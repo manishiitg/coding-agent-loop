@@ -352,6 +352,54 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitPreValidationCompletedEvent(ctx c
 	}
 }
 
+func collectNestedArtifactFolderNames(step PlanStepInterface, names map[string]struct{}) {
+	if step == nil {
+		return
+	}
+	if id := strings.TrimSpace(step.GetID()); id != "" {
+		names[id] = struct{}{}
+	}
+
+	switch s := step.(type) {
+	case *ConditionalPlanStep:
+		for _, nested := range s.IfTrueSteps {
+			collectNestedArtifactFolderNames(nested, names)
+		}
+		for _, nested := range s.IfFalseSteps {
+			collectNestedArtifactFolderNames(nested, names)
+		}
+	case *OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			collectNestedArtifactFolderNames(s.OrchestrationStep, names)
+		}
+		for _, route := range s.OrchestrationRoutes {
+			collectNestedArtifactFolderNames(route.SubAgentStep, names)
+		}
+	case *TodoTaskPlanStep:
+		if s.TodoTaskStep != nil {
+			collectNestedArtifactFolderNames(s.TodoTaskStep, names)
+		}
+		for _, route := range s.PredefinedRoutes {
+			collectNestedArtifactFolderNames(route.SubAgentStep, names)
+		}
+	}
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) getArtifactFolderNamesForStep(stepNumber int) []string {
+	if hcpo.approvedPlan == nil || stepNumber < 1 || stepNumber > len(hcpo.approvedPlan.Steps) {
+		return nil
+	}
+	names := make(map[string]struct{})
+	collectNestedArtifactFolderNames(hcpo.approvedPlan.Steps[stepNumber-1], names)
+	result := make([]string, 0, len(names))
+	for name := range names {
+		if name != "" {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
 // cleanupProgressFromStep removes completed step indices from targetStepIndex onward and cleans up branch steps
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupProgressFromStep(ctx context.Context, targetStepIndex int, progress *StepProgress) error {
 	if progress == nil {
@@ -525,7 +573,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveLogsFolder(ctx context.Context
 // by removing any existing execution artifacts from previous runs
 // Also deletes all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
 // Also deletes decision step folder if it exists (e.g., step-8-decision)
-// Also deletes all sub-agent step folders for this step (e.g., step-2-sub-agent-1, step-2-sub-agent-2, etc.)
+// Also deletes all sub-agent step folders for this step
+// (e.g., step-2-sub-agent-1, step-2-sub-agent-2, step-2-sub-login, etc.)
 func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context.Context, stepNumber int) error {
 	// Validate that run folder is set (required for building correct path)
 	if hcpo.selectedRunFolder == "" {
@@ -538,6 +587,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	stepFolderPath := fmt.Sprintf("%s/step-%d", executionWorkspacePath, stepNumber)
+	artifactFolderNames := hcpo.getArtifactFolderNamesForStep(stepNumber)
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting execution folder for step %d: %s", stepNumber, stepFolderPath))
 
@@ -572,6 +622,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 		// Continue even if logs archiving failed
 	}
 
+	for _, folderName := range artifactFolderNames {
+		if folderName == fmt.Sprintf("step-%d", stepNumber) {
+			continue
+		}
+		folderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, folderName)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting artifact folder for step %d: %s", stepNumber, folderPath))
+		if err := hcpo.CleanupDirectory(ctx, folderPath, fmt.Sprintf("execution/%s", folderName)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete artifact folder %s: %v", folderName, err))
+		} else if err := hcpo.DeleteWorkspaceFile(ctx, folderPath); err != nil {
+			errStr := err.Error()
+			if !strings.Contains(errStr, "not found") && !strings.Contains(errStr, "no such file") {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete artifact folder %s: %v", folderName, err))
+			}
+		}
+
+		artifactLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, folderName)
+		if err := hcpo.archiveLogsFolder(ctx, artifactLogsFolderPath, folderName); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive artifact logs folder %s: %v", folderName, err))
+		}
+	}
+
 	// Also delete all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
 	// This ensures that when resuming from a step before a conditional step, all branch executions are cleaned up
 	branchStepPrefix := fmt.Sprintf("step-%d-if-", stepNumber)
@@ -582,9 +653,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	decisionStepFolder := fmt.Sprintf("step-%d-decision", stepNumber)
 	decisionFoldersDeleted := 0
 
-	// Also delete all sub-agent step folders for this step (e.g., step-2-sub-agent-1, step-2-sub-agent-2, etc.)
+	// Also delete all sub-agent step folders for this step
+	// (e.g., step-2-sub-agent-1, step-2-sub-agent-2, step-2-sub-login, etc.)
 	// This ensures that when resuming from a step before an orchestration step, all sub-agent executions are cleaned up
-	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
+	subAgentStepPrefixes := []string{
+		fmt.Sprintf("step-%d-sub-agent-", stepNumber),
+		fmt.Sprintf("step-%d-sub-", stepNumber),
+	}
 	subAgentFoldersDeleted := 0
 	subAgentFoldersFound := []string{}
 
@@ -661,9 +736,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 				if err := hcpo.archiveLogsFolder(ctx, decisionLogsFolderPath, file); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %v", file, err))
 				}
-			} else if strings.HasPrefix(file, subAgentStepPrefix) {
+			} else if strings.HasPrefix(file, subAgentStepPrefixes[0]) || strings.HasPrefix(file, subAgentStepPrefixes[1]) {
 				// Check if this is a sub-agent step folder for the current step
-				// Pattern: step-{N}-sub-agent-{index}
+				// Pattern: step-{N}-sub-agent-{index} or step-{N}-sub-{routeId}
 				subAgentFoldersFound = append(subAgentFoldersFound, file)
 				subAgentFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
 				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting sub-agent step folder: %s", file))
@@ -762,7 +837,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getNextArchivalRunNumber(ctx context.
 // stepNumber is 1-based (e.g., step 1, step 2, etc.)
 // runNumber is the archive run number (1 for first archive, 2 for second, etc.)
 // Moves execution/step-{N}/ to execution/archived/run-{runNumber}/step-{N}/
-// Also archives branch folders (step-{N}-if-*), decision folders (step-{N}-decision), and sub-agent folders (step-{N}-sub-agent-*)
+// Also archives branch folders (step-{N}-if-*), decision folders (step-{N}-decision),
+// and sub-agent folders (step-{N}-sub-agent-* / step-{N}-sub-*)
 func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx context.Context, stepNumber int, runNumber int) error {
 	// Validate that run folder is set (required for building correct path)
 	if hcpo.selectedRunFolder == "" {
@@ -774,6 +850,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	archiveBasePath := fmt.Sprintf("%s/archived/run-%d", executionWorkspacePath, runNumber)
+	artifactFolderNames := hcpo.getArtifactFolderNamesForStep(stepNumber)
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📦 Archiving execution folder for step %d to run-%d", stepNumber, runNumber))
 
@@ -807,6 +884,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 	// Archive main step folder
 	archiveFolder(fmt.Sprintf("step-%d", stepNumber))
 
+	for _, folderName := range artifactFolderNames {
+		if folderName == fmt.Sprintf("step-%d", stepNumber) {
+			continue
+		}
+		archiveFolder(folderName)
+	}
+
 	// Also archive logs folder for this step
 	logsWorkspacePath := fmt.Sprintf("%s/logs", runWorkspacePath)
 	stepLogsFolderPath := fmt.Sprintf("%s/step-%d", logsWorkspacePath, stepNumber)
@@ -814,10 +898,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs folder for step %d: %v", stepNumber, err))
 	}
 
+	for _, folderName := range artifactFolderNames {
+		if folderName == fmt.Sprintf("step-%d", stepNumber) {
+			continue
+		}
+		artifactLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, folderName)
+		if err := hcpo.archiveLogsFolder(ctx, artifactLogsFolderPath, folderName); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive artifact logs folder %s: %v", folderName, err))
+		}
+	}
+
 	// Archive branch step folders, decision step folders, and sub-agent step folders
 	branchStepPrefix := fmt.Sprintf("step-%d-if-", stepNumber)
 	decisionStepFolder := fmt.Sprintf("step-%d-decision", stepNumber)
-	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
+	subAgentStepPrefixes := []string{
+		fmt.Sprintf("step-%d-sub-agent-", stepNumber),
+		fmt.Sprintf("step-%d-sub-", stepNumber),
+	}
 	genericAgentStepPrefix := fmt.Sprintf("step-%d-generic-agent-", stepNumber)
 
 	// List all files/folders in the execution directory
@@ -842,7 +939,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 				if err := hcpo.archiveLogsFolder(ctx, decisionLogsFolderPath, file); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %v", file, err))
 				}
-			} else if strings.HasPrefix(file, subAgentStepPrefix) {
+			} else if strings.HasPrefix(file, subAgentStepPrefixes[0]) || strings.HasPrefix(file, subAgentStepPrefixes[1]) {
 				// Archive sub-agent step folder
 				archiveFolder(file)
 				// Also archive corresponding sub-agent step logs folder
@@ -897,4 +994,76 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetValidationFailureCount(ctx conte
 	}
 
 	return nil
+}
+
+// emitLearnCodeScriptExecutionEvent emits a learn_code_script_execution event to the UI.
+func (hcpo *StepBasedWorkflowOrchestrator) emitLearnCodeScriptExecutionEvent(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	scriptPath string,
+	success bool,
+	exitCode int,
+	output string,
+	errMsg string,
+	fixIteration int,
+	isSavedScript bool,
+) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+	stepTitle := step.GetTitle()
+	if stepTitle == "" {
+		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
+	}
+	stepID := step.GetID()
+	if stepID == "" {
+		stepID = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+
+	// Read script content for UI display. Use workspace-relative path derived from scriptPath.
+	docsRoot := GetPromptDocsRoot()
+	scriptContent := ""
+	if scriptPath != "" {
+		scriptRelPath := strings.TrimPrefix(scriptPath, docsRoot+"/")
+		scriptRelPath = strings.TrimPrefix(scriptRelPath, hcpo.GetWorkspacePath()+"/")
+		if content, err := hcpo.ReadWorkspaceFile(ctx, scriptRelPath); err == nil {
+			scriptContent = content
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Read script content for UI: %s (%d bytes)", scriptRelPath, len(content)))
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read script content for UI (%s): %v", scriptRelPath, err))
+		}
+	}
+
+	ev := &events.LearnCodeScriptExecutionEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "learn_code",
+		},
+		StepID:        stepID,
+		StepIndex:     stepIndex,
+		StepTitle:     stepTitle,
+		StepPath:      stepPath,
+		WorkspacePath: hcpo.GetWorkspacePath(),
+		RunFolder:     hcpo.selectedRunFolder,
+		ScriptPath:    scriptPath,
+		ScriptContent: scriptContent,
+		Success:       success,
+		ExitCode:      exitCode,
+		Output:        output,
+		Error:         errMsg,
+		FixIteration:  fixIteration,
+		IsSavedScript: isSavedScript,
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf(
+		"🧭 [FIX_LEARN_CODE_UI] emitting learn_code_script_execution step=%s title=%q saved=%t fix_iter=%d success=%t exit=%d output_len=%d error_len=%d script_len=%d run_folder=%s",
+		stepID, stepTitle, isSavedScript, fixIteration, success, exitCode, len(output), len(errMsg), len(scriptContent), hcpo.selectedRunFolder,
+	))
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      events.LearnCodeScriptExecution,
+		Timestamp: time.Now(),
+		Data:      ev,
+	})
 }

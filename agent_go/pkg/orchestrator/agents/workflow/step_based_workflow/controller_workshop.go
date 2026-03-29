@@ -57,6 +57,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 // for that group, making each execute_step call self-contained.
 type WorkshopExecuteOptions struct {
 	GroupID      string // e.g., "group-1" — overrides session-level group
+	GroupDisplayName string // e.g., "Production" — human-friendly label for UI/event display
 	Iteration    string // e.g., "iteration-3" — combined with group folder name to form RunFolder
 	RunFolder    string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
 	SkipLearning bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
@@ -97,11 +98,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	// Otherwise, fall back to LoadVariableValues (reads from variables.json).
 	if hcpo.variableValues == nil {
 		if hcpo.variablesManifest != nil && len(hcpo.variablesManifest.Groups) == 1 {
-			// Single group — use its values automatically
+			// Single group — merge group overrides on top of manifest defaults
 			g := hcpo.variablesManifest.Groups[0]
-			hcpo.variableValues = g.Values
-			SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, g.Values)
-			hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Auto-loaded variable values from single group %q (%d vars)", g.GroupID, len(g.Values)))
+			merged := MergeGroupWithDefaults(hcpo.variablesManifest, g.Values)
+			hcpo.variableValues = merged
+			SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, merged)
+			hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Auto-loaded variable values from single group %q (%d vars, %d after merge with defaults)", g.GroupID, len(g.Values), len(merged)))
 		} else {
 			vals, loadErr := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 			if loadErr != nil {
@@ -340,9 +342,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 				}
 			}
 			if groupValues != nil {
-				hcpo.variableValues = groupValues
-				SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, groupValues)
-				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s (resolved=%s): %v", len(groupValues), opts.GroupID, resolvedGroupID, groupValues))
+				merged := MergeGroupWithDefaults(hcpo.variablesManifest, groupValues)
+				hcpo.variableValues = merged
+				SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, merged)
+				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s (resolved=%s, %d after merge with defaults): %v", len(groupValues), opts.GroupID, resolvedGroupID, len(merged), merged))
 			} else {
 				// Group not found — return a clear error so the agent asks the user for the correct group_id.
 				var groupDescs []string
@@ -453,7 +456,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx cont
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
 
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, "", stepPath)
 	var latestResult string
 	var latestAttempt, latestIteration int
 
@@ -480,6 +483,41 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx cont
 
 	if latestResult != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("Loaded execution result from logs for %s (attempt %d, iteration %d)", stepPath, latestAttempt, latestIteration))
+		return latestResult, true
+	}
+
+	logsRoot := fmt.Sprintf("%s/logs", validationWorkspacePath)
+	logFolders, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, logsRoot)
+	if err == nil {
+		for _, folderName := range logFolders {
+			for attempt := 1; attempt <= 10; attempt++ {
+				for iteration := 0; iteration <= 10; iteration++ {
+					filePath := fmt.Sprintf("%s/%s/execution/execution-attempt-%d-iteration-%d.json", logsRoot, folderName, attempt, iteration)
+					content, readErr := hcpo.ReadWorkspaceFile(ctx, filePath)
+					if readErr != nil {
+						continue
+					}
+					var data map[string]interface{}
+					if err := json.Unmarshal([]byte(content), &data); err != nil {
+						continue
+					}
+					recordedStepPath, _ := data["step_path"].(string)
+					execResult, _ := data["execution_result"].(string)
+					if recordedStepPath != stepPath || execResult == "" {
+						continue
+					}
+					if attempt > latestAttempt || (attempt == latestAttempt && iteration > latestIteration) {
+						latestResult = execResult
+						latestAttempt = attempt
+						latestIteration = iteration
+					}
+				}
+			}
+		}
+	}
+
+	if latestResult != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("Loaded execution result from scanned logs for %s (attempt %d, iteration %d)", stepPath, latestAttempt, latestIteration))
 		return latestResult, true
 	}
 	return "", false

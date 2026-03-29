@@ -1103,20 +1103,24 @@ function syncProviderKeysToServer() {
   }, 2000)
 }
 
+const getProviderKeySnapshot = (state: LLMState) => ([
+  state.openrouterConfig?.api_key,
+  state.openaiConfig?.api_key,
+  state.anthropicConfig?.api_key,
+  state.vertexConfig?.api_key,
+  state.azureConfig?.api_key,
+  state.azureConfig?.endpoint,
+  state.minimaxConfig?.api_key,
+  state.minimaxCodingPlanConfig?.api_key,
+  state.bedrockConfig?.region,
+  state.geminiCliApiKey,
+])
+
 // Watch for changes to any provider config or API key
-useLLMStore.subscribe(
-  (state) => [
-    state.openrouterConfig?.api_key,
-    state.openaiConfig?.api_key,
-    state.anthropicConfig?.api_key,
-    state.vertexConfig?.api_key,
-    state.azureConfig?.api_key,
-    state.azureConfig?.endpoint,
-    state.minimaxConfig?.api_key,
-    state.minimaxCodingPlanConfig?.api_key,
-    state.bedrockConfig?.region,
-    state.geminiCliApiKey,
-  ],
-  () => { syncProviderKeysToServer() },
-  { equalityFn: (a, b) => JSON.stringify(a) === JSON.stringify(b) }
-)
+useLLMStore.subscribe((state, prevState) => {
+  const nextSnapshot = getProviderKeySnapshot(state)
+  const prevSnapshot = getProviderKeySnapshot(prevState)
+  if (JSON.stringify(nextSnapshot) !== JSON.stringify(prevSnapshot)) {
+    syncProviderKeysToServer()
+  }
+})

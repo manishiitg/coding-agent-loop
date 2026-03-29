@@ -125,7 +125,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	}
 
 	// Get execution logs folder path based on executionStepPath (step-{X}-decision)
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, executionStepPath)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, step.GetID(), executionStepPath)
 
 	// Save decision step execution result
 	executionResultFilePath := fmt.Sprintf("%s/decision-execution.json", executionLogsFolderPath)
@@ -164,7 +164,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, decisionStepPath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), decisionStepPath)
 	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 		// Non-blocking: log warning but continue execution (folder will be created when files are written)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure decision step execution folder exists: %v (continuing - folder will be created when files are written)", err))
@@ -196,7 +196,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
 			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
 		}
-		hcpo.preSavePromptsJSON(stepIndex, decisionStepPath, "decision_evaluation", sp, um, model, "decision-prompts.json")
+		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), decisionStepPath, "decision_evaluation", sp, um, model, "decision-prompts.json")
 	}
 
 	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, learningHistory, variableNames, variableValues)
@@ -221,7 +221,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Determine validation workspace path (same logic as validation agent)
 	// validationWorkspacePath already defined above
 	// Get validation folder path based on decisionStepPath (step-{X})
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, decisionStepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, step.GetID(), decisionStepPath)
 
 	// Save decision evaluation result
 	decisionEvaluationFilePath := fmt.Sprintf("%s/decision-evaluation.json", validationFolderPath)

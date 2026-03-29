@@ -25,7 +25,7 @@
 
 import type {
   // Event wrapper types (aliased — we override these below)
-  PollingEventSchema as _RawPollingEventSchema,
+  PollingEvent as _RawPollingEventSchema,
   AgentEventForSchema as _RawAgentEventForSchema,
   
   // Individual event types
@@ -85,6 +85,7 @@ import type {
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
+  LearnCodeScriptExecutionEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -239,6 +240,7 @@ export type EventTypeString =
   | 'decision_evaluated'
   | 'routing_evaluated'
   | 'pre_validation_completed'
+  | 'learn_code_script_execution'
   | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
@@ -365,6 +367,7 @@ export interface EventTypeToDataMap {
   'decision_evaluated': DecisionEvaluatedEvent;
   'routing_evaluated': RoutingEvaluatedEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
+  'learn_code_script_execution': LearnCodeScriptExecutionEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -897,6 +900,7 @@ export type {
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
+  LearnCodeScriptExecutionEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,

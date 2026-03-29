@@ -200,37 +200,50 @@ type ConsistencyRule struct {
 
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
-	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
-	ConditionalLLM               *AgentLLMConfig `json:"conditional_llm,omitempty"`                 // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 100
-	LearningMaxTurns             *int            `json:"learning_max_turns,omitempty"`              // default: 100
-	OrchestrationMaxIterations   *int            `json:"orchestration_max_iterations,omitempty"`    // default: orchestrator max turns (typically 100)
-	DisableLearning              *bool           `json:"disable_learning,omitempty"`                // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LockLearnings                *bool           `json:"lock_learnings,omitempty"`                  // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningAfterLoopIteration   bool            `json:"learning_after_loop_iteration,omitempty"`   // run learning after each loop iteration
-	LearningDetailLevel          string          `json:"learning_detail_level,omitempty"`           // "exact" or "none" (default: "exact")
-	LearningMode                 string          `json:"learning_mode,omitempty"`                   // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
-	SelectedServers              []string        `json:"selected_servers,omitempty"`                // step-level MCP server selection (subset of preset servers)
-	SelectedTools                []string        `json:"selected_tools,omitempty"`                  // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomToolCategories  []string        `json:"enabled_custom_tool_categories,omitempty"`  // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
-	EnabledCustomTools           []string        `json:"enabled_custom_tools,omitempty"`            // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableContextOffloading      *bool           `json:"enable_context_offloading,omitempty"`       // Enable/disable context offloading (default: true if nil)
-	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
-	UseToolSearchMode            *bool           `json:"use_tool_search_mode,omitempty"`            // Step-level tool search mode override (nil = use preset default, true/false = override)
-	PreDiscoveredTools           []string        `json:"pre_discovered_tools,omitempty"`            // Tools always available without searching (overrides preset if specified)
-	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)
-	KeepLearningFull             *bool           `json:"keep_learning_full,omitempty"`              // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
-	DisableKnowledgebase         *bool           `json:"disable_knowledgebase,omitempty"`           // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
-	DisableTempLLM               *bool           `json:"disable_temp_llm,omitempty"`                // If true, skip tempLLM override and use the normal workflow LLM path (step config > tiered)
-	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
-	EnableDynamicTierSelection   *bool           `json:"enable_dynamic_tier_selection,omitempty"`   // Allow todo task orchestrator to choose tier for sub-agents
-	OrchestratorLLM              *AgentLLMConfig `json:"orchestrator_llm,omitempty"`                // Direct LLM override for orchestrator (works in both tiered and manual modes)
-	SubAgentLLM                  *AgentLLMConfig `json:"sub_agent_llm,omitempty"`                   // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
-	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
-	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
-	Optimized                    *bool           `json:"optimized,omitempty"`                       // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
-	SuccessfulRuns               *int            `json:"successful_runs,omitempty"`                 // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
+	ExecutionLLM                        *AgentLLMConfig `json:"execution_llm,omitempty"`
+	LearningLLM                         *AgentLLMConfig `json:"learning_llm,omitempty"`
+	ConditionalLLM                      *AgentLLMConfig `json:"conditional_llm,omitempty"`                        // Step-specific conditional LLM for conditional step evaluation
+	ExecutionMaxTurns                   *int            `json:"execution_max_turns,omitempty"`                    // default: 100
+	LearningMaxTurns                    *int            `json:"learning_max_turns,omitempty"`                     // default: 100
+	OrchestrationMaxIterations          *int            `json:"orchestration_max_iterations,omitempty"`           // default: orchestrator max turns (typically 100)
+	DisableLearning                     *bool           `json:"disable_learning,omitempty"`                       // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LearningAfterLoopIteration          bool            `json:"learning_after_loop_iteration,omitempty"`          // run learning after each loop iteration
+	LearningDetailLevel                 string          `json:"learning_detail_level,omitempty"`                  // "exact" or "none" (default: "exact")
+	LearningMode                        string          `json:"learning_mode,omitempty"`                          // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
+	SelectedServers                     []string        `json:"selected_servers,omitempty"`                       // step-level MCP server selection (subset of preset servers)
+	SelectedTools                       []string        `json:"selected_tools,omitempty"`                         // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories         []string        `json:"enabled_custom_tool_categories,omitempty"`         // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools                  []string        `json:"enabled_custom_tools,omitempty"`                   // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableContextOffloading             *bool           `json:"enable_context_offloading,omitempty"`              // Enable/disable context offloading (default: true if nil)
+	UseCodeExecutionMode                *bool           `json:"use_code_execution_mode,omitempty"`                // Step-level code execution mode override (nil = use preset default, true/false = override)
+	UseToolSearchMode                   *bool           `json:"use_tool_search_mode,omitempty"`                   // Step-level tool search mode override (nil = use preset default, true/false = override)
+	PreDiscoveredTools                  []string        `json:"pre_discovered_tools,omitempty"`                   // Tools always available without searching (overrides preset if specified)
+	EnabledSkills                       []string        `json:"enabled_skills,omitempty"`                         // Step-level skill selection (skill folder names, overrides preset if specified)
+	KeepLearningFull                    *bool           `json:"keep_learning_full,omitempty"`                     // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
+	DisableKnowledgebase                *bool           `json:"disable_knowledgebase,omitempty"`                  // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
+	DisableTempLLM                      *bool           `json:"disable_temp_llm,omitempty"`                       // If true, skip tempLLM override and use the normal workflow LLM path (step config > tiered)
+	TodoTaskOrchestratorTier            *int            `json:"todo_task_orchestrator_tier,omitempty"`            // Tier for todo task orchestrator agent (1/2/3) in tiered mode
+	EnableDynamicTierSelection          *bool           `json:"enable_dynamic_tier_selection,omitempty"`          // Allow todo task orchestrator to choose tier for sub-agents
+	OrchestratorLLM                     *AgentLLMConfig `json:"orchestrator_llm,omitempty"`                       // Direct LLM override for orchestrator (works in both tiered and manual modes)
+	SubAgentLLM                         *AgentLLMConfig `json:"sub_agent_llm,omitempty"`                          // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
+	DisableParallelToolExecution        *bool           `json:"disable_parallel_tool_execution,omitempty"`        // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
+	DisableTierOptimization             *bool           `json:"disable_tier_optimization,omitempty"`              // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
+	Optimized                           *bool           `json:"optimized,omitempty"`                              // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
+	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
+	UseLearnCodeMode                    *bool           `json:"use_learn_code_mode,omitempty"`                    // Learn code mode: LLM writes main.py once, saved and reused without LLM on future runs (nil = disabled)
+	LearnCodeMaxFixIter                 *int            `json:"learn_code_max_fix_iterations,omitempty"`          // Max LLM fix iterations when main.py execution fails (default: 5)
+	DeclaredExecutionMode               string          `json:"declared_execution_mode,omitempty"`                // Required mode decision for the step: "learn_code", "code_exec", "tool_search", or "simple"
+	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Why this mode is the best fit for the step
+	LearnCodeRejectionReason            string          `json:"learn_code_rejection_reason,omitempty"`            // Required when declared_execution_mode is not "learn_code"
+	CodeExecRejectionReason             string          `json:"code_exec_rejection_reason,omitempty"`             // Required when declared_execution_mode is "tool_search" or "simple"
+	ToolSearchRejectionReason           string          `json:"tool_search_rejection_reason,omitempty"`           // Required when declared_execution_mode is "simple"
+	DescriptionHash                     string          `json:"description_hash,omitempty"`                       // SHA256 of the current step description. If it changes, optimization review is stale.
+	DescriptionOptimized                *bool           `json:"description_optimized,omitempty"`                  // True when the description has been reviewed and judged optimized for execution.
+	DescriptionOptimizationReason       string          `json:"description_optimization_reason,omitempty"`        // Why the current description is considered optimized.
+	DescriptionLearningsAlignmentReason string          `json:"description_learnings_alignment_reason,omitempty"` // How the description reflects the learnings gathered so far.
+	DescriptionNoSecrets                *bool           `json:"description_no_secrets,omitempty"`                 // True when the description has been reviewed for secrets/hardcoded values and cleared.
+	DescriptionSecretsReviewReason      string          `json:"description_secrets_review_reason,omitempty"`      // Why the description is considered free of secrets/hardcoded values.
 }
 
 // ============================================================================

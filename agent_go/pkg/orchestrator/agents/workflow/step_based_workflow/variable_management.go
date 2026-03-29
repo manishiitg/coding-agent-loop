@@ -116,9 +116,27 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 	return variableValues, nil
 }
 
+// MergeGroupWithDefaults returns a merged variable map: manifest defaults first,
+// then group overrides on top. Variables defined in the manifest but absent from
+// the group (e.g. shared sheet IDs) get their default value automatically.
+func MergeGroupWithDefaults(manifest *VariablesManifest, groupValues map[string]string) map[string]string {
+	merged := make(map[string]string)
+	if manifest != nil {
+		for _, v := range manifest.Variables {
+			if v.Value != "" {
+				merged[v.Name] = v.Value
+			}
+		}
+	}
+	for k, v := range groupValues {
+		merged[k] = v
+	}
+	return merged
+}
+
 // SyncVariablesToWorkspaceEnv injects the current variableValues into workspaceEnvRef
 // with a SECRET_ prefix so they pass through the workspace API whitelist filter.
-// This makes workflow variables available as $SECRET_VAR_NAME in execute_shell_command.
+// This makes workflow variables available as $VAR_NAME in execute_shell_command.
 func SyncVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValues map[string]string) {
 	if bo == nil || len(variableValues) == 0 {
 		return
@@ -127,10 +145,12 @@ func SyncVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValu
 	if envRef == nil {
 		return
 	}
+	keys := make([]string, 0, len(variableValues))
 	for k, v := range variableValues {
-		envRef["SECRET_"+k] = v
+		envRef["VAR_"+k] = v
+		keys = append(keys, "VAR_"+k)
 	}
-	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Synced %d variable values as SECRET_* env vars for shell execution", len(variableValues)))
+	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Synced %d variable values as VAR_* env vars: %v", len(variableValues), keys))
 }
 
 // ResolveVariables replaces {{VARIABLE}} placeholders with actual values

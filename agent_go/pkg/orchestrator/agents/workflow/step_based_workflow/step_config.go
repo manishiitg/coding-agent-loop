@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // StepConfig represents a single step's configuration in step_config.json
 type StepConfig struct {
-	ID               string            `json:"id"`                          // Stable step ID (from plan.json) - required identifier
-	Title            string            `json:"title,omitempty"`             // Step title (optional, for reference/display only)
+	ID               string            `json:"id"`              // Stable step ID (from plan.json) - required identifier
+	Title            string            `json:"title,omitempty"` // Step title (optional, for reference/display only)
 	AgentConfigs     *AgentConfigs     `json:"agent_configs,omitempty"`
 	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // Override pre-validation schema (takes precedence over plan.json)
 }
@@ -112,7 +111,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 	workspacePath := hcpo.GetWorkspacePath()
 	// Build run folder path if selectedRunFolder is set
 	var runWorkspacePath string
-	
+
 	// Determine config subdir based on mode
 	configSubdir := "planning"
 	if hcpo.isEvaluationMode {
@@ -141,7 +140,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context,
 	if hcpo.isEvaluationMode {
 		configSubdir = "evaluation"
 	}
-	
+
 	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
 	configPath := filepath.Join(configSubdir, "step_config.json")
 
@@ -162,112 +161,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context,
 	return nil
 }
 
-// ParseStepOverrideContent parses step_override.json content directly into AgentConfigs
-func ParseStepOverrideContent(content string) (*AgentConfigs, error) {
-	var overrides AgentConfigs
-	if err := json.Unmarshal([]byte(content), &overrides); err != nil {
-		return nil, fmt.Errorf("failed to parse step_override.json: %w", err)
-	}
-	return &overrides, nil
-}
-
-// ReadStepOverrides reads step_override.json from the workspace
-// Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
-// Returns nil, nil if the file doesn't exist (no overrides configured)
-func ReadStepOverrides(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir string) (*AgentConfigs, error) {
-	if configSubdir == "" {
-		configSubdir = "planning"
-	}
-
-	// First, try to read from run folder (run-specific overrides)
-	var runOverrideRelativePath string
-	if runWorkspacePath != workspacePath && runWorkspacePath != "" {
-		relativePart := runWorkspacePath
-		if len(workspacePath) > 0 && len(runWorkspacePath) > len(workspacePath) {
-			relativePart = runWorkspacePath[len(workspacePath):]
-			relativePart = filepath.Clean(relativePart)
-			relativePart = filepath.ToSlash(relativePart)
-			if len(relativePart) > 0 && relativePart[0] == '/' {
-				relativePart = relativePart[1:]
-			}
-		}
-		runOverrideRelativePath = filepath.Join(relativePart, configSubdir, "step_override.json")
-	} else {
-		runOverrideRelativePath = filepath.Join(configSubdir, "step_override.json")
-	}
-
-	content, err := bo.ReadWorkspaceFile(ctx, runOverrideRelativePath)
-	if err == nil {
-		overrides, err := ParseStepOverrideContent(content)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse run folder step_override.json: %w", err)
-		}
-		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_override.json from: %s", runOverrideRelativePath))
-		return overrides, nil
-	}
-
-	// Fallback to workspace default overrides
-	overridePath := filepath.Join(configSubdir, "step_override.json")
-	content, err = bo.ReadWorkspaceFile(ctx, overridePath)
-	if err != nil {
-		// File doesn't exist - return nil (no overrides)
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		// Check for "not found" in error message (workspace API may not use os errors)
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "no such file") || strings.Contains(errMsg, "404") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to read step_override.json: %w", err)
-	}
-
-	overrides, err := ParseStepOverrideContent(content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse step_override.json: %w", err)
-	}
-
-	bo.GetLogger().Info(fmt.Sprintf("📁 Using default step_override.json from: %s", overridePath))
-	return overrides, nil
-}
-
-// ReadStepOverrides reads step_override.json using the orchestrator's workspace paths
+// ReadStepOverrides reads step overrides from workflow.json execution_defaults.
+// Returns nil if no overrides are configured.
 func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context) (*AgentConfigs, error) {
-	workspacePath := hcpo.GetWorkspacePath()
-	var runWorkspacePath string
-
-	configSubdir := "planning"
-	if hcpo.isEvaluationMode {
-		configSubdir = "evaluation"
-	}
-
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = workspacePath
-	}
-	return ReadStepOverrides(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir)
-}
-
-// WriteStepOverrides writes step_override.json to the workspace
-func (hcpo *StepBasedWorkflowOrchestrator) WriteStepOverrides(ctx context.Context, overrides *AgentConfigs) error {
-	configSubdir := "planning"
-	if hcpo.isEvaluationMode {
-		configSubdir = "evaluation"
-	}
-
-	overridePath := filepath.Join(configSubdir, "step_override.json")
-
-	jsonData, err := json.MarshalIndent(overrides, "", "  ")
+	manifestContent, err := hcpo.ReadWorkspaceFile(ctx, "workflow.json")
 	if err != nil {
-		return fmt.Errorf("failed to marshal step_override.json: %w", err)
+		return nil, nil
 	}
 
-	if err := hcpo.WriteWorkspaceFile(ctx, overridePath, string(jsonData)); err != nil {
-		return fmt.Errorf("failed to write step_override.json: %w", err)
+	var manifest struct {
+		ExecutionDefaults struct {
+			DisableLearning              *bool    `json:"disable_learning"`
+			DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution"`
+			ExecutionMaxTurns            *int     `json:"execution_max_turns"`
+			EnabledCustomTools           []string `json:"enabled_custom_tools"`
+		} `json:"execution_defaults"`
+	}
+	if err := json.Unmarshal([]byte(manifestContent), &manifest); err != nil {
+		return nil, nil
 	}
 
-	return nil
+	ed := manifest.ExecutionDefaults
+	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 {
+		return nil, nil
+	}
+
+	hcpo.GetLogger().Info("📁 Using step overrides from workflow.json execution_defaults")
+	return &AgentConfigs{
+		DisableLearning:              ed.DisableLearning,
+		DisableParallelToolExecution: ed.DisableParallelToolExecution,
+		ExecutionMaxTurns:            ed.ExecutionMaxTurns,
+		EnabledCustomTools:           ed.EnabledCustomTools,
+	}, nil
 }
 
 // MatchStepConfigs matches new plan steps with existing configs by ID only
@@ -400,6 +325,39 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.DisableTierOptimization != nil {
 		target.DisableTierOptimization = source.DisableTierOptimization
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_tier_optimization: %v", stepID, *source.DisableTierOptimization))
+	}
+	if source.DeclaredExecutionMode != "" {
+		target.DeclaredExecutionMode = source.DeclaredExecutionMode
+	}
+	if source.DeclaredExecutionModeReason != "" {
+		target.DeclaredExecutionModeReason = source.DeclaredExecutionModeReason
+	}
+	if source.LearnCodeRejectionReason != "" {
+		target.LearnCodeRejectionReason = source.LearnCodeRejectionReason
+	}
+	if source.CodeExecRejectionReason != "" {
+		target.CodeExecRejectionReason = source.CodeExecRejectionReason
+	}
+	if source.ToolSearchRejectionReason != "" {
+		target.ToolSearchRejectionReason = source.ToolSearchRejectionReason
+	}
+	if source.DescriptionHash != "" {
+		target.DescriptionHash = source.DescriptionHash
+	}
+	if source.DescriptionOptimized != nil {
+		target.DescriptionOptimized = source.DescriptionOptimized
+	}
+	if source.DescriptionOptimizationReason != "" {
+		target.DescriptionOptimizationReason = source.DescriptionOptimizationReason
+	}
+	if source.DescriptionLearningsAlignmentReason != "" {
+		target.DescriptionLearningsAlignmentReason = source.DescriptionLearningsAlignmentReason
+	}
+	if source.DescriptionNoSecrets != nil {
+		target.DescriptionNoSecrets = source.DescriptionNoSecrets
+	}
+	if source.DescriptionSecretsReviewReason != "" {
+		target.DescriptionSecretsReviewReason = source.DescriptionSecretsReviewReason
 	}
 }
 

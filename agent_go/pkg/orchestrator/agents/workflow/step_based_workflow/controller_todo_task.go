@@ -236,7 +236,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		hcpo.logTodoTaskRoutingDecision(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
 
 		// Save execution log for this iteration (so UI can show full execution history)
-		hcpo.saveTodoTaskExecutionLog(ctx, todoTaskStepPath, taskIteration, executionLLM, updatedHistory)
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, taskIteration, executionLLM, updatedHistory)
 
 		// Emit route selected event
 		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
@@ -377,9 +377,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"StepTitle":           ResolveVariables(step.GetTitle(), hcpo.variableValues),
 		"StepDescription":     ResolveVariables(step.GetDescription(), hcpo.variableValues),
 		"StepSuccessCriteria": ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
-		"StepContextDependencies": strings.Join(ResolveDependencyPaths(
+		"StepContextDependencies": strings.Join(hcpo.resolveDependencyPathsWithWorkspace(
+			ctx,
 			ResolveVariablesArray(previousContextFiles, hcpo.variableValues),
-			stepIndex, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
+			stepIndex, stepPath, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
 		), ", "),
 		"WorkspacePath":         filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath()),
 		"ExecutionFolderPath":   filepath.Join(docsRoot, fgExecPath),
@@ -628,7 +629,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	if todoAgent, ok := agent.(*WorkflowTodoTaskOrchestratorAgent); ok {
 		preSystemPrompt := todoAgent.todoTaskOrchestratorSystemPromptProcessor(templateVars)
 		preUserMessage := todoAgent.todoTaskOrchestratorUserMessageProcessor(templateVars, conversationHistory)
-		hcpo.preSavePromptsJSON(stepIndex, stepPath, "todo_task_orchestrator", preSystemPrompt, preUserMessage, executionLLM, "todo-task-prompts.json")
+		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "todo_task_orchestrator", preSystemPrompt, preUserMessage, executionLLM, "todo-task-prompts.json")
 	}
 
 	// Execute with tool-based approach (no structured output)
@@ -745,13 +746,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	executionPath := getExecutionFolderPath(executionWorkspacePath, genericStepPath)
+	executionPath := getExecutionFolderPath(executionWorkspacePath, genericStepPath, genericStepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	// Setup folder guard for generic agent
 	// Include parent step execution path so sub-agents can write output files
 	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
-	parentStepExecutionPath := filepath.Join(executionWorkspacePath, stepPath)
+	parentStepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
 	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
 
@@ -916,6 +917,47 @@ func cloneStepWithDelegationOverrides(
 	}
 }
 
+func rewriteBareContextDependenciesForDelegatedStep(step PlanStepInterface, parentStepExecutionAbsPath string) {
+	if step == nil || parentStepExecutionAbsPath == "" {
+		return
+	}
+	rewrite := func(deps []string) []string {
+		if len(deps) == 0 {
+			return deps
+		}
+		updated := make([]string, len(deps))
+		for i, dep := range deps {
+			if dep != "" && !filepath.IsAbs(dep) && !strings.Contains(dep, "/") {
+				updated[i] = filepath.Join(parentStepExecutionAbsPath, dep)
+			} else {
+				updated[i] = dep
+			}
+		}
+		return updated
+	}
+
+	switch s := step.(type) {
+	case *RegularPlanStep:
+		s.CommonStepFields.ContextDependencies = rewrite(s.CommonStepFields.ContextDependencies)
+	case *ConditionalPlanStep:
+		s.CommonStepFields.ContextDependencies = rewrite(s.CommonStepFields.ContextDependencies)
+	case *DecisionPlanStep:
+		s.CommonStepFields.ContextDependencies = rewrite(s.CommonStepFields.ContextDependencies)
+	case *RoutingPlanStep:
+		s.CommonStepFields.ContextDependencies = rewrite(s.CommonStepFields.ContextDependencies)
+	case *HumanInputPlanStep:
+		s.CommonStepFields.ContextDependencies = rewrite(s.CommonStepFields.ContextDependencies)
+	case *TodoTaskPlanStep:
+		if s.TodoTaskStep != nil {
+			rewriteBareContextDependenciesForDelegatedStep(s.TodoTaskStep, parentStepExecutionAbsPath)
+		}
+	case *OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			rewriteBareContextDependenciesForDelegatedStep(s.OrchestrationStep, parentStepExecutionAbsPath)
+		}
+	}
+}
+
 func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 	ctx context.Context,
 	stepToExecute PlanStepInterface,
@@ -1049,13 +1091,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	executionPath := getExecutionFolderPath(executionWorkspacePath, subAgentStepPath)
+	executionPath := getExecutionFolderPath(executionWorkspacePath, route.SubAgentStep.GetID(), subAgentStepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
+	parentStepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
+	parentStepExecutionAbsPath := filepath.Join(GetPromptDocsRoot(), parentStepExecutionPath)
+	rewriteBareContextDependenciesForDelegatedStep(stepToExecute, parentStepExecutionAbsPath)
 
 	// Setup folder guard for sub-agent
 	// Include parent step execution path so sub-agents can write output files
 	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
-	parentStepExecutionPath := filepath.Join(executionWorkspacePath, stepPath)
 	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
 	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
 
@@ -1453,7 +1497,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
 
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, step.GetID(), stepPath)
 	todoTaskLogFilePath := fmt.Sprintf("%s/todo-task-execution.json", validationFolderPath)
 
 	// Get todo title if a todo is being executed
@@ -1587,6 +1631,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendTodoTaskLogEntry(ctx context.Co
 // This allows the UI to show the full execution history (conversation, tool calls) for each iteration
 func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	ctx context.Context,
+	stepID string,
 	stepPath string,
 	iteration int,
 	executionLLM string,
@@ -1604,7 +1649,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	}
 
 	// Get execution logs folder path
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 
 	// Create filename: execution-attempt-1-iteration-{iteration}.json
 	// Use attempt=1 since todo task orchestrator doesn't have retry attempts like regular steps

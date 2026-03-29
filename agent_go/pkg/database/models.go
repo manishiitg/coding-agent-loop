@@ -16,83 +16,6 @@ const (
 	WorkflowStatusPostVerification = "post-verification"
 )
 
-// Schedule entity type constants
-const (
-	ScheduleEntityWorkflow = "workflow"
-	ScheduleEntityChat     = "chat"
-)
-
-// ScheduledJob represents a cron-scheduled job in the database
-type ScheduledJob struct {
-	ID                  string          `json:"id"`
-	Name                string          `json:"name"`
-	Description         string          `json:"description"`
-	EntityType          string          `json:"entity_type"`
-	PresetQueryID       string          `json:"preset_query_id"`
-	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs            []string        `json:"group_ids,omitempty"` // nil/empty = run all groups
-	CronExpression      string          `json:"cron_expression"`
-	Timezone            string          `json:"timezone"`
-	Enabled             bool            `json:"enabled"`
-	LastRunAt           *time.Time      `json:"last_run_at,omitempty"`
-	NextRunAt           *time.Time      `json:"next_run_at,omitempty"`
-	LastSessionID       string          `json:"last_session_id,omitempty"`
-	LastStatus          string          `json:"last_status,omitempty"`
-	LastError           string          `json:"last_error,omitempty"`
-	LastDurationMs      *int64          `json:"last_duration_ms,omitempty"`
-	RunCount            int             `json:"run_count"`
-	ConsecutiveFailures int             `json:"consecutive_failures"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
-}
-
-// CreateScheduledJobRequest represents a request to create a new scheduled job
-type CreateScheduledJobRequest struct {
-	Name           string          `json:"name"`
-	Description    string          `json:"description,omitempty"`
-	EntityType     string          `json:"entity_type"`
-	PresetQueryID  string          `json:"preset_query_id"`
-	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs       []string        `json:"group_ids,omitempty"` // nil/empty = all groups
-	CronExpression string          `json:"cron_expression"`
-	Timezone       string          `json:"timezone,omitempty"`
-	Enabled        *bool           `json:"enabled,omitempty"`
-}
-
-// UpdateScheduledJobRequest represents a request to update a scheduled job
-type UpdateScheduledJobRequest struct {
-	Name           string          `json:"name,omitempty"`
-	Description    string          `json:"description,omitempty"`
-	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs       []string        `json:"group_ids"`             // updated always (use SetGroupIDs flag)
-	SetGroupIDs    bool            `json:"set_group_ids,omitempty"` // true = update group_ids (even if empty)
-	CronExpression string          `json:"cron_expression,omitempty"`
-	Timezone       string          `json:"timezone,omitempty"`
-	Enabled        *bool           `json:"enabled,omitempty"`
-}
-
-// ScheduledJobRun represents a single execution of a scheduled job
-type ScheduledJobRun struct {
-	ID          string     `json:"id"`
-	JobID       string     `json:"job_id"`
-	RunFolder   string     `json:"run_folder,omitempty"`
-	SessionID   string     `json:"session_id,omitempty"`
-	Status      string     `json:"status"`
-	Error       string     `json:"error,omitempty"`
-	DurationMs  *int64     `json:"duration_ms,omitempty"`
-	GroupIDs    []string   `json:"group_ids,omitempty"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-}
-
-// ListScheduledJobsResponse represents the response for listing scheduled jobs
-type ListScheduledJobsResponse struct {
-	Jobs   []ScheduledJob `json:"jobs"`
-	Total  int            `json:"total"`
-	Limit  int            `json:"limit"`
-	Offset int            `json:"offset"`
-}
-
 // Agent mode constants
 const (
 	AgentModeSimple       = "simple"
@@ -103,19 +26,19 @@ const (
 // WorkflowMetadata stores workflow-specific metadata for background/minimized workflows
 // This is stored in the session config to enable querying and restoring background workflows
 type WorkflowMetadata struct {
-	PresetID         string          `json:"preset_id,omitempty"`           // Preset ID for context restoration (legacy, kept for backward compat)
-	WorkflowID       string          `json:"workflow_id,omitempty"`         // Manifest workflow ID (from workflow.json)
-	PresetName       string          `json:"preset_name,omitempty"`         // Display name
-	WorkspacePath    string          `json:"workspace_path,omitempty"`      // Workflow workspace path
-	RunFolder        string          `json:"run_folder,omitempty"`          // Current run folder (e.g., "iteration-1")
-	PhaseID          string          `json:"phase_id,omitempty"`            // Current phase ID (e.g., "execution")
-	PhaseName        string          `json:"phase_name,omitempty"`          // Phase display name
-	IsMinimized      bool            `json:"is_minimized,omitempty"`        // True when workflow is in background
-	MinimizedAt      *int64          `json:"minimized_at,omitempty"`        // Unix timestamp (ms) when minimized
-	StepProgress     json.RawMessage `json:"step_progress,omitempty"`       // Current step progress (StepProgress JSON)
-	CurrentStepID    string          `json:"current_step_id,omitempty"`     // Currently executing step ID
-	CurrentStepTitle string          `json:"current_step_title,omitempty"`  // Currently executing step title
-	LastPolled       *int64          `json:"last_polled,omitempty"`         // Unix timestamp (ms) of last status check
+	PresetID         string          `json:"preset_id,omitempty"`          // Preset ID for context restoration (legacy, kept for backward compat)
+	WorkflowID       string          `json:"workflow_id,omitempty"`        // Manifest workflow ID (from workflow.json)
+	PresetName       string          `json:"preset_name,omitempty"`        // Display name
+	WorkspacePath    string          `json:"workspace_path,omitempty"`     // Workflow workspace path
+	RunFolder        string          `json:"run_folder,omitempty"`         // Current run folder (e.g., "iteration-1")
+	PhaseID          string          `json:"phase_id,omitempty"`           // Current phase ID (e.g., "execution")
+	PhaseName        string          `json:"phase_name,omitempty"`         // Phase display name
+	IsMinimized      bool            `json:"is_minimized,omitempty"`       // True when workflow is in background
+	MinimizedAt      *int64          `json:"minimized_at,omitempty"`       // Unix timestamp (ms) when minimized
+	StepProgress     json.RawMessage `json:"step_progress,omitempty"`      // Current step progress (StepProgress JSON)
+	CurrentStepID    string          `json:"current_step_id,omitempty"`    // Currently executing step ID
+	CurrentStepTitle string          `json:"current_step_title,omitempty"` // Currently executing step title
+	LastPolled       *int64          `json:"last_polled,omitempty"`        // Unix timestamp (ms) of last status check
 }
 
 // ChatSessionConfig represents the configuration stored for a chat session
@@ -281,12 +204,12 @@ type PresetLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"`
 
 	// New: Agent-specific default models (takes priority over legacy fields)
-	ExecutionLLM  *AgentLLMConfig `json:"execution_llm,omitempty"`  // Default for execution agents
-	LearningLLM   *AgentLLMConfig `json:"learning_llm,omitempty"`   // Default for learning agents
-	PhaseLLM      *AgentLLMConfig `json:"phase_llm,omitempty"`      // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+	ExecutionLLM *AgentLLMConfig `json:"execution_llm,omitempty"` // Default for execution agents
+	LearningLLM  *AgentLLMConfig `json:"learning_llm,omitempty"`  // Default for learning agents
+	PhaseLLM     *AgentLLMConfig `json:"phase_llm,omitempty"`     // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 
 	// Feature toggles
-	UseKnowledgebase          *bool `json:"use_knowledgebase,omitempty"`           // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
+	UseKnowledgebase           *bool `json:"use_knowledgebase,omitempty"`            // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
 	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"` // nil/true = enabled (default), false = disabled
 	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/false = disabled (default), true = enabled
 
@@ -296,8 +219,8 @@ type PresetLLMConfig struct {
 	ImageGenModelID       string `json:"image_gen_model_id,omitempty"`      // e.g., "gemini-2.5-flash-image", "dall-e-3"
 
 	// Tiered LLM allocation mode
-	LLMAllocationMode string              `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"
-	TieredConfig      *TieredLLMConfig    `json:"tiered_config,omitempty"`
+	LLMAllocationMode string           `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"
+	TieredConfig      *TieredLLMConfig `json:"tiered_config,omitempty"`
 }
 
 // TieredLLMConfig represents the 3-tier LLM configuration for tiered allocation mode
@@ -309,7 +232,7 @@ type TieredLLMConfig struct {
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
 type AgentLLMConfig struct {
-	Provider  string             `json:"provider"`            // openrouter, bedrock, openai, vertex, anthropic, azure
+	Provider  string             `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic, azure
 	ModelID   string             `json:"model_id"`
 	Fallbacks []AgentLLMFallback `json:"fallbacks,omitempty"` // Optional fallback models for retry on failure
 }
@@ -333,53 +256,53 @@ type Employee struct {
 
 // PresetQuery represents a preset query in the database
 type PresetQuery struct {
-	ID                   string          `json:"id" db:"id"`
-	Label                string          `json:"label" db:"label"`
-	Query                string          `json:"query" db:"query"`
-	SelectedServers      string          `json:"selected_servers" db:"selected_servers"`               // JSON array
-	SelectedTools        string          `json:"selected_tools" db:"selected_tools"`                   // JSON array of "server:tool" format
-	SelectedFolder       sql.NullString  `json:"selected_folder" db:"selected_folder"`                 // Single folder path
-	AgentMode            string          `json:"agent_mode" db:"agent_mode"`                           // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig            json.RawMessage `json:"llm_config" db:"llm_config"`                           // JSON configuration for LLM settings
-	UseCodeExecutionMode bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"` // MCP code execution mode
-	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
-	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
-	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
-	SelectedSecrets              string          `json:"selected_secrets" db:"selected_secrets"`                                       // JSON array of secret IDs
-	SelectedGlobalSecretNames    string          `json:"selected_global_secret_names" db:"selected_global_secret_names"`               // JSON array of global secret names (NULL=all)
-	EnableBrowserAccess          bool            `json:"enable_browser_access" db:"enable_browser_access"`                             // Deprecated: use BrowserMode instead. TODO: remove once frontend migrated.
-	BrowserMode                  string          `json:"browser_mode" db:"browser_mode"`                                               // Browser mode: none|headless|cdp|playwright|stealth (source of truth)
-	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
-	EmployeeID           sql.NullString  `json:"employee_id" db:"employee_id"`
-	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
-	CreatedBy            string          `json:"created_by" db:"created_by"`
+	ID                        string          `json:"id" db:"id"`
+	Label                     string          `json:"label" db:"label"`
+	Query                     string          `json:"query" db:"query"`
+	SelectedServers           string          `json:"selected_servers" db:"selected_servers"`                         // JSON array
+	SelectedTools             string          `json:"selected_tools" db:"selected_tools"`                             // JSON array of "server:tool" format
+	SelectedFolder            sql.NullString  `json:"selected_folder" db:"selected_folder"`                           // Single folder path
+	AgentMode                 string          `json:"agent_mode" db:"agent_mode"`                                     // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig                 json.RawMessage `json:"llm_config" db:"llm_config"`                                     // JSON configuration for LLM settings
+	UseCodeExecutionMode      bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"`           // MCP code execution mode
+	UseToolSearchMode         bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`                 // Tool search mode
+	PreDiscoveredTools        string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`                 // JSON array of pre-discovered tools
+	SelectedSkills            string          `json:"selected_skills" db:"selected_skills"`                           // JSON array of skill folder names
+	SelectedSecrets           string          `json:"selected_secrets" db:"selected_secrets"`                         // JSON array of secret IDs
+	SelectedGlobalSecretNames string          `json:"selected_global_secret_names" db:"selected_global_secret_names"` // JSON array of global secret names (NULL=all)
+	EnableBrowserAccess       bool            `json:"enable_browser_access" db:"enable_browser_access"`               // Deprecated: use BrowserMode instead. TODO: remove once frontend migrated.
+	BrowserMode               string          `json:"browser_mode" db:"browser_mode"`                                 // Browser mode: none|headless|cdp|playwright|stealth (source of truth)
+	IsPredefined              bool            `json:"is_predefined" db:"is_predefined"`
+	EmployeeID                sql.NullString  `json:"employee_id" db:"employee_id"`
+	CreatedAt                 time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt                 time.Time       `json:"updated_at" db:"updated_at"`
+	CreatedBy                 string          `json:"created_by" db:"created_by"`
 }
 
 // MarshalJSON implements json.Marshaler for PresetQuery to handle sql.NullString properly
 func (p PresetQuery) MarshalJSON() ([]byte, error) {
 	result := struct {
-		ID                   string          `json:"id"`
-		Label                string          `json:"label"`
-		Query                string          `json:"query"`
-		SelectedServers      string          `json:"selected_servers"`
-		SelectedTools        string          `json:"selected_tools"`
-		SelectedFolder       *string         `json:"selected_folder,omitempty"`
-		AgentMode            string          `json:"agent_mode"`
-		LLMConfig            json.RawMessage `json:"llm_config"`
-		UseCodeExecutionMode bool            `json:"use_code_execution_mode"`
-		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
-		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
-		SelectedSkills       string          `json:"selected_skills"`
+		ID                        string          `json:"id"`
+		Label                     string          `json:"label"`
+		Query                     string          `json:"query"`
+		SelectedServers           string          `json:"selected_servers"`
+		SelectedTools             string          `json:"selected_tools"`
+		SelectedFolder            *string         `json:"selected_folder,omitempty"`
+		AgentMode                 string          `json:"agent_mode"`
+		LLMConfig                 json.RawMessage `json:"llm_config"`
+		UseCodeExecutionMode      bool            `json:"use_code_execution_mode"`
+		UseToolSearchMode         bool            `json:"use_tool_search_mode"`
+		PreDiscoveredTools        string          `json:"pre_discovered_tools"`
+		SelectedSkills            string          `json:"selected_skills"`
 		SelectedSecrets           string          `json:"selected_secrets"`
 		SelectedGlobalSecretNames *string         `json:"selected_global_secret_names,omitempty"`
 		EnableBrowserAccess       bool            `json:"enable_browser_access"`
 		BrowserMode               string          `json:"browser_mode"`
-		IsPredefined         bool            `json:"is_predefined"`
-		EmployeeID           *string         `json:"employee_id,omitempty"`
-		CreatedAt            time.Time       `json:"created_at"`
-		UpdatedAt            time.Time       `json:"updated_at"`
-		CreatedBy            string          `json:"created_by"`
+		IsPredefined              bool            `json:"is_predefined"`
+		EmployeeID                *string         `json:"employee_id,omitempty"`
+		CreatedAt                 time.Time       `json:"created_at"`
+		UpdatedAt                 time.Time       `json:"updated_at"`
+		CreatedBy                 string          `json:"created_by"`
 	}{
 		ID:                   p.ID,
 		Label:                p.Label,
@@ -419,21 +342,21 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 
 // CreatePresetQueryRequest represents a request to create a new preset query
 type CreatePresetQueryRequest struct {
-	Label                string           `json:"label"`
-	Query                string           `json:"query"`
-	SelectedServers      []string         `json:"selected_servers,omitempty"`
-	SelectedTools        []string         `json:"selected_tools,omitempty"`          // Array of "server:tool" strings
-	SelectedFolder       string           `json:"selected_folder,omitempty"`         // Single folder path - required for orchestrator/workflow
-	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
-	UseCodeExecutionMode bool             `json:"use_code_execution_mode,omitempty"` // MCP code execution mode
-	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
-	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
-	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
-	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret IDs for workflow
-	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
-	EnableBrowserAccess       bool             `json:"enable_browser_access,omitempty"`              // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
-	BrowserMode               string           `json:"browser_mode,omitempty"`                       // Browser mode: none|headless|cdp|playwright|stealth
+	Label                     string           `json:"label"`
+	Query                     string           `json:"query"`
+	SelectedServers           []string         `json:"selected_servers,omitempty"`
+	SelectedTools             []string         `json:"selected_tools,omitempty"`               // Array of "server:tool" strings
+	SelectedFolder            string           `json:"selected_folder,omitempty"`              // Single folder path - required for orchestrator/workflow
+	AgentMode                 string           `json:"agent_mode,omitempty"`                   // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig                 *PresetLLMConfig `json:"llm_config,omitempty"`                   // LLM configuration for this preset
+	UseCodeExecutionMode      bool             `json:"use_code_execution_mode,omitempty"`      // MCP code execution mode
+	UseToolSearchMode         bool             `json:"use_tool_search_mode,omitempty"`         // Tool search mode
+	PreDiscoveredTools        []string         `json:"pre_discovered_tools,omitempty"`         // Tools always available without searching
+	SelectedSkills            []string         `json:"selected_skills,omitempty"`              // Skill folder names for workflow
+	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`             // Secret IDs for workflow
+	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"` // Global secret names (nil=all, []=none)
+	EnableBrowserAccess       bool             `json:"enable_browser_access,omitempty"`        // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
+	BrowserMode               string           `json:"browser_mode,omitempty"`                 // Browser mode: none|headless|cdp|playwright|stealth
 	IsPredefined              bool             `json:"is_predefined,omitempty"`
 }
 
@@ -565,21 +488,21 @@ func (r *CreatePresetQueryRequest) Validate() error {
 
 // UpdatePresetQueryRequest represents a request to update a preset query
 type UpdatePresetQueryRequest struct {
-	Label                string           `json:"label,omitempty"`
-	Query                string           `json:"query,omitempty"`
-	SelectedServers      []string         `json:"selected_servers,omitempty"`
-	SelectedTools        []string         `json:"selected_tools,omitempty"`          // Array of "server:tool" strings
-	SelectedFolder       string           `json:"selected_folder,omitempty"`         // Single folder path - required for orchestrator/workflow
-	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
-	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
-	UseCodeExecutionMode *bool            `json:"use_code_execution_mode,omitempty"` // MCP code execution mode (pointer to allow false value)
-	UseToolSearchMode    *bool            `json:"use_tool_search_mode,omitempty"`    // Tool search mode (pointer to allow false value)
-	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
-	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
-	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret names for workflow
-	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
-	EnableBrowserAccess       *bool            `json:"enable_browser_access,omitempty"`              // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
-	BrowserMode               string           `json:"browser_mode,omitempty"`                       // Browser mode: none|headless|cdp|playwright|stealth
+	Label                     string           `json:"label,omitempty"`
+	Query                     string           `json:"query,omitempty"`
+	SelectedServers           []string         `json:"selected_servers,omitempty"`
+	SelectedTools             []string         `json:"selected_tools,omitempty"`               // Array of "server:tool" strings
+	SelectedFolder            string           `json:"selected_folder,omitempty"`              // Single folder path - required for orchestrator/workflow
+	AgentMode                 string           `json:"agent_mode,omitempty"`                   // Agent mode: simple, ReAct, orchestrator, workflow
+	LLMConfig                 *PresetLLMConfig `json:"llm_config,omitempty"`                   // LLM configuration for this preset
+	UseCodeExecutionMode      *bool            `json:"use_code_execution_mode,omitempty"`      // MCP code execution mode (pointer to allow false value)
+	UseToolSearchMode         *bool            `json:"use_tool_search_mode,omitempty"`         // Tool search mode (pointer to allow false value)
+	PreDiscoveredTools        []string         `json:"pre_discovered_tools,omitempty"`         // Tools always available without searching
+	SelectedSkills            []string         `json:"selected_skills,omitempty"`              // Skill folder names for workflow
+	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`             // Secret names for workflow
+	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"` // Global secret names (nil=all, []=none)
+	EnableBrowserAccess       *bool            `json:"enable_browser_access,omitempty"`        // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
+	BrowserMode               string           `json:"browser_mode,omitempty"`                 // Browser mode: none|headless|cdp|playwright|stealth
 }
 
 // Validate validates the UpdatePresetQueryRequest
@@ -669,10 +592,10 @@ const (
 
 // BotConnectorConfig represents configuration for a bot connector platform
 type BotConnectorConfig struct {
-	ID              string    `json:"id" db:"id"`                             // "slack", "discord", etc.
+	ID              string    `json:"id" db:"id"` // "slack", "discord", etc.
 	Enabled         bool      `json:"enabled" db:"enabled"`
-	BotMode         bool      `json:"bot_mode" db:"bot_mode"`                // full bot vs notification-only
-	ConfigJSON      string    `json:"config_json" db:"config_json"`          // platform-specific config
+	BotMode         bool      `json:"bot_mode" db:"bot_mode"`       // full bot vs notification-only
+	ConfigJSON      string    `json:"config_json" db:"config_json"` // platform-specific config
 	DefaultPresetID string    `json:"default_preset_id" db:"default_preset_id"`
 	AutoConfirm     bool      `json:"auto_confirm" db:"auto_confirm"`
 	AllowedChannels string    `json:"allowed_channels" db:"allowed_channels"` // JSON array
@@ -686,8 +609,8 @@ type BotSession struct {
 	Platform      string     `json:"platform" db:"platform"`
 	ChannelID     string     `json:"channel_id" db:"channel_id"`
 	ThreadTS      string     `json:"thread_ts" db:"thread_ts"`
-	SessionID     string     `json:"session_id" db:"session_id"`         // internal chat session ID
-	UserID        string     `json:"user_id" db:"user_id"`               // platform user ID
+	SessionID     string     `json:"session_id" db:"session_id"` // internal chat session ID
+	UserID        string     `json:"user_id" db:"user_id"`       // platform user ID
 	UserName      string     `json:"user_name" db:"user_name"`
 	Query         string     `json:"query" db:"query"`
 	Status        string     `json:"status" db:"status"`
@@ -703,8 +626,8 @@ type BotSession struct {
 type BotMessage struct {
 	ID                string    `json:"id" db:"id"`
 	BotSessionID      string    `json:"bot_session_id" db:"bot_session_id"`
-	Direction         string    `json:"direction" db:"direction"`                   // "incoming" / "outgoing"
-	MessageType       string    `json:"message_type" db:"message_type"`             // "user_request", "analysis", "confirmation", "progress", "result", "human_feedback"
+	Direction         string    `json:"direction" db:"direction"`       // "incoming" / "outgoing"
+	MessageType       string    `json:"message_type" db:"message_type"` // "user_request", "analysis", "confirmation", "progress", "result", "human_feedback"
 	Content           string    `json:"content" db:"content"`
 	PlatformMessageID string    `json:"platform_message_id" db:"platform_message_id"` // for message updates
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
@@ -734,10 +657,10 @@ type CreateBotSessionRequest struct {
 
 // UpdateBotSessionRequest for updating a bot session
 type UpdateBotSessionRequest struct {
-	SessionID    string `json:"session_id,omitempty"`
-	Status       string `json:"status,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	Status     string `json:"status,omitempty"`
 	PresetID   string `json:"preset_id,omitempty"`
-	ConfigJSON   string `json:"config_json,omitempty"`
+	ConfigJSON string `json:"config_json,omitempty"`
 }
 
 // CreateBotMessageRequest for creating a bot message

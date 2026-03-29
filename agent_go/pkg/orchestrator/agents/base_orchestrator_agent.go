@@ -117,6 +117,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.ServerNames,
 		boa.config.SelectedTools,
 		boa.config.UseCodeExecutionMode,
+		boa.config.UseLearnCodeMode,
 		boa.config.UseToolSearchMode,
 		boa.config.PreDiscoveredTools,
 		boa.config.Mode,
@@ -572,6 +573,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
 		UseToolSearchMode:    boa.config.UseToolSearchMode,
+		UseLearnCodeMode:     boa.config.UseLearnCodeMode,
 		SystemPrompt:         fullSystemPrompt,
 		UserMessage:          userMessage,
 	}

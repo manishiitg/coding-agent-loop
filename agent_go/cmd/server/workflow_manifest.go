@@ -46,8 +46,14 @@ type WorkflowCapabilities struct {
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.
 type WorkflowExecutionDefaults struct {
-	AlwaysUseSameRun     bool `json:"always_use_same_run"`
-	SkipExecutionCleanup bool `json:"skip_execution_cleanup"`
+	AlwaysUseSameRun            bool     `json:"always_use_same_run"`
+	SkipExecutionCleanup        bool     `json:"skip_execution_cleanup"`
+	ExecutionMode               string   `json:"execution_mode,omitempty"` // "stateless" | "stateful"
+	// Global step overrides (replaces step_override.json)
+	DisableLearning              *bool    `json:"disable_learning,omitempty"`
+	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
+	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
+	EnabledCustomTools           []string `json:"enabled_custom_tools,omitempty"`
 }
 
 // WorkflowOwnership tracks workflow assignment.

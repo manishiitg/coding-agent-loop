@@ -8,8 +8,8 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-// Execution mode - only 'with_learning' is supported (learning enabled, no human feedback)
-export type ExecutionModeType = 'with_learning'
+// Execution mode: stateless = new iteration + clear outputs each run; stateful = reuse iteration-0 + preserve outputs
+export type ExecutionModeType = 'stateless' | 'stateful'
 export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
 // Layout direction for workflow canvas
@@ -26,9 +26,7 @@ const TEMP_LEARNING_LLM_KEY = 'workflow_temp_learning_llm'
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
-const ALWAYS_USE_SAME_RUN_KEY = 'workflow_always_use_same_run'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
-const SKIP_EXECUTION_CLEANUP_KEY = 'workflow_skip_execution_cleanup'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -65,7 +63,6 @@ export interface PresetWorkflowState {
   currentRunningGroupId: string | null
   currentStepId: string | null
   stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
-  skipExecutionCleanup: boolean
   batchProgress: {
     isActive: boolean
     totalGroups: number
@@ -101,9 +98,8 @@ function createDefaultPresetState(): PresetWorkflowState {
     currentRunningGroupId: null,
     currentStepId: null,
     stepStatusMap: new Map(),
-    skipExecutionCleanup: false,
     batchProgress: null,
-    selectedExecutionMode: 'with_learning',
+    selectedExecutionMode: 'stateless',
     selectedStartPoint: 0,
     selectedBranchStep: null,
   }
@@ -126,7 +122,6 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     currentRunningGroupId: state.currentRunningGroupId,
     currentStepId: state.currentStepId,
     stepStatusMap: new Map(state.stepStatusMap),
-    skipExecutionCleanup: state.skipExecutionCleanup,
     batchProgress: state.batchProgress,
     selectedExecutionMode: state.selectedExecutionMode,
     selectedStartPoint: state.selectedStartPoint,
@@ -175,9 +170,6 @@ interface WorkflowStore {
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
       disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
       disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
-      alwaysUseSameRun: boolean  // If true, always reuse a single iteration instead of creating a new one
-      skipExecutionCleanup: boolean  // If true, skip deleting execution folders before running steps
-
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
 
@@ -274,8 +266,6 @@ interface WorkflowStore {
   setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
   setDisableReadImageAccess: (enabled: boolean) => void
-  setAlwaysUseSameRun: (enabled: boolean) => void
-  setSkipExecutionCleanup: (enabled: boolean) => void
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
@@ -387,7 +377,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       isLoadingProgress: false,
 
       // Execution options
-      selectedExecutionMode: 'with_learning',
+      selectedExecutionMode: 'stateless',
       selectedStartPoint: 0,
       selectedBranchStep: null,
 
@@ -501,10 +491,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       disableShellExecAccess: false,
       // Disable read image access (defaults to false, not persisted)
       disableReadImageAccess: false,
-      // Run mode toggle — loaded from workflow.json execution_defaults on workflow open
-      alwaysUseSameRun: false,
-      // Skip execution cleanup — loaded from workflow.json execution_defaults on workflow open
-      skipExecutionCleanup: false,
 
       // Variables manifest
       variablesManifest: null,
@@ -1103,7 +1089,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const executionStrategy: string = (isResuming || isResumingBranch)
           ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
           : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-        const shouldUseSameRun = state.alwaysUseSameRun || isResuming || isResumingBranch
+        const isStateful = state.selectedExecutionMode === 'stateful'
+        // UI execution now always runs on iteration-0 for both modes.
+        // The difference between stateless/stateful is cleanup behavior:
+        // stateless clears execution outputs, stateful preserves them.
+        const shouldUseSameRun = true
 
         console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
 
@@ -1127,7 +1117,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         
         const options: ExecutionOptions = {
           run_mode: shouldUseSameRun ? 'use_same_run' : 'create_new_runs_always',
-          selected_run_folder: shouldUseSameRun ? resolvedRunFolder : undefined,
+          selected_run_folder: 'iteration-0',
           execution_strategy: executionStrategy,
           workshop_mode: (() => {
             const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -1270,12 +1260,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.enable_context_summarization = false
         }
 
-        // Include skip execution cleanup flag
-        console.log('[SKIP_CLEANUP_DEBUG] state.skipExecutionCleanup =', state.skipExecutionCleanup)
-        if (state.skipExecutionCleanup) {
-          options.skip_execution_cleanup = true
-          console.log('[SKIP_CLEANUP_DEBUG] Setting options.skip_execution_cleanup = true')
-        }
+        options.skip_execution_cleanup = isStateful
 
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
           execution_strategy: options.execution_strategy,
@@ -1429,14 +1414,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       setDisableReadImageAccess: (enabled: boolean) => {
         set({ disableReadImageAccess: enabled })
         // No longer persisted to localStorage
-      },
-
-      setAlwaysUseSameRun: (enabled: boolean) => {
-        set({ alwaysUseSameRun: enabled })
-      },
-
-      setSkipExecutionCleanup: (enabled: boolean) => {
-        set({ skipExecutionCleanup: enabled })
       },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {
@@ -2119,11 +2096,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // startPoint is always 0 - will be calculated from progress via loadProgress
           // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
           // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
-          // NOTE: skipExecutionCleanup and alwaysUseSameRun are NOT restored here —
-          // they are loaded from workflow.json execution_defaults in WorkflowLayout.
+          // NOTE: selectedExecutionMode (stateless/stateful) is NOT restored here —
+          // it is loaded from workflow.json execution_defaults in WorkflowLayout.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
-            selectedExecutionMode: 'with_learning',
+            selectedExecutionMode: 'stateless',
             selectedStartPoint: 0,  // Always start fresh - calculated from progress
             selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,
@@ -2230,7 +2207,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             currentRunningGroupId: restored.currentRunningGroupId,
             currentStepId: restored.currentStepId,
             stepStatusMap: new Map(restored.stepStatusMap),
-            skipExecutionCleanup: restored.skipExecutionCleanup,
             batchProgress: restored.batchProgress,
             selectedExecutionMode: restored.selectedExecutionMode,
             selectedStartPoint: restored.selectedStartPoint,
@@ -2264,7 +2240,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           runFolders: [],
           selectedRunFolder: 'new',
           stepProgress: null,
-          selectedExecutionMode: 'with_learning',
+          selectedExecutionMode: 'stateless',
           selectedStartPoint: 0,
           selectedBranchStep: null,
           variablesManifest: null,

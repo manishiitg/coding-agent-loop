@@ -5,28 +5,28 @@ import (
 )
 
 // shellToolDef returns the execute_shell_command tool definition (single source of truth).
-func shellToolDef() llmtypes.Tool {
-	return llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary.\n\n**PATH USAGE RULES:**\n- Always use full workspace-relative paths in commands (e.g., 'cat Workflow/myproject/plan.md', 'python3 Workflow/myproject/execution/step-1/script.py')\n- **Always quote paths with single quotes** in shell commands, as folder names may contain spaces (e.g., `cat 'Workflow/My Project/file.json'`, `cd 'Workflow/My Project' && python3 script.py`)\n- To run a command inside a specific directory, use `cd '<path>' && <command>` in the command string\n- The shell starts in the workspace root by default\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM.
-					// It is now hardcoded to true internally in ExecuteShellCommand.
-					"command": map[string]interface{}{
-						"type":        "string",
-						"description": "Shell command to execute as a single string including all arguments. Use full workspace-relative paths and always quote paths with single quotes as folder names may contain spaces (e.g., \"cat 'Workflow/myproject/plan.md'\"). To run in a specific directory use \"cd '<path>' && <command>\". Supports pipes, redirects, chaining, env vars, and wildcards.",
+	func shellToolDef() llmtypes.Tool {
+		return llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "execute_shell_command",
+				Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) and may be subject to workspace access restrictions.",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM.
+						// It is now hardcoded to true internally in ExecuteShellCommand.
+						"command": map[string]interface{}{
+							"type":        "string",
+							"description": "Shell command to execute as a single string, including any arguments and shell operators.",
+						},
+						"timeout": map[string]interface{}{
+							"type":        "integer",
+							"description": "Optional timeout in seconds.",
+						},
 					},
-					"timeout": map[string]interface{}{
-						"type":        "integer",
-						"description": "Timeout in seconds (default: 60, max: 300)",
-					},
-				},
-				"required": []string{"command"},
-			}),
+					"required": []string{"command"},
+				}),
 		},
 	}
 }
@@ -119,26 +119,26 @@ func GetDiffPatchToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{diffPatchToolDef()}
 }
 
-func diffPatchToolDef() llmtypes.Tool {
-	return llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "diff_patch_workspace_file",
-			Description: "Apply a unified diff patch to a workspace file. Use execute_shell_command to 'cat' the file first to see its exact content, then generate a diff using 'diff -U0' format with perfect context matching. Use for targeted, surgical changes to specific file sections.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'Chats/plan-123/plan.md')",
+	func diffPatchToolDef() llmtypes.Tool {
+		return llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "diff_patch_workspace_file",
+				Description: "Apply a unified diff patch to a file and return the result.",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"filepath": map[string]interface{}{
+							"type":        "string",
+							"description": "Path to the file to patch.",
+						},
+						"diff": map[string]interface{}{
+							"type":        "string",
+							"description": "Unified diff patch string to apply.\n\nFormat:\n- Headers: --- a/file and +++ b/file\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (space + content)\n- Removals: '-' prefix\n- Additions: '+' prefix\n- End with a trailing newline\n\nExample:\n--- a/file\n+++ b/file\n@@ -5,1 +5,1 @@\n-- [ ] task-1\n+- [x] task-1\n",
+						},
 					},
-					"diff": map[string]interface{}{
-						"type":        "string",
-						"description": "Unified diff format string to apply:\n\n**FORMAT (like 'diff -U0'):**\n- Headers: --- a/file.md and +++ b/file.md\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (SPACE + content - MUST match file exactly)\n- Removals: '-' prefix (MINUS + content)\n- Additions: '+' prefix (PLUS + content)\n- MUST end with newline character\n\nContext lines start with SPACE ( ), NOT minus (-). Example:\n--- a/plan.md\n+++ b/plan.md\n@@ -5,1 +5,1 @@\n-- [ ] **task-1**: Do something\n+- [x] **task-1**: Do something\n",
-					},
-				},
-				"required": []string{"filepath", "diff"},
-			}),
+					"required": []string{"filepath", "diff"},
+				}),
 		},
 	}
 }

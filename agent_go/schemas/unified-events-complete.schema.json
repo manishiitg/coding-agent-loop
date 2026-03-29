@@ -1598,6 +1598,88 @@
       },
       "type": "object"
     },
+    "LearnCodeScriptExecutionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "fix_iteration": {
+          "type": "integer"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "is_saved_script": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "output": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "script_content": {
+          "type": "string"
+        },
+        "script_path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "MCPServerConnectionEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2167,11 +2249,23 @@
         "step_index": {
           "type": "integer"
         },
+        "system_prompt": {
+          "type": "string"
+        },
         "timestamp": {
           "format": "date-time",
           "type": "string"
         },
         "trace_id": {
+          "type": "string"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
+        },
+        "user_message": {
           "type": "string"
         }
       },
@@ -2724,119 +2818,6 @@
       },
       "type": "object"
     },
-    "StepFailedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "StepFinishedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "StepProgressUpdatedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2847,6 +2828,9 @@
           "type": "string"
         },
         "current_step_id": {
+          "type": "string"
+        },
+        "error": {
           "type": "string"
         },
         "event_id": {
@@ -2892,65 +2876,10 @@
         "trace_id": {
           "type": "string"
         },
-        "workspace_path": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "StepStartedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
+        "used_tier": {
           "type": "integer"
         },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "run_folder": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
+        "used_tier_label": {
           "type": "string"
         },
         "workspace_path": {
@@ -3639,6 +3568,9 @@
           "format": "date-time",
           "type": "string"
         },
+        "tool_call_id": {
+          "type": "string"
+        },
         "tool_name": {
           "type": "string"
         },
@@ -3694,6 +3626,9 @@
           "format": "date-time",
           "type": "string"
         },
+        "tool_call_id": {
+          "type": "string"
+        },
         "tool_name": {
           "type": "string"
         },
@@ -3724,6 +3659,9 @@
         "is_end_event": {
           "type": "boolean"
         },
+        "is_parallel": {
+          "type": "boolean"
+        },
         "metadata": {
           "type": "object"
         },
@@ -3741,6 +3679,9 @@
         },
         "timestamp": {
           "format": "date-time",
+          "type": "string"
+        },
+        "tool_call_id": {
           "type": "string"
         },
         "tool_name": {
@@ -4290,6 +4231,9 @@
     "large_tool_output_server_unavailable": {
       "$ref": "#/$defs/LargeToolOutputServerUnavailableEvent"
     },
+    "learn_code_script_execution": {
+      "$ref": "#/$defs/LearnCodeScriptExecutionEvent"
+    },
     "llm_generation_end": {
       "$ref": "#/$defs/LLMGenerationEndEvent"
     },
@@ -4349,15 +4293,6 @@
     },
     "smart_routing_start": {
       "$ref": "#/$defs/SmartRoutingStartEvent"
-    },
-    "step_execution_end": {
-      "$ref": "#/$defs/StepFinishedEvent"
-    },
-    "step_execution_failed": {
-      "$ref": "#/$defs/StepFailedEvent"
-    },
-    "step_execution_start": {
-      "$ref": "#/$defs/StepStartedEvent"
     },
     "step_progress_updated": {
       "$ref": "#/$defs/StepProgressUpdatedEvent"

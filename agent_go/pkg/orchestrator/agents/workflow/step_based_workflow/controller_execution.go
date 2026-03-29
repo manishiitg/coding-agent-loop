@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,6 +61,7 @@ type StepPathInfo struct {
 //   - "step-3-if-false-1" -> {ParentStepNumber: 3, BranchType: "false", BranchIndex: 1, IsBranchStep: true}
 //   - "step-2-decision" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: false} (decision step inner step)
 //   - "step-2-sub-agent-1" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: true} (sub-agent step)
+//   - "step-2-sub-login" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: true} (todo_task route sub-agent step)
 func parseStepPath(stepPath string) StepPathInfo {
 	// Regular step pattern: "step-{number}"
 	regularStepRegex := regexp.MustCompile(`^step-(\d+)$`)
@@ -69,6 +71,8 @@ func parseStepPath(stepPath string) StepPathInfo {
 	decisionStepRegex := regexp.MustCompile(`^step-(\d+)-decision$`)
 	// Sub-agent step pattern: "step-{number}-sub-agent-{index}" or "step-{number}-sub-agent-{index}-i-{iteration}"
 	subAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-agent-(\d+)(?:-i-(\d+))?$`)
+	// Todo-task route sub-agent step pattern: "step-{number}-sub-{routeId}"
+	todoTaskSubAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-.+$`)
 
 	if matches := branchStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		// Branch step
@@ -84,6 +88,16 @@ func parseStepPath(stepPath string) StepPathInfo {
 		}
 	} else if matches := subAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		// Sub-agent step - treat as branch step
+		parentStepNumber := 0
+		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
+		return StepPathInfo{
+			ParentStepNumber: parentStepNumber,
+			BranchType:       "",
+			BranchIndex:      -1,
+			IsBranchStep:     true,
+		}
+	} else if matches := todoTaskSubAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
+		// Todo-task route sub-agent step - treat as a dedicated sub-agent step.
 		parentStepNumber := 0
 		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
 		return StepPathInfo{
@@ -125,27 +139,133 @@ func parseStepPath(stepPath string) StepPathInfo {
 	}
 }
 
-// getExecutionFolderPath returns the execution folder path based on stepPath
-// For regular steps: "execution/step-{X}/"
-// For branch steps: "execution/step-{parentStep}-{true/false}-{branchIdx}/"
-// For decision step inner steps: "execution/step-{X}-decision/"
-// For sub-agent steps: "execution/step-{X}-sub-agent-{index}/"
-func getExecutionFolderPath(executionWorkspacePath string, stepPath string) string {
-	// Check if this is a sub-agent step
-	// Pattern: step-{X}-sub-agent-{index}
-	if strings.Contains(stepPath, "-sub-agent-") {
-		return fmt.Sprintf("%s/%s", executionWorkspacePath, stepPath)
+func getArtifactFolderName(stepID string, stepPath string) string {
+	stepID = strings.TrimSpace(stepID)
+	if stepID != "" {
+		return stepID
 	}
-	pathInfo := parseStepPath(stepPath)
-	if pathInfo.IsBranchStep {
-		return fmt.Sprintf("%s/step-%d-%s-%d", executionWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
+	return stepPath
+}
+
+// getExecutionFolderPath returns the execution folder path based on the stable step ID when available.
+// stepPath remains the control-flow identifier and fallback for older callers.
+func getExecutionFolderPath(executionWorkspacePath string, stepID string, stepPath string) string {
+	return fmt.Sprintf("%s/%s", executionWorkspacePath, getArtifactFolderName(stepID, stepPath))
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) resolveDependencyPathsWithWorkspace(
+	ctx context.Context,
+	deps []string,
+	stepIndex int,
+	stepPath string,
+	allSteps []PlanStepInterface,
+	executionWorkspacePath string,
+	docsRoot string,
+	variableValues map[string]string,
+) []string {
+	if len(deps) == 0 {
+		return nil
 	}
-	// Check if this is a decision step inner step
-	// Pattern: step-{X}-decision
-	if strings.Contains(stepPath, "-decision") {
-		return fmt.Sprintf("%s/%s", executionWorkspacePath, stepPath)
+
+	appendUniqueCandidates := func(base []string, extras []string) []string {
+		seen := make(map[string]bool, len(base))
+		for _, item := range base {
+			seen[item] = true
+		}
+		for _, item := range extras {
+			if item == "" || seen[item] {
+				continue
+			}
+			base = append(base, item)
+			seen[item] = true
+		}
+		return base
 	}
-	return fmt.Sprintf("%s/step-%d", executionWorkspacePath, pathInfo.ParentStepNumber)
+
+	resolvedPaths := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		candidates := ResolveDependencyPathCandidates(dep, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, variableValues)
+		candidates = appendUniqueCandidates(candidates, hcpo.findApprovedPlanProducerCandidates(dep, executionWorkspacePath, docsRoot, variableValues))
+		if len(candidates) == 0 {
+			resolvedPaths = append(resolvedPaths, dep)
+			continue
+		}
+
+		chosen := candidates[0]
+		for _, candidate := range candidates {
+			if !filepath.IsAbs(candidate) {
+				continue
+			}
+			relPath := strings.TrimPrefix(candidate, docsRoot+"/")
+			if relPath == candidate {
+				continue
+			}
+			if _, err := hcpo.ReadWorkspaceFile(ctx, relPath); err == nil {
+				chosen = candidate
+				break
+			}
+		}
+
+		resolvedPaths = append(resolvedPaths, chosen)
+	}
+	return resolvedPaths
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) findApprovedPlanProducerCandidates(
+	dep string,
+	executionWorkspacePath string,
+	docsRoot string,
+	variableValues map[string]string,
+) []string {
+	if hcpo.approvedPlan == nil || dep == "" || filepath.IsAbs(dep) || strings.Contains(dep, "/") {
+		return nil
+	}
+
+	allPlanSteps := collectAllSteps(hcpo.approvedPlan.Steps)
+	candidates := make([]string, 0, 4)
+	seen := make(map[string]bool)
+
+	for _, info := range allPlanSteps {
+		step := info.Step
+		if step == nil {
+			continue
+		}
+		output := ResolveVariables(step.GetContextOutput().String(), variableValues)
+		if !contextOutputMatchesDependency(output, dep) {
+			continue
+		}
+
+		stepID := strings.TrimSpace(step.GetID())
+		if stepID == "" {
+			continue
+		}
+
+		appendCandidate := func(candidate string) {
+			if candidate == "" || seen[candidate] {
+				return
+			}
+			seen[candidate] = true
+			candidates = append(candidates, candidate)
+		}
+
+		// Prefer the stable artifact folder keyed by step_id.
+		appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, stepID, stepID), dep))
+
+		// Backward compatibility: older runs may still have artifacts in positional step folders
+		// like execution/step-1 or execution/step-1-sub-read-credentials.
+		legacyStepPath := ""
+		if info.TopIndex > 0 {
+			legacyStepPath = fmt.Sprintf("step-%d", info.TopIndex)
+		} else {
+			infoCopy := info
+			legacyStepPath = resolveInnerStepPath(hcpo.approvedPlan.Steps, &infoCopy)
+		}
+		if legacyStepPath != "" {
+			appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, "", legacyStepPath), dep))
+		}
+	}
+
+	return candidates
 }
 
 // =============================================================================
@@ -309,6 +429,39 @@ func createFolderViaAPI(ctx context.Context, folderPath string, workspacePath ..
 	return nil
 }
 
+// deleteFolderViaAPI deletes a folder (and all its contents) via the Workspace API (DELETE /api/folders/{path}).
+// The folderPath should be relative to workspace-docs root (e.g., "Workflow/X/learnings/step-1/code").
+func deleteFolderViaAPI(ctx context.Context, folderPath string) error {
+	pathSegments := strings.Split(folderPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already gone
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // writeFileViaAPI writes a file via the Workspace API (PUT /api/documents/{filepath}).
 func writeFileViaAPI(ctx context.Context, filePath string, content string) error {
 	apiURL := getWorkspaceAPIURL() + "/api/documents/" + filePath
@@ -365,38 +518,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureStepExecutionFolderExists(ctx c
 	return nil
 }
 
-// getValidationFolderPath returns the validation folder path based on stepPath
-// For regular steps: "logs/step-{X}/"
-// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
-// For sub-agent steps: "logs/step-{X}-sub-agent-{index}/"
-func getValidationFolderPath(validationWorkspacePath string, stepPath string) string {
-	// Check if this is a sub-agent step
-	// Pattern: step-{X}-sub-agent-{index}
-	if strings.Contains(stepPath, "-sub-agent-") || strings.Contains(stepPath, "-sub-") {
-		return fmt.Sprintf("%s/logs/%s", validationWorkspacePath, stepPath)
-	}
-	pathInfo := parseStepPath(stepPath)
-	if pathInfo.IsBranchStep {
-		return fmt.Sprintf("%s/logs/step-%d-%s-%d", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
-	}
-	return fmt.Sprintf("%s/logs/step-%d", validationWorkspacePath, pathInfo.ParentStepNumber)
+// getValidationFolderPath returns the logs folder path based on the stable step ID when available.
+func getValidationFolderPath(validationWorkspacePath string, stepID string, stepPath string) string {
+	return fmt.Sprintf("%s/logs/%s", validationWorkspacePath, getArtifactFolderName(stepID, stepPath))
 }
 
-// getExecutionFolderPathForLogs returns the execution logs folder path based on stepPath
-// For regular steps: "logs/step-{X}/execution/"
-// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/execution/"
-// For sub-agent steps: "logs/step-{X}-sub-agent-{index}/execution/"
-func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath string) string {
-	// Check if this is a sub-agent step
-	// Pattern: step-{X}-sub-agent-{index}
-	if strings.Contains(stepPath, "-sub-agent-") || strings.Contains(stepPath, "-sub-") {
-		return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, stepPath)
-	}
-	pathInfo := parseStepPath(stepPath)
-	if pathInfo.IsBranchStep {
-		return fmt.Sprintf("%s/logs/step-%d-%s-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
-	}
-	return fmt.Sprintf("%s/logs/step-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber)
+// getExecutionFolderPathForLogs returns the execution logs folder path based on the stable step ID when available.
+func getExecutionFolderPathForLogs(validationWorkspacePath string, stepID string, stepPath string) string {
+	return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, getArtifactFolderName(stepID, stepPath))
 }
 
 // getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID (NEW FORMAT)
@@ -467,7 +596,7 @@ func getLearningPathIdentifier(stepID string, stepPath string) string {
 // executions can be inspected via debug_step or direct log file access.
 // Uses context.Background() internally so writes succeed even when the caller's context is cancelled.
 func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
-	stepIndex int, stepPath string, retryAttempt int, loopIterationCount int,
+	stepIndex int, stepID string, stepPath string, retryAttempt int, loopIterationCount int,
 	executionResult string, executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
 	executionAgent agents.OrchestratorAgent,
@@ -481,7 +610,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	} else {
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
-	logDir := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	logDir := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 	filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
 
 	// Save execution result
@@ -552,7 +681,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadSingleStepResultFromLogs(ctx cont
 	}
 
 	stepPath := fmt.Sprintf("step-%d", stepNumber)
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	stepID := stepPath
+	if hcpo.approvedPlan != nil && stepNumber >= 1 && stepNumber <= len(hcpo.approvedPlan.Steps) {
+		if id := hcpo.approvedPlan.Steps[stepNumber-1].GetID(); id != "" {
+			stepID = id
+		}
+	}
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 
 	var latestExecutionResult string
 	var latestAttempt, latestIteration int
@@ -675,7 +810,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 		if step.StepType() == StepTypeDecision {
 			stepPath = fmt.Sprintf("step-%d-decision", i+1)
 		}
-		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 
 		summary.WriteString(fmt.Sprintf("**Step %d: %s**\n", i+1, resolvedTitle))
 		summary.WriteString(fmt.Sprintf("- **Description**: %s\n", description))
@@ -783,6 +918,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step hash guard check failed for %s: %v (continuing)", stepPath, err))
 	}
 
+	// Learn code mode — determined once per step invocation (persists across outer-loop iterations).
+	// Check embedded plan AgentConfigs first; fall back to step_configs.json so that workshop-saved
+	// configs (use_learn_code_mode: true) also take effect for sub-agent steps whose embedded plan
+	// config may not have the flag.
+	isLearnCodeMode := false
+	{
+		agentCfgs := getAgentConfigs(step)
+		if (agentCfgs == nil || agentCfgs.UseLearnCodeMode == nil) && step.GetID() != "" {
+			if stepConfigs, err := hcpo.ReadStepConfigs(ctx); err == nil {
+				for _, sc := range stepConfigs {
+					if sc.ID == step.GetID() && sc.AgentConfigs != nil && sc.AgentConfigs.UseLearnCodeMode != nil {
+						agentCfgs = sc.AgentConfigs
+						break
+					}
+				}
+			}
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] step=%s agentCfgs_nil=%v UseLearnCodeMode=%v",
+			step.GetID(), agentCfgs == nil,
+			agentCfgs != nil && agentCfgs.UseLearnCodeMode != nil && *agentCfgs.UseLearnCodeMode))
+		if agentCfgs != nil && agentCfgs.UseLearnCodeMode != nil {
+			isLearnCodeMode = *agentCfgs.UseLearnCodeMode
+		}
+	}
+	learnCodePriorScript := ""          // old script content when saved script failed (LLM relearn context)
+	learnCodePriorError := ""           // error from failed saved script (LLM relearn context)
+	learnCodeScriptNeedsSaving := false // set after LLM writes main.py and pre-validation passes
+	learnCodeFastPathDone := false      // set when saved script ran successfully (skip execution loop)
+
 	// Initialize variables for step execution.
 	// Regular steps get 3 retries on pre-validation failure.
 	// Sub-agents and workshop single-step mode get 2 — if it can't fix in 2 tries,
@@ -829,11 +993,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		if isCodeExecutionMode {
 			isToolSearchMode = false
 		}
+		// Learn code mode implies code execution mode
+		if isLearnCodeMode {
+			isCodeExecutionMode = true
+			isToolSearchMode = false
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Mode enabled for step %d — forcing code execution mode", stepIndex+1))
+		}
 
 		// Always use learnings folder (unified folder for all learning types)
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
-		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 		// Ensure step execution folder exists (create if it was previously deleted)
 		if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
@@ -864,6 +1034,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings, useKnowledgebase)
 
+		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
+		if isLearnCodeMode {
+			stepExecutionPathForGuard := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
+			folderGuardWritePaths = append(folderGuardWritePaths, stepExecutionPathForGuard+"/code")
+		}
+
 		// Determine if skip execution cleanup is enabled
 		skipExecutionCleanup := false
 		if hcpo.executionOptions != nil {
@@ -890,10 +1066,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			return result
 		}
 
+		stepTitleForPrompt := ResolveVariables(step.GetTitle(), hcpo.variableValues)
+		stepDescriptionForPrompt := ResolveVariables(step.GetDescription(), hcpo.variableValues)
+		stepSuccessCriteriaForPrompt := ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues)
+		if isLearnCodeMode {
+			// In learn_code mode the saved script is reused across groups/users, so keep
+			// template placeholders in the task description/success criteria instead of
+			// injecting current-run values that the model might copy into main.py.
+			stepDescriptionForPrompt = step.GetDescription()
+			stepSuccessCriteriaForPrompt = step.GetSuccessCriteria()
+		}
+
+		contextDeps := step.GetContextDependencies()
+		resolvedContextDeps := []string{}
+		if len(contextDeps) > 0 {
+			resolvedDeps := ResolveVariablesArray(contextDeps, hcpo.variableValues)
+			resolvedContextDeps = hcpo.resolveDependencyPathsWithWorkspace(ctx, resolvedDeps, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
+		}
+
+		learnCodeInputArgsForPrompt := ""
+		if isLearnCodeMode && len(resolvedContextDeps) > 0 {
+			// Reuse the exact same resolved dependency list for both the saved prompt
+			// and the later python3 main.py invocation so they cannot drift.
+			learnCodeInputArgsForPrompt = strings.Join(resolvedContextDeps, "\n")
+		}
+
 		templateVars := map[string]string{
-			"StepTitle":             ResolveVariables(step.GetTitle(), hcpo.variableValues),
-			"StepDescription":       ResolveVariables(step.GetDescription(), hcpo.variableValues),
-			"StepSuccessCriteria":   ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
+			"StepTitle":             stepTitleForPrompt,
+			"StepDescription":       stepDescriptionForPrompt,
+			"StepSuccessCriteria":   stepSuccessCriteriaForPrompt,
 			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
 			"WorkspacePath":         toAbsPath(executionWorkspacePath),                         // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
 			"LearningsPath":         toAbsPath(learningsPath),                                  // Absolute learnings folder path
@@ -909,27 +1110,45 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                   // Skip cleanup mode flag for state verification prompt
 			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                  // Evaluation mode flag for eval-specific prompt guidance
 			"WorkflowRoot":          toAbsPath(workflowRoot),                                   // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
+			"IsLearnCodeMode":       fmt.Sprintf("%v", isLearnCodeMode),
+			"IsRelearnMode":         fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
+			"LearnCodePriorScript":  learnCodePriorScript,
+			"LearnCodePriorError":   learnCodePriorError,
+			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
+			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.GetWorkspaceEnvRef()),
+			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
 		}
 
-		// Inject workflow variables as environment variables for code execution mode.
-		// Uses SECRET_ prefix to pass through the workspace API whitelist (MCP_* and SECRET_*).
-		// Available via os.environ["SECRET_VAR_NAME"] in Python or $SECRET_VAR_NAME in bash.
+		// Inject workflow variables as VAR_* env vars and workspace path as VAR_WORKSPACE_PATH.
+		// VAR_* passes through the shell whitelist (MCP_*, SECRET_*, VAR_*).
+		// Available via os.environ["VAR_NAME"] in Python or $VAR_NAME in bash.
 		if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
 			for k, v := range hcpo.variableValues {
-				envRef["SECRET_"+k] = v
+				envRef["VAR_"+k] = v
 			}
 			// Also inject the workspace path so scripts can reference it
 			if wp := hcpo.GetWorkspacePath(); wp != "" {
-				envRef["SECRET_WORKSPACE_PATH"] = wp
+				envRef["VAR_WORKSPACE_PATH"] = wp
 			}
 		}
 
 		// Add context dependencies with full absolute paths
-		contextDeps := step.GetContextDependencies()
-		if len(contextDeps) > 0 {
-			resolvedDeps := ResolveVariablesArray(contextDeps, hcpo.variableValues)
-			fullPathDeps := ResolveDependencyPaths(resolvedDeps, stepIndex, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
-			templateVars["StepContextDependencies"] = strings.Join(fullPathDeps, ", ")
+		if len(resolvedContextDeps) > 0 {
+			templateVars["StepContextDependencies"] = strings.Join(resolvedContextDeps, ", ")
+
+			// Pre-flight: verify all resolved input files exist before launching any agent.
+			// A missing file means a prior step didn't produce its output — retrying this step
+			// won't fix that, so fail immediately with a clear message.
+			for _, absPath := range resolvedContextDeps {
+				if !filepath.IsAbs(absPath) {
+					continue // bare/relative — can't check via workspace API, skip
+				}
+				relPath := strings.TrimPrefix(absPath, docsRoot+"/")
+				if _, readErr := hcpo.ReadWorkspaceFile(ctx, relPath); readErr != nil {
+					return "", updatedContextFiles, fmt.Errorf(
+						"input file not found: %s\n(produced by a prior step — check that the previous step completed successfully)", absPath)
+				}
+			}
 		} else {
 			templateVars["StepContextDependencies"] = ""
 		}
@@ -939,9 +1158,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["VariableNames"] = variableNames
 		}
 
-		// Add variable values if available (name = value - description format)
-		if variableValues := FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues); variableValues != "" {
-			templateVars["VariableValues"] = variableValues
+		// Add variable values only in tool search mode — tool search agents cannot read env vars,
+		// so they need values in the prompt. Code exec and learn_code agents read values via
+		// SECRET_<VAR> env vars and must NOT have values hardcoded in the prompt.
+		if isToolSearchMode {
+			if variableValues := FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues); variableValues != "" {
+				templateVars["VariableValues"] = variableValues
+			}
 		}
 
 		// Add decision evaluation question if this is a decision inner step
@@ -1027,6 +1250,50 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		var validationResponse *ValidationResponse
 		var previousValidationResponse *ValidationResponse // Preserve previous validation response for retry detection (works for both retries and loop iterations)
 
+		// Learn code mode: attempt fast path execution with saved script (before any LLM work).
+		if isLearnCodeMode && !learnCodeFastPathDone {
+			fastResult := hcpo.tryRunSavedLearnCodeScript(ctx, step, stepIndex, stepPath, allSteps,
+				stepExecutionPath, executionWorkspacePath)
+			if fastResult.RanScript {
+				// Emit UI event for the saved-script execution attempt
+				savedScriptPath := getLearnCodeScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), step.GetID(), hcpo.isEvaluationMode)
+				hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+					savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
+				// Save execution log so debug_step and direct file inspection can see fast-path output
+				hcpo.saveLearnCodeFastPathLog(ctx, stepIndex, step.GetID(), stepPath, savedScriptPath, fastResult)
+			}
+			if fastResult.RanScript && fastResult.Success {
+				// Saved script executed and validated — skip LLM entirely
+				learnCodeFastPathDone = true
+				executionResult = fastResult.Output
+				validationResponse = &ValidationResponse{
+					IsSuccessCriteriaMet: true,
+					ExecutionStatus:      "COMPLETED",
+					Reasoning:            "learn_code: saved script executed and validated (0 LLM tokens)",
+				}
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Fast path succeeded for step %d — skipping execution loop", stepIndex+1))
+			} else if fastResult.RanScript {
+				// Script ran but failed — fall through to LLM for relearn
+				learnCodePriorScript = fastResult.ExistingScript
+				learnCodePriorError = fastResult.Error
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Script failed for step %d — falling back to LLM with error context", stepIndex+1))
+			} else if fastResult.ExistingScript != "" {
+				// Hash mismatch (step definition changed) but an existing script was found.
+				// Pass it to the LLM as context so it can adapt the working script rather
+				// than rewriting from scratch (prevents reintroducing patterns that were removed).
+				learnCodePriorScript = fastResult.ExistingScript
+				// No prior error — this is an update, not a failure
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d hash mismatch — LLM will update existing script to match new definition", stepIndex+1))
+			}
+
+			// templateVars were built before the fast-path check. Refresh the learn_code
+			// prompt fields here so a hash-mismatch/failure can surface the saved script
+			// and prior error in the actual rendered prompt for this same execution pass.
+			templateVars["IsRelearnMode"] = fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != "")
+			templateVars["LearnCodePriorScript"] = learnCodePriorScript
+			templateVars["LearnCodePriorError"] = learnCodePriorError
+		}
+
 		// Loop handling: if step has loop, wrap execution in loop that checks loop condition
 		var loopConditionMet bool
 		var loopIterationCount int
@@ -1038,6 +1305,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// For non-loop steps, this executes once. For loop steps, it iterates until condition is met.
 		// NOTE: No conversation history is passed to execution agent - all context via template variables
 		for loopIteration := 0; ; loopIteration++ {
+			// Learn code mode fast path: saved script already ran — skip execution loop
+			if learnCodeFastPathDone {
+				break
+			}
 			// Check for context cancellation before each iteration
 			select {
 			case <-ctx.Done():
@@ -1360,11 +1631,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed on previous attempt - will use original LLM instead of temp override (fallback enabled)"))
 				}
 				agentConfigs := getAgentConfigs(step)
+				executionAgentCtx := ctx
+				if isLearnCodeMode && strings.TrimSpace(learnCodePriorError) != "" {
+					executionAgentCtx = context.WithValue(executionAgentCtx, LearnCodeRepairHighTierContextKey, true)
+					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [learn_code] saved script failed previously for step %d — creating execution agent on high tier for repair", stepIndex+1))
+				}
 
 				// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
 				// For learnings / tempLLM selection, use the concrete step ID so sub-agents align with their own learnings folder.
 				// allSteps is already []PlanStepInterface - no conversion needed
-				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
+				executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 				}
@@ -1403,7 +1679,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						preExecLLM = fmt.Sprintf("%s/%s", executionAgent.GetConfig().LLMConfig.Primary.Provider, executionAgent.GetConfig().LLMConfig.Primary.ModelID)
 					}
 					fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
-					hcpo.preSavePromptsJSON(stepIndex, stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
+					hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
+				}
+
+				// Learn code mode: clean and pre-create the code/ subdirectory via workspace API.
+				// Deleting all files ensures stale helpers from a previous LLM attempt don't accumulate.
+				if isLearnCodeMode {
+					codeDirRelPath := stepExecutionPath + "/code"
+					// Delete all existing files in code/ (LLM may have written stale files on a prior attempt)
+					if codeFiles, listErr := hcpo.ListWorkspaceFiles(ctx, codeDirRelPath); listErr == nil {
+						for _, f := range codeFiles {
+							fName := filepath.Base(f)
+							if fName == "" || fName == "." {
+								continue
+							}
+							if delErr := hcpo.DeleteWorkspaceFile(ctx, codeDirRelPath+"/"+fName); delErr != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to delete old %s from code/: %v", fName, delErr))
+							}
+						}
+					}
+					if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Pre-created code/ dir for step %d: %s", stepIndex+1, codeDirRelPath))
+					}
 				}
 
 				// Execute execution-only agent with learning history (reused from learning reading above)
@@ -1434,7 +1733,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// tool responses from interrupted executions via debug_step or log files.
 					if len(executionConversationHistory) > 0 {
 						hcpo.GetLogger().Info(fmt.Sprintf("[PARTIAL-LOGS] Saving partial execution logs for step %d (%s) — %d conversation entries, error: %v", stepIndex+1, stepPath, len(executionConversationHistory), err))
-						hcpo.saveExecutionConversationLogs(stepIndex, stepPath, retryAttempt, loopIterationCount,
+						hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, loopIterationCount,
 							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent)
 					} else {
 						hcpo.GetLogger().Warn(fmt.Sprintf("[PARTIAL-LOGS] No conversation history to save for step %d (%s) — execution failed before any LLM turns", stepIndex+1, stepPath))
@@ -1450,8 +1749,118 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
 
 				// Save execution logs (result, conversation history, system prompt)
-				hcpo.saveExecutionConversationLogs(stepIndex, stepPath, retryAttempt, loopIterationCount,
+				hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, loopIterationCount,
 					executionResult, executionLLM, executionConversationHistory, executionAgent)
+
+				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
+				// in the same conversation chain (no new agent, no system-prompt reset).
+				if isLearnCodeMode {
+					maxFixIter := 5
+					if agentCfgs := getAgentConfigs(step); agentCfgs != nil && agentCfgs.LearnCodeMaxFixIter != nil {
+						maxFixIter = *agentCfgs.LearnCodeMaxFixIter
+					}
+					codeDirAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code")
+					learnCodeRepairAgentUpgraded := false
+					learnCodeRepairSystemPrompt := ""
+
+					var lastLcResult *LearnCodeFastPathResult
+					for fixIter := 0; fixIter <= maxFixIter; fixIter++ {
+						lastLcResult = hcpo.runLearnCodeMainPyFromExecution(ctx, step, stepIndex, stepPath, allSteps, stepExecutionPath, executionWorkspacePath)
+
+						// Emit UI event only when a script was actually executed (not when main.py is simply absent).
+						// The nil case (main.py not yet written) is internal control-flow — emitting a ✗ failed
+						// event for it is misleading when the LLM writes the script on the next iteration.
+						mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
+						if lastLcResult != nil {
+							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+								mainPyPath, lastLcResult.Success, lastLcResult.ExitCode, lastLcResult.Output, lastLcResult.Error,
+								fixIter, false)
+						}
+
+						if lastLcResult != nil && lastLcResult.Success {
+							break // script passed
+						}
+						if fixIter == maxFixIter {
+							break // exhausted fix attempts
+						}
+
+						// Build feedback user message with the exact error
+						var feedbackMsg string
+						if lastLcResult == nil {
+							feedbackMsg = fmt.Sprintf(
+								"main.py was not found at %s/main.py.\n\nWrite the complete solution to main.py there. You may run it yourself to test, but the system will also execute it automatically after your turn.",
+								codeDirAbsPath,
+							)
+						} else {
+							feedbackMsg = fmt.Sprintf(
+								"Your script failed (fix attempt %d/%d):\n```\n%s\n```\n\nFix the bug and rewrite main.py at %s/main.py.",
+								fixIter+1, maxFixIter, lastLcResult.Error, codeDirAbsPath,
+							)
+						}
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] main.py failed for step %d (fix attempt %d/%d) — continuing conversation with error", stepIndex+1, fixIter+1, maxFixIter))
+
+						// Upgrade repair turns to a high-tier execution agent after the first script failure.
+						// This keeps the initial execution cost-aware, but uses the strongest tier to debug code.
+						if !learnCodeRepairAgentUpgraded {
+							repairCtx := context.WithValue(ctx, LearnCodeRepairHighTierContextKey, true)
+							repairAgentName := fmt.Sprintf("%s-fix-%d-high", executionAgentName, fixIter+1)
+							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
+							if repairErr != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to upgrade repair agent for step %d: %v", stepIndex+1, repairErr))
+							} else {
+								if repairCfg := repairAgent.GetConfig(); repairCfg != nil && repairCfg.LLMConfig.Primary.ModelID != "" {
+									executionLLM = fmt.Sprintf("%s/%s", repairCfg.LLMConfig.Primary.Provider, repairCfg.LLMConfig.Primary.ModelID)
+								}
+								if repairEOA, ok := repairAgent.(*WorkflowExecutionOnlyAgent); ok {
+									learnCodeRepairSystemPrompt = repairEOA.executionOnlySystemPromptProcessor(templateVars)
+								}
+								if executionAgent != nil {
+									_ = executionAgent.Close()
+								}
+								executionAgent = repairAgent
+								learnCodeRepairAgentUpgraded = true
+								hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [learn_code] upgraded repair turns for step %d to high-tier agent: %s", stepIndex+1, executionLLM))
+							}
+						}
+
+						// Continue the same conversation: inject error as a user turn
+						if ba := executionAgent.GetBaseAgent(); ba != nil {
+							systemPrompt := ""
+							if learnCodeRepairSystemPrompt != "" {
+								systemPrompt = learnCodeRepairSystemPrompt
+								learnCodeRepairSystemPrompt = ""
+							}
+							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, executionConversationHistory, systemPrompt, false)
+							if err != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] agent error during fix attempt %d: %v", fixIter+1, err))
+								break
+							}
+						} else {
+							break
+						}
+					}
+
+					if lastLcResult == nil || !lastLcResult.Success {
+						var errMsg string
+						if lastLcResult == nil {
+							errMsg = fmt.Sprintf("main.py was never written to %s", codeDirAbsPath)
+						} else {
+							errMsg = fmt.Sprintf("main.py still failing after %d fix attempts:\n%s", maxFixIter, lastLcResult.Error)
+						}
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] step %d failed after fix loop: %s", stepIndex+1, errMsg))
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: false,
+							ExecutionStatus:      "FAILED",
+							Reasoning:            errMsg,
+						}
+						if retryAttempt >= maxRetryAttempts {
+							validationFailedAfterMaxRetries = true
+						}
+						continue
+					}
+					turnCount = len(executionConversationHistory)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] main.py executed successfully for step %d — proceeding to validation", stepIndex+1))
+				}
 
 				// Run pre-validation (code-based structural checks) -- always active, independent of LLM validation.
 				agentConfigs = getAgentConfigs(step)
@@ -1510,6 +1919,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if hasLoop(step) {
 						validationResponse.LoopConditionMet = true
 						loopConditionMet = true
+					}
+					// Learn code mode: mark script for saving to learnings after the execution loop
+					if isLearnCodeMode {
+						learnCodeScriptNeedsSaving = true
 					}
 				}
 
@@ -1680,7 +2093,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 							// Log skipped learning to file
 							if skipReason != "" {
-								_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+								_ = hcpo.logLearningExecution(ctx, step.GetID(), stepPath, map[string]interface{}{
 									"type":          "learning_skipped",
 									"step_path":     stepPath,
 									"learning_type": "success",
@@ -1924,7 +2337,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								}
 
 								if skipReason != "" {
-									_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+									_ = hcpo.logLearningExecution(ctx, step.GetID(), stepPath, map[string]interface{}{
 										"type":          "learning_skipped",
 										"step_path":     stepPath,
 										"learning_type": "success", // Loop iteration learning is treated as success learning
@@ -1977,6 +2390,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if isCodeExecutionMode && isLearningDisabled {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1))
 					isLearningDisabled = false
+				}
+				// LEARN CODE MODE: the saved script IS the learning artifact — skip SKILL.md learning
+				if isLearnCodeMode {
+					isLearningDisabled = true
+					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Skipping SKILL.md learning for step %d — script saved to learnings instead", stepIndex+1))
 				}
 				// HUMAN-ASSISTED LEARNING MODE: Skip all automatic learning — human triggers manually via generate_learnings
 				if agentConfigs != nil && agentConfigs.LearningMode != "auto" {
@@ -2285,7 +2703,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 						// Log skipped failure learning to file
 						if skipReason != "" {
-							_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+							_ = hcpo.logLearningExecution(ctx, step.GetID(), stepPath, map[string]interface{}{
 								"type":          "learning_skipped",
 								"step_path":     stepPath,
 								"learning_type": "failure",
@@ -2436,6 +2854,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			}
 			// Loop step with condition not met: continue to next iteration
 		} // End of main execution loop
+
+		// Learn code mode: save the newly written main.py to learnings (only when LLM generated it)
+		if isLearnCodeMode && learnCodeScriptNeedsSaving {
+			hcpo.saveLearnCodeScriptToLearnings(step, toAbsPath(stepExecutionPath))
+			learnCodeScriptNeedsSaving = false
+		}
 
 		// BLOCKING HUMAN FEEDBACK - Ask user if they want to continue to next step
 		// If user provides feedback (doesn't approve), stop workflow and ask user to manually update plan
@@ -3322,7 +3746,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 			stepPath := fmt.Sprintf("step-%d", i+1)
-			stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+			stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 			responseFilePath := filepath.Join(stepExecutionPath, resolvedContextOutput)
 
 			var executionResult string

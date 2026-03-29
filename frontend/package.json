@@ -9,9 +9,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "types:events": "npx json-schema-to-typescript ../agent_go/schemas/unified-events-complete.schema.json > src/generated/events.ts",
-    "types:events-bridge": "npx json-schema-to-typescript ../agent_go/schemas/polling-event.schema.json > src/generated/events-bridge.ts",
-    "types:generate": "npm run types:events && npm run types:events-bridge",
+    "types:events": "node scripts/generate-event-types.mjs",
+    "types:events-bridge": "node scripts/generate-event-types.mjs",
+    "types:generate": "node scripts/generate-event-types.mjs",
     "predev": "npm run types:generate"
   },
   "dependencies": {

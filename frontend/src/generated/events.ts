@@ -5,7 +5,7 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-export interface UnifiedEventsCompleteSchema {
+export interface UnifiedEventsComplete {
   agent_end?: AgentEndEvent;
   agent_start?: AgentStartEvent;
   cache_event?: CacheEvent;
@@ -27,6 +27,7 @@ export interface UnifiedEventsCompleteSchema {
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
   large_tool_output_file_written?: LargeToolOutputFileWrittenEvent;
   large_tool_output_server_unavailable?: LargeToolOutputServerUnavailableEvent;
+  learn_code_script_execution?: LearnCodeScriptExecutionEvent;
   llm_generation_end?: LLMGenerationEndEvent;
   llm_generation_error?: LLMGenerationErrorEvent;
   llm_generation_start?: LLMGenerationStartEvent;
@@ -47,9 +48,6 @@ export interface UnifiedEventsCompleteSchema {
   request_human_feedback?: RequestHumanFeedbackEvent;
   smart_routing_end?: SmartRoutingEndEvent;
   smart_routing_start?: SmartRoutingStartEvent;
-  step_execution_end?: StepFinishedEvent;
-  step_execution_failed?: StepFailedEvent;
-  step_execution_start?: StepStartedEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   step_token_usage?: StepTokenUsageEvent;
   structured_output_end?: StructuredOutputEndEvent;
@@ -555,6 +553,35 @@ export interface LargeToolOutputServerUnavailableEvent {
   tool_name?: string;
   trace_id?: string;
 }
+export interface LearnCodeScriptExecutionEvent {
+  component?: string;
+  correlation_id?: string;
+  error?: string;
+  event_id?: string;
+  exit_code?: number;
+  fix_iteration?: number;
+  hierarchy_level?: number;
+  is_end_event?: boolean;
+  is_saved_script?: boolean;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  output?: string;
+  parent_id?: string;
+  run_folder?: string;
+  script_content?: string;
+  script_path?: string;
+  session_id?: string;
+  span_id?: string;
+  step_id?: string;
+  step_index?: number;
+  step_path?: string;
+  step_title?: string;
+  success?: boolean;
+  timestamp?: string;
+  trace_id?: string;
+  workspace_path?: string;
+}
 export interface LLMGenerationEndEvent {
   component?: string;
   content?: string;
@@ -873,8 +900,13 @@ export interface OrchestratorAgentStartEvent {
   session_id?: string;
   span_id?: string;
   step_index?: number;
+  system_prompt?: string;
   timestamp?: string;
   trace_id?: string;
+  use_code_execution_mode?: boolean;
+  use_learn_code_mode?: boolean;
+  use_tool_search_mode?: boolean;
+  user_message?: string;
 }
 export interface OrchestratorEndEvent {
   component?: string;
@@ -1071,73 +1103,11 @@ export interface SmartRoutingStartEvent {
   trace_id?: string;
   user_query?: string;
 }
-export interface StepFinishedEvent {
-  component?: string;
-  correlation_id?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_branch_step?: boolean;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  step_id?: string;
-  step_index?: number;
-  step_path?: string;
-  step_title?: string;
-  timestamp?: string;
-  trace_id?: string;
-}
-export interface StepFailedEvent {
-  component?: string;
-  correlation_id?: string;
-  error?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_branch_step?: boolean;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  step_id?: string;
-  step_index?: number;
-  step_path?: string;
-  step_title?: string;
-  timestamp?: string;
-  trace_id?: string;
-}
-export interface StepStartedEvent {
-  component?: string;
-  correlation_id?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_branch_step?: boolean;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  run_folder?: string;
-  session_id?: string;
-  span_id?: string;
-  step_id?: string;
-  step_index?: number;
-  step_path?: string;
-  step_title?: string;
-  timestamp?: string;
-  trace_id?: string;
-  workspace_path?: string;
-}
 export interface StepProgressUpdatedEvent {
   component?: string;
   correlation_id?: string;
   current_step_id?: string;
+  error?: string;
   event_id?: string;
   group_id?: string;
   group_index?: number;
@@ -1154,6 +1124,8 @@ export interface StepProgressUpdatedEvent {
   timestamp?: string;
   total_groups?: number;
   trace_id?: string;
+  used_tier?: number;
+  used_tier_label?: string;
   workspace_path?: string;
 }
 export interface StepTokenUsageEvent {
@@ -1398,6 +1370,7 @@ export interface ToolCallEndEvent {
   session_id?: string;
   span_id?: string;
   timestamp?: string;
+  tool_call_id?: string;
   tool_name?: string;
   trace_id?: string;
   turn?: number;
@@ -1418,6 +1391,7 @@ export interface ToolCallErrorEvent {
   session_id?: string;
   span_id?: string;
   timestamp?: string;
+  tool_call_id?: string;
   tool_name?: string;
   trace_id?: string;
   turn?: number;
@@ -1428,6 +1402,7 @@ export interface ToolCallStartEvent {
   event_id?: string;
   hierarchy_level?: number;
   is_end_event?: boolean;
+  is_parallel?: boolean;
   metadata?: {
     [k: string]: unknown;
   };
@@ -1436,6 +1411,7 @@ export interface ToolCallStartEvent {
   session_id?: string;
   span_id?: string;
   timestamp?: string;
+  tool_call_id?: string;
   tool_name?: string;
   tool_params?: ToolParams;
   trace_id?: string;

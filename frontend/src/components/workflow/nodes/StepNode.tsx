@@ -192,25 +192,19 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     // If we have a valid config, use it
     if (llmConfig?.provider && llmConfig?.model_id) {
       const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
-      return {
-        executionLLM: llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-      }
+      return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
     }
 
     // Fallback: use workflow primary config from LLM store
     if (workflowPrimaryConfig?.provider) {
       const llm = availableLLMs?.find(l => l.provider === workflowPrimaryConfig.provider && l.model === workflowPrimaryConfig.model_id)
-      return {
-        executionLLM: llm?.label || (workflowPrimaryConfig.model_id ? `${workflowPrimaryConfig.provider} ${workflowPrimaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
-      }
+      return llm?.label || (workflowPrimaryConfig.model_id ? `${workflowPrimaryConfig.provider} ${workflowPrimaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
     }
 
     // Last fallback: use legacy primary config
     if (primaryConfig?.provider) {
       const llm = availableLLMs?.find(l => l.provider === primaryConfig.provider && l.model === primaryConfig.model_id)
-      return {
-        executionLLM: llm?.label || (primaryConfig.model_id ? `${primaryConfig.provider} ${primaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
-      }
+      return llm?.label || (primaryConfig.model_id ? `${primaryConfig.provider} ${primaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
     }
 
     return null

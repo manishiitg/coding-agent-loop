@@ -2,9 +2,11 @@ package step_based_workflow
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -40,6 +43,31 @@ var knownWorkspaceToolNames = map[string]bool{
 	"agent_browser":             true,
 	"search_tools":              true,
 	"add_tool":                  true,
+}
+
+const workshopFixedIteration = "iteration-0"
+
+func parseWorkshopIterationNumber(iteration string) int {
+	if iteration == "" {
+		return 0
+	}
+	trimmed := strings.TrimSpace(iteration)
+	trimmed = strings.TrimPrefix(trimmed, "iteration-")
+	if n, err := strconv.Atoi(trimmed); err == nil {
+		return n
+	}
+	return 0
+}
+
+func normalizeWorkshopBuilderRunFolder(runFolder string) string {
+	if runFolder == "" {
+		return workshopFixedIteration
+	}
+	parts := strings.SplitN(runFolder, "/", 2)
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s/%s", workshopFixedIteration, parts[1])
+	}
+	return workshopFixedIteration
 }
 
 // ============================================================================
@@ -128,6 +156,100 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 		}
 	}
 	return result
+}
+
+func computeDescriptionHash(description string) string {
+	normalized := strings.TrimSpace(strings.ReplaceAll(description, "\r\n", "\n"))
+	hash := sha256.Sum256([]byte(normalized))
+	return fmt.Sprintf("%x", hash[:])
+}
+
+func deriveExecutionModeFromConfig(cfg *AgentConfigs) string {
+	if cfg == nil {
+		return "simple"
+	}
+	if cfg.UseLearnCodeMode != nil && *cfg.UseLearnCodeMode {
+		return "learn_code"
+	}
+	if cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode {
+		return "code_exec"
+	}
+	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
+		return "tool_search"
+	}
+	return "simple"
+}
+
+func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
+	if cfg == nil {
+		return
+	}
+
+	switch strings.TrimSpace(cfg.DeclaredExecutionMode) {
+	case "learn_code":
+		trueVal := true
+		falseVal := false
+		cfg.UseLearnCodeMode = &trueVal
+		cfg.UseToolSearchMode = &falseVal
+	case "code_exec":
+		trueVal := true
+		falseVal := false
+		cfg.UseLearnCodeMode = &falseVal
+		cfg.UseCodeExecutionMode = &trueVal
+		cfg.UseToolSearchMode = &falseVal
+	case "tool_search":
+		trueVal := true
+		falseVal := false
+		cfg.UseLearnCodeMode = &falseVal
+		cfg.UseCodeExecutionMode = &falseVal
+		cfg.UseToolSearchMode = &trueVal
+	case "simple":
+		falseVal := false
+		cfg.UseLearnCodeMode = &falseVal
+		cfg.UseCodeExecutionMode = &falseVal
+		cfg.UseToolSearchMode = &falseVal
+	}
+}
+
+func validateExecutionModeDeclaration(cfg *AgentConfigs) []string {
+	if cfg == nil {
+		return []string{"execution mode declaration missing"}
+	}
+
+	mode := strings.TrimSpace(cfg.DeclaredExecutionMode)
+	if mode == "" {
+		return []string{"declared_execution_mode missing"}
+	}
+
+	validModes := map[string]bool{
+		"learn_code":  true,
+		"code_exec":   true,
+		"tool_search": true,
+		"simple":      true,
+	}
+	if !validModes[mode] {
+		return []string{fmt.Sprintf("declared_execution_mode %q is invalid", mode)}
+	}
+
+	var issues []string
+	actualMode := deriveExecutionModeFromConfig(cfg)
+	if actualMode != mode {
+		issues = append(issues, fmt.Sprintf("declared_execution_mode=%s does not match configured mode=%s", mode, actualMode))
+	}
+	if strings.TrimSpace(cfg.DeclaredExecutionModeReason) == "" {
+		issues = append(issues, "declared_execution_mode_reason missing")
+	}
+	if mode != "learn_code" && strings.TrimSpace(cfg.LearnCodeRejectionReason) == "" {
+		issues = append(issues, "learn_code_rejection_reason missing")
+	}
+	if (mode == "tool_search" || mode == "simple") && strings.TrimSpace(cfg.CodeExecRejectionReason) == "" {
+		issues = append(issues, "code_exec_rejection_reason missing")
+	}
+	if mode == "simple" && strings.TrimSpace(cfg.ToolSearchRejectionReason) == "" {
+		issues = append(issues, "tool_search_rejection_reason missing")
+	}
+
+	return issues
 }
 
 // findWorkshopStepByID searches all steps (including inner) for a matching ID.
@@ -724,8 +846,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 
 	case "eval":
-		// EVAL: build and run evaluations — no plan or step changes
+		// EVAL: build and run evaluations — no execution plan changes, but evaluation step configs are allowed
 		tools = append(tools, eval...)
+		tools = append(tools, "update_step_config", "analyze_step")
 		tools = append(tools, "query_step", "list_executions")
 
 	case "output":
@@ -795,9 +918,20 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	// Set workspace path
 	iwm.controller.SetWorkspacePath(workspacePath)
 
+	// Set shell working directory to workspace root so the workshop agent can use
+	// relative paths in shell commands (e.g., `cat variables/variables.json` instead
+	// of `cd 'Workflow/...' && cat variables/variables.json`).
+	if iwm.controller.httpSessionID != "" {
+		common.SetSessionWorkingDir(iwm.controller.httpSessionID, workspacePath)
+		iwm.controller.GetLogger().Info(fmt.Sprintf("🔧 [workshop] Set shell CWD to workspace: %s", workspacePath))
+	}
+
 	// Use the run folder passed from the frontend toolbar selection (if any).
-	// If empty, leave selectedRunFolder unset — the LLM will run 'ls runs/' and
-	// pick the appropriate iteration via execute_step's iteration parameter.
+	// Builder mode is pinned to iteration-0, so normalize any incoming selection.
+	// If empty, leave selectedRunFolder unset outside builder mode.
+	if iwm.workshopModeOverride == "builder" {
+		runFolder = normalizeWorkshopBuilderRunFolder(runFolder)
+	}
 	if runFolder != "" {
 		iwm.controller.selectedRunFolder = runFolder
 		iwm.controller.GetLogger().Info(fmt.Sprintf("📁 Using provided run folder: %s", runFolder))
@@ -851,22 +985,47 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		workflowObjective = iwm.controller.approvedPlan.Objective
 		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
 	}
+	// Read execution_mode and available groups for stateless-aware prompting.
+	executionMode := ""
+	availableGroups := ""
+	if manifest, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
+		var wf struct {
+			ExecutionDefs struct {
+				ExecutionMode string `json:"execution_mode"`
+			} `json:"execution_defaults"`
+		}
+		if json.Unmarshal([]byte(manifest), &wf) == nil {
+			executionMode = wf.ExecutionDefs.ExecutionMode
+		}
+	}
+	if iwm.controller.variablesManifest != nil && len(iwm.controller.variablesManifest.Groups) > 0 {
+		var groupIDs []string
+		for _, g := range iwm.controller.variablesManifest.Groups {
+			groupIDs = append(groupIDs, g.GroupID)
+		}
+		availableGroups = strings.Join(groupIDs, ", ")
+	}
+
 	templateVars := map[string]string{
-		"WorkspacePath":       workspacePath,
-		"RunFolder":           iwm.controller.selectedRunFolder,
-		"PlanJSON":            planContent,
-		"StepConfigSummary":   stepConfigSummary,
-		"IsCodeExecutionMode": fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
-		"UseToolSearchMode":   fmt.Sprintf("%v", agent.GetConfig().UseToolSearchMode),
-		"WorkshopMode":        workshopMode,
-		"UnoptimizedSteps":    unoptimizedSteps,
-		"ProgressSummary":     progressSummary,
-		"UserRequest":         userGoal,
-		"SessionID":           iwm.sessionID,
-		"WorkflowID":          iwm.workflowID,
-		"UseKnowledgebase":    useKB,
-		"WorkflowObjective":        workflowObjective,
-		"WorkflowSuccessCriteria":  workflowSuccessCriteria,
+		"WorkspacePath":           workspacePath,
+		"RunFolder":               iwm.controller.selectedRunFolder,
+		"PlanJSON":                planContent,
+		"StepConfigSummary":       stepConfigSummary,
+		"IsCodeExecutionMode":     fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
+		"UseToolSearchMode":       fmt.Sprintf("%v", agent.GetConfig().UseToolSearchMode),
+		"WorkshopMode":            workshopMode,
+		"UnoptimizedSteps":        unoptimizedSteps,
+		"ProgressSummary":         progressSummary,
+		"UserRequest":             userGoal,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
+		"UseKnowledgebase":        useKB,
+		"WorkflowObjective":       workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"ExecutionMode":           executionMode,
+		"AvailableGroups":         availableGroups,
+		"AbsWorkspacePath":        GetPromptDocsRoot() + "/" + workspacePath,
+		"AbsDocsRoot":             GetPromptDocsRoot(),
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -1012,6 +1171,14 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Do NOT worry about optimization yet — the workflow structure may still change
 - Do NOT mark steps as optimized or run optimize_step — premature optimization wastes effort on steps that may be restructured
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
+
+**When creating or configuring each step, choose its execution mode (preference order):**
+1. **Learn code mode** (best): step is deterministic — data transforms, file processing, calculations, fixed API calls → update_step_config(step_id, use_learn_code_mode=true). 0 LLM tokens after first run.
+2. **Code execution mode**: step needs runtime reasoning or browser — makes 2+ MCP tool calls, adapts to page state → update_step_config(step_id, use_code_execution_mode=true)
+3. **Tool search mode**: exact tools aren't known upfront → update_step_config(step_id, use_tool_search_mode=true)
+4. **Simple mode** (default): single tool call, no config needed
+
+When in doubt: start with learn_code. If the step can't be a fixed script (browser, dynamic reasoning), fall back to code_exec.
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
@@ -1023,11 +1190,29 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 2. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective is missing** — run `+"`infer_objective`"+` to infer it from the plan structure, then confirm with the user.{{end}}
 3. Once both are set, run `+"`optimize_workflow`"+` **once** at the start. It analyzes the full plan — including nested orchestrators and evaluation coverage — against the objective and success criteria. **Fix all structural issues before touching individual steps.**
 4. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools. Do NOT defer to the user.
-5. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires?**
+5. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires, and what is the strongest execution mode it can support?**
 
 **IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
 
-**Optimization workflow (one step at a time):**
+**Optimization is discovery-driven:** optimize by running the step, inspecting what actually happened, and then moving it toward the strongest viable execution mode in this order: `+"`learn_code`"+` → `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`. Do not assume the current mode is correct just because it is already configured.
+
+**Optimization workflow depends on the step's execution mode:**
+
+**For learn_code steps** (use_learn_code_mode=true):
+1. **Check mode** — Read step_config.json. If step isn't in learn_code mode yet, set it: update_step_config(step_id, use_learn_code_mode=true)
+2. **Run the step** — execute_step(step_id). On first run: LLM writes main.py, controller runs it, saves to learnings/{step-id}/ on success. On subsequent runs: controller executes saved main.py directly (0 LLM tokens).
+3. **Run optimize_step(step_id)** — uses the observed run plus the saved main.py to decide whether learn_code is truly the strongest viable mode, whether the script is correct, and what cleanup would make it stable across groups/runs.
+4. **Apply script fixes** — Two options:
+   - **Small fix** (logic bug, wrong field): Edit learnings/{step-id}/main.py directly with diff_patch_workspace_file. Next run uses the updated script immediately.
+   - **Full rewrite needed**: Delete learnings/{step-id}/main.py (and script_metadata.json) via execute_shell_command, then re-run. LLM rewrites from scratch.
+5. **Ensure validation schema** — update_step_config(step_id, validation_schema=...) so each run is checked automatically.
+6. **Re-run and verify** — execute_step(step_id). Should run 0 LLM tokens, output validates.
+7. **Mark optimized** — update_step_config(step_id, lock_learnings=true, optimized=true)
+   - lock_learnings=true: script won't be overwritten if it fails — hard fail instead (protects your optimized script)
+   - optimized=true: step is done, uses lowest LLM tier
+   - Note: generate_learnings is NOT used for learn_code steps — the script IS the learning.
+
+**For regular steps** (simple / code_exec / tool_search):
 1. **Ask which step** — If the user hasn't specified a step, show the unoptimized steps list and ask which one to optimize next.
 2. **Run the step** — execute_step(step_id, skip_learning=false) so the step learns from its execution. Wait for auto-notification.
 3. **Review tool usage** — When the step completes, check the execution result:
@@ -1035,6 +1220,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
    - Did it search for tools that should already be configured? (wasted turns)
    - Did it call the wrong server/tool names? (stale learnings)
    - Could the same result be achieved with fewer tool calls?
+   - Could the work be moved upward in the mode ladder: from `+"`tool_search`"+` to `+"`code_exec`"+`, or from `+"`code_exec`"+` to `+"`learn_code`"+`?
 4. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/SKILL.md
    - Do they reference the correct server/tool names matching the step config?
    - Are they guiding the agent to use the minimum number of tool calls?
@@ -1049,11 +1235,12 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
    - No wasted tool calls (minimum necessary calls only)
    - Learnings guided the agent correctly
    - Output passes validation
-8. **Mark optimized** — When the step has **at least 3 successful runs** (check successful_runs in step_config) and runs cleanly: update_step_config(step_id, optimized=true)
+   - The step is now using the strongest viable mode discovered from the run evidence
+8. **Mark optimized** — When the step has **at least 3 successful runs** and runs cleanly: update_step_config(step_id, optimized=true)
    - Setting optimized=true also locks learnings automatically (they always move together)
-   - **Cost impact**: optimized steps automatically use **lower-cost LLM tiers** at runtime for execution agents — execution agents drop to Tier 3 (Low). Todo-task orchestrators still stay on Tier 1 (High) unless explicitly overridden.
-   - The system auto-sets optimized=true after 3 successful validations, but you can also set it manually after verifying quality
-   - If an optimized step starts failing later: update_step_config(step_id, optimized=false) — reverts to higher tiers and unlocks learnings for rework
+   - **Cost impact**: optimized steps automatically use **lower-cost LLM tiers** at runtime
+   - The system auto-sets optimized=true after 3 successful validations, but you can also set it manually
+   - If an optimized step starts failing later: update_step_config(step_id, optimized=false) — reverts and unlocks for rework
 9. **Report and ask** — Tell the user the step is optimized and ask which step to work on next.
 
 **For todo_task steps (sub-agent steps):**
@@ -1065,18 +1252,34 @@ Todo task steps contain inner sub-agents (routes). Optimize each sub-agent indiv
 5. **Optimize tier selection** — After running the full todo_task, review optimize_step output for tier analysis. Add a TIER RECOMMENDATIONS section to the orchestration SKILL.md with per-route tier assignments (1=High for complex, 2=Medium for routine, 3=Low for simple). The orchestrator reads this at runtime to pick the right LLM tier for each sub-agent.
 6. **Run the full todo_task** — execute_step(parent_step_id) to verify the orchestrator + all sub-agents work together end-to-end
 
-**Code execution mode — prefer it for most steps:**
-Steps that make multiple MCP tool calls should use **code execution mode** (update_step_config(step_id, use_code_execution_mode=true)). In code exec mode, the agent writes a single Python script that calls MCP tools via HTTP, which is:
-- **More reliable** — one script with error handling instead of multiple independent tool calls
-- **Faster** — fewer LLM turns (one script vs. multiple tool-call-then-parse cycles)
-- **More deterministic** — the same script runs the same way every time
-- **Easier to optimize** — learnings can include the exact working script (saved in learnings/{step-id}/code/)
+**Step mode preference order (highest to lowest):**
 
-When reviewing a step, check: if it makes 2+ MCP tool calls, switch it to code exec mode. The learning should then include the full working Python script so the agent can reuse it directly on future runs.
+**1. Learn code mode** ← always try this first for non-browser steps
+Update: update_step_config(step_id, use_learn_code_mode=true)
+- LLM writes main.py once. Controller runs it: python3 main.py input1 input2.... On failure, exact error is fed back so LLM fixes it. Once it passes, main.py is saved to learnings/{step-id}/.
+- **All future runs: 0 LLM tokens, fully deterministic.**
+- Use whenever: data transforms, file processing, calculations, fixed API calls, extraction/normalization, report generation from structured data, any step whose logic doesn't change run-to-run.
+- Also valid for stable browser automation when the flow is repeatable: known selectors, fixed navigation, predictable waits, deterministic extraction, or scripted form submission.
+- Not suitable for: highly reactive browser tasks where the script cannot know the next action until it interprets arbitrary page state, or steps whose reasoning logic itself changes each run.
 
-**Exception — browser automation steps:** Do NOT use code execution mode for steps that use browser tools (browser_snapshot, browser_click, browser_navigate, agent_browser, Playwright). Browser automation requires the LLM to react to page state between each action (read snapshot → decide next click → read result). A Python script cannot do this — it needs the LLM in the loop for every browser interaction.
+**2. Code execution mode** ← fallback when learn_code isn't possible
+Update: update_step_config(step_id, use_code_execution_mode=true)
+- Agent writes a Python script that calls MCP tools via HTTP, runs it in one turn. More reliable and faster than multi-turn tool calling.
+- Use when: step needs to adapt at runtime (browser, dynamic content) but still benefits from a single script over multiple separate tool calls.
+- This is usually the right first scripted mode for browser steps: let Python drive the browser/tool sequence in one place, then promote to learn_code if the script stabilizes across runs.
+- The learning should include the full working Python script so the agent reuses it directly.
 
-**Goal**: Each step should execute with the **fewest possible tool calls and LLM turns** — no exploration, no wrong server names, no retries. Prefer code execution mode with a single comprehensive Python script. The learnings and description should be precise enough that the agent gets it right on the first try.
+**3. Tool search mode** ← last resort only
+Update: update_step_config(step_id, use_tool_search_mode=true)
+- Use only when the exact tools needed aren't known upfront or vary at runtime. All other modes are preferred.
+
+**4. Simple mode** (no config needed) — for single-tool-call steps only.
+
+**Browser automation guidance:** Do NOT blanket-ban Python for browser steps. Prefer **code_exec** first for browser workflows that can be scripted, and upgrade to **learn_code** when the browser flow is repeatable and stable across runs. Keep a browser step in **simple** mode only when the agent truly must inspect page state turn-by-turn and decide interactively after each action.
+
+**When reviewing a step during optimization**: ask "is this step deterministic — same inputs, same output every time?" If yes → switch to learn_code. If it makes 2+ MCP tool calls but needs runtime reasoning → switch to code_exec. Default to learn_code first and downgrade only if it fails.
+
+**Goal**: Each step should run with the **fewest possible LLM tokens and tool calls**. learn_code is the gold standard — 0 tokens after the first run. code_exec is second best. Simple mode for trivial steps. Tool search only when unavoidable.
 
 If structural changes are needed (add/remove/reorder steps based on optimize_workflow output), use plan modification tools directly — same tools available as in Build mode.
 {{else if eq .WorkshopMode "debugger"}}
@@ -1097,18 +1300,27 @@ If structural changes are needed (add/remove/reorder steps based on optimize_wor
 **Evaluation workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
 2. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and `+"`success_criteria`"+`.
-3. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-4. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
-5. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run.
-6. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
-7. Iterate by refining `+"`evaluation/evaluation_plan.json`"+` or switching to Build/Optimize mode if the execution workflow itself needs changes.
+3. Prefer **learn_code** for eval steps whenever the check can be expressed as deterministic Python over files, JSON, markdown, or structured outputs. Eval steps should maximize saved Python logic (`+"`main.py`"+`) so scoring is reproducible and cheap. Use **code_exec** only when the step still needs runtime MCP calls or lightweight scripting glue; use **tool_search** only as a last resort.
+4. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
+   - `+"`declared_execution_mode`"+` + `+"`declared_execution_mode_reason`"+`
+   - rejection reasons for stronger modes not chosen
+   - `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`, `+"`description_learnings_alignment_reason`"+`
+   - `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
+   The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
+5. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+6. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
+7. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run.
+8. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+9. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
 
 **Evaluation files:**
 - Plan: evaluation/evaluation_plan.json
+- Step config: evaluation/step_config.json
 - Reports: evaluation/runs/{runFolder}/evaluation_report.json
 - Learnings: evaluation/learnings/{stepID}/
+- Learn-code artifact: evaluation/learnings/{stepID}/main.py
 
-Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design and scoring. Switch to Build mode for workflow changes.
+Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design, scoring, and evaluation step configuration under `+"`evaluation/`"+`. Switch to Build mode for workflow changes.
 {{else if eq .WorkshopMode "output"}}
 **REPORT MODE** — Design the final workflow report artifact that is generated automatically after a workflow group run completes.
 
@@ -1137,7 +1349,7 @@ Do NOT modify execution steps or evaluation steps in output mode unless the user
 
 ## CURRENT STATE
 
-- **Workspace**: {{.WorkspacePath}} (`+"`/app/workspace-docs/{{.WorkspacePath}}/`"+`)
+- **Workspace**: {{.WorkspacePath}} (`+"`{{.AbsWorkspacePath}}/`"+`)
 - **Run Folder**: {{.RunFolder}}
 - **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — use `+"`infer_objective`"+` to infer and confirm it{{end}}
 - **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else}}⚠️ Not defined — ask the user what success looks like for this workflow, then save via `+"`set_workflow_objective`"+`{{end}}
@@ -1264,9 +1476,18 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 ## RUNNING STEPS
 
 ### Iterations & Groups
-**Iterations** are just output folders (e.g., iteration-0). The system defaults to **iteration-0** — do NOT pass iteration unless the user explicitly requests a different one. Every execute_step re-reads the **latest** plan.json — no caching or snapshotting.
+**Iterations** are just output folders (e.g., iteration-0). In workshop builder mode, always use **iteration-0**. Do not choose or pass any other iteration. Every execute_step re-reads the **latest** plan.json — no caching or snapshotting.
 
-**Groups**: Before running a step, read `+"`cat variables.json`"+` to find available group_ids. Call execute_step with the correct **group_id**. Never guess the group_id — always read variables.json.
+{{if eq .ExecutionMode "stateless"}}**This is a STATELESS workflow** — it runs independently for each group (user/account). Each group has its own isolated execution folder and data.
+Available groups: **{{.AvailableGroups}}**
+
+When running a step or the full workflow:
+- **Always ask the user which group to run for** if they haven't specified one — do not assume or default silently.
+- Use execute_step with the explicit `+"`group_id`"+` parameter.
+- Scripts must read all user-specific values (user IDs, account numbers, etc.) from environment variables, not hardcode them. Check for this during optimization.
+- When testing learn_code steps, run across **at least 2 different groups** before locking — a script that works for one group but fails for another has hardcoded values.
+{{else}}**Groups**: Before running a step, read `+"`cat variables.json`"+` to find available group_ids. Call execute_step with the correct **group_id**. Never guess the group_id — always read variables.json.
+{{end}}
 
 ### Execution Procedure
 1. User says "run step-X" → determine group → call **execute_step("step-id", group_id=group_id)** → get execution_id
@@ -1388,6 +1609,12 @@ The step **description** in plan.json is the primary instruction the execution a
 
 **How to update**: Edit plan.json directly using **diff_patch_workspace_file** to update a step's description field. The change takes effect on the next execution.
 
+**Description review bookkeeping is required**: After you change or approve a description, immediately call `+"`update_step_config`"+` to record:
+- `+"`description_optimized`"+` + `+"`description_optimization_reason`"+`
+- `+"`description_learnings_alignment_reason`"+`
+- `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
+The system auto-saves a `+"`description_hash`"+`. If the description changes later, that review becomes stale and must be re-done.
+
 ### 6. Post-Execution Step Review
 After running a step, review it for optimization — but follow this priority order. Fix fundamentals first before worrying about efficiency.
 
@@ -1423,20 +1650,37 @@ After running a step, review it for optimization — but follow this priority or
 
 When the user runs a step, briefly note the highest-priority improvement needed. Don't dump all dimensions at once — focus on what matters most right now.
 
-### 7. Code Execution Mode vs Tool Search Mode
+### 7. Execution Modes: Simple vs Code Exec vs Learn Code vs Tool Search
 
-Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
+Steps have four execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode, use_learn_code_mode)**:
 
-- **Simple mode** (both false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
+- **Simple mode** (all false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
 - **Code Execution mode** (use_code_execution_mode=true): Agent writes Python code that calls MCP tools programmatically via mcpbridge. **Use this when**:
   - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
   - The user explicitly asks for code execution mode
+- **Learn Code mode** (use_learn_code_mode=true): LLM writes main.py once; controller validates it; all future runs execute the saved script with **0 LLM tokens**. **Use this when**:
+  - The step is fully deterministic — same inputs always produce same outputs
+  - The step is a data transform, file conversion, calculation, or API call with fixed logic
+  - The step has been running successfully as code_exec with the same script for several iterations
+  - You want zero token cost and maximum speed for a stable step
+  - Note: mutually exclusive with tool_search_mode. Inputs arrive as positional CLI args; secrets/vars as env vars.
 - **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools aren't known upfront or the step needs to adapt to available tools.
 
+**Mode declaration is required**: Every optimized step must also store:
+- `+"`declared_execution_mode`"+`
+- `+"`declared_execution_mode_reason`"+`
+- rejection reasons for stronger modes that were not chosen:
+  - not `+"`learn_code`"+` → `+"`learn_code_rejection_reason`"+`
+  - not `+"`code_exec`"+` → `+"`code_exec_rejection_reason`"+`
+  - not `+"`tool_search`"+` when using `+"`simple`"+` → `+"`tool_search_rejection_reason`"+`
+
+This is deliberate: it forces you to think through why the step is not using the stronger preferred mode. Do not mark a step optimized until these fields are filled in.
+
 When the user asks to enable code execution for a step, use: update_step_config(step_id, use_code_execution_mode=true)
+When the user asks to enable learn code mode for a step, use: update_step_config(step_id, use_learn_code_mode=true)
 
 **Workshop agent behavior for code-exec steps**: When you (the workshop agent) are asked to explore, investigate, or do manual work related to a step marked with code execution mode, you should also adopt the code-exec approach — use **execute_shell_command** to write and run Python/shell scripts that combine multiple MCP tool calls together, rather than making individual tool calls one by one. This mirrors how the step's execution agent works and helps you build reusable scripts and patterns that can inform the step's learnings.
 
@@ -1494,10 +1738,12 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 
 **Workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly with shell/file tools
-2. Run **validate_evaluation_plan** after editing
-3. Run **run_full_evaluation(target_run_folder)** to score against an execution run
-4. Review the report — low scores (< 5) need tighter criteria or better step descriptions
-5. Iterate: fix execution steps or refine the eval plan, then re-run
+2. Default each eval step to `+"`learn_code`"+` when the check is deterministic. Favor saved Python over repeated LLM reasoning so evaluations stay reproducible and cheap.
+3. Use `+"`update_step_config`"+` to record each eval step's declared mode, why stronger modes were not chosen, and whether the description is optimized and free of secrets. In eval mode this persists to `+"`evaluation/step_config.json`"+`.
+4. Run **validate_evaluation_plan** after editing
+5. Run **run_full_evaluation(target_run_folder)** to score against an execution run
+6. Review the report — low scores (< 5) need tighter criteria or better step descriptions
+7. Iterate: fix execution steps or refine the eval plan, then re-run
 
 Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode for workflow changes.
 {{end}}
@@ -1509,7 +1755,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
-- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. iteration defaults to iteration-0. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
+- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
 {{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
@@ -1530,9 +1776,9 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **list_executions(status_filter?)** — List all background executions
 {{end}}
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "eval")}}
 ### Step Config & Analysis
-- **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag
+- **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. In eval mode this writes to `+"`evaluation/step_config.json`"+`.
 - **analyze_step(step_id)** — Config and execution history analysis
 {{if eq .WorkshopMode "optimizer"}}- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
 - **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background for a single step
@@ -1626,11 +1872,11 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **human_feedback** — Ask the user a question during a run
 
 ### Skills
-Skills are reusable instruction sets injected into step agents at runtime. They live at the **workspace root** `+"`/app/workspace-docs/skills/{folder}/SKILL.md`"+` — shared across all workflows. Do NOT create or reference skills inside the workflow folder (e.g. `+"`Workflow/trading/skills/`"+` does not exist).
+Skills are reusable instruction sets injected into step agents at runtime. They live at the **workspace root** `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` — shared across all workflows. Do NOT create or reference skills inside the workflow folder (e.g. `+"`Workflow/trading/skills/`"+` does not exist).
 
 **Workflow for managing skills:**
 1. **Find**: `+"`list_skills`"+` to see installed skills, or `+"`search_skills(query)`"+` to search the public registry
-2. **Install**: `+"`install_skill(source)`"+` (e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` — downloads into `+"`/app/workspace-docs/skills/{folder}/`"+`. If a skill folder exists but has no SKILL.md, reinstall it using the same method it was originally installed with — **never write SKILL.md content manually**.
+2. **Install**: `+"`install_skill(source)`"+` (e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` — downloads into `+"`{{.AbsDocsRoot}}/skills/{folder}/`"+`. If a skill folder exists but has no SKILL.md, reinstall it using the same method it was originally installed with — **never write SKILL.md content manually**.
 3. **Add to workflow**: `+"`update_workflow_config(add_skills=[\"folder-name\"])`"+` — all steps inherit it. **Do NOT edit workflow.json manually.**
 4. **Restrict to specific steps**: By default all steps inherit all workflow-level skills. To limit a step: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\"])`"+`. Empty array = no skills for that step.
 5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"folder-name\"])`"+`
@@ -1661,8 +1907,10 @@ When a step has learning_mode "human_assisted":
 
 ## FILE LAYOUT
 
-**Shell working directory**: `+"`/app/workspace-docs/{{.WorkspacePath}}/`"+` — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`).
-All paths below are relative to this root.
+**Shell working directory**: `+"`{{.AbsWorkspacePath}}/`"+`
+- Always use **absolute paths** in shell commands: prefix every path with `+"`{{.AbsWorkspacePath}}/`"+`
+- Do **not** use `+"`cd`"+` or relative paths
+All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+` when running shell commands).
 
 | Path | Contents |
 |------|----------|
@@ -2005,7 +2253,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' (workshop scratch iteration) if omitted. Use a different iteration only when the user explicitly requests it.",
+					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
 				},
 				"skip_learning": map[string]interface{}{
 					"type":        "boolean",
@@ -2058,19 +2306,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
 			}
 
-			// Default to iteration-0 (workshop scratch iteration) if not provided
-			if iteration == "" {
-				iteration = "iteration-0"
-			}
+			// Workshop builder mode always uses the scratch iteration.
+			iteration = workshopFixedIteration
 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
 			iwm.refreshVariablesManifest(ctx)
 			// Resolve group folder name from group_id (uses sanitized display name or group_id)
 			groupFolderName := groupID
+			groupDisplayName := ""
 			if iwm.controller.variablesManifest != nil && groupID != "" {
 				for _, g := range iwm.controller.variablesManifest.Groups {
 					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+						if g.DisplayName != "" {
+							groupDisplayName = g.DisplayName
+						}
 						if g.DisplayName != "" {
 							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
 							if sanitized != "" {
@@ -2111,12 +2361,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execOpts := &WorkshopExecuteOptions{
-				GroupID:      groupID,
-				RunFolder:    runFolder,
-				SkipLearning: skipLearning,
-				Instructions: instructions,
-				HumanInput:   humanInput,
-				Tier:         tierValue,
+				GroupID:          groupID,
+				GroupDisplayName: groupDisplayName,
+				Iteration:        iteration,
+				RunFolder:        runFolder,
+				SkipLearning:     skipLearning,
+				Instructions:     instructions,
+				HumanInput:       humanInput,
+				Tier:             tierValue,
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
@@ -2128,6 +2380,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return resolveErr.Error(), nil
 			}
 			stepID = resolvedID
+
+			isLearnCodeStep := false
+			if iwm.controller.approvedPlan != nil {
+				if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+					if cfg := getAgentConfigs(stepInfo.Step); cfg != nil && cfg.UseLearnCodeMode != nil && *cfg.UseLearnCodeMode {
+						isLearnCodeStep = true
+					}
+				}
+			}
+			if !isLearnCodeStep {
+				if configs, err := iwm.controller.ReadStepConfigs(ctx); err == nil {
+					for _, sc := range configs {
+						if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.UseLearnCodeMode != nil && *sc.AgentConfigs.UseLearnCodeMode {
+							isLearnCodeStep = true
+							break
+						}
+					}
+				}
+			}
 
 			execID := fmt.Sprintf("exec-%s-%05d", stepID, time.Now().UnixNano()%100000)
 			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
@@ -2175,10 +2446,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
+					inputData := map[string]string{}
+					if execOpts != nil {
+						if execOpts.GroupID != "" {
+							inputData["group_id"] = execOpts.GroupID
+						}
+						if execOpts.GroupDisplayName != "" {
+							inputData["group_display_name"] = execOpts.GroupDisplayName
+						}
+						if execOpts.Iteration != "" {
+							inputData["iteration"] = execOpts.Iteration
+						}
+						if execOpts.RunFolder != "" {
+							inputData["run_folder"] = execOpts.RunFolder
+						}
+					}
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-execution",
 						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
+						InputData:     inputData,
+						Iteration:     parseWorkshopIterationNumber(execOpts.Iteration),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -2291,7 +2579,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			learningInfo := "Learning: skipped (default for faster iteration). To generate learnings after execution, use generate_learnings(step_id). To run with learning enabled, use execute_step(step_id, skip_learning=false)."
 			if !skipLearning {
-				learningInfo = "Learning: enabled — success learnings run in background (won't block next step), failure learnings run sequentially (needed for retry)."
+				if isLearnCodeStep {
+					learningInfo = "Learn code mode: this step does not use separate SKILL learnings. The saved Python script is the learning, and the run may create/update that script directly."
+				} else {
+					learningInfo = "Learning: enabled — success learnings run in background (won't block next step), failure learnings run sequentially (needed for retry)."
+				}
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, skip_learning=%v", stepID, execID, groupInfo, skipLearning))
 			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\n%s\nYou will be automatically notified when it completes.", stepID, execID, learningInfo), nil
@@ -2579,7 +2871,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
+					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
@@ -2602,10 +2894,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iteration, _ := args["iteration"].(string)
 			groupID, _ := args["group_id"].(string)
 
-			// Default to iteration-0 (workshop scratch iteration)
-			if iteration == "" {
-				iteration = "iteration-0"
-			}
+			// Workshop builder mode always reads from the scratch iteration.
+			iteration = workshopFixedIteration
 			if groupID == "" {
 				return "group_id is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
 			}
@@ -2942,6 +3232,51 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, enable tool search mode — the agent dynamically discovers available tools at runtime using search_tools before calling them. Useful when the exact tools needed are not known upfront. If false, tools are provided directly without search. Omit to inherit the preset default.",
 				},
+				"use_learn_code_mode": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, enable learn code mode — the LLM writes main.py once, the controller validates it, and all future runs execute the saved script directly (0 LLM tokens). Best for deterministic steps: data transforms, file processing, calculations, API calls with fixed logic. Inputs are positional args (python3 main.py input1 input2...), secrets/vars as env vars. Implies code execution mode for the initial LLM write; mutually exclusive with use_tool_search_mode.",
+				},
+				"declared_execution_mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"learn_code", "code_exec", "tool_search", "simple"},
+					"description": "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly.",
+				},
+				"declared_execution_mode_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Required explanation for why the chosen execution mode is the best fit for this step.",
+				},
+				"learn_code_rejection_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when declared_execution_mode is not 'learn_code'. Explain why learn_code is not appropriate for this step.",
+				},
+				"code_exec_rejection_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when declared_execution_mode is 'tool_search' or 'simple'. Explain why code_exec is not appropriate.",
+				},
+				"tool_search_rejection_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when declared_execution_mode is 'simple'. Explain why tool_search is unnecessary.",
+				},
+				"description_optimized": map[string]interface{}{
+					"type":        "boolean",
+					"description": "True when the current step description has been reviewed and is considered optimized for execution quality.",
+				},
+				"description_optimization_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Why the current description is considered optimized.",
+				},
+				"description_learnings_alignment_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "How the current description reflects the learnings gathered for this step.",
+				},
+				"description_no_secrets": map[string]interface{}{
+					"type":        "boolean",
+					"description": "True when the current description has been reviewed and confirmed to contain no secrets, hardcoded credentials, or user/run-specific values.",
+				},
+				"description_secrets_review_reason": map[string]interface{}{
+					"type":        "string",
+					"description": "Why the current description is considered free of secrets and hardcoded values.",
+				},
 				"optimized": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, mark this step as optimized — completion notifications will be simpler (no 'debug and optimize' prompt). Set this when a step is producing consistent, good results.",
@@ -3142,9 +3477,31 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 						// 1. Check learnings exist
 						learningsPath := getLearningFolderPathByStepID("", stepID, "", iwm.controller.isEvaluationMode)
-						learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
-						if len(learningFiles) == 0 {
-							missing = append(missing, "learnings (no learning files found — run generate_learnings first)")
+						isLearnCodeStep := targetConfig.AgentConfigs != nil && targetConfig.AgentConfigs.UseLearnCodeMode != nil && *targetConfig.AgentConfigs.UseLearnCodeMode
+						if isLearnCodeStep {
+							// For learn_code steps: check script exists and has >= 3 successful runs
+							mainPyRelPath := learningsPath + "/main.py"
+							if _, readErr := iwm.controller.ReadWorkspaceFile(ctx, mainPyRelPath); readErr != nil {
+								missing = append(missing, "learn_code script (learnings/"+stepID+"/main.py not found — run the step first so the LLM writes and saves main.py)")
+							} else {
+								// Check successful_runs in script_metadata.json
+								metaRelPath := learningsPath + "/script_metadata.json"
+								if metaContent, readErr := iwm.controller.ReadWorkspaceFile(ctx, metaRelPath); readErr == nil {
+									var meta LearnCodeMetadata
+									if jsonErr := json.Unmarshal([]byte(metaContent), &meta); jsonErr == nil {
+										if meta.SuccessfulRuns["learn_code"] < 3 {
+											missing = append(missing, fmt.Sprintf("learn_code successful runs (%d/3) — run the step at least 3 more times in learn_code mode to confirm the script is stable before locking", meta.SuccessfulRuns["learn_code"]))
+										}
+									}
+								} else {
+									missing = append(missing, "learn_code script metadata (script_metadata.json not found — run the step at least 3 times first)")
+								}
+							}
+						} else {
+							learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
+							if len(learningFiles) == 0 {
+								missing = append(missing, "learnings (no learning files found — run generate_learnings first)")
+							}
 						}
 
 						// 2. Check pre-validation schema exists in plan
@@ -3189,6 +3546,91 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["use_tool_search_mode"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					targetConfig.AgentConfigs.UseToolSearchMode = &b
+				}
+			}
+			if val, ok := args["use_learn_code_mode"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.UseLearnCodeMode = &b
+				}
+			}
+			if val, ok := args["declared_execution_mode"]; ok && val != nil {
+				if s, ok := val.(string); ok && s != "" {
+					targetConfig.AgentConfigs.DeclaredExecutionMode = s
+				}
+			}
+			if val, ok := args["declared_execution_mode_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.DeclaredExecutionModeReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["learn_code_rejection_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.LearnCodeRejectionReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["code_exec_rejection_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.CodeExecRejectionReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["tool_search_rejection_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.ToolSearchRejectionReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["description_optimized"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.DescriptionOptimized = &b
+				}
+			}
+			if val, ok := args["description_optimization_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.DescriptionOptimizationReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["description_learnings_alignment_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.DescriptionLearningsAlignmentReason = strings.TrimSpace(s)
+				}
+			}
+			if val, ok := args["description_no_secrets"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.DescriptionNoSecrets = &b
+				}
+			}
+			if val, ok := args["description_secrets_review_reason"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.DescriptionSecretsReviewReason = strings.TrimSpace(s)
+				}
+			}
+
+			// If the caller declared a mode, sync the low-level mode flags to match it.
+			syncDeclaredExecutionModeConfig(targetConfig.AgentConfigs)
+
+			// Keep description hash in sync whenever description review or mode review is updated.
+			descriptionReviewTouched := false
+			for _, key := range []string{
+				"declared_execution_mode",
+				"declared_execution_mode_reason",
+				"learn_code_rejection_reason",
+				"code_exec_rejection_reason",
+				"tool_search_rejection_reason",
+				"description_optimized",
+				"description_optimization_reason",
+				"description_learnings_alignment_reason",
+				"description_no_secrets",
+				"description_secrets_review_reason",
+			} {
+				if _, ok := args[key]; ok {
+					descriptionReviewTouched = true
+					break
+				}
+			}
+			if descriptionReviewTouched {
+				if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil && iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						targetConfig.AgentConfigs.DescriptionHash = computeDescriptionHash(stepInfo.Step.GetDescription())
+					}
 				}
 			}
 
@@ -3996,7 +4438,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
+					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
@@ -4024,10 +4466,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			iteration, _ := args["iteration"].(string)
-			// Default to iteration-0 (workshop scratch iteration)
-			if iteration == "" {
-				iteration = "iteration-0"
-			}
+			// Workshop builder mode always uses the scratch iteration.
+			iteration = workshopFixedIteration
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
 				return "group_id is required (e.g., 'group1')", nil
@@ -4426,7 +4866,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b: optimize_step — background optimization agent
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_step",
-		"Start a background optimization agent that analyzes logs, output, learnings, and config for a step. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
+		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It discovers the strongest viable execution mode in order: learn_code, then code_exec, then tool_search, then simple. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6581,13 +7021,20 @@ var optimizationAgentSystemTemplate = MustRegisterTemplate("optimizationAgentSys
 You are a read-only step optimization analyst. You analyze execution logs, output files, learnings, and configuration for a specific workflow step and produce a structured report with actionable recommendations.
 
 ## ROLE
-Perform deep analysis of a step's execution and produce a comprehensive optimization report. You are **read-only** — you do NOT modify any files, plans, or configurations.
+Perform deep analysis of a step's observed executions and produce a comprehensive optimization report. Optimize by **discovery from real runs**, not by speculation. Your job is to infer the strongest viable execution mode from evidence in this order:
+1. `+"`learn_code`"+`
+2. `+"`code_exec`"+`
+3. `+"`tool_search`"+`
+4. `+"`simple`"+`
+
+You are **read-only** — you do NOT modify any files, plans, or configurations.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files. Use shell commands only for reading files (cat, ls, head, etc.).
 2. **Be Specific**: Reference exact file paths, line numbers, field names, and values in your analysis.
 3. **Be Actionable**: Every recommendation must be something the user can act on immediately.
 4. **Prioritize by Impact**: Rank recommendations by how much they'd improve the step's reliability and output quality.
+5. **Use the mode ladder strictly**: Always test the step conceptually against `+"`learn_code`"+` first. Only reject it if the observed run shows why it cannot work. Then evaluate `+"`code_exec`"+`, then `+"`tool_search`"+`. Do not skip directly to weaker modes without explaining why stronger ones fail.
 
 ## STEP CONTEXT
 
@@ -6607,7 +7054,7 @@ Perform deep analysis of a step's execution and produce a comprehensive optimiza
 `+"```json\n{{.ValidationResult}}\n```"+`
 {{end}}
 
-{{if .ExistingLearnings}}### Existing Learnings
+{{if and (ne .IsLearnCodeMode "true") .ExistingLearnings}}### Existing Learnings
 {{.ExistingLearnings}}
 {{end}}
 
@@ -6626,21 +7073,27 @@ The user wants you to focus specifically on: **{{.Focus}}**
 ## DATA LAYOUT
 
 All paths relative to workspace root:
-- Execution output: `+"`runs/{{.RunFolder}}/execution/step-{{.StepNum}}/`"+`
-- Execution logs: `+"`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/execution/`"+`
-- Validation logs: `+"`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/`"+`
+- Execution output: `+"`runs/{{.RunFolder}}/execution/{{.StepID}}/`"+` (older runs may use `+"`step-{{.StepNum}}/`"+`)
+- Execution logs: `+"`runs/{{.RunFolder}}/logs/{{.StepID}}/execution/`"+` (older runs may use `+"`logs/step-{{.StepNum}}/execution/`"+`)
+- Validation logs: `+"`runs/{{.RunFolder}}/logs/{{.StepID}}/`"+` (older runs may use `+"`logs/step-{{.StepNum}}/`"+`)
 - Learnings: `+"`learnings/{{.StepID}}/`"+`
 - Plan: `+"`planning/plan.json`"+`
 - Step config: `+"`planning/step_config.json`"+`
 
 ## ANALYSIS PROCEDURE
 
-1. **Read execution logs** — Check the latest conversation history for tool calls, errors, retries
-2. **Read actual output files** — Compare output against success criteria and validation schema
-3. **Review existing learnings** — Are they specific? Actionable? Or noisy/generic?
-4. **Analyze tool/server usage** — Are there unused servers? Missing tools?
-5. **Check validation schema** — Does it catch stale files? Are there enough field checks?
-6. **Check step description** — Is it clear, specific, and actionable?
+1. **Read execution logs first** — Treat the latest successful or failing run as the main evidence. Check the conversation history for tool calls, retries, dead ends, and whether the agent behaved deterministically or reactively.
+2. **Read actual output files** — Compare output against success criteria and validation schema.
+3. **Discover the strongest viable execution mode** — Evaluate in order:
+   - `+"`learn_code`"+`: Could the observed behavior be captured as a stable Python script with fixed inputs, env vars, and deterministic outputs?
+   - `+"`code_exec`"+`: If not, could the step still be driven by one Python script that makes the needed MCP/browser/tool calls at runtime?
+   - `+"`tool_search`"+`: Only if the observed run genuinely needed tool discovery that could not have been known up front.
+   - `+"`simple`"+`: Only if the step is truly tiny and direct.
+   For each rejected stronger mode, cite the concrete evidence from the run.
+4. **Review learning artifacts** — For regular steps, inspect SKILL.md and related learning files. For learn_code steps, inspect saved Python scripts and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
+5. **Analyze tool/server usage** — Are there unused servers? Missing tools? Did the run reveal that the step boundary should move so more work can be done in Python?
+6. **Check validation schema** — Does it catch stale files? Are there enough field checks?
+7. **Check step description** — Is it clear, specific, actionable, and free of secrets/hardcoded values?
 
 ## REPORT FORMAT
 
@@ -6655,24 +7108,75 @@ Produce your report in this exact markdown structure:
 - Compare actual output content against what was expected.
 
 ### Hardcoded Values Check
-Scan the step description (from plan.json) AND learnings (SKILL.md) for hardcoded values that should use variable placeholders instead:
+Scan the step description (from plan.json) and the step's learning artifacts for hardcoded values that will break when running across different users or groups:
+- **Regular steps**: inspect `+"`learnings/{{.StepID}}/SKILL.md`"+` and any related learning files
+- **Learn-code steps**: inspect all saved Python/scripts and `+"`script_metadata.json`"+` in `+"`learnings/{{.StepID}}/`"+`
 - **Paths**: Absolute workspace paths (e.g., `+"`/Users/...`"+`, `+"`/home/...`"+`, `+"`C:\\...`"+`) — should use `+"`"+`{{"{{WORKSPACE_PATH}}"}}`+"`"+` or relative paths
 - **Secrets/credentials**: API keys, tokens, passwords, auth headers — should use secret variables from variables.json
-- **User-specific values**: Account IDs, usernames, emails, phone numbers, URLs with specific domains — should use variable placeholders (e.g., `+"`{USER_ID}`"+`, `+"`{EMAIL}`"+`)
-- **Environment-specific values**: Hardcoded ports, hostnames, database names — should be parameterized
-For each hardcoded value found, recommend the specific variable placeholder to use and where to define it.
+- **User-specific values**: Account IDs, usernames, emails, phone numbers, sheet/document IDs, URLs with specific domains — should use variable placeholders (e.g., `+"`{USER_ID}`"+`, `+"`{EMAIL}`"+`) in descriptions, or `+"`os.environ['SECRET_<VAR>']`"+` in Python scripts
+- **Environment-specific values**: Hardcoded ports, hostnames, database names, run folder names — should be parameterized
+- **Python scripts (learn_code)**: Any string literal in a script that came from a variable or secret (visible in the step description during the LLM phase) is a hardcoding violation. Scripts MUST read all dynamic values from environment variables.
+For each hardcoded value found, recommend the specific variable placeholder to use and where to define it. For Python scripts, show the exact `+"`os.environ['SECRET_<VAR>']`"+` replacement.
 
 ### Learnings Review
-- Which existing learnings are good (specific, actionable)?
-- Which are noisy, generic, or outdated?
-- What patterns are missing that should be captured?
+- For regular steps: which existing SKILL.md learnings are good (specific, actionable)?
+- For learn_code steps: which saved scripts/helpers are good, and which are brittle or outdated?
+- What patterns are missing that should be captured more clearly in the learning artifact for this mode?
+
+### Execution Mode Discovery
+- Starting from the strongest preferred mode, evaluate the step in this order: `+"`learn_code`"+` → `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`.
+- For each mode considered, say:
+  - **Can it work?** yes / no
+  - **Evidence from the observed run**: what in the logs/output supports that conclusion
+  - **Why not**: if rejected, what specifically blocks it
+- End with:
+  - **Recommended mode now**
+  - **Next mode to try after one more cleanup/refactor**, if different
+  - **What step-description, learning, or boundary change would unlock a stronger mode**
 
 ### Config Recommendations
 - Tool/server scoping: should servers be added or removed?
 - LLM tier: is the current model appropriate for this step's complexity?
-- Execution mode: any changes needed?
+- **Execution mode**: recommend the first viable mode from this required sequence:
+  1. **Learn code mode** (`+"`use_learn_code_mode=true`"+`): If the observed run could be turned into a stable Python program with fixed inputs and environment variables, recommend this first.
+  2. **Code execution mode** (`+"`use_code_execution_mode=true`"+`): If the step still needs runtime adaptation or browser/tool orchestration, but one Python script can drive it, recommend code_exec next.
+  3. **Tool search mode**: Only if the observed run genuinely requires dynamic tool discovery that could not be preconfigured.
+  4. **Simple mode**: Only if the step is genuinely tiny and does not benefit from the stronger scripted modes.
 - Learning config: should learning be disabled, locked, or detail level changed?
-- **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise and slow down execution. If it WAS used, confirm it's needed and check whether the interaction could be automated instead.
+- **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise. If it WAS used, check whether it could be automated.
+
+{{if .IsLearnCodeMode}}
+### Learn Code Mode Review
+This step runs in **learn code mode** — the saved script files ARE the learning artifact. There is no SKILL.md.
+
+{{if .LearnCodeFiles}}**Saved script files** (`+"`learnings/{{.StepID}}/`"+`):
+{{.LearnCodeFiles}}
+{{else}}**No saved scripts yet** — the step hasn't produced a passing script yet (run it first).
+{{end}}
+
+{{if .LearnCodeMetadata}}**Script metadata** (`+"`learnings/{{.StepID}}/script_metadata.json`"+`):
+`+"```json\n{{.LearnCodeMetadata}}\n```"+`
+{{end}}
+
+**Review ALL script files for:**
+- **Correctness**: Does the logic correctly implement the step description and success criteria?
+- **Input handling**: Does main.py use positional args (sys.argv[1], sys.argv[2]...) for context_dependencies? Are they used correctly?
+- **Helper modules**: Are helper files (utils.py, parser.py, etc.) clean and correct? Are they imported properly in main.py?
+- **Output**: Does it write all required output files to STEP_OUTPUT_DIR (os.environ['STEP_OUTPUT_DIR'])?
+- **Error handling**: Are errors raised clearly (non-zero exit or exception) so the controller can catch and report them?
+- **Edge cases**: Missing files, empty inputs, malformed data?
+- **Hardcoded values (CRITICAL)**: Scan every script file for values that are specific to one user/account/run and will break when the workflow runs for a different group. Common violations:
+  - User IDs, account numbers, email addresses, phone numbers hardcoded as string literals
+  - Sheet IDs, document IDs, or any identifier that varies per user
+  - Paths that include a specific username or run folder (e.g. `+"`/manishiitg/`"+`, `+"`iteration-0`"+`)
+  - Any value that appeared in the step description or was visible during the LLM phase
+  All such values must be read from environment variables (`+"`os.environ['SECRET_<VAR_NAME>']`"+`) — they are injected automatically at runtime. If hardcoded values are found, this is a **blocking issue** — the fix must be applied before locking.
+
+**To apply fixes:**
+- **Small fix** (bug, wrong field, output format): Edit the specific file directly in `+"`learnings/{{.StepID}}/`"+` using diff_patch_workspace_file. Next run uses updated files immediately.
+- **Full rewrite needed**: Delete all files in `+"`learnings/{{.StepID}}/`"+` via execute_shell_command (`+"`rm -rf learnings/{{.StepID}}/*`"+`), then re-run. LLM rewrites from scratch.
+- **When optimized**: Set `+"`lock_learnings=true`"+` AND `+"`optimized=true`"+` together — locks the scripts against overwrite, marks step done.
+{{end}}
 
 ### Plan Recommendations
 - Description improvements: what should be added, clarified, or removed?
@@ -6701,9 +7205,10 @@ If this is a todo_task step with sub-agents, analyze tier usage from the routing
 
 ### Priority Actions
 Ranked list of the top 3-5 most impactful changes, with specific instructions for each.
+The first action should usually be the next experiment in the mode ladder (`+"`learn_code`"+` first, then `+"`code_exec`"+`, then `+"`tool_search`"+`) unless the step has a blocking correctness issue that must be fixed before mode changes.
 `)
 
-var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Discover the strongest viable execution mode in order: learn_code, then code_exec, then tool_search, then simple.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // inferObjectiveAgentSystemTemplate is the system prompt for the objective inference agent
 var inferObjectiveAgentSystemTemplate = MustRegisterTemplate("inferObjectiveAgentSystem", `# Workflow Objective Inference Agent
@@ -6756,7 +7261,7 @@ var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflow
 
 You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective and success criteria, and produce a structured report that the builder can act on immediately.
 
-You do NOT optimize individual step content (descriptions, learnings, schemas) — that is optimize_step's job. You evaluate whether the plan structure itself is correct and complete for achieving the objective and satisfying the success criteria.
+Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to increase the share of steps that can run as `+"`learn_code`"+`, then `+"`code_exec`"+`, and use `+"`tool_search`"+` only as a last resort.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files.
@@ -6765,6 +7270,8 @@ You do NOT optimize individual step content (descriptions, learnings, schemas) �
 4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
 5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
 6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
+7. **Prefer deterministic execution**: When recommending structure changes, prefer designs that make steps more deterministic and easier to run in this order: `+"`learn_code`"+` > `+"`code_exec`"+` > `+"`tool_search`"+`.
+8. **Check portability hazards**: If plan-visible text contains hardcoded secrets, user-specific values, absolute paths, or run-folder-specific paths, flag them even if they are not yet causing a failure.
 
 ## CONTEXT
 
@@ -6812,11 +7319,18 @@ Work through these checks in order:
 2. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
 3. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective or success criteria requires is unhandled.
 4. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
-5. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
-6. **Granularity** — Any step too coarse (multiple distinct outputs, should be split)? Any two steps that should be merged (share context, no independent value)?
-7. **Redundancy** — Any two steps or routes doing the same work?
-8. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
-9. **Evaluation coverage** — Read `+"`evaluation/evaluation_plan.json`"+` via shell. If it exists: does each eval step map to a real workflow output? Does the set of eval steps cover every condition in the success criteria and every critical output the objective requires? Are any eval success criteria inconsistent with the workflow's validation schemas? If the file does not exist, flag it as missing.
+5. **Execution mode fit** — For each step, decide whether the current structure makes `+"`learn_code`"+`, `+"`code_exec`"+`, or `+"`tool_search`"+` the right mode. If the current structure forces a weaker mode than necessary, explain what structural change would unlock a better mode.
+6. **Granularity for mode optimization** — Any step too coarse (multiple distinct outputs, mixed deterministic and exploratory work, should be split)? Any two steps that should be merged because they share the same deterministic transform and splitting them adds unnecessary handoff overhead? Optimize for the highest proportion of steps that can use `+"`learn_code`"+`, then `+"`code_exec`"+`, and minimize `+"`tool_search`"+`.
+7. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
+8. **Redundancy** — Any two steps or routes doing the same work?
+9. **Portability / hardcoded values** — Scan plan-visible fields for hardcoded values that will break reuse across users/groups/environments:
+   - absolute paths (`+"`/Users/...`"+`, `+"`/home/...`"+`, `+"`C:\\...`"+`)
+   - run-specific paths or folder names (`+"`runs/iteration-0/...`"+`, hardcoded `+"`group-1`"+`, step-specific run folders)
+   - user- or account-specific values that should be variables
+   - secrets or credentials embedded directly in plan text
+   For each finding, name the exact step ID and field, the risky value, and the placeholder/variable pattern that should replace it.
+10. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
+11. **Evaluation coverage** — Read `+"`evaluation/evaluation_plan.json`"+` via shell. If it exists: does each eval step map to a real workflow output? Does the set of eval steps cover every condition in the success criteria and every critical output the objective requires? Are any eval success criteria inconsistent with the workflow's validation schemas? If the file does not exist, flag it as missing.
 
 ## REPORT FORMAT
 
@@ -6829,6 +7343,19 @@ List only steps with structural issues (skip steps that are correctly placed and
 For each problematic step:
 - **[actual-step-id]** (`+"`type`"+`): <the specific structural problem and its impact on the objective>
 - For nested steps: **[parent-id > sub-id]** (`+"`type`"+`): <problem>
+
+### Execution Mode & Granularity
+For each step where the current design is preventing the best mode:
+- **[actual-step-id]**: current mode=`+"`simple|learn_code|code_exec|tool_search|unknown`"+` → recommended mode=`+"`learn_code|code_exec|tool_search|simple`"+`
+- **Why**: <deterministic transform, runtime browser/tool interaction, dynamic tool discovery, etc.>
+- **Structural fix**: <split before/after [step-id] | merge with [step-id] | keep as-is but rewrite step boundaries>
+
+Use these rules:
+- Prefer `+"`learn_code`"+` for deterministic transforms, extraction, normalization, calculations, and fixed API calls.
+- Use `+"`code_exec`"+` when a step needs runtime adaptation or multiple MCP calls but still benefits from a single script.
+- Use `+"`tool_search`"+` only when the exact tools genuinely cannot be known up front.
+- If a step mixes deterministic work with exploratory/browser/tool-discovery work, recommend splitting it so the deterministic portion can move to `+"`learn_code`"+`.
+- If two adjacent deterministic steps only exist because of an artificial file handoff and would be cleaner as one stable transform, recommend merging them.
 
 ### Missing Steps / Routes
 For each gap in the objective that no existing step covers:
@@ -6846,6 +7373,12 @@ For each gap in the objective that no existing step covers:
 ### Redundant / Misplaced Steps
 For each step or route that duplicates work or is in the wrong position:
 - **[actual-step-id]**: <why redundant or misplaced> — **Fix**: <remove via delete_plan_steps | merge into [step-id] | move after [step-id]>
+
+### Portability / Hardcoded Values
+List only findings with concrete risk. For each:
+- **[actual-step-id]**: field=`+"`description|success_criteria|context_output|route condition|other`"+` — hardcoded value=`+"`...`"+`
+- **Risk**: <why it will break across users, groups, environments, or runs>
+- **Fix**: <replace with `+"`"+`{{"{{VARIABLE_NAME}}"}}`+"`"+`, secret env, relative path, or run-agnostic output name>
 
 ### Step Type Issues
 For each step using the wrong type:
@@ -6998,6 +7531,8 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 	if stepNum < 1 {
 		stepNum = 1 // inner steps use step-1
 	}
+	legacyStepPath := fmt.Sprintf("step-%d", stepNum)
+	artifactFolder := getArtifactFolderName(stepID, legacyStepPath)
 
 	// --- Gather context (all read-only) ---
 
@@ -7021,17 +7556,24 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 
 	// Latest validation result
 	validationResult := ""
-	validationLogDir := fmt.Sprintf("runs/%s/logs/step-%d", runFolder, stepNum)
-	for i := 5; i >= 2; i-- {
-		vPath := fmt.Sprintf("%s/validation-%d.json", validationLogDir, i)
-		if content, err := iwm.controller.ReadWorkspaceFile(ctx, vPath); err == nil {
-			validationResult = content
+	validationLogDirs := []string{
+		fmt.Sprintf("runs/%s/logs/%s", runFolder, artifactFolder),
+		fmt.Sprintf("runs/%s/logs/%s", runFolder, legacyStepPath),
+	}
+	for _, validationLogDir := range validationLogDirs {
+		for i := 5; i >= 2; i-- {
+			vPath := fmt.Sprintf("%s/validation-%d.json", validationLogDir, i)
+			if content, err := iwm.controller.ReadWorkspaceFile(ctx, vPath); err == nil {
+				validationResult = content
+				break
+			}
+		}
+		if validationResult != "" {
 			break
 		}
-	}
-	if validationResult == "" {
 		if content, err := iwm.controller.ReadWorkspaceFile(ctx, fmt.Sprintf("%s/validation.json", validationLogDir)); err == nil {
 			validationResult = content
+			break
 		}
 	}
 
@@ -7047,11 +7589,19 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 
 	// Tool usage summary
 	toolUsageSummary := ""
-	logsPath := fmt.Sprintf("runs/%s/logs/step-%d/execution", runFolder, stepNum)
-	absLogsPath := fmt.Sprintf("%s/%s", iwm.controller.GetWorkspacePath(), logsPath)
 	toolUsageMap := make(map[string]*ToolUsageEntry)
 	summary := &StepToolUsageSummary{}
-	extractToolsFromLogsPath(ctx, absLogsPath, toolUsageMap, iwm.controller.ReadWorkspaceFile, logger, summary)
+	logPaths := []string{
+		fmt.Sprintf("runs/%s/logs/%s/execution", runFolder, artifactFolder),
+		fmt.Sprintf("runs/%s/logs/%s/execution", runFolder, legacyStepPath),
+	}
+	for _, logsPath := range logPaths {
+		absLogsPath := fmt.Sprintf("%s/%s", iwm.controller.GetWorkspacePath(), logsPath)
+		extractToolsFromLogsPath(ctx, absLogsPath, toolUsageMap, iwm.controller.ReadWorkspaceFile, logger, summary)
+		if len(toolUsageMap) > 0 {
+			break
+		}
+	}
 	if len(toolUsageMap) > 0 {
 		var toolSB strings.Builder
 		for name, entry := range toolUsageMap {
@@ -7071,6 +7621,39 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 	contextDeps := ""
 	if deps := targetStep.GetContextDependencies(); len(deps) > 0 {
 		contextDeps = strings.Join(deps, ", ")
+	}
+
+	// Learn code mode: read all saved script files and metadata from learnings/{step-id}/
+	// learn_code saves ALL files from code/ dir into learnings/{step-id}/ directly (main.py + helpers)
+	learnCodeFiles := "" // all .py files formatted as a multi-file block
+	learnCodeMetadata := ""
+	isLearnCodeMode := false
+	for _, sc := range stepConfigs {
+		if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.UseLearnCodeMode != nil && *sc.AgentConfigs.UseLearnCodeMode {
+			isLearnCodeMode = true
+			break
+		}
+	}
+	if isLearnCodeMode {
+		learnDir := fmt.Sprintf("learnings/%s", stepID)
+		if files, err := iwm.controller.ListWorkspaceFiles(ctx, learnDir); err == nil {
+			var fileSB strings.Builder
+			for _, fname := range files {
+				if !strings.HasSuffix(fname, ".py") {
+					continue
+				}
+				content, readErr := iwm.controller.ReadWorkspaceFile(ctx, learnDir+"/"+fname)
+				if readErr != nil {
+					continue
+				}
+				fileSB.WriteString(fmt.Sprintf("### %s\n```python\n%s\n```\n\n", fname, content))
+			}
+			learnCodeFiles = fileSB.String()
+		}
+		if content, err := iwm.controller.ReadWorkspaceFile(ctx, learnDir+"/script_metadata.json"); err == nil {
+			learnCodeMetadata = content
+		}
+		existingLearnings = "" // learn_code uses the saved script files below as the learning artifact
 	}
 
 	// --- Create agent ---
@@ -7150,6 +7733,9 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 		"Focus":                   focus,
 		"SessionID":               iwm.sessionID,
 		"WorkflowID":              iwm.workflowID,
+		"LearnCodeFiles":          learnCodeFiles,
+		"LearnCodeMetadata":       learnCodeMetadata,
+		"IsLearnCodeMode":         fmt.Sprintf("%v", isLearnCodeMode),
 	}
 
 	// --- Execute ---
@@ -7237,10 +7823,38 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
 			optimized := false
+			mode := "simple"
+			declaredMode := ""
+			lockLearnings := false
+			disableLearning := false
+			descriptionReviewed := false
+			descriptionNoSecrets := false
 			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
 				optimized = *sc.AgentConfigs.Optimized
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v\n", sc.ID, optimized))
+			if sc.AgentConfigs != nil {
+				if sc.AgentConfigs.UseLearnCodeMode != nil && *sc.AgentConfigs.UseLearnCodeMode {
+					mode = "learn_code"
+				} else if sc.AgentConfigs.UseCodeExecutionMode != nil && *sc.AgentConfigs.UseCodeExecutionMode {
+					mode = "code_exec"
+				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
+					mode = "tool_search"
+				}
+				if sc.AgentConfigs.LockLearnings != nil {
+					lockLearnings = *sc.AgentConfigs.LockLearnings
+				}
+				if sc.AgentConfigs.DisableLearning != nil {
+					disableLearning = *sc.AgentConfigs.DisableLearning
+				}
+				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+				if sc.AgentConfigs.DescriptionOptimized != nil {
+					descriptionReviewed = *sc.AgentConfigs.DescriptionOptimized
+				}
+				if sc.AgentConfigs.DescriptionNoSecrets != nil {
+					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, disableLearning, descriptionReviewed, descriptionNoSecrets))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -7298,15 +7912,15 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 	runFolder := iwm.controller.selectedRunFolder
 
 	templateVars := map[string]string{
-		"WorkspacePath":          workspacePath,
-		"RunFolder":              runFolder,
-		"PlanJSON":               planJSON,
-		"StepConfigSummary":      stepConfigSummary,
-		"WorkflowObjective":      workflowObjective,
+		"WorkspacePath":           workspacePath,
+		"RunFolder":               runFolder,
+		"PlanJSON":                planJSON,
+		"StepConfigSummary":       stepConfigSummary,
+		"WorkflowObjective":       workflowObjective,
 		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"Focus":                  focus,
-		"SessionID":              iwm.sessionID,
-		"WorkflowID":             iwm.workflowID,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
 	}
 
 	logger.Info(fmt.Sprintf("🔍 Running optimize_workflow agent (objective: %q, success_criteria: %q, focus: %q)", workflowObjective, workflowSuccessCriteria, focus))
@@ -7336,26 +7950,23 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 		stepConfigMap[stepConfigs[i].ID] = &stepConfigs[i]
 	}
 
-	// Collect all step IDs currently in the plan (top-level + nested branches)
+	// Collect all step IDs currently in the plan (top-level + nested branches/routes/sub-agents)
 	type stepEntry struct {
+		step     PlanStepInterface
 		id       string
 		stepType StepType
 		title    string
 	}
-	var collectSteps func(steps []PlanStepInterface) []stepEntry
-	collectSteps = func(steps []PlanStepInterface) []stepEntry {
-		var out []stepEntry
-		for _, s := range steps {
-			out = append(out, stepEntry{id: s.GetID(), stepType: s.StepType(), title: s.GetTitle()})
-			// Recurse into conditional branches
-			if c, ok := s.(*ConditionalPlanStep); ok {
-				out = append(out, collectSteps(c.IfTrueSteps)...)
-				out = append(out, collectSteps(c.IfFalseSteps)...)
-			}
-		}
-		return out
+	allStepInfos := collectAllSteps(plan.Steps)
+	allSteps := make([]stepEntry, 0, len(allStepInfos))
+	for _, info := range allStepInfos {
+		allSteps = append(allSteps, stepEntry{
+			step:     info.Step,
+			id:       info.Step.GetID(),
+			stepType: info.Step.StepType(),
+			title:    info.Step.GetTitle(),
+		})
 	}
-	allSteps := collectSteps(plan.Steps)
 
 	// Build set of all plan step IDs for orphan detection
 	planStepIDs := make(map[string]bool, len(allSteps))
@@ -7365,7 +7976,7 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 
 	// Step types that require agent execution (optimization + learnings apply)
 	needsOptimization := func(t StepType) bool {
-		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeTodoTask || t == StepTypeRouting
+		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeDecision || t == StepTypeTodoTask || t == StepTypeRouting || t == StepTypeOrchestration
 	}
 
 	var issues []string
@@ -7398,31 +8009,75 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 
 		cfg := stepConfigMap[entry.id]
 		var stepIssues []string
+		agentCfg := (*AgentConfigs)(nil)
+		if cfg != nil {
+			agentCfg = cfg.AgentConfigs
+		}
 
 		// 2a. Optimized flag
-		isOptimized := cfg != nil && cfg.AgentConfigs != nil && cfg.AgentConfigs.Optimized != nil && *cfg.AgentConfigs.Optimized
+		isOptimized := agentCfg != nil && agentCfg.Optimized != nil && *agentCfg.Optimized
 		if !isOptimized {
 			stepIssues = append(stepIssues, "not optimized")
 		}
 
-		// 2b. Learnings exist
-		learningsPath := fmt.Sprintf("%s/%s", learningsBase, entry.id)
-		learningFiles, _ := iwm.controller.ListWorkspaceFiles(ctx, learningsPath)
-		hasMDLearnings := false
-		for _, f := range learningFiles {
-			if strings.HasSuffix(f, ".md") && f != "_learning_new.md" {
-				hasMDLearnings = true
-				break
-			}
+		// 2b. Mode declaration exists and is internally consistent
+		stepIssues = append(stepIssues, validateExecutionModeDeclaration(agentCfg)...)
+
+		// 2c. Description review is current and complete
+		currentDescriptionHash := computeDescriptionHash(entry.step.GetDescription())
+		if agentCfg == nil || strings.TrimSpace(agentCfg.DescriptionHash) == "" {
+			stepIssues = append(stepIssues, "description_hash missing")
+		} else if agentCfg.DescriptionHash != currentDescriptionHash {
+			stepIssues = append(stepIssues, "description_hash is stale — description changed since last review")
 		}
-		if !hasMDLearnings {
-			stepIssues = append(stepIssues, "no learnings")
+		if agentCfg == nil || agentCfg.DescriptionOptimized == nil || !*agentCfg.DescriptionOptimized {
+			stepIssues = append(stepIssues, "description_optimized not confirmed")
+		}
+		if agentCfg == nil || strings.TrimSpace(agentCfg.DescriptionOptimizationReason) == "" {
+			stepIssues = append(stepIssues, "description_optimization_reason missing")
+		}
+		if agentCfg == nil || strings.TrimSpace(agentCfg.DescriptionLearningsAlignmentReason) == "" {
+			stepIssues = append(stepIssues, "description_learnings_alignment_reason missing")
+		}
+		if agentCfg == nil || agentCfg.DescriptionNoSecrets == nil || !*agentCfg.DescriptionNoSecrets {
+			stepIssues = append(stepIssues, "description_no_secrets not confirmed")
+		}
+		if agentCfg == nil || strings.TrimSpace(agentCfg.DescriptionSecretsReviewReason) == "" {
+			stepIssues = append(stepIssues, "description_secrets_review_reason missing")
 		}
 
-		// 2c. Pre-discovered tools for tool-search steps
-		useToolSearch := cfg != nil && cfg.AgentConfigs != nil && cfg.AgentConfigs.UseToolSearchMode != nil && *cfg.AgentConfigs.UseToolSearchMode
+		// 2d. Learnings exist
+		learningsPath := fmt.Sprintf("%s/%s", learningsBase, entry.id)
+		learningFiles, _ := iwm.controller.ListWorkspaceFiles(ctx, learningsPath)
+		isLearnCode := agentCfg != nil && agentCfg.UseLearnCodeMode != nil && *agentCfg.UseLearnCodeMode
+		if isLearnCode {
+			hasScriptLearnings := false
+			for _, f := range learningFiles {
+				if strings.HasSuffix(f, ".py") {
+					hasScriptLearnings = true
+					break
+				}
+			}
+			if !hasScriptLearnings {
+				stepIssues = append(stepIssues, "no learn_code script learnings")
+			}
+		} else {
+			hasMDLearnings := false
+			for _, f := range learningFiles {
+				if strings.HasSuffix(f, ".md") && f != "_learning_new.md" {
+					hasMDLearnings = true
+					break
+				}
+			}
+			if !hasMDLearnings {
+				stepIssues = append(stepIssues, "no learnings")
+			}
+		}
+
+		// 2e. Pre-discovered tools for tool-search steps
+		useToolSearch := agentCfg != nil && agentCfg.UseToolSearchMode != nil && *agentCfg.UseToolSearchMode
 		if useToolSearch {
-			hasPreDiscovered := cfg != nil && cfg.AgentConfigs != nil && len(cfg.AgentConfigs.PreDiscoveredTools) > 0
+			hasPreDiscovered := agentCfg != nil && len(agentCfg.PreDiscoveredTools) > 0
 			if !hasPreDiscovered {
 				stepIssues = append(stepIssues, "tool-search mode but no pre-discovered tools")
 			}

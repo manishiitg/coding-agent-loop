@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // and to preserve per-workspace data across workflow switches.
@@ -50,7 +49,6 @@ export interface UsePlanDataReturn {
   loading: boolean
   error: string | null
   changes: PlanChanges | null  // Latest detected changes (set via setChanges from granular events)
-  stepOverride: AgentConfigs | null  // Global step override config
   loadPlan: () => Promise<void>  // Loads plan without comparison
   /** @deprecated Legacy method - prefer using updateStep() which calls backend APIs. See method documentation for when to use. */
   savePlan: (plan: PlanningResponse) => Promise<void>
@@ -61,7 +59,6 @@ export interface UsePlanDataReturn {
   updateStep: (stepIndex: number, updates: Partial<PlanStep>) => Promise<void>
   deleteStep: (stepIndex: number) => Promise<void>
   addStep: (step: PlanStep, afterIndex?: number) => Promise<void>
-  saveStepOverride: (agentConfigs: AgentConfigs | null) => Promise<void>  // Save global step override
   refresh: () => Promise<void>  // Refreshes plan without comparison (alias for loadPlan)
   clearChanges: () => void  // Clear the changes state
   setChanges: (changes: PlanChanges | null) => void  // Set changes directly (for granular events)
@@ -168,14 +165,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [changes, setChanges] = useState<PlanChanges | null>(null)
-  const [stepOverride, setStepOverrideLocal] = useState<AgentConfigs | null>(null)
-  const setStepOverrideInStore = useWorkflowStore(state => state.setStepOverride)
-
-  // Sync stepOverride to both local state and workflow store
-  const setStepOverride = useCallback((override: AgentConfigs | null) => {
-    setStepOverrideLocal(override)
-    setStepOverrideInStore(override)
-  }, [setStepOverrideInStore])
 
   // Track workspace path to detect workflow switches
   const currentWorkspaceRef = useRef<string | null>(null)
@@ -219,27 +208,13 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
         }
       }
 
-      // Also load step_override.json (global overrides)
-      if (workspacePath) {
-        try {
-          const overrideResponse = await agentApi.getStepOverride(workspacePath)
-          if (overrideResponse.success && overrideResponse.data?.agent_configs) {
-            setStepOverride(overrideResponse.data.agent_configs)
-          } else {
-            setStepOverride(null)
-          }
-        } catch {
-          // step_override.json doesn't exist - that's okay
-          setStepOverride(null)
-        }
-
-      }
+      // Step overrides are now loaded from workflow.json in WorkflowLayout.tsx
 
       return planData
     }
 
     return null
-  }, [getPlanFilePath, getStepConfigFilePath, workspacePath, setStepOverride])
+  }, [getPlanFilePath, getStepConfigFilePath, workspacePath])
 
   // Load plan from workspace with caching to prevent duplicate API calls
   const loadPlan = useCallback(async (): Promise<void> => {
@@ -666,25 +641,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   }, [plan, workspacePath, loadPlan])
 
   // Save global step override
-  const saveStepOverride = useCallback(async (agentConfigs: AgentConfigs | null) => {
-    if (!workspacePath) {
-      throw new Error('No workspace path provided')
-    }
-
-    try {
-      const result = await agentApi.updateStepOverride(workspacePath, agentConfigs)
-      if (!result.success) {
-        throw new Error(result.message || 'Failed to save step override')
-      }
-
-      // Update local state
-      setStepOverride(agentConfigs)
-      console.log('[usePlanData] Saved step_override.json:', agentConfigs ? 'updated' : 'cleared')
-    } catch (err) {
-      console.error('[usePlanData] Failed to save step override:', err)
-      throw err
-    }
-  }, [workspacePath])
 
   // Refresh plan (returns detected changes)
   // Refresh function that invalidates cache and reloads
@@ -707,7 +663,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     } else {
       // Reset everything when no workspace
       setPlan(null)
-      setStepOverride(null)
       currentWorkspaceRef.current = null
       setError(null)
       setChanges(null)
@@ -731,7 +686,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     loading,
     error,
     changes,
-    stepOverride,
     loadPlan,
     savePlan,
     saveStepConfig,
@@ -739,7 +693,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     updateStep,
     deleteStep,
     addStep,
-    saveStepOverride,
     refresh,
     clearChanges,
     setChanges

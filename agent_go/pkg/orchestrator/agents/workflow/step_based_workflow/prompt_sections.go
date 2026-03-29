@@ -82,18 +82,130 @@ func BuildVariablesSection(variableNames string, variableValues string) string {
 	return sb.String()
 }
 
-// ResolveDependencyPaths maps dependency filenames to full absolute paths by matching them to
-// the producing step's execution folder. This is the common logic used by both execution and
-// todo task agents to show full paths instead of bare filenames.
-func ResolveDependencyPaths(
-	deps []string,
+func contextOutputMatchesDependency(output string, dep string) bool {
+	if strings.TrimSpace(output) == strings.TrimSpace(dep) {
+		return true
+	}
+	for _, part := range strings.Split(output, ",") {
+		if strings.TrimSpace(part) == strings.TrimSpace(dep) {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildPythonBestPractices returns a "Python Best Practices" section for code execution agents.
+// varMappingLines lists {{VAR}} → SECRET_VAR mappings (may be empty).
+// hasInputArgs: whether the step has positional input file args (sys.argv).
+// This is the single source of truth for Python code patterns so all generated scripts are consistent.
+func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) string {
+	var sb strings.Builder
+	sb.WriteString("\n## Python Best Practices\n\n")
+	sb.WriteString("Use these exact patterns for consistency across all scripts.\n\n")
+
+	// Env vars / secrets
+	sb.WriteString("### Accessing secrets and workflow variables\n")
+	sb.WriteString("```python\n")
+	sb.WriteString("import os, sys\n\n")
+	sb.WriteString("# Always use os.environ['KEY'] — never os.environ.get('KEY', 'default')\n")
+	sb.WriteString("# Missing var = KeyError (fail loudly, never silently fall back to a hardcoded value)\n\n")
+	sb.WriteString("# Workflow variables → VAR_<NAME>  (non-secret config: user IDs, sheet IDs, etc.)\n")
+	if len(varMappingLines) > 0 {
+		for _, line := range varMappingLines {
+			// line format: "{{VAR}} → os.environ['VAR_VAR']"
+			parts := strings.SplitN(line, " → ", 2)
+			if len(parts) == 2 {
+				varName := strings.Trim(parts[0], "{}")
+				sb.WriteString(fmt.Sprintf("%s = os.environ['VAR_%s']\n", strings.ToLower(varName), varName))
+			}
+		}
+	} else {
+		sb.WriteString("my_var = os.environ['VAR_MY_VAR']\n")
+	}
+	sb.WriteString("\n# Real secrets → SECRET_<NAME>  (passwords, API keys, tokens)\n")
+	sb.WriteString("my_password = os.environ['SECRET_MY_PASSWORD']\n")
+	sb.WriteString("\n# Special vars always available:\n")
+	sb.WriteString("output_dir = os.environ['STEP_OUTPUT_DIR']  # write all output files here\n")
+	sb.WriteString("mcp_url    = os.environ['MCP_API_URL']\n")
+	sb.WriteString("mcp_token  = os.environ['MCP_API_TOKEN']\n")
+	sb.WriteString("```\n\n")
+
+	// Input files
+	if hasInputArgs {
+		sb.WriteString("### Reading input files (positional args)\n")
+		sb.WriteString("```python\n")
+		sb.WriteString("import sys, json\n\n")
+		sb.WriteString("input_file = sys.argv[1]          # first context_dependency path\n")
+		sb.WriteString("# input_file2 = sys.argv[2]       # second, if any\n")
+		sb.WriteString("with open(input_file) as f:\n")
+		sb.WriteString("    data = json.load(f)            # or f.read() for plain text\n")
+		sb.WriteString("```\n\n")
+	}
+
+	// MCP tool call
+	sb.WriteString("### Calling an MCP tool\n")
+	sb.WriteString("```python\n")
+	sb.WriteString("import requests, os, json, time\n\n")
+	sb.WriteString("def call_mcp(server, tool, args, retries=3, backoff=2):\n")
+	sb.WriteString("    \"\"\"Call an MCP tool via HTTP. Retries on broken pipe / connection errors.\"\"\"\n")
+	sb.WriteString("    url = os.environ['MCP_API_URL'] + f'/tools/mcp/{server}/{tool}'\n")
+	sb.WriteString("    headers = {\n")
+	sb.WriteString("        'Authorization': f'Bearer {os.environ[\"MCP_API_TOKEN\"]}',\n")
+	sb.WriteString("        'Content-Type': 'application/json',\n")
+	sb.WriteString("    }\n")
+	sb.WriteString("    last_err = None\n")
+	sb.WriteString("    for attempt in range(retries):\n")
+	sb.WriteString("        try:\n")
+	sb.WriteString("            resp = requests.post(url, json=args, headers=headers, timeout=120)\n")
+	sb.WriteString("            resp.raise_for_status()\n")
+	sb.WriteString("            result = resp.json()\n")
+	sb.WriteString("            if not result.get('success'):\n")
+	sb.WriteString("                err = result.get('error', '')\n")
+	sb.WriteString("                # Broken pipe from Go's MCP connection — retry, the server will reconnect\n")
+	sb.WriteString("                if 'broken pipe' in err.lower() or 'connection reset' in err.lower() or 'transport closed' in err.lower():\n")
+	sb.WriteString("                    last_err = RuntimeError(f'MCP broken pipe: {err}')\n")
+	sb.WriteString("                    if attempt < retries - 1:\n")
+	sb.WriteString("                        time.sleep(backoff * (attempt + 1))\n")
+	sb.WriteString("                        continue\n")
+	sb.WriteString("                raise RuntimeError(f'MCP error: {err}')\n")
+	sb.WriteString("            return result['result']\n")
+	sb.WriteString("        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:\n")
+	sb.WriteString("            last_err = e\n")
+	sb.WriteString("            if attempt < retries - 1:\n")
+	sb.WriteString("                time.sleep(backoff * (attempt + 1))\n")
+	sb.WriteString("    raise last_err\n")
+	sb.WriteString("```\n\n")
+
+	// Writing output files
+	sb.WriteString("### Writing output files\n")
+	sb.WriteString("```python\n")
+	sb.WriteString("import os, json\n\n")
+	sb.WriteString("output_dir = os.environ['STEP_OUTPUT_DIR']\n")
+	sb.WriteString("os.makedirs(output_dir, exist_ok=True)\n\n")
+	sb.WriteString("# JSON output:\n")
+	sb.WriteString("with open(os.path.join(output_dir, 'result.json'), 'w') as f:\n")
+	sb.WriteString("    json.dump(data, f, indent=2)\n\n")
+	sb.WriteString("# Text output:\n")
+	sb.WriteString("with open(os.path.join(output_dir, 'output.txt'), 'w') as f:\n")
+	sb.WriteString("    f.write(text)\n")
+	sb.WriteString("```\n")
+
+	return sb.String()
+}
+
+// ResolveDependencyPathCandidates returns candidate absolute paths for a dependency, ordered by
+// workflow likelihood. Callers can optionally verify these against the real workspace and pick
+// the first existing file.
+func ResolveDependencyPathCandidates(
+	dep string,
 	stepIndex int,
+	currentStepPath string,
 	allSteps []PlanStepInterface,
 	executionWorkspacePath string,
 	docsRoot string,
 	variableValues map[string]string,
 ) []string {
-	if len(deps) == 0 {
+	if dep == "" {
 		return nil
 	}
 	toAbs := func(path string) string {
@@ -102,23 +214,107 @@ func ResolveDependencyPaths(
 		}
 		return filepath.Join(docsRoot, path)
 	}
+	buildDepAbsPath := func(folderPath string, dep string) string {
+		return fmt.Sprintf("%s/%s", toAbs(folderPath), dep)
+	}
+	currentStepID := ""
+	if stepIndex >= 0 && stepIndex < len(allSteps) {
+		currentStepID = allSteps[stepIndex].GetID()
+	}
+	if currentStepPath == "" {
+		currentStepPath = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+
+	if filepath.IsAbs(dep) || strings.Contains(dep, "/") {
+		return []string{dep}
+	}
+
+	candidates := make([]string, 0, 3)
+	appendCandidate := func(candidate string) {
+		if candidate == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == candidate {
+				return
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	for j := 0; j < stepIndex && j < len(allSteps); j++ {
+		prevOutput := ResolveVariables(allSteps[j].GetContextOutput().String(), variableValues)
+		if contextOutputMatchesDependency(prevOutput, dep) {
+			prevStepPath := fmt.Sprintf("step-%d", j+1)
+			if allSteps[j].StepType() == StepTypeDecision {
+				prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
+			}
+			prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, allSteps[j].GetID(), prevStepPath)
+			appendCandidate(buildDepAbsPath(prevStepExecPath, dep))
+		}
+	}
+
+	if cut := strings.LastIndex(currentStepPath, "-sub-"); cut != -1 {
+		if stepIndex >= 0 && stepIndex < len(allSteps) {
+			if todoStep, ok := allSteps[stepIndex].(*TodoTaskPlanStep); ok {
+				parentRoutePrefix := fmt.Sprintf("step-%d-sub-", stepIndex+1)
+				for _, route := range todoStep.PredefinedRoutes {
+					if route.SubAgentStep == nil {
+						continue
+					}
+					routeOutput := ResolveVariables(route.SubAgentStep.GetContextOutput().String(), variableValues)
+					if !contextOutputMatchesDependency(routeOutput, dep) {
+						continue
+					}
+					routeStepPath := parentRoutePrefix + route.RouteID
+					routeExecPath := getExecutionFolderPath(executionWorkspacePath, route.SubAgentStep.GetID(), routeStepPath)
+					appendCandidate(buildDepAbsPath(routeExecPath, dep))
+				}
+			}
+		}
+
+		parentStepPath := currentStepPath[:cut]
+		parentStepID := ""
+		if parentStepPath == fmt.Sprintf("step-%d", stepIndex+1) {
+			parentStepID = currentStepID
+		}
+		parentStepExecPath := getExecutionFolderPath(executionWorkspacePath, parentStepID, parentStepPath)
+		appendCandidate(buildDepAbsPath(parentStepExecPath, dep))
+	}
+
+	currentStepExecPath := getExecutionFolderPath(executionWorkspacePath, currentStepID, currentStepPath)
+	appendCandidate(buildDepAbsPath(currentStepExecPath, dep))
+
+	if len(candidates) == 0 {
+		return []string{dep}
+	}
+	return candidates
+}
+
+// ResolveDependencyPaths maps dependency filenames to the most likely absolute path based on the
+// workflow plan. This is the common logic used by both execution and todo task agents to show
+// full paths instead of bare filenames.
+func ResolveDependencyPaths(
+	deps []string,
+	stepIndex int,
+	currentStepPath string,
+	allSteps []PlanStepInterface,
+	executionWorkspacePath string,
+	docsRoot string,
+	variableValues map[string]string,
+) []string {
+	if len(deps) == 0 {
+		return nil
+	}
 
 	fullPathDeps := make([]string, 0, len(deps))
 	for _, dep := range deps {
-		fullPath := dep // Default to bare filename if no match found
-		for j := 0; j < stepIndex && j < len(allSteps); j++ {
-			prevOutput := ResolveVariables(allSteps[j].GetContextOutput().String(), variableValues)
-			if prevOutput == dep {
-				prevStepPath := fmt.Sprintf("step-%d", j+1)
-				if allSteps[j].StepType() == StepTypeDecision {
-					prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
-				}
-				prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, prevStepPath)
-				fullPath = fmt.Sprintf("%s/%s", toAbs(prevStepExecPath), dep)
-				break
-			}
+		candidates := ResolveDependencyPathCandidates(dep, stepIndex, currentStepPath, allSteps, executionWorkspacePath, docsRoot, variableValues)
+		if len(candidates) == 0 {
+			fullPathDeps = append(fullPathDeps, dep)
+			continue
 		}
-		fullPathDeps = append(fullPathDeps, fullPath)
+		fullPathDeps = append(fullPathDeps, candidates[0])
 	}
 	return fullPathDeps
 }

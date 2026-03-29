@@ -25,6 +25,17 @@ const STREAMING_INACTIVITY_MS = 60000
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
 
+type LearnCodeScriptExecutionData = {
+  step_id?: string
+  fix_iteration?: number
+}
+
+const getLearnCodeScriptExecutionData = (event: PollingEvent): LearnCodeScriptExecutionData | undefined => {
+  if (event.type !== 'learn_code_script_execution') return undefined
+  const wrapper = event.data as { data?: LearnCodeScriptExecutionData } | undefined
+  return wrapper?.data || event.data as LearnCodeScriptExecutionData | undefined
+}
+
 // Helper to compute visible event counts (full recomputation — use sparingly)
 const computePerModeCounts = (events: PollingEvent[]): PerModeEventCounts => {
   return {
@@ -700,13 +711,71 @@ export const useChatStore = create<ChatState>()(
             return state
           }
 
-          const newEvents = [...currentEvents, ...uniqueNewEvents]
+          // When a new learn_code_script_execution starts (fix_iteration=0), purge all
+          // previous learn_code events for that step so stale ✗ failed events don't linger.
+          let baseEvents = currentEvents
+          for (const ev of uniqueNewEvents) {
+            const learnCodeData = getLearnCodeScriptExecutionData(ev)
+            if (learnCodeData?.fix_iteration === 0) {
+              const stepId = learnCodeData.step_id
+              console.log('[FIX_LEARN_CODE_UI] store_reset_step_history', {
+                sessionId,
+                eventId: ev.id,
+                stepId,
+                currentEventCount: currentEvents.length,
+              })
+              baseEvents = baseEvents.filter(
+                e => getLearnCodeScriptExecutionData(e)?.step_id !== stepId
+              )
+              // Rebuild idSet after removal so dedup stays consistent
+              idSet = new Set(baseEvents.map(e => e.id).filter(Boolean) as string[])
+              tabEventIdSets.set(sessionId, idSet)
+            }
+          }
+
+          const newEvents = [...baseEvents, ...uniqueNewEvents]
+
+          // For learn_code steps, keep only the final result event per step_id.
+          // A step goes through multiple fix iterations; intermediate failures should
+          // not linger once a later attempt succeeds. Keep the event with the highest
+          // fix_iteration — that is always the latest (and definitive) result.
+          const lcLastIterByStep = new Map<string, number>()
+          for (const ev of newEvents) {
+            const learnCodeData = getLearnCodeScriptExecutionData(ev)
+            if (learnCodeData) {
+              const sid = learnCodeData.step_id
+              const iter = learnCodeData.fix_iteration ?? 0
+              if (sid && (lcLastIterByStep.get(sid) ?? -1) < iter) lcLastIterByStep.set(sid, iter)
+            }
+          }
+          const deduped = newEvents.filter(ev => {
+            const learnCodeData = getLearnCodeScriptExecutionData(ev)
+            if (!learnCodeData) return true
+            const sid = learnCodeData.step_id
+            const iter = learnCodeData.fix_iteration ?? 0
+            if (!sid) return true
+            return iter === lcLastIterByStep.get(sid)
+          })
+
+          for (const ev of uniqueNewEvents) {
+            const learnCodeData = getLearnCodeScriptExecutionData(ev)
+            if (!learnCodeData) continue
+            console.log('[FIX_LEARN_CODE_UI] store_add_event', {
+              sessionId,
+              eventId: ev.id,
+              stepId: learnCodeData.step_id ?? null,
+              fixIteration: learnCodeData.fix_iteration ?? null,
+              latestFixIterationForStep: learnCodeData.step_id ? (lcLastIterByStep.get(learnCodeData.step_id) ?? null) : null,
+              keptAfterDedup: deduped.some(e => e.id === ev.id),
+              finalEventCount: deduped.length,
+            })
+          }
           // Trigger cleanup if threshold exceeded
-          let finalEvents = newEvents
+          let finalEvents = deduped
           let didCleanup = false
-          if (newEvents.length >= CLEANUP_THRESHOLD) {
-            logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
-            finalEvents = cleanupOldEvents(newEvents)
+          if (deduped.length >= CLEANUP_THRESHOLD) {
+            logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${deduped.length} -> ${MAX_EVENTS}`)
+            finalEvents = cleanupOldEvents(deduped)
             didCleanup = true
             // Rebuild ID index after cleanup discards events
             tabEventIdSets.set(sessionId, new Set(finalEvents.map(e => e.id).filter(Boolean) as string[]))

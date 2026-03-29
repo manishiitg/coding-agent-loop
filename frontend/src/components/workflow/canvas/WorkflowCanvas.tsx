@@ -458,8 +458,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const loadPlanRefresh = planData.refresh
   const clearChanges = planData.clearChanges
   const setChanges = planData.setChanges
-  const stepOverride = planData.stepOverride
-  const saveStepOverride = planData.saveStepOverride
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state (run folders, variables, phases, progress) in one call
@@ -2353,8 +2351,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onStartPhase={handleStartPhase}
         onStop={stopWorkflow}
         onBulkUpdateSteps={handleBulkUpdateSteps}
-        stepOverride={stepOverride}
-        onSaveStepOverride={saveStepOverride}
         onCreatePlan={onCreatePlan || (() => {})}
         showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
@@ -2379,7 +2375,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 : ''
         }`}>
         <ReactFlow
-          className="w-full h-full"
+          className="w-full h-full bg-gray-50 dark:bg-gray-900"
           style={{ width: '100%', height: '100%' }}
           nodes={nodes}
           edges={edges}
@@ -2405,7 +2401,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           maxZoom={2}
           defaultViewport={{ x: 100, y: 0, zoom: 0.9 }}
           attributionPosition="bottom-right"
-          className="bg-gray-50 dark:bg-gray-900"
         >
           <Background 
             variant={BackgroundVariant.Dots} 

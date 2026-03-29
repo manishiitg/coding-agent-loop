@@ -143,7 +143,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.GetTitle()))
 
 	// Log learning start
-	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+	_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 		"type":             "learning_start",
 		"step_path":        stepPath,
 		"learning_type":    "success",
@@ -236,7 +236,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
 	}
-	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath))
+	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, learningPathIdentifier, stepPath))
 	successLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
 
 	// Ensure skill writing guide exists and pass its path
@@ -285,7 +285,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	learningResult, learningConv, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
 		// Log learning failure
-		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 			"type":          "learning_failed",
 			"step_path":     stepPath,
 			"learning_type": "success",
@@ -304,7 +304,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, learningPathIdentifier, stepPath)
 	convPath := fmt.Sprintf("%s/learning-conversation.json", validationFolderPath)
 
 	// Save conversation
@@ -312,7 +312,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
 
 	// Log learning completion
-	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+	_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 		"type":              "learning_completed",
 		"step_path":         stepPath,
 		"learning_type":     "success",
@@ -573,7 +573,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.GetTitle()))
 
 	// Log learning start
-	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+	_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 		"type":             "learning_start",
 		"step_path":        stepPath,
 		"learning_type":    "failure",
@@ -652,7 +652,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
 	}
-	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath))
+	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, learningPathIdentifier, stepPath))
 	failureLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
 
 	// Ensure skill writing guide exists and pass its path
@@ -701,7 +701,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	learningResult, learningConv, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
 		// Log learning failure
-		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 			"type":          "learning_failed",
 			"step_path":     stepPath,
 			"learning_type": "failure",
@@ -720,7 +720,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, learningPathIdentifier, stepPath)
 	convPath := fmt.Sprintf("%s/learning-failure-conversation.json", validationFolderPath)
 
 	// Save conversation
@@ -728,7 +728,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
 
 	// Log learning completion
-	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+	_ = hcpo.logLearningExecution(ctx, learningPathIdentifier, stepPath, map[string]interface{}{
 		"type":              "learning_completed",
 		"step_path":         stepPath,
 		"learning_type":     "failure",
@@ -816,11 +816,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 		}
 	}
 
-	// Read all .md files from the step folder
-	// Exclude metadata files (.learning_metadata.json) and temporary files (_learning_new.md) - these are for internal tracking only
+	// Read root-level learning files from the step folder.
+	// Root markdown files are traditional learnings; root Python/shell files are learn_code
+	// artifacts (main.py, helpers) saved directly into learnings/{step-id}/.
+	// Exclude metadata files and temporary files used for internal tracking only.
 	for _, file := range files {
 		// Skip metadata files - these should not be passed to execution agents
-		if file == ".learning_metadata.json" || strings.HasSuffix(file, ".learning_metadata.json") {
+		if file == ".learning_metadata.json" || strings.HasSuffix(file, ".learning_metadata.json") || file == "script_metadata.json" {
 			continue
 		}
 		// Skip temporary learning files - _learning_new.md should have been deleted above, but skip it if still present
@@ -832,6 +834,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 			content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
 			if err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning file %s: %v", filePath, err))
+				continue
+			}
+			learningFiles[file] = content
+			continue
+		}
+		// learn_code saves main.py and helper files directly in the learnings root, not in code/.
+		// Count common script/helper extensions here so empty-checks and prompt learnings work.
+		if strings.HasSuffix(file, ".py") || strings.HasSuffix(file, ".sh") {
+			filePath := filepath.Join(stepLearningsPath, file)
+			content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read root learning file %s: %v", filePath, err))
 				continue
 			}
 			learningFiles[file] = content
@@ -997,7 +1011,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx conte
 }
 
 // logLearningExecution appends a learning execution entry to the learning log file (JSONL format)
-func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Context, stepPath string, entry map[string]interface{}) error {
+func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Context, stepID string, stepPath string, entry map[string]interface{}) error {
 	// Determine log file path
 	var validationWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
@@ -1009,7 +1023,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Cont
 	// Get validation folder path using stepPath
 	// For regular steps: "logs/step-{X}/"
 	// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepID, stepPath)
 
 	// Create logs folder if it doesn't exist (using BaseOrchestrator.WriteWorkspaceFile which handles dirs, or manual check)
 	// We'll rely on appendOrchestrationLogEntry logic which handles file writing

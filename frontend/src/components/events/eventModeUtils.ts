@@ -41,6 +41,9 @@ export const SUMMARY_MODE_EVENTS = new Set([
   'background_agent_completed',
   'background_agent_terminated',
 
+  // Learn code mode — script execution results
+  'learn_code_script_execution',
+
   // Task & step progress
   'todo_task_route_selected',
   'todo_task_item_created',

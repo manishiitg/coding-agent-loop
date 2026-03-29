@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { agentApi } from '../services/api'
+import { sessionShareApi } from '../services/api'
 import type {
   WorkflowManifest,
   DiscoveredWorkflow,
@@ -48,7 +48,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   refreshWorkflows: async () => {
     set({ isLoading: true })
     try {
-      const response = await agentApi.listWorkflowManifests()
+      const response = await sessionShareApi.listWorkflowManifests()
       set({
         workflows: response.workflows || [],
         lastRefreshed: Date.now(),
@@ -79,7 +79,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   createWorkflow: async (label, workspacePath, capabilities) => {
-    const response = await agentApi.createWorkflowManifest({
+    const response = await sessionShareApi.createWorkflowManifest({
       label,
       workspace_path: workspacePath,
       capabilities,
@@ -90,7 +90,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   updateWorkflow: async (workspacePath, updates) => {
-    const response = await agentApi.updateWorkflowManifest({
+    const response = await sessionShareApi.updateWorkflowManifest({
       workspace_path: workspacePath,
       ...updates,
     })
@@ -100,7 +100,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   deleteWorkflow: async (workspacePath) => {
-    await agentApi.deleteWorkflowManifest(workspacePath)
+    await sessionShareApi.deleteWorkflowManifest(workspacePath)
     // Refresh to remove from list
     const { activeWorkflowId, workflows } = get()
     const deleted = workflows.find(w => w.workspace_path === workspacePath)
@@ -111,7 +111,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   duplicateWorkflow: async (sourceWorkspacePath, targetWorkspacePath, newLabel) => {
-    const response = await agentApi.duplicateWorkflowManifest({
+    const response = await sessionShareApi.duplicateWorkflowManifest({
       source_workspace_path: sourceWorkspacePath,
       target_workspace_path: targetWorkspacePath,
       new_label: newLabel,

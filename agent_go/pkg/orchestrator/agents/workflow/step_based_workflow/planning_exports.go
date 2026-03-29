@@ -97,6 +97,11 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["WorkflowObjective"] = templateVars["WorkflowObjective"]
 		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
 		templateData["UseToolSearchMode"] = templateVars["UseToolSearchMode"]
+		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
+		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
+		wsPath := templateVars["WorkspacePath"]
+		templateData["AbsWorkspacePath"] = GetPromptDocsRoot() + "/" + wsPath
+		templateData["AbsDocsRoot"] = GetPromptDocsRoot()
 		templateData["PlanJSON"] = ""    // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
@@ -367,9 +372,10 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 			groupID := cfg.EnabledGroupIDs[0] // Use the first selected group
 			groupValues := existingManifest.GetVariableValues(groupID)
 			if groupValues != nil {
-				controller.variableValues = groupValues
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, groupValues)
-				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars)", groupID, len(groupValues)))
+				merged := MergeGroupWithDefaults(existingManifest, groupValues)
+				controller.variableValues = merged
+				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, merged)
+				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars, %d after merge with defaults)", groupID, len(groupValues), len(merged)))
 			} else {
 				logger.Warn(fmt.Sprintf("[WORKSHOP] Toolbar-selected group %q not found in manifest — falling back to base values", groupID))
 				vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
@@ -523,8 +529,9 @@ func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabled
 		groupID := enabledGroupIDs[0]
 		groupValues := manifest.GetVariableValues(groupID)
 		if groupValues != nil {
-			s.controller.variableValues = groupValues
-			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from group %q (%d vars)", groupID, len(groupValues)))
+			merged := MergeGroupWithDefaults(manifest, groupValues)
+			s.controller.variableValues = merged
+			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from group %q (%d vars, %d after merge with defaults)", groupID, len(groupValues), len(merged)))
 		} else {
 			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupID))
 		}

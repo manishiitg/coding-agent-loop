@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { agentApi } from '../services/api'
+import { agentApi, sessionShareApi } from '../services/api'
 import type { PlannerFile, PresetQuery, PresetLLMConfig, CreatePresetQueryRequest, UpdatePresetQueryRequest } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
@@ -628,7 +628,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Dual-write: also update workflow.json manifest if this is a workflow preset with a folder
             if (agentMode === 'workflow' && selectedFolder?.filepath) {
               try {
-                await agentApi.updateWorkflowManifest({
+                await sessionShareApi.updateWorkflowManifest({
                   workspace_path: selectedFolder.filepath,
                   label,
                   capabilities: {
@@ -749,7 +749,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Dual-write: also create workflow.json manifest for new workflow presets
             if (agentMode === 'workflow' && selectedFolder?.filepath) {
               try {
-                await agentApi.createWorkflowManifest({
+                await sessionShareApi.createWorkflowManifest({
                   label,
                   workspace_path: selectedFolder.filepath,
                   capabilities: {

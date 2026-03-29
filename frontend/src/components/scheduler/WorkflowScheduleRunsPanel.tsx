@@ -9,7 +9,7 @@ import {
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
-import type { ScheduledJob, ScheduledJobRun } from '../../services/api-types'
+import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../services/api-types'
 import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
@@ -51,16 +51,6 @@ function timeAgo(dateStr?: string): string {
   if (hrs < 24) return `${hrs}h ago`
   const days = Math.floor(hrs / 24)
   return `${days}d ago`
-}
-
-function formatNext(dateStr?: string): string {
-  if (!dateStr) return '—'
-  const d = new Date(dateStr)
-  const now = new Date()
-  const diff = d.getTime() - now.getTime()
-  const hrs = Math.floor(diff / 3600000)
-  if (hrs < 24) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 function formatDuration(ms?: number): string {
@@ -119,6 +109,63 @@ function formatTimeUntil(dateStr?: string): string {
   return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
+function formatLocalScheduleTime(dateStr?: string): string {
+  if (!dateStr) return '—'
+
+  try {
+    const d = new Date(dateStr)
+    const now = new Date()
+    const diffDays = Math.floor((d.getTime() - now.getTime()) / 86400000)
+
+    if (diffDays < 1) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+    }
+
+    if (diffDays < 7) {
+      return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+    }
+
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+  } catch {
+    return dateStr
+  }
+}
+
+function formatLocalScheduleTimeShort(dateStr?: string): string {
+  if (!dateStr) return ''
+
+  try {
+    return new Date(dateStr).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    })
+  } catch {
+    return ''
+  }
+}
+
+function stripTimezoneSuffix(label: string): string {
+  return label.replace(/\s*\([^()]*\b(?:[A-Z]{2,5}|UTC|GMT)\b[^()]*\)\s*$/, '').trim()
+}
+
+function localizeTimezoneLabel(label: string, dateStr?: string): string {
+  const baseLabel = stripTimezoneSuffix(label)
+  if (!dateStr) return baseLabel || label
+
+  const localizedTime = formatLocalScheduleTimeShort(dateStr)
+  if (!localizedTime) return baseLabel || label
+
+  const hasTimezoneSuffix = /\([^()]*\b(?:[A-Z]{2,5}|UTC|GMT)\b[^()]*\)\s*$/.test(label)
+  if (!hasTimezoneSuffix) return label
+
+  return `${baseLabel} (${localizedTime})`
+}
+
+function getLocalizedJobName(job: ScheduledJob): string {
+  return localizeTimezoneLabel(job.name, job.next_run_at)
+}
+
 function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   const rank = (job: ScheduledJob) => {
     if (job.last_status === 'running') return 0
@@ -152,6 +199,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
+  const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
+  const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
 
   // Auto-expand running jobs
   useEffect(() => {
@@ -190,8 +239,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     if (showLoading) setIsLoading(true)
     setError(null)
     try {
-      const resp = await schedulerApi.listJobs({ entity_type: 'workflow' })
+      const [resp, config] = await Promise.all([
+        schedulerApi.listJobs({ entity_type: 'workflow' }),
+        schedulerApi.getConfig().catch(() => null),
+      ])
       setJobs(resp.jobs)
+      setSchedulerConfig(config)
     } catch {
       setError('Failed to load scheduled workflows')
     } finally {
@@ -296,6 +349,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   // Auto-refresh while any job is running: jobs list + runs + costs (every 5s)
   const hasRunningJob = jobs.some(j => j.last_status === 'running')
   const activeJobs = jobs.filter(j => j.enabled).length
+  const isSchedulerPaused = !!schedulerConfig?.globally_paused
 
   const summary = useMemo(() => {
     const running = jobs.filter(j => j.last_status === 'running').length
@@ -316,7 +370,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
     jobs.forEach((job) => {
       const preset = presetMap.get(job.preset_query_id)
-      const label = preset?.label || job.workflow_label || job.name
+      const label = localizeTimezoneLabel(
+        preset?.label || job.workflow_label || job.name,
+        job.next_run_at
+      )
       if (!label) return
       if (!seen.has(label)) seen.set(label, label)
     })
@@ -482,6 +539,21 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
   }
 
+  const handleToggleGlobalPause = async () => {
+    setIsUpdatingSchedulerPause(true)
+    try {
+      const updated = await schedulerApi.updateConfig({
+        globally_paused: !isSchedulerPaused,
+        paused_by: !isSchedulerPaused ? 'frontend-user' : '',
+      })
+      setSchedulerConfig(updated)
+    } catch (e) {
+      console.error('Failed to update scheduler config:', e)
+    } finally {
+      setIsUpdatingSchedulerPause(false)
+    }
+  }
+
   const openPopup = async (job: ScheduledJob, popup: ActivePopup, selectedRunFolder?: string) => {
     const preset = presetMap.get(job.preset_query_id)
     const workspacePath = job.workspace_path || preset?.workspacePath || null
@@ -535,11 +607,29 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </h2>
             {!isLoading && (
               <span className="text-xs text-muted-foreground ml-1">
-                {summary.running} running · {activeJobs} active · {jobs.length} total
+                {summary.running} running · {isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
               </span>
             )}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggleGlobalPause}
+              disabled={isUpdatingSchedulerPause}
+              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                isSchedulerPaused
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+              }`}
+            >
+              {isUpdatingSchedulerPause ? (
+                <Loader className="w-3.5 h-3.5 animate-spin" />
+              ) : isSchedulerPaused ? (
+                <Play className="w-3.5 h-3.5" />
+              ) : (
+                <Pause className="w-3.5 h-3.5" />
+              )}
+              {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
+            </button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -561,6 +651,24 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         <div className="flex-1 overflow-y-auto">
           {!isLoading && jobs.length > 0 && (
             <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-4 space-y-4">
+              {isSchedulerPaused && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">All scheduled workflow triggers are paused</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Existing manual runs still work. Cron-triggered executions will not start until you resume schedules.
+                      </div>
+                    </div>
+                    {schedulerConfig?.paused_at && (
+                      <div className="text-xs text-muted-foreground whitespace-nowrap">
+                        Paused {timeAgo(schedulerConfig.paused_at)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <button
                   onClick={() => setActiveFilter('running')}
@@ -628,7 +736,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   <div className="grid gap-2 md:grid-cols-2">
                     {upcomingJobs.map((job) => {
                       const preset = presetMap.get(job.preset_query_id)
-                      const label = preset?.label || job.workflow_label || job.name
+                      const label = localizeTimezoneLabel(
+                        preset?.label || job.workflow_label || job.name,
+                        job.next_run_at
+                      )
+                      const localizedJobName = getLocalizedJobName(job)
                       return (
                         <button
                           key={`upcoming-${job.id}`}
@@ -644,8 +756,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             </span>
                           </div>
                           <div className="mt-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                            <span className="truncate" title={job.name}>{job.name}</span>
-                            <span className="whitespace-nowrap">{formatNext(job.next_run_at)}</span>
+                            <span className="truncate" title={job.name}>{localizedJobName}</span>
+                            <span className="whitespace-nowrap">{formatLocalScheduleTime(job.next_run_at)}</span>
                           </div>
                         </button>
                       )
@@ -729,6 +841,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
               {filteredJobs.map((job) => {
                 const preset = presetMap.get(job.preset_query_id)
                 const cronDesc = describeCron(job.cron_expression)
+                const localizedJobName = getLocalizedJobName(job)
+                const localizedPresetLabel = preset?.label
+                  ? localizeTimezoneLabel(preset.label, job.next_run_at)
+                  : null
                 const isExpanded = expandedJobId === job.id
                 const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
                 const runs = jobRuns[job.id] ?? []
@@ -747,12 +863,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       {/* Main content */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                            {job.name}
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate" title={job.name}>
+                            {localizedJobName}
                           </span>
-                          {preset && (
+                          {localizedPresetLabel && (
                             <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                              {preset.label}
+                              {localizedPresetLabel}
                             </span>
                           )}
                           {!job.enabled && (
@@ -802,7 +918,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             )}
                             {job.last_status === 'running' ? 'Running...' : `Last: ${timeAgo(job.last_run_at)}`}
                           </span>
-                          <span>Next: {job.enabled ? formatNext(job.next_run_at) : 'paused'}</span>
+                          <span>Next: {job.enabled ? formatLocalScheduleTime(job.next_run_at) : 'paused'}</span>
                           <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                           {job.last_duration_ms != null && job.last_status !== 'running' && (
                             <span>Duration: {formatDuration(job.last_duration_ms)}</span>

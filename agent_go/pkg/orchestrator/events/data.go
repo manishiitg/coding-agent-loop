@@ -65,6 +65,7 @@ type OrchestratorAgentStartEvent struct {
 	Iteration            int               `json:"iteration,omitempty"`              // which iteration of the loop
 	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
 	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
+	UseLearnCodeMode     bool              `json:"use_learn_code_mode,omitempty"`     // learn code mode enabled
 	SystemPrompt         string            `json:"system_prompt,omitempty"`           // full system prompt sent to LLM
 	UserMessage          string            `json:"user_message,omitempty"`            // user message sent to LLM
 }
@@ -535,3 +536,26 @@ func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGr
 	}
 }
 
+
+// LearnCodeScriptExecutionEvent is emitted when the controller runs python3 main.py in learn_code mode.
+type LearnCodeScriptExecutionEvent struct {
+	events.BaseEventData
+	StepID       string `json:"step_id"`
+	StepIndex    int    `json:"step_index"`
+	StepTitle    string `json:"step_title"`
+	StepPath     string `json:"step_path"`
+	WorkspacePath string `json:"workspace_path"`
+	RunFolder    string `json:"run_folder"`
+	ScriptPath    string `json:"script_path"`    // Absolute path to main.py that was executed
+	ScriptContent string `json:"script_content"` // Contents of main.py (for UI display)
+	Success       bool   `json:"success"`        // true if exit code 0 and validation passed
+	ExitCode      int    `json:"exit_code"`
+	Output        string `json:"output"`         // combined stdout
+	Error         string `json:"error"`          // stderr / error message on failure
+	FixIteration  int    `json:"fix_iteration"`  // 0 = first run, >0 = fix attempt number
+	IsSavedScript bool   `json:"is_saved_script"` // true if running saved script from learnings, false if LLM-phase
+}
+
+func (e *LearnCodeScriptExecutionEvent) GetEventType() events.EventType {
+	return LearnCodeScriptExecution
+}

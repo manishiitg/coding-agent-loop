@@ -5,7 +5,7 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-export interface PollingEventSchema {
+export interface PollingEvent {
   /**
    * Unique event identifier
    */
@@ -135,6 +135,7 @@ export interface EventDataUnion {
   decision_evaluated?: DecisionEvaluatedEvent;
   routing_evaluated?: RoutingEvaluatedEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
+  learn_code_script_execution?: LearnCodeScriptExecutionEvent;
   todo_steps_extracted?: TodoStepsExtractedEvent;
   variables_extracted?: VariablesExtractedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
@@ -174,7 +175,6 @@ export interface EventDataUnion {
   batch_group_start?: BatchGroupStartEvent;
   batch_group_end?: BatchGroupEndEvent;
   batch_execution_end?: BatchExecutionEndEvent;
-  prerequisite_navigation?: PrerequisiteNavigationEvent;
 }
 export interface AgentStartEvent {
   timestamp?: string;
@@ -1345,6 +1345,10 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
+  use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
+  system_prompt?: string;
+  user_message?: string;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;
@@ -1582,6 +1586,35 @@ export interface ValidationErrorForEvent {
   expected?: string;
   actual?: string;
   message?: string;
+}
+export interface LearnCodeScriptExecutionEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  workspace_path?: string;
+  run_folder?: string;
+  script_path?: string;
+  script_content?: string;
+  success?: boolean;
+  exit_code?: number;
+  output?: string;
+  error?: string;
+  fix_iteration?: number;
+  is_saved_script?: boolean;
 }
 export interface TodoStepsExtractedEvent {
   timestamp?: string;
@@ -2363,25 +2396,4 @@ export interface BatchExecutionEndEvent {
   iteration_number?: number;
   completed_group_ids?: string[];
   failed_group_ids?: string[];
-}
-export interface PrerequisiteNavigationEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  from_step_index?: number;
-  to_step_index?: number;
-  from_step_id?: string;
-  to_step_id?: string;
-  reason?: string;
-  failure_type?: string;
 }

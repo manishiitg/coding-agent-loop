@@ -255,8 +255,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   })))
 
   // All servers that are currently connected (status=ok)
-  const connectedServers = useMemo(
-    () => new Set(allTools.filter(t => t.status === 'ok').map(t => t.server).filter(Boolean)),
+  const connectedServers = useMemo<Set<string>>(
+    () => new Set(allTools
+      .filter(t => t.status === 'ok')
+      .map(t => t.server)
+      .filter((server): server is string => typeof server === 'string' && server.length > 0)),
     [allTools]
   )
   
@@ -292,17 +295,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Determine which servers to use based on mode category
   // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into multi-agent mode
-  const effectiveServers = useMemo(() => {
+  const effectiveServers = useMemo<string[]>(() => {
     // For workflow mode, use preset servers
     if (selectedModeCategory === 'workflow') {
-      return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
+      const workflowServers = currentPresetServers.length > 0 ? currentPresetServers : selectedServers
+      return workflowServers.filter((server): server is string => typeof server === 'string')
     }
     // For multi-agent mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in multi-agent mode - workflow preset state is isolated to workflow mode only
     const isChatLike = selectedModeCategory === 'multi-agent'
-    const tabSelectedServers = (isChatLike && activeTab?.config)
+    const tabSelectedServers: string[] = ((isChatLike && activeTab?.config)
       ? activeTab.config.selectedServers 
-      : selectedServers
+      : selectedServers).filter((server): server is string => typeof server === 'string')
     
     // If no servers are selected (empty array), default to all connected servers
     if (tabSelectedServers.length === 0) {
@@ -311,7 +315,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
     // Filter out servers that aren't currently connected (status=ok).
     // Stale servers from localStorage could block queries if sent to backend.
-    const filtered = tabSelectedServers.filter(s => s === "NO_SERVERS" || connectedServers.has(s))
+    const filtered = tabSelectedServers.filter((s): s is string => s === "NO_SERVERS" || connectedServers.has(s))
     return filtered
   }, [
     selectedModeCategory,
@@ -1329,6 +1333,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             console.log('[WORKSHOP] Skipping notification for step', { agentName, stepType, isCancelled })
           } else {
             const truncated = result.length > 5000 ? result.substring(0, 5000) + '...' : result
+            const fullFailureText = result
             const timestamp = formatAutoNotificationTime(event)
             const runFolder = inputData?.run_folder ?? ''
             const runInfo = runFolder ? ` [run: ${runFolder}]` : ''
@@ -1339,15 +1344,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             if (agentType === 'workshop-step-learning') {
               notification = success
                 ? `${AUTO_PREFIX}[LEARNING COMPLETE] [${timestamp}] ${agentName} — ${truncated}`
-                : `${AUTO_PREFIX}[LEARNING FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
+                : `${AUTO_PREFIX}[LEARNING FAILED] [${timestamp}] ${agentName} failed.\nError: ${fullFailureText}`
             } else if (agentType === 'workshop-step-debug') {
               notification = success
                 ? `${AUTO_PREFIX}[OPTIMIZATION COMPLETE] [${timestamp}] ${agentName} — ${truncated}`
-                : `${AUTO_PREFIX}[OPTIMIZATION FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
+                : `${AUTO_PREFIX}[OPTIMIZATION FAILED] [${timestamp}] ${agentName} failed.\nError: ${fullFailureText}`
             } else if (agentType === 'workshop-background-task') {
               notification = success
                 ? `${AUTO_PREFIX}[BACKGROUND TASK COMPLETE] [${timestamp}] ${agentName} finished.\nResult: ${truncated}`
-                : `${AUTO_PREFIX}[BACKGROUND TASK FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
+                : `${AUTO_PREFIX}[BACKGROUND TASK FAILED] [${timestamp}] ${agentName} failed.\nError: ${fullFailureText}`
             } else {
               // Check if the result content indicates failure even when success=true (no execution error)
               // A step can complete without throwing an error but still report STATUS: FAILED in the result
@@ -1393,11 +1398,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               }
 
               if (resultIndicatesFailure) {
-                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${truncated}${actionHint}`
+                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${fullFailureText}${actionHint}`
               } else if (success) {
                 notification = `${AUTO_PREFIX}[${eventLabel} COMPLETED] [${timestamp}]${runInfo} ${agentName} finished successfully.\nResult: ${truncated}${actionHint}`
               } else {
-                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} failed.\nError: ${truncated}${actionHint}`
+                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} failed.\nError: ${fullFailureText}${actionHint}`
               }
             }
 
@@ -1439,6 +1444,21 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         useWorkspaceStore.getState().processWorkspaceEvent(event)
       }
 
+      if (event.type === 'learn_code_script_execution') {
+        const learnCodeData = (innerData ?? agentEvent ?? {}) as Record<string, unknown>
+        console.log('[FIX_LEARN_CODE_UI] chat_area_event_received', {
+          sessionId: actualSessionId,
+          tabId: tab?.tabId ?? null,
+          eventId: event.id,
+          correlationId: (event as unknown as Record<string, unknown>).correlation_id ?? agentEvent?.correlation_id ?? learnCodeData?.correlation_id ?? null,
+          stepId: learnCodeData.step_id ?? null,
+          stepTitle: learnCodeData.step_title ?? null,
+          fixIteration: learnCodeData.fix_iteration ?? null,
+          isSavedScript: learnCodeData.is_saved_script ?? null,
+          success: learnCodeData.success ?? null,
+        })
+      }
+
       // PERF: In summary mode, skip sub-agent inner events (tool calls, LLM events) from tabEvents.
       // These are grouped inside agent cards and never shown at the top level,
       // but adding them triggers the full render cascade on every batch.
@@ -1452,7 +1472,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         && event.type !== 'todo_task_item_created'
         && event.type !== 'todo_task_item_updated'
         && event.type !== 'todo_task_item_completed'
-        && event.type !== 'step_progress_updated') {
+        && event.type !== 'step_progress_updated'
+        && event.type !== 'learn_code_script_execution') {
         continue
       }
 
@@ -1472,9 +1493,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       hadWorkspaceActivityRef.current = false
       const isChatLikeMode = selectedModeCategory === 'multi-agent'
       if (isChatLikeMode) {
-        // Auto-refresh workspace for multi-agent mode so the file tree updates immediately
-        console.log('[Workspace] Auto-refreshing workspace (completion event + had workspace activity, multi-agent mode)')
-        useWorkspaceStore.getState().fetchFiles()
+        // Reconcile only dirty folders when we know them; fall back to a full refresh for
+        // shell-driven changes where no workspace_file_operation events were emitted.
+        console.log('[Workspace] Reconciling workspace (completion event + had workspace activity, multi-agent mode)')
+        useWorkspaceStore.getState().refreshDirtyFolders({ fallbackToFullFetch: true })
       } else {
         // Workflow mode: just mark stale — workflow has its own debounced refresh logic
         console.log('[Workspace] Marking needsRefresh (completion event + had workspace activity)')
@@ -1582,6 +1604,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             || t === 'todo_task_step_completed' || t === 'todo_task_route_selected'
             || t === 'todo_task_item_created' || t === 'todo_task_item_updated'
             || t === 'todo_task_item_completed' || t === 'step_progress_updated'
+            || t === 'learn_code_script_execution'
         })
       : msg.events
 
@@ -2402,7 +2425,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         hasActivePreset: !!activePreset,
         effectivePlanPhase,
         decryptedSecrets,
-        selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : null, // null = all global secrets included by default
+        selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames ?? undefined,
       })
 
       // Validate execution groups for workflow mode

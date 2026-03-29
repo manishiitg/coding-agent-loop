@@ -1242,7 +1242,7 @@ func isCliProviderForPrompt(provider string) bool {
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.
 // filename: e.g. "todo-task-prompts.json", "conditional-prompts.json", etc.
-func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepPath, agentType, systemPrompt, userMessage, model, filename string) {
+func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, model, filename string) {
 	go func() {
 		var vwp string
 		if hcpo.selectedRunFolder != "" {
@@ -1250,7 +1250,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, ste
 		} else {
 			vwp = hcpo.GetWorkspacePath()
 		}
-		ld := getExecutionFolderPathForLogs(vwp, stepPath)
+		ld := getExecutionFolderPathForLogs(vwp, stepID, stepPath)
 		pp := fmt.Sprintf("%s/%s", ld, filename)
 		pd := map[string]interface{}{
 			"step_index":    stepIndex + 1,

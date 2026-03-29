@@ -109,7 +109,7 @@ interface WorkspaceState {
   // so that unscoped fetchFiles() calls from other components don't replace the scoped tree
   activeFolder: string | null
   setActiveFolder: (folder: string | null) => void
-  fetchFiles: (folder?: string, options?: { maxDepth?: number }) => Promise<void>
+  fetchFiles: (folder?: string, options?: { maxDepth?: number; force?: boolean }) => Promise<void>
   
   // File highlighting
   highlightedFile: string | null
@@ -135,9 +135,11 @@ interface WorkspaceState {
   needsRefresh: boolean
   setNeedsRefresh: (needsRefresh: boolean) => void
 
-  // Auto-refresh: when enabled, automatically fetches files instead of showing the stale banner
-  autoRefresh: boolean
-  setAutoRefresh: (autoRefresh: boolean) => void
+  // Dirty folders tracked from workspace_file_operation events.
+  // Used to reconcile only changed subtrees instead of re-fetching the full workspace tree.
+  dirtyFolders: Set<string>
+  markDirtyFolder: (folder: string | null | undefined) => void
+  refreshDirtyFolders: (options?: { fallbackToFullFetch?: boolean }) => Promise<void>
 
   // Reset all state
   resetWorkspaceState: () => void
@@ -148,6 +150,8 @@ interface WorkspaceState {
 // we skip processing duplicates within this window to avoid repeated highlight/scroll cycles.
 const WORKSPACE_EVENT_DEDUP_MS = 2000
 const recentlyProcessedWorkspaceEvents = new Map<string, number>()
+const DIRTY_REFRESH_DEBOUNCE_MS = 600
+let dirtyRefreshTimeout: ReturnType<typeof setTimeout> | null = null
 
 function shouldSkipDuplicateWorkspaceEvent(eventId: string | undefined, filepath: string, operation: string): boolean {
   const key = eventId || `${filepath}:${operation}`
@@ -197,6 +201,141 @@ const buildFileIndex = (files: PlannerFile[]): Map<string, PlannerFile> => {
   
   files.forEach(indexFile)
   return index
+}
+
+const normalizeWorkspacePath = (path: string | null | undefined): string | null => {
+  if (!path) return null
+  const normalized = path.trim().replace(/^\/+|\/+$/g, '')
+  return normalized || null
+}
+
+const getParentFolderPath = (path: string | null | undefined): string | null => {
+  const normalized = normalizeWorkspacePath(path)
+  if (!normalized) return null
+  const lastSlash = normalized.lastIndexOf('/')
+  return lastSlash === -1 ? null : normalized.slice(0, lastSlash)
+}
+
+const pathsOverlap = (left: string | null | undefined, right: string | null | undefined): boolean => {
+  const normalizedLeft = normalizeWorkspacePath(left)
+  const normalizedRight = normalizeWorkspacePath(right)
+
+  if (!normalizedLeft || !normalizedRight) {
+    return !normalizedLeft && !normalizedRight
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.startsWith(normalizedRight + '/') ||
+    normalizedRight.startsWith(normalizedLeft + '/')
+  )
+}
+
+const pruneDirtyFoldersToScope = (dirtyFolders: Set<string>, scope: string | null | undefined): Set<string> => {
+  const normalizedScope = normalizeWorkspacePath(scope)
+  if (!normalizedScope) {
+    return new Set(dirtyFolders)
+  }
+
+  return new Set(
+    Array.from(dirtyFolders).filter(folder => pathsOverlap(folder, normalizedScope))
+  )
+}
+
+const hasRelevantDirtyFolders = (dirtyFolders: Set<string>, scope: string | null | undefined): boolean => (
+  pruneDirtyFoldersToScope(dirtyFolders, scope).size > 0
+)
+
+const pruneDirtyFoldersForFetch = (
+  dirtyFolders: Set<string>,
+  refreshedFolder: string | null | undefined,
+  clearDescendants: boolean
+): Set<string> => {
+  const normalizedRefreshedFolder = normalizeWorkspacePath(refreshedFolder)
+  if (!normalizedRefreshedFolder) {
+    return new Set()
+  }
+
+  return new Set(
+    Array.from(dirtyFolders).filter(folder => {
+      if (folder === normalizedRefreshedFolder) return false
+      if (clearDescendants && folder.startsWith(normalizedRefreshedFolder + '/')) return false
+      return true
+    })
+  )
+}
+
+const isFetchAffectedByDirtyState = (fetchFolder: string | null | undefined, dirtyFolders: Set<string>): boolean => {
+  if (dirtyFolders.size === 0) return false
+
+  const normalizedFetchFolder = normalizeWorkspacePath(fetchFolder)
+  if (!normalizedFetchFolder) {
+    return true
+  }
+
+  return Array.from(dirtyFolders).some(folder => pathsOverlap(folder, normalizedFetchFolder))
+}
+
+const resolveRefreshTargetFolder = (
+  candidate: string | null | undefined,
+  state: Pick<WorkspaceState, 'activeFolder' | 'fileIndex'>
+): string | null => {
+  let current = normalizeWorkspacePath(candidate)
+  const activeFolder = normalizeWorkspacePath(state.activeFolder)
+
+  while (current) {
+    if (activeFolder && current === activeFolder) {
+      return activeFolder
+    }
+
+    const indexed = state.fileIndex.get(current)
+    if (indexed?.type === 'folder') {
+      return current
+    }
+
+    current = getParentFolderPath(current)
+  }
+
+  return activeFolder ?? null
+}
+
+const deriveDirtyRefreshFolder = (
+  eventData: Pick<WorkspaceFileOperationEvent, 'operation' | 'filepath' | 'folder'>,
+  state: Pick<WorkspaceState, 'activeFolder' | 'fileIndex'>
+): string | null => {
+  const candidates: Array<string | null> = []
+  const operation = eventData.operation
+  const filepath = normalizeWorkspacePath(eventData.filepath)
+  const folderHint = normalizeWorkspacePath(eventData.folder)
+
+  if (folderHint) {
+    candidates.push(folderHint)
+  }
+
+  if (filepath) {
+    const shouldPreferParent =
+      operation === 'update' ||
+      operation === 'patch' ||
+      operation === 'delete' ||
+      operation === 'move'
+
+    if (shouldPreferParent) {
+      candidates.push(getParentFolderPath(filepath))
+    }
+    candidates.push(filepath)
+    if (!shouldPreferParent) {
+      candidates.push(getParentFolderPath(filepath))
+    }
+  }
+
+  for (const candidate of candidates) {
+    const resolved = resolveRefreshTargetFolder(candidate, state)
+    if (resolved) {
+      return resolved
+    }
+  }
+
+  return normalizeWorkspacePath(state.activeFolder)
 }
 
 // --- Incremental file tree updates ---
@@ -343,7 +482,7 @@ const initialState = {
   highlightTimeout: null,
   expandedFolders: new Set<string>(),
   needsRefresh: false,
-  autoRefresh: false
+  dirtyFolders: new Set<string>()
 }
 
 interface FileTreeCacheEntry {
@@ -406,6 +545,75 @@ function mergeSubfolderIntoTree(tree: PlannerFile[], targetPath: string, replace
 export const useWorkspaceStore = create<WorkspaceState>()(
     (set, get) => ({
       ...initialState,
+
+      // Debounced smart refresh so bursts of completion/progress events trigger a single reconcile pass.
+      // This preserves the "don't fetch on every workspace event" behavior while still updating
+      // automatically without a separate user-facing toggle.
+      markDirtyFolder: (folder) => {
+        const normalizedFolder = normalizeWorkspacePath(folder)
+        if (!normalizedFolder) return
+
+        set((state) => {
+          if (state.dirtyFolders.has(normalizedFolder)) {
+            return state
+          }
+
+          const nextDirtyFolders = new Set(state.dirtyFolders)
+          nextDirtyFolders.add(normalizedFolder)
+
+          return {
+            dirtyFolders: nextDirtyFolders,
+            needsRefresh: true
+          }
+        })
+      },
+
+      refreshDirtyFolders: async (options?: { fallbackToFullFetch?: boolean }) => {
+        const state = get()
+        const activeFolder = normalizeWorkspacePath(state.activeFolder)
+        const scopedDirtyFolders = pruneDirtyFoldersToScope(state.dirtyFolders, activeFolder)
+
+        if (scopedDirtyFolders.size === 0) {
+          if (options?.fallbackToFullFetch) {
+            await get().fetchFiles(state.activeFolder ?? undefined, { force: true })
+            return
+          }
+
+          set({ needsRefresh: false })
+          return
+        }
+
+        const refreshTargetByDirtyFolder = new Map<string, string>()
+        const refreshTargets = Array.from(scopedDirtyFolders)
+          .map(folder => {
+            const target = activeFolder && activeFolder.startsWith(folder + '/')
+              ? activeFolder
+              : folder
+            refreshTargetByDirtyFolder.set(folder, target)
+            return target
+          })
+          .filter((folder): folder is string => !!folder)
+          .sort((left, right) => left.split('/').length - right.split('/').length)
+
+        const uniqueTargets = Array.from(new Set(refreshTargets))
+        const targetSet = new Set(uniqueTargets)
+
+        for (const folder of uniqueTargets) {
+          await get().fetchFiles(folder, { force: true, maxDepth: 1 })
+        }
+
+        const remainingDirtyFolders = new Set(get().dirtyFolders)
+        refreshTargetByDirtyFolder.forEach((target, dirtyFolder) => {
+          if (targetSet.has(target)) {
+            remainingDirtyFolders.delete(dirtyFolder)
+          }
+        })
+
+        set({
+          dirtyFolders: remainingDirtyFolders,
+          needsRefresh: hasRelevantDirtyFolders(remainingDirtyFolders, get().activeFolder)
+        })
+      },
       
       // File Management
       setFiles: (files) => {
@@ -456,8 +664,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               isEditMode: false,
               isSaving: false
             })
-            // Refresh file list
-            await get().fetchFiles()
+            // Refresh file list after a manual save — bypass cache so the tree reflects
+            // any filesystem-level changes immediately.
+            await get().fetchFiles(undefined, { force: true })
             return { success: true }
           } else {
             set({ isSaving: false })
@@ -576,24 +785,31 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       // Stale indicator
       setNeedsRefresh: (needsRefresh: boolean) => {
-        if (get().needsRefresh === needsRefresh) return
-        // When auto-refresh is enabled, fetch immediately instead of showing the banner
-        if (needsRefresh && get().autoRefresh) {
-          console.log('[Workspace] Auto-refresh enabled — fetching files automatically')
-          get().fetchFiles()
-          return // fetchFiles sets needsRefresh=false on completion
-        }
-        set({ needsRefresh })
-      },
+        const scheduleDirtyRefresh = (fallbackToFullFetch: boolean) => {
+          if (dirtyRefreshTimeout) {
+            clearTimeout(dirtyRefreshTimeout)
+          }
 
-      // Auto-refresh toggle
-      setAutoRefresh: (autoRefresh: boolean) => {
-        set({ autoRefresh })
-        // If enabling auto-refresh while stale, refresh immediately
-        if (autoRefresh && get().needsRefresh) {
-          console.log('[Workspace] Auto-refresh enabled while stale — fetching files')
-          get().fetchFiles()
+          dirtyRefreshTimeout = setTimeout(() => {
+            dirtyRefreshTimeout = null
+            get().refreshDirtyFolders({ fallbackToFullFetch }).catch(error => {
+              console.error('[Workspace] Failed to refresh dirty folders:', error)
+            })
+          }, DIRTY_REFRESH_DEBOUNCE_MS)
         }
+
+        // Smart refresh is always enabled: reconcile dirty folders instead of fetching the full tree.
+        if (needsRefresh) {
+          console.log('[Workspace] Smart refresh — reconciling dirty folders automatically')
+          if (!get().needsRefresh) {
+            set({ needsRefresh: true })
+          }
+          scheduleDirtyRefresh(true)
+          return
+        }
+
+        if (get().needsRefresh === needsRefresh) return
+        set({ needsRefresh })
       },
 
       // File Operations
@@ -740,12 +956,19 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // When components call fetchFiles() without a folder, this prevents them from
       // accidentally fetching the entire root tree and replacing the workflow-scoped tree.
       setActiveFolder: (folder: string | null) => {
-        set({ activeFolder: folder })
+        set((state) => {
+          const scopedDirtyFolders = pruneDirtyFoldersToScope(state.dirtyFolders, folder)
+          return {
+            activeFolder: folder,
+            dirtyFolders: scopedDirtyFolders,
+            needsRefresh: hasRelevantDirtyFolders(scopedDirtyFolders, folder)
+          }
+        })
       },
 
       // File fetching — uses activeFolder as fallback when no folder is explicitly passed,
       // so that unscoped fetchFiles() calls from StepNode, WorkflowCanvas, etc. stay scoped.
-      fetchFiles: async (folder?: string, options?: { maxDepth?: number }) => {
+      fetchFiles: async (folder?: string, options?: { maxDepth?: number; force?: boolean }) => {
         // Use activeFolder as fallback so unscoped calls stay scoped to the workflow folder.
         // When an explicit folder IS passed (including undefined from Workspace.tsx chat mode),
         // callers who want to update the scope should call setActiveFolder() separately.
@@ -754,6 +977,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
         const applyProcessedFiles = (processedFiles: PlannerFile[]) => {
           const currentActiveFolder = get().activeFolder
+          const nextNeedsRefresh = hasRelevantDirtyFolders(get().dirtyFolders, currentActiveFolder)
 
           if (!effectiveFolder && currentActiveFolder) {
             return
@@ -772,19 +996,21 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (rootNode) {
               const mergedFiles = mergeSubfolderIntoTree(get().files, effectiveFolder, rootNode)
               const index = buildFileIndex(mergedFiles)
-              set({ files: mergedFiles, fileIndex: index, needsRefresh: false, error: null })
+              set({ files: mergedFiles, fileIndex: index, needsRefresh: nextNeedsRefresh, error: null })
             }
             return
           }
 
           const index = buildFileIndex(processedFiles)
-          set({ files: processedFiles, fileIndex: index, needsRefresh: false, error: null })
+          set({ files: processedFiles, fileIndex: index, needsRefresh: nextNeedsRefresh, error: null })
         }
 
-        const cachedEntry = findReusableFileTreeCacheEntry(effectiveFolder, options?.maxDepth)
-        if (cachedEntry) {
-          applyProcessedFiles(cachedEntry.files)
-          return
+        if (!options?.force && !isFetchAffectedByDirtyState(effectiveFolder, get().dirtyFolders)) {
+          const cachedEntry = findReusableFileTreeCacheEntry(effectiveFolder, options?.maxDepth)
+          if (cachedEntry) {
+            applyProcessedFiles(cachedEntry.files)
+            return
+          }
         }
 
         // Deduplicate: if a fetch for the same folder/depth is already in flight, reuse it
@@ -804,6 +1030,18 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 fileIndex: buildFileIndex(processedFiles)
               })
               applyProcessedFiles(processedFiles)
+
+              if (options?.force) {
+                const nextDirtyFolders = pruneDirtyFoldersForFetch(
+                  get().dirtyFolders,
+                  effectiveFolder,
+                  options.maxDepth === undefined
+                )
+                set({
+                  dirtyFolders: nextDirtyFolders,
+                  needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
+                })
+              }
             } else {
               const currentActiveFolder = get().activeFolder
               const isScopedSubfolderFetch = !!(
@@ -816,6 +1054,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
               if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
                 console.warn('[WorkspaceStore] Ignoring missing scoped subfolder during lazy-load:', effectiveFolder)
+                if (options?.force) {
+                  const nextDirtyFolders = pruneDirtyFoldersForFetch(get().dirtyFolders, effectiveFolder, false)
+                  set({
+                    dirtyFolders: nextDirtyFolders,
+                    needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
+                  })
+                }
                 return
               }
 
@@ -834,6 +1079,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
             if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
               console.warn('[WorkspaceStore] Ignoring missing scoped subfolder error during lazy-load:', effectiveFolder)
+              if (options?.force) {
+                const nextDirtyFolders = pruneDirtyFoldersForFetch(get().dirtyFolders, effectiveFolder, false)
+                set({
+                  dirtyFolders: nextDirtyFolders,
+                  needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
+                })
+              }
               return
             }
 
@@ -958,6 +1210,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 return true
               }
 
+              const dirtyFolder = deriveDirtyRefreshFolder(eventData, get())
+              if (dirtyFolder) {
+                get().markDirtyFolder(dirtyFolder)
+              }
+
               // Use index for O(1) lookup instead of O(n) tree search
               const state = get()
               const normalizedPath = filepath.trim()
@@ -979,6 +1236,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               }
             } else if (operation === 'delete') {
               if (filepath) {
+                const dirtyFolder = deriveDirtyRefreshFolder(eventData, get())
+                if (dirtyFolder) {
+                  get().markDirtyFolder(dirtyFolder)
+                }
+
                 get().removeFile(filepath)
                 // Clear selection if deleted file was selected
                 const state = get()
@@ -996,6 +1258,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
                 if (!shouldHighlight) {
                   return true
+                }
+
+                const dirtyFolder = deriveDirtyRefreshFolder(eventData, get())
+                if (dirtyFolder) {
+                  get().markDirtyFolder(dirtyFolder)
                 }
                 
                 const state = get()
@@ -1155,12 +1422,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       resetWorkspaceState: () => {
         recentlyProcessedWorkspaceEvents.clear()
         clearFileTreeCache()
+        if (dirtyRefreshTimeout) {
+          clearTimeout(dirtyRefreshTimeout)
+          dirtyRefreshTimeout = null
+        }
         set({
           ...initialState,
           fileIndex: new Map<string, PlannerFile>(),
           expandedFolders: new Set<string>(),
           highlightTimeout: null,
-          needsRefresh: false
+          needsRefresh: false,
+          dirtyFolders: new Set<string>()
         })
       }
     })

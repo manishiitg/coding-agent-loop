@@ -1121,8 +1121,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleGetStepOverride).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleUpdateStepOverride).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleGetFinalOutputConfig).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleUpdateFinalOutputConfig).Methods("POST", "OPTIONS")
 
@@ -3672,7 +3670,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
-		var workspaceEnv map[string]string             // hoisted so secrets can be injected after allChatSecrets is computed
+		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
 		workspaceAccessEnabledForChat := false
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
@@ -4440,7 +4438,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
 			}
-
 			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
 			// and register the path transformer on the agent itself (primary interception point).
 			// Two conditions trigger this: headless browser (agent_browser) or Playwright MCP.
@@ -4950,9 +4947,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if workshopSession != nil {
-						// Wire bgAgentRegistry notifier so todo task sub-agents auto-notify the main agent.
-						// Called every request (safe: always rebuilds the chain, no duplicates).
-						workshopSession.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
+						// NOTE: Do NOT wire todoSubAgentBgNotifier here. In workshop mode, all subAgentNotifier
+						// calls come from sub-agents within background step executions (execute_step goroutines),
+						// never from the main workshop agent itself. Wiring todoSubAgentBgNotifier causes double
+						// AUTO-NOTIFICATIONs: one for each todo sub-agent AND one for the exec-* completion.
+						// The workshopExecutionBgNotifier below is the single source of auto-notifications.
+						//
 						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/generate_learnings
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
 						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
@@ -5199,7 +5199,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Merge global secrets with user-supplied secrets, then inject into system prompt (not user message)
 		chatQuery := req.Query
-
 
 		// Skip secret prompt injection for workflow phases — they inject secrets in the phase setup above.
 		// Only inject here for non-workflow chat agents (multi-agent, plain chat, etc.)
@@ -5595,12 +5594,21 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify session ownership for multi-user isolation
+	// Verify session ownership for multi-user isolation.
+	// Workflow sessions (mode=workflow/workflow_phase) skip DB creation and are tracked
+	// in-memory only via activeSessions. Fall back to that map if the DB lookup fails.
 	currentUserID := GetUserIDFromContext(r.Context())
 	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 	if err != nil {
-		http.Error(w, "Session not found or access denied", http.StatusNotFound)
-		return
+		// Check in-memory active sessions (workflow sessions are not in DB)
+		api.activeSessionsMux.RLock()
+		activeSession, exists := api.activeSessions[sessionID]
+		api.activeSessionsMux.RUnlock()
+		if !exists || (currentUserID != "" && activeSession.UserID != "" && activeSession.UserID != currentUserID) {
+			http.Error(w, "Session not found or access denied", http.StatusNotFound)
+			return
+		}
+		log.Printf("[SESSION STOP] Workflow session %s not in DB, verified via activeSessions (mode=%s)", sessionID, activeSession.AgentMode)
 	}
 
 	// Cancel agent execution context if it exists
@@ -8032,7 +8040,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
 			// This prevents runaway delegation chains
 
-
 			// Add plan update instructions to worker sub-agents
 			// Workers update plan.md as they work — adding findings, marking progress, noting issues
 			if planFolder != "" {
@@ -9611,6 +9618,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			caps := manifest.Capabilities
 			log.Printf("[WORKSHOP] Loaded config from manifest at %s", workspacePath)
 
+			// Manifest is the source of truth for workflow-selected MCP servers.
+			// The incoming request can carry stale UI/session server state, which
+			// would incorrectly strip step-level servers like playwright during
+			// workflow filtering if we keep using it here.
+			cfg.SelectedServers = append([]string(nil), caps.SelectedServers...)
 			cfg.SelectedTools = caps.SelectedTools
 			cfg.UseCodeExecutionMode = caps.UseCodeExecutionMode
 			cfg.UseToolSearchMode = caps.UseToolSearchMode
@@ -10801,6 +10813,423 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 	}
 }
 
+func getOrganizationChatInstructions() string {
+	return `# Organization Assistant
+
+You manage organization operations across workflows.
+
+Primary responsibilities:
+1. Manage employees.
+2. Assign multiple workflows to employees.
+3. Manage workflow schedules.
+4. Inspect latest workflow outputs and recent scheduled runs.
+
+Operating rules:
+- Stay in organization scope unless the user explicitly asks to switch to workflow design.
+- Prefer the dedicated organization tools over ad-hoc shell/database inspection.
+- When you change an employee assignment or schedule, state exactly what changed.
+- Treat "output" as the latest workflow run and its artifacts unless the user defines a stricter business-output contract.
+- If a workflow has no runs yet, say that explicitly instead of implying an output exists.`
+}
+
+func marshalOrganizationResult(v interface{}) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (api *StreamingAPI) registerOrganizationChatTools(underlyingAgent *mcpagent.Agent, currentUserID string, sessionID string) error {
+	if underlyingAgent == nil {
+		return fmt.Errorf("underlying agent is nil")
+	}
+
+	listWorkflowSummaries := func(ctx context.Context) ([]map[string]interface{}, error) {
+		return api.listOrganizationWorkflowSummaries(ctx, currentUserID)
+	}
+
+	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
+		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "organization_tools")
+	}
+
+	if err := registerTool("list_employees", "List all employees available for workflow assignment.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employees, err := api.chatDB.ListEmployees(ctx)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employees": employees})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("create_employee", "Create a new employee record.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"name":         map[string]interface{}{"type": "string", "description": "Employee name."},
+			"avatar_color": map[string]interface{}{"type": "string", "description": "Optional hex color.", "default": "#6366f1"},
+			"description":  map[string]interface{}{"type": "string", "description": "Optional employee description or role."},
+		},
+		"required": []string{"name"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		name, _ := args["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", fmt.Errorf("name is required")
+		}
+		avatarColor, _ := args["avatar_color"].(string)
+		description, _ := args["description"].(string)
+		created, err := api.chatDB.CreateEmployee(ctx, &database.Employee{
+			Name:        name,
+			AvatarColor: strings.TrimSpace(avatarColor),
+			Description: strings.TrimSpace(description),
+			UserID:      currentUserID,
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employee": created, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("update_employee", "Update an existing employee record.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"employee_id":  map[string]interface{}{"type": "string", "description": "Employee ID."},
+			"name":         map[string]interface{}{"type": "string", "description": "Updated employee name."},
+			"avatar_color": map[string]interface{}{"type": "string", "description": "Updated hex color."},
+			"description":  map[string]interface{}{"type": "string", "description": "Updated description or role."},
+		},
+		"required": []string{"employee_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+		if employeeID == "" {
+			return "", fmt.Errorf("employee_id is required")
+		}
+		current, err := api.chatDB.GetEmployee(ctx, employeeID)
+		if err != nil {
+			return "", err
+		}
+		if current == nil {
+			return "", fmt.Errorf("employee %q not found", employeeID)
+		}
+		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
+			current.Name = strings.TrimSpace(name)
+		}
+		if avatarColor, ok := args["avatar_color"].(string); ok && strings.TrimSpace(avatarColor) != "" {
+			current.AvatarColor = strings.TrimSpace(avatarColor)
+		}
+		if description, ok := args["description"].(string); ok {
+			current.Description = strings.TrimSpace(description)
+		}
+		updated, err := api.chatDB.UpdateEmployee(ctx, employeeID, current)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employee": updated, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("delete_employee", "Delete an employee. Assigned workflows become unassigned.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"employee_id": map[string]interface{}{"type": "string", "description": "Employee ID."},
+		},
+		"required": []string{"employee_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+		if employeeID == "" {
+			return "", fmt.Errorf("employee_id is required")
+		}
+		if err := api.chatDB.DeleteEmployee(ctx, employeeID); err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"success": true, "employee_id": employeeID})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_workflows", "List workflow presets with current employee assignment, schedules, and latest output locations.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		workflows, err := listWorkflowSummaries(ctx)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"workflows": workflows})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("assign_workflow_employee", "Assign or unassign a workflow preset to an employee.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
+			"employee_id":     map[string]interface{}{"type": "string", "description": "Employee ID. Leave empty to unassign."},
+		},
+		"required": []string{"preset_query_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		if presetQueryID == "" {
+			return "", fmt.Errorf("preset_query_id is required")
+		}
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+
+		sqlDB := api.chatDB.GetDB()
+		if sqlDB == nil {
+			return "", fmt.Errorf("database connection unavailable")
+		}
+
+		var (
+			result interface{ RowsAffected() (int64, error) }
+			err    error
+		)
+		if employeeID != "" {
+			result, err = sqlDB.ExecContext(ctx,
+				`UPDATE preset_queries SET employee_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+				employeeID, presetQueryID)
+		} else {
+			result, err = sqlDB.ExecContext(ctx,
+				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+				presetQueryID)
+		}
+		if err != nil {
+			return "", err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if rowsAffected == 0 {
+			return "", fmt.Errorf("preset_query_id %q not found", presetQueryID)
+		}
+
+		return marshalOrganizationResult(map[string]interface{}{
+			"success":         true,
+			"preset_query_id": presetQueryID,
+			"employee_id":     employeeID,
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_workflow_schedules", "List schedules for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		jobs, err := api.listOrganizationWorkflowSchedules(ctx, currentUserID, presetQueryID)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"jobs": jobs})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("create_workflow_schedule", "Create a schedule for a workflow preset.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
+			"name":            map[string]interface{}{"type": "string", "description": "Schedule name."},
+			"cron_expression": map[string]interface{}{"type": "string", "description": "Cron expression."},
+			"timezone":        map[string]interface{}{"type": "string", "description": "Timezone name.", "default": "Asia/Kolkata"},
+			"description":     map[string]interface{}{"type": "string", "description": "Optional description."},
+			"enabled":         map[string]interface{}{"type": "boolean", "description": "Whether schedule is enabled.", "default": true},
+			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional workflow group IDs."},
+		},
+		"required": []string{"preset_query_id", "name", "cron_expression"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		name, _ := args["name"].(string)
+		cronExpression, _ := args["cron_expression"].(string)
+		timezone, _ := args["timezone"].(string)
+		description, _ := args["description"].(string)
+		if strings.TrimSpace(presetQueryID) == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(cronExpression) == "" {
+			return "", fmt.Errorf("preset_query_id, name, and cron_expression are required")
+		}
+		if strings.TrimSpace(timezone) == "" {
+			timezone = "Asia/Kolkata"
+		}
+		if err := ValidateCronExpression(strings.TrimSpace(cronExpression)); err != nil {
+			return "", err
+		}
+		var groupIDs []string
+		if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
+			for _, item := range rawGroupIDs {
+				if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+					groupIDs = append(groupIDs, strings.TrimSpace(value))
+				}
+			}
+		}
+		enabled := true
+		if value, ok := args["enabled"].(bool); ok {
+			enabled = value
+		}
+		job, err := api.createOrganizationWorkflowSchedule(ctx, currentUserID, strings.TrimSpace(presetQueryID), WorkflowSchedule{
+			Name:           strings.TrimSpace(name),
+			Description:    strings.TrimSpace(description),
+			CronExpression: strings.TrimSpace(cronExpression),
+			Timezone:       strings.TrimSpace(timezone),
+			Enabled:        enabled,
+			GroupIDs:       groupIDs,
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("update_workflow_schedule", "Update an existing workflow schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id":     map[string]interface{}{"type": "string", "description": "Schedule ID."},
+			"name":            map[string]interface{}{"type": "string", "description": "Updated name."},
+			"description":     map[string]interface{}{"type": "string", "description": "Updated description."},
+			"cron_expression": map[string]interface{}{"type": "string", "description": "Updated cron expression."},
+			"timezone":        map[string]interface{}{"type": "string", "description": "Updated timezone."},
+			"enabled":         map[string]interface{}{"type": "boolean", "description": "Enable or disable the schedule."},
+			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Updated workflow group IDs."},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		job, err := api.updateOrganizationWorkflowSchedule(ctx, currentUserID, scheduleID, func(schedule *WorkflowSchedule) error {
+			if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
+				schedule.Name = strings.TrimSpace(name)
+			}
+			if description, ok := args["description"].(string); ok {
+				schedule.Description = strings.TrimSpace(description)
+			}
+			if cronExpression, ok := args["cron_expression"].(string); ok && strings.TrimSpace(cronExpression) != "" {
+				cleanCron := strings.TrimSpace(cronExpression)
+				if err := ValidateCronExpression(cleanCron); err != nil {
+					return err
+				}
+				schedule.CronExpression = cleanCron
+			}
+			if timezone, ok := args["timezone"].(string); ok && strings.TrimSpace(timezone) != "" {
+				schedule.Timezone = strings.TrimSpace(timezone)
+			}
+			if enabled, ok := args["enabled"].(bool); ok {
+				schedule.Enabled = enabled
+			}
+			if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
+				groupIDs := make([]string, 0, len(rawGroupIDs))
+				for _, item := range rawGroupIDs {
+					if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+						groupIDs = append(groupIDs, strings.TrimSpace(value))
+					}
+				}
+				schedule.GroupIDs = groupIDs
+			}
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("delete_workflow_schedule", "Delete a workflow schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		if err := api.deleteOrganizationWorkflowSchedule(ctx, currentUserID, scheduleID); err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"success": true, "schedule_id": scheduleID})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_schedule_runs", "List recent runs for a schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
+			"limit":       map[string]interface{}{"type": "number", "description": "Maximum runs to return.", "default": 20},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		limit := 20
+		if rawLimit, ok := args["limit"].(float64); ok && rawLimit > 0 {
+			limit = int(rawLimit)
+		}
+		item, _, err := api.findWorkflowSchedule(ctx, currentUserID, scheduleID)
+		if err != nil {
+			return "", err
+		}
+		runs, _, err := ListScheduleRuns(ctx, item.WorkspacePath, scheduleID, limit, 0)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"runs": runs})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("inspect_workflow_outputs", "Show the latest run/output paths for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		workflows, err := listWorkflowSummaries(ctx)
+		if err != nil {
+			return "", err
+		}
+		if presetQueryID != "" {
+			filtered := make([]map[string]interface{}, 0, 1)
+			for _, workflow := range workflows {
+				if workflowID, _ := workflow["preset_query_id"].(string); workflowID == presetQueryID {
+					filtered = append(filtered, workflow)
+				}
+			}
+			workflows = filtered
+		}
+		return marshalOrganizationResult(map[string]interface{}{"outputs": workflows})
+	}); err != nil {
+		return err
+	}
+
+	workspace.SetSessionWorkingDir(sessionID, "Workflow/")
+	workspace.SetSessionFolderGuard(sessionID,
+		[]string{"Workflow/", "Chats/", "Downloads/", "skills/", "subagents/"},
+		[]string{"Chats/", "Downloads/"},
+	)
+
+	return nil
+}
 // workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.
 // Returns nil if neither specific nor legacy values are set.
 func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {

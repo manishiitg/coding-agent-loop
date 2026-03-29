@@ -6,6 +6,7 @@ import type {
   UpdateScheduledJobRequest,
   ListScheduledJobsResponse,
   ListScheduledJobRunsResponse,
+  SchedulerConfig,
 } from '../services/api-types'
 
 const API_BASE_URL = getApiBaseUrl()
@@ -24,6 +25,12 @@ api.interceptors.request.use((config) => {
 })
 
 export const schedulerApi = {
+  getConfig: () =>
+    api.get<SchedulerConfig>('/api/scheduler/config').then(r => r.data),
+
+  updateConfig: (req: SchedulerConfig) =>
+    api.put<SchedulerConfig>('/api/scheduler/config', req).then(r => r.data),
+
   listJobs: (params?: { entity_type?: string; enabled?: boolean; limit?: number; offset?: number }) =>
     api.get<ListScheduledJobsResponse>('/api/scheduler/jobs', { params }).then(r => r.data),
 

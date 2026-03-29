@@ -5,6 +5,7 @@ import { SSEConnection } from '../../services/sse'
 import { EventList } from '../events'
 import { useChatStore } from '../../stores'
 import type { PollingEvent, SSEEventMessage } from '../../services/api-types'
+import { getTypedEventData } from '../../generated/event-types'
 
 // Event types that EventDispatcher can render (all others show as "Unknown")
 const KNOWN_EVENT_TYPES = new Set([
@@ -34,7 +35,7 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }:
 
   // Filter to only events that EventDispatcher can render
   const displayEvents = useMemo(
-    () => allEvents.filter(e => KNOWN_EVENT_TYPES.has(e.type)),
+    () => allEvents.filter(e => !!e.type && KNOWN_EVENT_TYPES.has(e.type)),
     [allEvents]
   )
 
@@ -43,8 +44,11 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }:
       setAllEvents(prev => [...prev, ...msg.events])
 
       for (const evt of msg.events) {
-        if (evt.type === 'streaming_chunk' && evt.data?.chunk) {
-          appendStreamingChunk(sessionId, evt.data.chunk as string)
+        if (evt.type === 'streaming_chunk') {
+          const chunkData = getTypedEventData(evt, 'streaming_chunk')
+          if (chunkData?.content) {
+            appendStreamingChunk(sessionId, chunkData.chunk_index ?? -1, chunkData.content)
+          }
         }
       }
     }

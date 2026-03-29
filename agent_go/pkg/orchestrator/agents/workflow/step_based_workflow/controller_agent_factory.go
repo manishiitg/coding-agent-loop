@@ -10,16 +10,16 @@ import (
 	"sync"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/codeexec"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -305,7 +305,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// READ: step-specific learnings folder (only if learnings exist) + execution folder (to read previous step results) + knowledgebase folder (if enabled)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder (if enabled) + execution/Downloads folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
-	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	readPaths = []string{executionWorkspacePath}
 	// Only add learnings folder to read paths if learnings exist
@@ -447,6 +447,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
 	if orchestratorLLMConfig == nil {
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
+	}
+
+	// Learn-code repair override: after main.py fails, force Tier 1 for repair turns.
+	// This intentionally beats temp overrides, step ExecutionLLM, and maturity-based tiering.
+	if forceHighRepair, ok := ctx.Value(LearnCodeRepairHighTierContextKey).(bool); ok && forceHighRepair {
+		if hcpo.tierResolver != nil {
+			llmConfig := hcpo.tierResolver.ResolveTier(TierHigh)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learn-code repair forcing Tier 1 (High) for step %s: %s/%s",
+					stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+				return llmConfig
+			}
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learn-code repair requested Tier 1 for step %s but no TierHigh config is available; falling back to normal selection", stepPath))
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learn-code repair requested Tier 1 for step %s but tier resolver is unavailable; falling back to normal selection", stepPath))
+		}
 	}
 
 	// ── 1. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
@@ -717,6 +733,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Provider '%s': code execution mode disabled (not CLI provider), tool search mode: %v", actualProvider, config.UseToolSearchMode))
 	}
 
+	// Learn code mode: propagate to agent config so prompt filename gets _learn-code suffix
+	if stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
+		config.UseLearnCodeMode = true
+	}
+
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
 		config.EnableContextOffloading = stepConfig.EnableContextOffloading
@@ -844,7 +865,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
-	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 
 	// Set folder guard paths:
 	// READ: step-specific learnings folder (only if learnings exist) + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder (if enabled)
@@ -910,7 +931,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 
 	// Add execution logs folder so learning agents can read execution logs if needed
 	// Execution logs contain actual tool usage, conversation history, and execution results
-	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePath, learningPathIdentifier, stepPath)
 	readPaths = append(readPaths, executionLogsPath)
 
 	// Add skills folder so learning agents can read skill-creator guide and other installed skills
@@ -1083,6 +1104,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 3. Setup folder guard (extracted method) - uses step-specific learnings folder only if learnings exist
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, hasLearnings)
+
+	// Learn code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
+	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] stepConfig nil=%v useLearnCode=%v", stepConfig == nil, stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode))
+	if stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
+		if len(writePaths) > 0 {
+			codePath := writePaths[0] + "/code"
+			writePaths = append(writePaths, codePath)
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Enforced write paths now include code/: %v", writePaths))
+		} else {
+			hcpo.GetLogger().Warn("🐍 [learn_code] writePaths is empty — cannot append code/ subdir to folder guard")
+		}
+	}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
@@ -1467,7 +1501,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	return agent, nil
 }
 
-
 // ConversationEntry is a single flattened message in the sub-agent's conversation
 type ConversationEntry struct {
 	Index    int    `json:"index"`
@@ -1479,7 +1512,7 @@ type ConversationEntry struct {
 
 // SubAgentCallRecord stores the full record of a single call_sub_agent / call_generic_agent call
 type SubAgentCallRecord struct {
-	Index         int                 `json:"index"`   // 1-based call order
+	Index         int                 `json:"index"` // 1-based call order
 	CalledAt      time.Time           `json:"called_at"`
 	TodoID        string              `json:"todo_id"`
 	RouteID       string              `json:"route_id,omitempty"` // empty for generic

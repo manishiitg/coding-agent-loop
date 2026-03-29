@@ -117,7 +117,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, conditionalStepPath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), conditionalStepPath)
 	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 		// Non-blocking: log warning but continue execution (folder will be created when files are written)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure conditional step execution folder exists: %v (continuing - folder will be created when files are written)", err))
@@ -155,7 +155,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
 			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
 		}
-		hcpo.preSavePromptsJSON(stepIndex, conditionalStepPath, "conditional_evaluation", sp, um, model, "conditional-prompts.json")
+		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), conditionalStepPath, "conditional_evaluation", sp, um, model, "conditional-prompts.json")
 	}
 
 	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, conditionalStep.ConditionQuestion, stepDescription, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues)
@@ -190,7 +190,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	}
 
 	// Get validation folder path based on conditionalStepPath (step-{X})
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, conditionalStepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, step.GetID(), conditionalStepPath)
 
 	// Save conditional evaluation result
 	conditionalEvaluationFilePath := fmt.Sprintf("%s/conditional-evaluation.json", validationFolderPath)
@@ -474,7 +474,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 
 	// Write step_done.json for the conditional step itself
 	// executionWorkspacePath is defined earlier in the function
-	stepExecutionPath = getExecutionFolderPath(executionWorkspacePath, conditionalStepPath)
+	stepExecutionPath = getExecutionFolderPath(executionWorkspacePath, step.GetID(), conditionalStepPath)
 	stepDonePath := filepath.Join(stepExecutionPath, "step_done.json")
 	stepDoneData := map[string]interface{}{
 		"completed_at": time.Now().UTC().Format(time.RFC3339),

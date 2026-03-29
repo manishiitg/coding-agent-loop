@@ -173,9 +173,7 @@ export default function Workspace({
     setActiveFolder,
     setBinaryFileData,
     needsRefresh,
-    setNeedsRefresh,
-    autoRefresh,
-    setAutoRefresh
+    setNeedsRefresh
   } = useWorkspaceStore()
 
   const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
@@ -524,15 +522,24 @@ export default function Workspace({
 
   const latestIteration = availableIterations[availableIterations.length - 1] ?? null
 
+  const builderPinnedIteration = useMemo(() => {
+    if (selectedModeCategory !== 'workflow' || workflowWorkspaceView !== 'builder') {
+      return null
+    }
+
+    return availableIterations.includes('iteration-0') ? 'iteration-0' : null
+  }, [selectedModeCategory, workflowWorkspaceView, availableIterations])
+
   // Effective iteration to display: user override → selectedRunFolder (top-level only) → latest
   const effectiveDisplayedIteration = useMemo(() => {
+    if (builderPinnedIteration) return builderPinnedIteration
     if (workspaceDisplayedIteration) return workspaceDisplayedIteration
     if (selectedRunFolder && selectedRunFolder !== 'new') {
       // selectedRunFolder can be "iteration-N" or "iteration-N/group-X" — take top-level only
       return selectedRunFolder.split('/')[0]
     }
     return latestIteration
-  }, [workspaceDisplayedIteration, selectedRunFolder, latestIteration])
+  }, [builderPinnedIteration, workspaceDisplayedIteration, selectedRunFolder, latestIteration])
 
   useEffect(() => {
     if (selectedModeCategory !== 'workflow' || workflowWorkspaceView !== 'builder' || availableIterations.length === 0) {
@@ -561,6 +568,12 @@ export default function Workspace({
   ])
 
   const prevWorkflowWorkspaceViewRef = useRef<typeof workflowWorkspaceView>(workflowWorkspaceView)
+  useEffect(() => {
+    if (workflowWorkspaceView === 'builder') {
+      setShowIterationDropdown(false)
+    }
+  }, [workflowWorkspaceView])
+
   useEffect(() => {
     const previousView = prevWorkflowWorkspaceViewRef.current
     prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
@@ -593,6 +606,8 @@ export default function Workspace({
     latestIteration,
     workspaceDisplayedIteration
   ])
+
+  const canSelectIterationInWorkspace = selectedModeCategory === 'workflow' && workflowWorkspaceView === 'execution'
 
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
@@ -655,7 +670,7 @@ export default function Workspace({
   const handleRefreshAndSearch = useCallback(async () => {
     setServerSearchLoading(true)
     try {
-      await fetchFiles(undefined)
+      await fetchFiles(undefined, { force: true })
     } catch (err) {
       console.error('Failed to refresh files:', err)
     } finally {
@@ -812,7 +827,8 @@ export default function Workspace({
       const { fetchFiles: fetch } = useWorkspaceStore.getState()
       if (selectedModeCategory === 'workflow') {
         const targetFolder = activeFolder
-        fetch(targetFolder)
+        const shouldForceInitialWorkflowLoad = !!targetFolder && !fullyLoadedWorkflowFoldersRef.current.has(targetFolder)
+        fetch(targetFolder, shouldForceInitialWorkflowLoad ? { force: true } : undefined)
           .then(() => {
             if (targetFolder) {
               fullyLoadedWorkflowFoldersRef.current.add(targetFolder)
@@ -945,7 +961,7 @@ export default function Workspace({
     if (folder.type === 'folder') {
       // In workflow mode, disable direct clicking on iteration/group folders
       // Only allow checkbox-based selection for these folders
-      if (selectedModeCategory === 'workflow') {
+      if (selectedModeCategory === 'workflow' && workflowWorkspaceView === 'execution') {
         const isIterationFolder =
           folder.filepath.includes('/runs/iteration-') ||
           /\/iteration-\d+$/.test(folder.filepath) ||
@@ -1154,7 +1170,7 @@ export default function Workspace({
       }
 
       // Refresh the file list
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
 
       // Clear selection and exit selection mode
       setSelectedFiles(new Set())
@@ -1217,7 +1233,7 @@ export default function Workspace({
       }
       
       // Refresh the file list to show updated state
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       
       // Close dialog
       closeDeleteDialog()
@@ -1246,7 +1262,7 @@ export default function Workspace({
       await wsFileApi.deleteAllFilesInFolder(fullFolderPath)
       
       // Refresh the file list to show updated state
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       
       // Close dialog
       closeDeleteAllFilesDialog()
@@ -1478,7 +1494,7 @@ export default function Workspace({
       await wsFileApi.moveFile(fullFilePath, fullDestinationPath, commitMessage)
       
       // Refresh the file list to show updated state
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       
       // Update selected file if it was moved
       if (localMoveDialog.item.filepath === highlightedFile) {
@@ -1522,7 +1538,7 @@ export default function Workspace({
       await wsFileApi.moveFile(fullFilePath, destinationPath, commitMessage)
       
       // Refresh the file list to show updated state
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       
       // Update selected file if it was renamed
       if (renameDialog.item.filepath === highlightedFile) {
@@ -1648,12 +1664,12 @@ export default function Workspace({
 
     const allSucceeded = results.every(r => r.success)
     if (allSucceeded) {
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       setPendingFiles([])
       closeUploadDialog()
       setUploadResults(null)
     } else {
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       // Keep dialog open to show results; remove succeeded files from pending
       const failedNames = new Set(results.filter(r => !r.success).map(r => r.name))
       setPendingFiles(prev => prev.filter(f => failedNames.has(f.name)))
@@ -1732,7 +1748,7 @@ export default function Workspace({
       await wsFileApi.createFolder(fullFolderPath, commitMessage)
       
       // Refresh file list to show the new folder
-      await fetchFiles(activeFolder)
+      await fetchFiles(activeFolder, { force: true })
       
       // Close dialog
       closeCreateFolderDialog()
@@ -1864,7 +1880,7 @@ export default function Workspace({
         
         // Refresh workspace files
         setTimeout(() => {
-          fetchFiles(activeFolder).catch(console.error)
+          fetchFiles(activeFolder, { force: true }).catch(console.error)
         }, 500)
         
         // Auto-dismiss success message after 5 seconds
@@ -1998,7 +2014,7 @@ export default function Workspace({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={() => fetchFiles(activeFolder)}
+                      onClick={() => fetchFiles(activeFolder, { force: true })}
                       disabled={loading}
                       className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
                     >
@@ -2097,7 +2113,7 @@ export default function Workspace({
               {/* Git Sync Status - Hidden in selection mode */}
               {!isSelectionMode && isGitSyncEnabled && (
                 <div className="relative">
-                  <GitSyncStatus onSync={() => fetchFiles(activeFolder)} isVisible={!minimized} />
+                  <GitSyncStatus onSync={() => fetchFiles(activeFolder, { force: true })} isVisible={!minimized} />
                 </div>
               )}
 
@@ -2105,7 +2121,7 @@ export default function Workspace({
               {!isSelectionMode && isSemanticSearchEnabled && (
                 <div className="relative">
                   <SemanticSearchSync
-                    onResync={() => fetchFiles(activeFolder)}
+                    onResync={() => fetchFiles(activeFolder, { force: true })}
                     isVisible={!minimized}
                     hideButton={true}
                     showDetailsExternal={showSearchSyncDetails}
@@ -2200,48 +2216,44 @@ export default function Workspace({
       {/* Content */}
       {!minimized && (
         <div className="flex-1 overflow-hidden">
-          {/* Stale workspace banner + auto-refresh toggle */}
+          {/* Stale workspace banner */}
           {needsRefresh && (
             <div className="flex items-center justify-between px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 text-xs">
               <span className="text-yellow-600 dark:text-yellow-500">Files may be out of date</span>
-              <button
-                onClick={() => {
-                  console.log('[Workspace] Manual refresh triggered by user')
-                  setNeedsRefresh(false)
-                  fetchFiles(activeFolder)
-                }}
-                disabled={loading}
-                className="ml-2 px-2 py-0.5 rounded text-yellow-600 dark:text-yellow-500 hover:bg-yellow-500/20 font-medium disabled:opacity-50"
+                  <button
+                    onClick={() => {
+                      console.log('[Workspace] Manual refresh triggered by user')
+                      setNeedsRefresh(false)
+                      fetchFiles(activeFolder, { force: true })
+                    }}
+                    disabled={loading}
+                    className="ml-2 px-2 py-0.5 rounded text-yellow-600 dark:text-yellow-500 hover:bg-yellow-500/20 font-medium disabled:opacity-50"
               >
                 Refresh
               </button>
             </div>
           )}
-          {/* Auto-refresh toggle — always visible so user can enable/disable anytime */}
-          <div className="flex items-center px-3 py-1 border-b border-gray-200 dark:border-gray-700 text-xs">
-            <label className="flex items-center gap-1.5 cursor-pointer text-gray-500 dark:text-gray-400 select-none">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-                className="w-3 h-3 rounded accent-blue-500 cursor-pointer"
-              />
-              Auto-refresh
-            </label>
-          </div>
           {/* Iteration filter badge — shown in workflow mode when iterations exist */}
           {selectedModeCategory === 'workflow' && availableIterations.length > 0 && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border-b border-blue-500/20 text-xs">
               <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Filters workspace as per workflow</span>
               <div className="relative ml-auto iteration-filter-dropdown">
                 <button
-                  onClick={() => setShowIterationDropdown(prev => !prev)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300 font-medium"
+                  onClick={() => {
+                    if (!canSelectIterationInWorkspace) return
+                    setShowIterationDropdown(prev => !prev)
+                  }}
+                  disabled={!canSelectIterationInWorkspace}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-blue-700 dark:text-blue-300 font-medium ${
+                    canSelectIterationInWorkspace
+                      ? 'bg-blue-500/10 hover:bg-blue-500/20'
+                      : 'bg-blue-500/5 opacity-80 cursor-default'
+                  }`}
                 >
                   {effectiveDisplayedIteration ?? 'Select iteration'}
-                  <ChevronDown className="w-3 h-3" />
+                  {canSelectIterationInWorkspace && <ChevronDown className="w-3 h-3" />}
                 </button>
-                {showIterationDropdown && (
+                {canSelectIterationInWorkspace && showIterationDropdown && (
                   <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg min-w-[140px] max-h-48 overflow-y-auto">
                     {availableIterations.map(iter => (
                       <button
@@ -2276,7 +2288,7 @@ export default function Workspace({
                 onFileDelete={handleFileDelete}
                 onFolderDelete={handleFolderDelete}
                 onDeleteAllFilesInFolder={handleDeleteAllFilesInFolder}
-                onRetry={() => fetchFiles(activeFolder)}
+                onRetry={() => fetchFiles(activeFolder, { force: true })}
                 expandedFolders={expandedFolders}
                 loadingChildren={emptyLoadingSet}
                 chatFileContext={chatFileContext}

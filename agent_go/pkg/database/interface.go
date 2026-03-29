@@ -66,19 +66,6 @@ type Database interface {
 	DeleteUserSecret(ctx context.Context, userID, name string) error
 	ListUserSecrets(ctx context.Context, userID string) ([]UserSecret, error)
 
-	// Scheduled job management
-	CreateScheduledJob(ctx context.Context, req *CreateScheduledJobRequest) (*ScheduledJob, error)
-	GetScheduledJob(ctx context.Context, id string) (*ScheduledJob, error)
-	UpdateScheduledJob(ctx context.Context, id string, req *UpdateScheduledJobRequest) (*ScheduledJob, error)
-	DeleteScheduledJob(ctx context.Context, id string) error
-	ListScheduledJobs(ctx context.Context, limit, offset int, entityType *string, enabled *bool) ([]ScheduledJob, int, error)
-	UpdateScheduledJobRunStatus(ctx context.Context, id string, lastRunAt time.Time, nextRunAt *time.Time, sessionID, status, errMsg string, durationMs *int64) error
-
-	// Scheduled job run history
-	CreateScheduledJobRun(ctx context.Context, run *ScheduledJobRun) error
-	UpdateScheduledJobRun(ctx context.Context, id string, status string, errMsg string, durationMs *int64, runFolder string, sessionID string) error
-	ListScheduledJobRuns(ctx context.Context, jobID string, limit, offset int) ([]ScheduledJobRun, int, error)
-
 	// Employee Management
 	CreateEmployee(ctx context.Context, employee *Employee) (*Employee, error)
 	GetEmployee(ctx context.Context, id string) (*Employee, error)

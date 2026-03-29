@@ -1,0 +1,785 @@
+package step_based_workflow
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
+)
+
+// cleanStepOutputDir deletes all output files/folders in the step execution directory.
+// preserveDirs lists subdirectory names to skip (e.g., "code" when main.py is inside it).
+// Called before the controller re-runs main.py so pre-validation tests fresh output only.
+func (hcpo *StepBasedWorkflowOrchestrator) cleanStepOutputDir(ctx context.Context, stepExecutionRelPath string, preserveDirs ...string) {
+	entries, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepExecutionRelPath)
+	if listErr != nil {
+		return // folder doesn't exist yet — nothing to clean
+	}
+	preserveSet := make(map[string]bool, len(preserveDirs))
+	for _, d := range preserveDirs {
+		preserveSet[d] = true
+	}
+	workspacePath := hcpo.GetWorkspacePath()
+	docsRoot := GetPromptDocsRoot()
+	for _, entry := range entries {
+		name := filepath.Base(entry)
+		if name == "" || name == "." || preserveSet[name] {
+			continue
+		}
+		entryRelPath := stepExecutionRelPath + "/" + name
+		// Build absolute path for folder-delete API, accounting for the fact that
+		// stepExecutionRelPath may already include the workspacePath prefix.
+		var absPath string
+		if strings.HasPrefix(entryRelPath, workspacePath+"/") || entryRelPath == workspacePath {
+			absPath = filepath.Join(docsRoot, entryRelPath)
+		} else {
+			absPath = filepath.Join(docsRoot, workspacePath, entryRelPath)
+		}
+		// Try file delete first; if it fails (directory entries return error from /api/documents/),
+		// fall back to folder delete via /api/folders/.
+		fileDelErr := hcpo.DeleteWorkspaceFile(ctx, entryRelPath)
+		if fileDelErr != nil {
+			if folderErr := deleteFolderViaAPI(ctx, absPath); folderErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] cleanStepOutputDir: failed to delete %s: file=%v folder=%v", name, fileDelErr, folderErr))
+			}
+		}
+	}
+}
+
+// LearnCodeMetadata persists script provenance and runtime statistics.
+type LearnCodeMetadata struct {
+	StepID         string         `json:"step_id"`
+	StepHash       string         `json:"step_hash"`      // SHA256 of step definition — invalidated when step changes
+	ScriptVersion  int            `json:"script_version"` // incremented each time the LLM rewrites the script
+	CreatedAt      string         `json:"created_at"`
+	LastRunAt      string         `json:"last_run_at"`
+	TotalRuns      int            `json:"total_runs"`
+	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts: {"learn_code": N, "code_exec": N, ...}
+	FailedRuns     int            `json:"failed_runs"`
+	RelearnCount   int            `json:"relearn_count"` // how many times the LLM had to rewrite
+}
+
+// LearnCodeFastPathResult is returned by tryRunSavedLearnCodeScript.
+type LearnCodeFastPathResult struct {
+	RanScript      bool   // true if a saved script was found and attempted
+	Success        bool   // true if script ran and validation passed
+	ExitCode       int    // actual Python exit code (0 = success, -1 = not-run/API error)
+	Output         string // combined stdout from script
+	Error          string // stderr / validation error (used as relearn context for LLM)
+	ExistingScript string // old script content (for LLM relearn prompt)
+}
+
+// getLearnCodeDirRelPath returns the learnings subdirectory (relative to workspace root).
+func getLearnCodeDirRelPath(stepID string, isEvalMode bool) string {
+	if isEvalMode {
+		return fmt.Sprintf("evaluation/learnings/%s", stepID)
+	}
+	return fmt.Sprintf("learnings/%s", stepID)
+}
+
+// getLearnCodeScriptAbsPath returns the absolute path to the saved main.py.
+// NOTE: Only used for passing paths to execLearnCodeScript (workspace API receives abs paths inside Docker).
+func getLearnCodeScriptAbsPath(docsRoot, workspacePath, stepID string, isEvalMode bool) string {
+	return filepath.Join(docsRoot, workspacePath, getLearnCodeDirRelPath(stepID, isEvalMode), "main.py")
+}
+
+// readLearnCodeMetadataAPI reads script_metadata.json via the workspace API.
+// Returns nil if the file is missing or cannot be parsed.
+func (hcpo *StepBasedWorkflowOrchestrator) readLearnCodeMetadataAPI(ctx context.Context, stepID string) *LearnCodeMetadata {
+	relPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/script_metadata.json"
+	data, err := hcpo.ReadWorkspaceFile(ctx, relPath)
+	if err != nil {
+		return nil
+	}
+	var meta LearnCodeMetadata
+	if err := json.Unmarshal([]byte(data), &meta); err == nil {
+		return &meta
+	}
+	// Legacy format: successful_runs was a plain int, not a map.
+	var legacy struct {
+		StepID         string `json:"step_id"`
+		StepHash       string `json:"step_hash"`
+		ScriptVersion  int    `json:"script_version"`
+		CreatedAt      string `json:"created_at"`
+		LastRunAt      string `json:"last_run_at"`
+		TotalRuns      int    `json:"total_runs"`
+		SuccessfulRuns int    `json:"successful_runs"`
+		FailedRuns     int    `json:"failed_runs"`
+		RelearnCount   int    `json:"relearn_count"`
+	}
+	if err := json.Unmarshal([]byte(data), &legacy); err != nil {
+		return nil
+	}
+	return &LearnCodeMetadata{
+		StepID:         legacy.StepID,
+		StepHash:       legacy.StepHash,
+		ScriptVersion:  legacy.ScriptVersion,
+		CreatedAt:      legacy.CreatedAt,
+		LastRunAt:      legacy.LastRunAt,
+		TotalRuns:      legacy.TotalRuns,
+		SuccessfulRuns: map[string]int{"learn_code": 0},
+		FailedRuns:     legacy.FailedRuns,
+		RelearnCount:   legacy.RelearnCount,
+	}
+}
+
+// writeLearnCodeMetadataAPI writes script_metadata.json via the workspace API.
+func (hcpo *StepBasedWorkflowOrchestrator) writeLearnCodeMetadataAPI(ctx context.Context, stepID string, meta LearnCodeMetadata) error {
+	relPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/script_metadata.json"
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return hcpo.WriteWorkspaceFile(ctx, relPath, string(data))
+}
+
+// hasValidLearnedScriptAPI returns true if main.py exists via workspace API and step_hash matches.
+func (hcpo *StepBasedWorkflowOrchestrator) hasValidLearnedScriptAPI(ctx context.Context, stepID, currentStepHash string) bool {
+	scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+	_, err := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
+	if err != nil {
+		return false
+	}
+	meta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
+	if meta == nil {
+		return false
+	}
+	if strings.TrimSpace(meta.StepHash) == "" && strings.TrimSpace(currentStepHash) != "" {
+		// Legacy repair: older learn_code saves could leave step_hash empty even when
+		// main.py existed. Backfill it now so the saved script can participate in fast path.
+		meta.StepID = stepID
+		meta.StepHash = currentStepHash
+		if err := hcpo.writeLearnCodeMetadataAPI(ctx, stepID, *meta); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to backfill empty step_hash for %s: %v", stepID, err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🛠️ [learn_code] Backfilled missing step_hash for saved script: %s", stepID))
+		}
+	}
+	return meta.StepHash == currentStepHash
+}
+
+// buildLearnCodeInputArgsForPrompt returns newline-joined input arg paths for templateVars.
+// Returns "" when learn_code mode is disabled or there are no context dependencies.
+func (hcpo *StepBasedWorkflowOrchestrator) buildLearnCodeInputArgsForPrompt(
+	ctx context.Context,
+	isLearnCodeMode bool,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	allSteps []PlanStepInterface,
+	executionWorkspacePath string,
+	docsRoot string,
+	variableValues map[string]string,
+) string {
+	if !isLearnCodeMode {
+		return ""
+	}
+	args := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, variableValues)
+	return strings.Join(args, "\n")
+}
+
+// buildLearnCodeVarMappingForPrompt returns a newline-joined list showing how workflow
+// variables map to env vars, e.g. "{{TARGET_USER}} → os.environ['SECRET_TARGET_USER']".
+// Returns "" when learn_code mode is disabled or there are no variables.
+func buildLearnCodeVarMappingForPrompt(isLearnCodeMode bool, manifest *VariablesManifest) string {
+	if !isLearnCodeMode || manifest == nil || len(manifest.Variables) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(manifest.Variables))
+	for _, v := range manifest.Variables {
+		lines = append(lines, fmt.Sprintf("{{%s}} → os.environ['VAR_%s']", v.Name, v.Name))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// buildLearnCodeEnvVarNamesForPrompt returns newline-joined env var names for templateVars.
+// Returns "" when learn_code mode is disabled.
+func buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode bool, workspaceEnvRef map[string]string) string {
+	if !isLearnCodeMode {
+		return ""
+	}
+	names := []string{"STEP_OUTPUT_DIR", "MCP_API_URL"}
+	for k := range workspaceEnvRef {
+		if k != "MCP_API_URL" { // avoid duplicate
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names[2:]) // sort the SECRET_*/VAR_* part
+	return strings.Join(names, "\n")
+}
+
+// buildLearnCodeInputArgs returns absolute paths to context_dependency files as positional args.
+// These become: python3 main.py <input1> <input2> ...
+func (hcpo *StepBasedWorkflowOrchestrator) buildLearnCodeInputArgs(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	allSteps []PlanStepInterface,
+	executionWorkspacePath string,
+	docsRoot string,
+	variableValues map[string]string,
+) []string {
+	deps := step.GetContextDependencies()
+	if len(deps) == 0 {
+		return nil
+	}
+	resolved := ResolveVariablesArray(deps, variableValues)
+	return hcpo.resolveDependencyPathsWithWorkspace(ctx, resolved, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, variableValues)
+}
+
+// shellQuotePath wraps an absolute path in single quotes for safe shell embedding.
+func shellQuotePath(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// execLearnCodeScript runs python3 <mainPy> <args...> via the workspace shell API.
+// Uses workspace.Client (same path as the LLM agent's execute_shell_command tool) so that
+// folder guard, ExtraEnv (SECRET_*, MCP_API_URL), and path handling all work consistently.
+//
+// workDirAbsPath  — absolute path to the script's working directory (code/ or learnings/{id}/)
+// stepOutputAbsPath — absolute path for STEP_OUTPUT_DIR env var (execution/step-N/)
+// stepExecutionRelPath — workspace-relative path to the execution folder (for FolderGuard write paths)
+func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
+	ctx context.Context,
+	mainPyAbsPath string,
+	inputArgs []string,
+	stepOutputAbsPath string,
+	workDirAbsPath string,
+	stepExecutionRelPath string,
+) (output string, exitCode int, execErr error) {
+	docsRoot := GetPromptDocsRoot() // /app/workspace-docs
+
+	// Convert absolute workDir to workspace-relative for WorkingDirectory field.
+	// The workspace API prepends docsRoot, so passing the absolute path would double it.
+	workDirRel := strings.TrimPrefix(workDirAbsPath, docsRoot+"/")
+	if workDirRel == workDirAbsPath {
+		// Didn't start with docsRoot — fall back to empty (workspace root)
+		workDirRel = ""
+	}
+
+	// Build command: STEP_OUTPUT_DIR is passed via ExtraEnv so no inline env prefix needed.
+	// Use absolute paths for main.py and args — /app/workspace-docs/... is valid inside Docker.
+	var sb strings.Builder
+	sb.WriteString("python3 ")
+	sb.WriteString(shellQuotePath(mainPyAbsPath))
+	for _, arg := range inputArgs {
+		sb.WriteString(" ")
+		sb.WriteString(shellQuotePath(arg))
+	}
+
+	// FolderGuard: allow reads from anywhere in workspace, writes only to the step execution folder.
+	guard := &workspace.FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  []string{"."},
+		WritePaths: []string{stepExecutionRelPath},
+	}
+
+	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR.
+	extraEnv := map[string]string{
+		"STEP_OUTPUT_DIR": stepOutputAbsPath,
+	}
+	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+		for k, v := range envRef {
+			if k == "STEP_OUTPUT_DIR" {
+				// Never let the shared workspace env override the per-step output folder.
+				// STEP_OUTPUT_DIR is execution-specific and can leak across concurrently
+				// running steps if read from the shared env map.
+				continue
+			}
+			extraEnv[k] = v
+		}
+	}
+
+	// Build request using the same ExecuteShellCommandParams struct the LLM agent uses,
+	// so the workspace API receives the same JSON shape and applies the same logic.
+	timeout := 300
+	useShell := true
+	reqParams := workspace.ExecuteShellCommandParams{
+		Command:          sb.String(),
+		WorkingDirectory: workDirRel,
+		Timeout:          &timeout,
+		UseShell:         &useShell,
+		FolderGuard:      guard,
+		ExtraEnv:         extraEnv,
+	}
+
+	jsonBody, err := json.Marshal(reqParams)
+	if err != nil {
+		return "", -1, fmt.Errorf("marshal shell request: %w", err)
+	}
+
+	apiURL := getWorkspaceAPIURL() + "/api/execute"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return "", -1, fmt.Errorf("create shell request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", -1, fmt.Errorf("workspace shell execute: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", -1, fmt.Errorf("read shell response: %w", err)
+	}
+
+	// Parse raw API response: {"success":..., "data":{"stdout":...,"stderr":...,"exit_code":...}, "error":...}
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+		Data    struct {
+			Stdout   string `json:"stdout"`
+			Stderr   string `json:"stderr"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", -1, fmt.Errorf("parse shell response: %w (body: %s)", err, string(body))
+	}
+
+	combined := apiResp.Data.Stdout
+	if apiResp.Data.Stderr != "" {
+		if combined != "" {
+			combined += "\n"
+		}
+		combined += apiResp.Data.Stderr
+	}
+	exitCode = apiResp.Data.ExitCode
+	if !apiResp.Success && exitCode == 0 {
+		exitCode = -1
+		execErr = fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+	return combined, exitCode, execErr
+}
+
+// tryRunSavedLearnCodeScript checks for a saved main.py and runs it:
+//   - No saved script or step definition changed → RanScript=false (fall through to LLM)
+//   - Script ran + validation passed              → RanScript=true, Success=true
+//   - Script failed                               → RanScript=true, Success=false (fall through to LLM for relearn)
+func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	allSteps []PlanStepInterface,
+	stepExecutionRelPath string, // workspace-relative, e.g. "Workflow/X/runs/iter-1/execution/step-2"
+	executionWorkspacePath string, // workspace-relative execution root
+) *LearnCodeFastPathResult {
+	docsRoot := GetPromptDocsRoot()
+	stepID := step.GetID()
+	stepHash := hcpo.CalculateStepHash(step)
+
+	if !hcpo.hasValidLearnedScriptAPI(ctx, stepID, stepHash) {
+		// Even when the hash mismatches (step definition changed), read the existing
+		// main.py if it exists and surface it as ExistingScript so the LLM can adapt
+		// the working script instead of rewriting from scratch. This preserves tested
+		// logic (e.g. login flows) and prevents the LLM from re-adding unwanted patterns.
+		scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+		existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
+		if existingScript != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d (%s) hash mismatch — passing existing script to LLM as update context", stepIndex+1, stepID))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] No valid saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
+		}
+		return &LearnCodeFastPathResult{RanScript: false, ExistingScript: existingScript}
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Executing saved script for step %d (%s) — 0 LLM tokens", stepIndex+1, stepID))
+
+	// Read existing script content for relearn context (if script fails).
+	scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+	existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
+
+	scriptAbsPath := getLearnCodeScriptAbsPath(docsRoot, hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
+	stepExecutionAbsPath := filepath.Join(docsRoot, stepExecutionRelPath)
+	learnDirAbsPath := filepath.Dir(scriptAbsPath) // learnings/{step-id}/ — workDir for saved script
+
+	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
+
+	// Clean previous output files before running saved script — fresh slate for this execution.
+	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath)
+
+	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, scriptAbsPath, inputArgs, stepExecutionAbsPath, learnDirAbsPath, stepExecutionRelPath)
+	if execErr != nil || exitCode != 0 {
+		var errMsg string
+		if execErr != nil {
+			errMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
+		} else {
+			errMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
+		}
+		// Even with non-zero exit, check if the script produced valid output.
+		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+		if preValResults != nil {
+			hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, preValResults)
+		}
+		if preValResults != nil && preValResults.OverallPass {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
+			hcpo.updateLearnCodeRunStats(ctx, stepID, true)
+			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output, ExistingScript: existingScript}
+		}
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script failed for step %d: %s", stepIndex+1, errMsg))
+		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
+		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg, ExistingScript: existingScript}
+	}
+
+	// Script exited 0 — run pre-validation to confirm output structure
+	preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+	if preValResults != nil {
+		hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, preValResults)
+	}
+	if preValResults != nil && !preValResults.OverallPass {
+		errMsg := formatWorkspaceResults(preValResults)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script ran but output validation failed for step %d", stepIndex+1))
+		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
+		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: 0, Error: errMsg, ExistingScript: existingScript}
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
+	hcpo.updateLearnCodeRunStats(ctx, stepID, true)
+	return &LearnCodeFastPathResult{RanScript: true, Success: true, Output: output}
+}
+
+// runLearnCodeMainPyFromExecution runs main.py written by the LLM in the step execution code folder.
+// Returns nil if main.py has not been written yet (LLM hasn't finished writing).
+// The LLM writes to execution/step-x/code/; STEP_OUTPUT_DIR is execution/step-x/.
+func (hcpo *StepBasedWorkflowOrchestrator) runLearnCodeMainPyFromExecution(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	allSteps []PlanStepInterface,
+	stepExecutionRelPath string,
+	executionWorkspacePath string,
+) *LearnCodeFastPathResult {
+	docsRoot := GetPromptDocsRoot()
+	stepExecutionAbsPath := filepath.Join(docsRoot, stepExecutionRelPath)
+	codeDirAbsPath := filepath.Join(stepExecutionAbsPath, "code")
+	mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
+
+	// Check if main.py exists via workspace API (not os.Stat — Go server runs on Mac, files are in Docker).
+	mainPyRelPath := stepExecutionRelPath + "/code/main.py"
+	if _, err := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); err != nil {
+		return nil // main.py not yet written
+	}
+
+	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
+
+	// Clean previous output files before running so pre-validation tests fresh output only.
+	// Preserve code/ — main.py lives there and we're about to run it.
+	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath, "code")
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Running main.py from code/ folder for step %d (LLM phase)", stepIndex+1))
+	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, mainPyPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
+	if execErr != nil || exitCode != 0 {
+		var errMsg string
+		if execErr != nil {
+			errMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
+		} else {
+			errMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
+		}
+		// Even with non-zero exit, check if the script produced valid output.
+		// Some scripts print diagnostics and exit non-zero but still write all required files.
+		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+		if preValResults != nil && preValResults.OverallPass {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
+			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output}
+		}
+		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg}
+	}
+	return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: 0, Output: output}
+}
+
+// saveLearnCodeScriptToLearnings copies all files from the step's code/ subfolder to learnings/{step-id}/.
+// This preserves main.py plus any helper modules the LLM wrote alongside it.
+// Uses workspace API (not os.*) — Go server may not have direct filesystem access to Docker workspace.
+func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
+	step PlanStepInterface,
+	stepExecutionAbsPath string,
+) {
+	stepID := step.GetID()
+	ctx := context.Background()
+
+	// Check if main.py exists in the code/ subfolder via workspace API.
+	// stepExecutionAbsPath = /app/workspace-docs/{workspace}/{runs}/execution/step-N
+	// Convert to relative path for workspace API: strip docsRoot + workspacePath prefix.
+	docsRoot := GetPromptDocsRoot()
+	workspacePath := hcpo.GetWorkspacePath()
+	wsPrefix := filepath.Join(docsRoot, workspacePath) + "/"
+	stepExecRelPath := strings.TrimPrefix(stepExecutionAbsPath, wsPrefix)
+	if stepExecRelPath == stepExecutionAbsPath {
+		// Couldn't strip — fall back to relative path extraction from absolute
+		stepExecRelPath = strings.TrimPrefix(stepExecutionAbsPath, docsRoot+"/")
+		stepExecRelPath = strings.TrimPrefix(stepExecRelPath, workspacePath+"/")
+	}
+	codeRelPath := stepExecRelPath + "/code"
+	mainPyRelPath := codeRelPath + "/main.py"
+
+	if _, err := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] main.py not found in code/ dir (%s) — skipping save", mainPyRelPath))
+		return
+	}
+
+	learnDirRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode)
+
+	// Delete all existing files AND folders in learnings/{step-id}/ before copying new ones.
+	// Files use DELETE /api/documents/; subdirectories use DELETE /api/folders/.
+	// We try folder delete first (handles "code/" subdir), then fall back to file delete.
+	if existingFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
+		for _, f := range existingFiles {
+			fileName := filepath.Base(f)
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" {
+				continue // keep metadata; delete everything else
+			}
+			entryRelPath := learnDirRelPath + "/" + fileName
+			absPath := filepath.Join(GetPromptDocsRoot(), workspacePath, entryRelPath)
+			// File delete first; fall back to folder delete for subdirectories (e.g. code/).
+			if fileDelErr := hcpo.DeleteWorkspaceFile(ctx, entryRelPath); fileDelErr != nil {
+				if folderErr := deleteFolderViaAPI(ctx, absPath); folderErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to delete %s from learnings: file=%v folder=%v", fileName, fileDelErr, folderErr))
+				}
+			}
+		}
+	}
+
+	// List files in code/ folder and copy each to learnings/{step-id}/
+	files, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, codeRelPath)
+	if listErr != nil {
+		// ListWorkspaceFiles failed — try to copy just main.py
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to list code/ dir (%s): %v — copying main.py only", codeRelPath, listErr))
+		content, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
+		if readErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read main.py: %v", readErr))
+			return
+		}
+		if writeErr := hcpo.WriteWorkspaceFile(ctx, learnDirRelPath+"/main.py", content); writeErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write main.py to learnings: %v", writeErr))
+			return
+		}
+	} else {
+		for _, f := range files {
+			if f == "" {
+				continue
+			}
+			// f may be a relative path within codeRelPath or the full path — normalize
+			fileName := filepath.Base(f)
+			if fileName == "" || fileName == "." {
+				continue
+			}
+			srcRelPath := codeRelPath + "/" + fileName
+			content, readErr := hcpo.ReadWorkspaceFile(ctx, srcRelPath)
+			if readErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to read %s: %v", fileName, readErr))
+				continue
+			}
+			if writeErr := hcpo.WriteWorkspaceFile(ctx, learnDirRelPath+"/"+fileName, content); writeErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write %s to learnings: %v", fileName, writeErr))
+			}
+		}
+	}
+
+	oldMeta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
+	version := 1
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	relearnCount := 0
+	if oldMeta != nil {
+		version = oldMeta.ScriptVersion + 1
+		if oldMeta.CreatedAt != "" {
+			createdAt = oldMeta.CreatedAt
+		}
+		relearnCount = oldMeta.RelearnCount + 1
+	}
+
+	currentStepHash := hcpo.CalculateStepHash(step)
+	if strings.TrimSpace(currentStepHash) == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Calculated empty step hash while saving %s", stepID))
+	}
+
+	newMeta := LearnCodeMetadata{
+		StepID:        stepID,
+		StepHash:      currentStepHash,
+		ScriptVersion: version,
+		CreatedAt:     createdAt,
+		LastRunAt:     time.Now().UTC().Format(time.RFC3339),
+		RelearnCount:  relearnCount,
+	}
+	if err := hcpo.writeLearnCodeMetadataAPI(ctx, stepID, newMeta); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write script_metadata.json: %v", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Saved main.py to learnings for step (%s) — version %d", stepID, version))
+	}
+}
+
+// updateLearnCodeRunStats increments run counters in script_metadata.json via workspace API.
+func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.Context, stepID string, success bool) {
+	meta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
+	if meta == nil {
+		return
+	}
+	meta.TotalRuns++
+	meta.LastRunAt = time.Now().UTC().Format(time.RFC3339)
+	if success {
+		if meta.SuccessfulRuns == nil {
+			meta.SuccessfulRuns = map[string]int{}
+		}
+		meta.SuccessfulRuns["learn_code"]++
+	} else {
+		meta.FailedRuns++
+	}
+	_ = hcpo.writeLearnCodeMetadataAPI(ctx, stepID, *meta)
+}
+
+// saveLearnCodeFastPathLog writes a JSON execution log to the standard logs directory
+// so that debug_step and direct file inspection can see the fast-path script run.
+func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
+	ctx context.Context,
+	stepIndex int,
+	stepID string,
+	stepPath string,
+	scriptPath string,
+	result *LearnCodeFastPathResult,
+) {
+	if result == nil {
+		return
+	}
+	logDir := getExecutionFolderPathForLogs(func() string {
+		if hcpo.selectedRunFolder != "" {
+			return fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		}
+		return hcpo.GetWorkspacePath()
+	}(), stepID, stepPath)
+
+	logData := map[string]interface{}{
+		"step_index":  stepIndex + 1,
+		"step_path":   stepPath,
+		"mode":        "learn_code_fast_path",
+		"script_path": scriptPath,
+		"exit_code":   result.ExitCode,
+		"success":     result.Success,
+		"output":      result.Output,
+		"error":       result.Error,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	}
+	if logJSON, err := json.MarshalIndent(logData, "", "  "); err == nil {
+		logPath := logDir + "/learn_code_fast_path.json"
+		if err := hcpo.WriteWorkspaceFile(context.Background(), logPath, string(logJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to save fast path log: %v", err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved fast path execution log: %s", logPath))
+		}
+	}
+}
+
+// GetLearnCodeModeInstructions returns system prompt additions for learn_code mode.
+// codeDirAbsPath is the LLM's working directory (execution/step-x/code/).
+// stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
+// inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
+// envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
+func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string) string {
+	var sb strings.Builder
+	sb.WriteString("\n\n## Learn Code Mode\n\n")
+	sb.WriteString("You are in **learn code mode**. Your ONLY job is to write a Python solution.\n\n")
+	sb.WriteString("**Your working directory (write all code files here):**\n")
+	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
+	sb.WriteString("**Rules:**\n")
+	sb.WriteString(fmt.Sprintf("- Write `main.py` (the entry point) to `%s/main.py`\n", codeDirAbsPath))
+	sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
+	sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
+	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
+	sb.WriteString("- The system will also execute it automatically after your turn ends\n")
+	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
+	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
+	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n\n")
+
+	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
+	if len(varMappingLines) > 0 {
+		sb.WriteString("**Workflow variable → env var** (`VAR_*` = config values, `SECRET_*` = real credentials):\n")
+		for _, line := range varMappingLines {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", line))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Show exact positional arguments
+	if len(inputArgPaths) > 0 {
+		sb.WriteString("**Script invocation** (exact call the controller will make):\n```\n")
+		sb.WriteString(fmt.Sprintf("python3 %s/main.py", codeDirAbsPath))
+		for _, arg := range inputArgPaths {
+			sb.WriteString(fmt.Sprintf(" \\\n    '%s'", arg))
+		}
+		sb.WriteString("\n```\n\n")
+		sb.WriteString("**Positional arguments** (sys.argv):\n")
+		for i, arg := range inputArgPaths {
+			sb.WriteString(fmt.Sprintf("- `sys.argv[%d]` = `%s`\n", i+1, arg))
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("- No positional arguments — script takes no inputs\n\n")
+	}
+
+	// Show available env vars
+	if len(envVarNames) > 0 {
+		sb.WriteString("**Available environment variables**:\n")
+		// Always show STEP_OUTPUT_DIR first, then sort the rest
+		shown := map[string]bool{}
+		sb.WriteString(fmt.Sprintf("- `STEP_OUTPUT_DIR` = `%s`  (write output files here)\n", stepOutputAbsPath))
+		shown["STEP_OUTPUT_DIR"] = true
+		sorted := make([]string, 0, len(envVarNames))
+		for _, name := range envVarNames {
+			if !shown[name] {
+				sorted = append(sorted, name)
+			}
+		}
+		sort.Strings(sorted)
+		for _, name := range sorted {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", name))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Python best practices section
+	sb.WriteString(BuildPythonBestPractices(varMappingLines, len(inputArgPaths) > 0))
+
+	// Show validation schema — tells the LLM exactly what output files to produce
+	if validationSchemaJSON != "" {
+		sb.WriteString("**Output requirements (validation schema)** — your script MUST produce these files:\n")
+		sb.WriteString("```json\n")
+		sb.WriteString(validationSchemaJSON)
+		sb.WriteString("\n```\n")
+		sb.WriteString("Write each required file to `STEP_OUTPUT_DIR` with the exact filename and structure shown.\n\n")
+	}
+
+	if isRelearn && priorScript != "" {
+		if priorError != "" {
+			// Script ran but failed — show error context for fix
+			sb.WriteString("### Previous Script (Failed)\n\n")
+			sb.WriteString("The previously saved script failed. Fix the bug and rewrite main.py:\n\n")
+			sb.WriteString("```python\n")
+			sb.WriteString(priorScript)
+			sb.WriteString("\n```\n")
+			sb.WriteString("\n**Error:**\n```\n")
+			sb.WriteString(priorError)
+			sb.WriteString("\n```\n")
+		} else {
+			// Step definition changed (hash mismatch) — adapt the existing working script
+			sb.WriteString("### Existing Script (Update Required)\n\n")
+			sb.WriteString("The step definition changed. Adapt this working script to match the updated step description above. ")
+			sb.WriteString("Keep all working logic intact — only change what the new description requires:\n\n")
+			sb.WriteString("```python\n")
+			sb.WriteString(priorScript)
+			sb.WriteString("\n```\n")
+		}
+	}
+	return sb.String()
+}

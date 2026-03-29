@@ -167,6 +167,16 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
 	startTime := time.Now()
 
+	// If path is relative and we have a workspace path, prepend it (same logic as Read/Write).
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath != "" && !filepath.IsAbs(filePath) {
+		if strings.HasPrefix(filePath, workspacePath+"/") || filePath == workspacePath {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ DeleteWorkspaceFile: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend.", filePath, workspacePath))
+		} else {
+			filePath = filepath.Join(workspacePath, filePath)
+		}
+	}
+
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	deleteArgs := map[string]interface{}{
 		"filepath": filePath,

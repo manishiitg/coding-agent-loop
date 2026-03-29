@@ -3,6 +3,8 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,12 +30,17 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.CodeExecutionSection}}
 {{end}}
 
+{{if .PythonBestPractices}}
+{{.PythonBestPractices}}
+{{end}}
+
 {{if .VariableNames}}
 ## Variables
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 
 **Handling**: Step descriptions are already resolved. For code and tool calls, use the resolved values directly.
+{{if and .IsCodeExecutionMode .VarMapping}}**Env var access** (VAR_* for variables, SECRET_* for credentials, never hardcode): {{.VarMapping}}{{end}}
 {{end}}
 
 ## Workspace & Paths
@@ -59,6 +66,7 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 ## EXECUTION RULES
 1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
 {{if .IsCodeExecutionMode}}2. Use absolute paths in code. E.g., `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
+3. **No env var fallbacks in Python**: always `+"`"+`os.environ['KEY']`+"`"+` — never `+"`"+`os.environ.get('KEY', 'default')`+"`"+`. Variables use `+"`"+`VAR_<NAME>`+"`"+`, secrets use `+"`"+`SECRET_<NAME>`+"`"+`. Missing var must raise KeyError, not silently use a hardcoded value.
 {{else}}2. Use absolute paths in shell commands. E.g., `+"`"+`echo '...' > '{{.StepExecutionPath}}/{{.StepContextOutput}}'`+"`"+`.
 {{end}}
 
@@ -131,6 +139,7 @@ End your response with exactly one of:
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
+{{end}}{{if eq .IsLearnCodeMode "true"}}**LEARN CODE NOTE**: Implement the task below as Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
 {{if eq .HasLoop "true"}}
@@ -205,6 +214,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	BaseDescription            string // Step description without orchestrator instructions
 	OrchestratorInstructions   string // Orchestrator instructions (split from description)
 	HasSkill                   string // "true" if skill files are available
+	IsLearnCodeMode            string // "true" when learn_code mode is enabled
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -243,6 +253,47 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 	return hctpeoa.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil, systemPrompt, true)
 }
 
+// buildCodeExecBestPractices returns the Python best practices section for code_exec mode.
+// Returns "" when not in code execution mode or no variables/inputs present.
+func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
+	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" {
+		return ""
+	}
+	var varMappingLines []string
+	if raw := templateVars["LearnCodeVarMapping"]; raw != "" {
+		varMappingLines = strings.Split(raw, "\n")
+	}
+	hasInputArgs := templateVars["StepContextDependencies"] != ""
+	return BuildPythonBestPractices(varMappingLines, hasInputArgs)
+}
+
+var hardcodedStepPathCmdRegex = regexp.MustCompile(`(?i)cat\s+'?\{WORKSPACE_PATH\}/step-\d+/[^'\s]+`)
+
+func sanitizeLearnCodeDescription(desc string) string {
+	if desc == "" {
+		return desc
+	}
+
+	lines := strings.Split(desc, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case hardcodedStepPathCmdRegex.MatchString(trimmed):
+			out = append(out, "- Use the resolved dependency file from the Requirements section below. Do NOT hardcode step-numbered paths.")
+			continue
+		case strings.Contains(trimmed, "Where {WORKSPACE_PATH}"):
+			continue
+		case strings.Contains(trimmed, "Use ONLY the current run's step-"):
+			out = append(out, "- Use only the resolved dependency path from this run. Do NOT explore other iterations or groups.")
+			continue
+		}
+		out = append(out, line)
+	}
+
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
 // executionOnlySystemPromptProcessor generates the system prompt for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
@@ -266,6 +317,36 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	// Build code execution or tool search section using common builder
 	useToolSearchMode := templateVars["UseToolSearchMode"] == "true"
 	codeExecutionSection := BuildCodeExecutionSection(isCodeExecutionMode, useToolSearchMode, workspacePath)
+
+	// Learn code mode: append instructions to write main.py (added on top of code execution section)
+	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"
+	if isLearnCodeMode {
+		isRelearnMode := templateVars["IsRelearnMode"] == "true"
+		priorScript := templateVars["LearnCodePriorScript"]
+		priorError := templateVars["LearnCodePriorError"]
+		codeDirAbsPath := filepath.Join(stepExecutionPath, "code")
+
+		// Parse input arg paths from templateVars (newline-separated)
+		var inputArgPaths []string
+		if raw := templateVars["LearnCodeInputArgs"]; raw != "" {
+			inputArgPaths = strings.Split(raw, "\n")
+		}
+
+		// Parse env var names from templateVars (newline-separated)
+		var envVarNames []string
+		if raw := templateVars["LearnCodeEnvVarNames"]; raw != "" {
+			envVarNames = strings.Split(raw, "\n")
+		}
+
+		// Parse variable→env mapping lines (newline-separated)
+		var varMappingLines []string
+		if raw := templateVars["LearnCodeVarMapping"]; raw != "" {
+			varMappingLines = strings.Split(raw, "\n")
+		}
+
+		validationSchemaJSON := templateVars["ValidationSchema"]
+		codeExecutionSection += GetLearnCodeModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON)
+	}
 
 	// Get variable names and values for system prompt
 	variableNames := templateVars["VariableNames"]
@@ -293,6 +374,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"KeepLearningFull":           fmt.Sprintf("%t", keepLearningFull),
 		"VariableNames":              variableNames,
 		"VariableValues":             variableValues,
+		"VarMapping":                 templateVars["LearnCodeVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
+		"PythonBestPractices":        buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
@@ -317,6 +400,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(templateVars map[string]string) string {
 	// Split description into base description and orchestrator instructions
 	fullDescription := templateVars["StepDescription"]
+	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"
+	if isLearnCodeMode {
+		fullDescription = sanitizeLearnCodeDescription(fullDescription)
+	}
 	baseDescription := fullDescription
 	orchestratorInstructions := ""
 	if idx := strings.Index(fullDescription, "\n\n## Orchestrator Instructions\n\n"); idx >= 0 {
@@ -352,6 +439,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		PreviousStepsSummary:    templateVars["PreviousStepsSummary"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
 		HasSkill:                fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
+		IsLearnCodeMode:         fmt.Sprintf("%t", isLearnCodeMode),
 	}
 
 	// Execute the pre-parsed template

@@ -56,7 +56,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     />
   )
 })
-import { agentApi } from '../../services/api'
+import { agentApi, sessionShareApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
 import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
@@ -376,18 +376,39 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activeWorkflowPreset])
 
-  // Load execution_defaults (Reuse Iteration, Clear Outputs) from workflow.json when workspace changes
+  // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
     if (!workspacePath) return
-    agentApi.getWorkflowManifest(workspacePath)
+    sessionShareApi.getWorkflowManifest(workspacePath)
       .then(response => {
         const defaults = response?.manifest?.execution_defaults
         if (!defaults) return
         const store = useWorkflowStore.getState()
-        store.setAlwaysUseSameRun(defaults.always_use_same_run)
-        store.setSkipExecutionCleanup(defaults.skip_execution_cleanup)
+        // Prefer explicit execution_mode; fall back to deriving from legacy flags
+        if (defaults.execution_mode === 'stateless' || defaults.execution_mode === 'stateful') {
+          store.setExecutionMode(defaults.execution_mode)
+        } else if (defaults.always_use_same_run) {
+          store.setExecutionMode('stateful')
+        } else {
+          store.setExecutionMode('stateless')
+        }
+        // Load global step overrides from execution_defaults
+        const hasOverrides = defaults.disable_learning !== undefined ||
+          defaults.disable_parallel_tool_execution !== undefined ||
+          defaults.execution_max_turns !== undefined ||
+          (defaults.enabled_custom_tools && defaults.enabled_custom_tools.length > 0)
+        if (hasOverrides) {
+          store.setStepOverride({
+            disable_learning: defaults.disable_learning !== undefined ? defaults.disable_learning : undefined,
+            disable_parallel_tool_execution: defaults.disable_parallel_tool_execution !== undefined ? defaults.disable_parallel_tool_execution : undefined,
+            execution_max_turns: defaults.execution_max_turns,
+            enabled_custom_tools: defaults.enabled_custom_tools,
+          })
+        } else {
+          store.setStepOverride(null)
+        }
       })
-      .catch(() => { /* manifest may not exist yet, use localStorage defaults */ })
+      .catch(() => { /* manifest may not exist yet, use defaults */ })
   }, [workspacePath])
 
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change

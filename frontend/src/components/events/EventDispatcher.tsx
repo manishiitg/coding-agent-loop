@@ -1712,6 +1712,90 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
+  // Learn Code Script Execution Event
+  if (event.type === 'learn_code_script_execution') {
+    const wrapper = event.data as { data?: unknown } | undefined
+    const d = (wrapper?.data || event.data) as {
+      step_id: string; step_title: string; step_path: string
+      script_path: string; script_content: string; success: boolean; exit_code: number
+      output: string; error: string; fix_iteration: number; is_saved_script: boolean
+    }
+    const isSaved = d?.is_saved_script
+    const success = d?.success
+    const fixIter = d?.fix_iteration ?? 0
+    let label: string
+    if (isSaved) {
+      label = '🐍 Script (saved)'
+    } else if (fixIter === 0) {
+      label = '🐍 Script (new)'
+    } else {
+      label = `🐍 Script (fix #${fixIter})`
+    }
+    const exitCode = d?.exit_code
+    const exitLabel = exitCode == null || exitCode < 0 ? 'failed' : `exit ${exitCode}`
+    const statusColor = success
+      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+      : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+    const textColor = success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
+    const failDetail = !success ? (d?.error || d?.output) : null
+    const successOutput = success ? d?.output : null
+    return (
+      <CompactWrapper compact={compact}>
+        <div className={`border rounded-md ${statusColor} ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium ${textColor}`}>{label}</span>
+            <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400`}>{d?.step_title || d?.step_path}</span>
+            {success
+              ? <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-600 dark:text-green-400`}>✓ passed</span>
+              : <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400`}>✗ {exitLabel}</span>
+            }
+          </div>
+          {failDetail && (() => {
+            const preview = failDetail.slice(0, 600)
+            const isTruncated = failDetail.length > 600
+            return (
+              <div className="mt-1">
+                <div className={`font-mono ${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400 whitespace-pre-wrap break-all`}>
+                  {preview}{isTruncated ? '…' : ''}
+                </div>
+                {isTruncated && (
+                  <details className="mt-2">
+                    <summary className={`cursor-pointer ${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400 select-none`}>
+                      View full error
+                    </summary>
+                    <pre className={`mt-1 font-mono ${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400 whitespace-pre-wrap break-all bg-red-50 dark:bg-red-950/20 rounded p-2 max-h-64 overflow-y-auto`}>
+                      {failDetail}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )
+          })()}
+          {successOutput && (
+            <details className="mt-2">
+              <summary className={`cursor-pointer ${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400 select-none`}>
+                Output
+              </summary>
+              <pre className={`mt-1 font-mono ${compact ? 'text-[10px]' : 'text-xs'} text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-all bg-gray-50 dark:bg-gray-800 rounded p-2 max-h-64 overflow-y-auto`}>
+                {successOutput}
+              </pre>
+            </details>
+          )}
+          {d?.script_content && (
+            <details className="mt-1">
+              <summary className={`cursor-pointer ${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400 select-none`}>
+                View main.py
+              </summary>
+              <pre className={`mt-1 font-mono ${compact ? 'text-[10px]' : 'text-xs'} text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-all bg-gray-50 dark:bg-gray-800 rounded p-2 max-h-64 overflow-y-auto`}>
+                {d.script_content}
+              </pre>
+            </details>
+          )}
+        </div>
+      </CompactWrapper>
+    )
+  }
+
   // Default case for unknown event types
   return (
     <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>

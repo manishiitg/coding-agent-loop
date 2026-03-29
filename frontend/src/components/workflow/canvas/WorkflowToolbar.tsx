@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
+import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import type { StepProgress, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
@@ -40,7 +41,6 @@ import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import BulkStepConfigModal from '../BulkStepConfigModal'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
-import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
@@ -48,7 +48,7 @@ import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import FinalOutputPopup from '../FinalOutputPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
-import type { PlanStep, AgentConfigs } from '../../../utils/stepConfigMatching'
+import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import {
   buildGroupFolderPath,
@@ -97,8 +97,6 @@ interface WorkflowToolbarProps {
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
-  stepOverride?: AgentConfigs | null  // Global step override config
-  onSaveStepOverride?: (agentConfigs: AgentConfigs | null) => Promise<void>  // Save global step override
   onRefresh?: () => Promise<void>  // Refresh plan and variables
   onSaveLayout?: () => Promise<void>  // Save workflow layout
   onDeleteLayout?: () => Promise<void>  // Delete workflow layout and reset to default
@@ -184,8 +182,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   showChatArea = false,
   onToggleChatArea,
   onBulkUpdateSteps,
-  stepOverride,
-  onSaveStepOverride,
   onRefresh,
   onSaveLayout,
   onDeleteLayout,
@@ -224,10 +220,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView,
-    alwaysUseSameRun,
-    setAlwaysUseSameRun,
-    skipExecutionCleanup,
-    setSkipExecutionCleanup,
+    selectedExecutionMode,
+    setExecutionMode,
     layoutDirection,
     setLayoutDirection
   } = useWorkflowStore(useShallow(state => ({
@@ -252,10 +246,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
-    alwaysUseSameRun: state.alwaysUseSameRun,
-    setAlwaysUseSameRun: state.setAlwaysUseSameRun,
-    skipExecutionCleanup: state.skipExecutionCleanup,
-    setSkipExecutionCleanup: state.setSkipExecutionCleanup,
+    setExecutionMode: state.setExecutionMode,
     layoutDirection: state.layoutDirection,
     setLayoutDirection: state.setLayoutDirection
   })))
@@ -540,8 +531,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
   const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
-  const effectiveAlwaysUseSameRun = alwaysUseSameRun || isResumingExecution
-  const clearOutputsBeforeRun = !skipExecutionCleanup
 
 
   // Helper to format the selected run folder display text
@@ -1569,80 +1558,104 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </TooltipProvider>
             )}
 
-            <ToolbarToggle
-              label="Reuse Iteration"
-              checked={effectiveAlwaysUseSameRun}
-              disabled={isResumingExecution}
-              onClick={() => {
-                if (!isResumingExecution) {
-                  const newVal = !alwaysUseSameRun
-                  setAlwaysUseSameRun(newVal)
-                  if (workspacePath) {
-                    useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
-                      execution_defaults: {
-                        always_use_same_run: newVal,
-                        skip_execution_cleanup: skipExecutionCleanup,
-                      }
-                    }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
-                  }
-                }
-              }}
-              tooltip={
-                <div className="space-y-1">
-                  <p>
-                    {isResumingExecution
-                      ? 'Iteration mode is locked while resuming.'
-                      : effectiveAlwaysUseSameRun
-                      ? 'Reuse the same iteration for every run.'
-                      : 'Create a new iteration every time you run.'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {isResumingExecution
-                      ? 'Resume runs continue inside the existing iteration.'
-                      : effectiveAlwaysUseSameRun
-                      ? 'Turn this on when you want to keep working in one iteration.'
-                      : 'Turn this off when each run should start in a fresh iteration.'}
-                  </p>
-                </div>
-              }
-            />
+            {/* Global Overrides Button - next to refresh */}
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowBulkStepConfigModal(true)}
+                    className="flex items-center justify-center w-7 h-7 rounded-md transition-all bg-muted text-foreground hover:bg-accent"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Global overrides</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
-            <ToolbarToggle
-              label="Clear Outputs"
-              checked={clearOutputsBeforeRun}
-              onClick={() => {
-                const newVal = !skipExecutionCleanup
-                setSkipExecutionCleanup(newVal)
-                if (workspacePath) {
-                  useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
-                    execution_defaults: {
-                      always_use_same_run: alwaysUseSameRun,
-                      skip_execution_cleanup: newVal,
-                    }
-                  }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
-                }
-              }}
-              tooltip={
-                <div className="space-y-1">
-                  <p>
-                    {clearOutputsBeforeRun
-                      ? 'Clear previous step outputs before running.'
-                      : 'Keep previous step outputs when running again.'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {clearOutputsBeforeRun
-                      ? 'Turn this on when each run should start with cleaned output folders.'
-                      : 'Turn this off when you want to reuse existing outputs in the selected group.'}
-                  </p>
-                </div>
-              }
-            />
+            {/* Execution Mode: Stateless / Stateful */}
+            <TooltipProvider delayDuration={150}>
+              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 p-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExecutionMode('stateless')
+                        if (workspacePath) {
+                          const cur = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.execution_defaults
+                          useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
+                            execution_defaults: {
+                              always_use_same_run: false,
+                              skip_execution_cleanup: false,
+                              execution_mode: 'stateless',
+                              disable_learning: cur?.disable_learning,
+                              disable_parallel_tool_execution: cur?.disable_parallel_tool_execution,
+                              execution_max_turns: cur?.execution_max_turns,
+                              enabled_custom_tools: cur?.enabled_custom_tools,
+                            }
+                          }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        selectedExecutionMode === 'stateless'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Stateless
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-[220px] text-xs">
+                    <p className="font-medium mb-1">Stateless</p>
+                    <p>Manual runs always use iteration-0 and clear execution outputs before running. Scheduled runs still create a new iteration.</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExecutionMode('stateful')
+                        if (workspacePath) {
+                          const cur = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.execution_defaults
+                          useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
+                            execution_defaults: {
+                              always_use_same_run: true,
+                              skip_execution_cleanup: true,
+                              execution_mode: 'stateful',
+                              disable_learning: cur?.disable_learning,
+                              disable_parallel_tool_execution: cur?.disable_parallel_tool_execution,
+                              execution_max_turns: cur?.execution_max_turns,
+                              enabled_custom_tools: cur?.enabled_custom_tools,
+                            }
+                          }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        selectedExecutionMode === 'stateful'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Stateful
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-[220px] text-xs">
+                    <p className="font-medium mb-1">Stateful</p>
+                    <p>Always runs in iteration-0. Outputs are preserved across runs.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
 
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
-                {/* Iteration Selector */}
-                <div className="relative" ref={iterationDropdownRef}>
+                {/* Iteration Selector - only shown in stateless mode */}
+                {isExecutionWorkspace && selectedExecutionMode === 'stateless' && <div className="relative" ref={iterationDropdownRef}>
                   <button
                     ref={iterationDropdownButtonRef}
                     onClick={(e) => {
@@ -2071,7 +2084,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     </div>,
                     document.body
                   )}
-                </div>
+                </div>}
 
                 {/* Progress indicator when existing run selected */}
                 {hasExistingProgress && (
@@ -2372,21 +2385,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {/* Bulk Step Config Button */}
-        {!isExecutionWorkspace && hasPlan && plan && onBulkUpdateSteps && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowBulkStepConfigModal(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Bulk configure steps</p></TooltipContent>
-          </Tooltip>
-        )}
-
         {/* Workflow Settings Button — opens the preset settings modal from the top header */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -2528,16 +2526,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       isLoading={deleteDialog.isLoading}
     />
     
-    {/* Bulk Step Config Modal */}
-    {onBulkUpdateSteps && (
-      <BulkStepConfigModal
-        isOpen={showBulkStepConfigModal}
-        onClose={() => setShowBulkStepConfigModal(false)}
-        plan={plan || null}
-        stepOverride={stepOverride || null}
-        onSaveStepOverride={onSaveStepOverride || (async () => {})}
-      />
-    )}
+    {/* Global Overrides Modal */}
+    <BulkStepConfigModal
+      isOpen={showBulkStepConfigModal}
+      onClose={() => setShowBulkStepConfigModal(false)}
+      workspacePath={workspacePath ?? null}
+    />
 
     {/* Learnings Popup */}
     <LearningsPopup

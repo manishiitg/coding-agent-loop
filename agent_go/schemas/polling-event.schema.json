@@ -2188,6 +2188,9 @@
         "pre_validation_completed": {
           "$ref": "#/$defs/PreValidationCompletedEvent"
         },
+        "learn_code_script_execution": {
+          "$ref": "#/$defs/LearnCodeScriptExecutionEvent"
+        },
         "todo_steps_extracted": {
           "$ref": "#/$defs/TodoStepsExtractedEvent"
         },
@@ -2304,9 +2307,6 @@
         },
         "batch_execution_end": {
           "$ref": "#/$defs/BatchExecutionEndEvent"
-        },
-        "prerequisite_navigation": {
-          "$ref": "#/$defs/PrerequisiteNavigationEvent"
         }
       },
       "additionalProperties": false,
@@ -2315,101 +2315,101 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "cache_expired",
-        "mcp_server_connection_start",
-        "batch_execution_start",
-        "streaming_connection_lost",
-        "cache_miss",
-        "llm_messages",
-        "mcp_server_connection",
-        "blocking_human_feedback",
-        "streaming_progress",
-        "mcp_server_connection_error",
-        "debug",
-        "agent_error",
-        "token_usage",
-        "context_cancelled",
-        "todo_steps_extracted",
-        "human_verification_response",
-        "streaming_end",
-        "batch_execution_end",
-        "tool_response",
-        "system_prompt",
-        "context_editing_error",
-        "smart_routing_start",
-        "streaming_start",
-        "context_editing_completed",
-        "large_tool_output_server_unavailable",
-        "decision_evaluated",
-        "variables_extracted",
-        "agent_start",
-        "unified_completion",
-        "independent_steps_selected",
-        "llm_token_usage",
-        "workspace_file_operation",
-        "orchestrator_start",
-        "pre_validation_completed",
-        "mcp_server_connection_end",
-        "json_validation_end",
-        "conversation_end",
-        "llm_generation_start",
-        "mcp_server_discovery",
-        "context_summarization_completed",
-        "large_tool_output_detected",
-        "large_tool_output_file_write_error",
+        "user_message",
         "throttling_detected",
-        "orchestrator_agent_error",
-        "tool_call_error",
-        "orchestrator_agent_start",
-        "step_token_usage",
-        "structured_output_end",
-        "streaming_chunk",
-        "cache_hit",
-        "cache_write",
-        "cache_error",
-        "agent_end",
-        "tool_execution",
-        "large_tool_output_file_written",
-        "model_change",
-        "fallback_model_used",
-        "smart_routing_end",
-        "orchestrator_end",
-        "orchestrator_error",
-        "conversation_turn",
-        "llm_generation_error",
-        "mcp_server_selection",
-        "context_summarization_started",
-        "context_summarization_error",
-        "fallback_attempt",
-        "step_progress_updated",
-        "structured_output_error",
-        "conversation_start",
-        "tool_call_end",
-        "tool_output",
-        "cache_cleanup",
-        "performance",
-        "batch_group_start",
-        "conversation_error",
-        "token_limit_exceeded",
-        "routing_evaluated",
-        "streaming_error",
-        "json_validation_start",
-        "conversation_thinking",
-        "error_detail",
-        "max_turns_reached",
-        "orchestrator_agent_end",
+        "unified_completion",
         "structured_output_start",
-        "cache_operation_start",
+        "conversation_error",
+        "tool_call_end",
+        "mcp_server_connection",
+        "context_summarization_started",
+        "context_summarization_completed",
+        "model_change",
+        "streaming_chunk",
+        "cache_write",
+        "conversation_end",
+        "tool_response",
+        "large_tool_output_detected",
+        "comprehensive_cache",
+        "smart_routing_end",
+        "todo_steps_extracted",
+        "llm_messages",
+        "human_verification_response",
+        "streaming_start",
+        "json_validation_start",
+        "llm_generation_end",
+        "token_usage",
+        "streaming_progress",
+        "cache_miss",
+        "cache_expired",
+        "large_tool_output_file_write_error",
+        "fallback_attempt",
+        "orchestrator_end",
+        "routing_evaluated",
+        "structured_output_error",
+        "streaming_connection_lost",
+        "cache_hit",
+        "mcp_server_connection_error",
+        "json_validation_end",
+        "debug",
+        "context_editing_error",
+        "orchestrator_agent_error",
+        "request_human_feedback",
+        "cache_cleanup",
+        "conversation_thinking",
+        "batch_group_start",
+        "agent_end",
+        "tool_call_start",
+        "large_tool_output_server_unavailable",
+        "token_limit_exceeded",
+        "orchestrator_agent_start",
+        "step_progress_updated",
+        "structured_output_end",
         "tool_call_progress",
+        "agent_start",
+        "conversation_start",
+        "context_editing_completed",
         "agent_processing",
         "batch_group_end",
-        "llm_generation_end",
+        "agent_error",
+        "llm_generation_error",
         "llm_generation_with_retry",
-        "tool_call_start",
-        "user_message",
-        "comprehensive_cache",
-        "prerequisite_navigation",
-        "request_human_feedback"
+        "mcp_server_discovery",
+        "mcp_server_selection",
+        "context_cancelled",
+        "blocking_human_feedback",
+        "mcp_server_connection_end",
+        "conversation_turn",
+        "max_turns_reached",
+        "fallback_model_used",
+        "smart_routing_start",
+        "independent_steps_selected",
+        "tool_call_error",
+        "workspace_file_operation",
+        "context_summarization_error",
+        "large_tool_output_file_written",
+        "orchestrator_agent_end",
+        "learn_code_script_execution",
+        "tool_execution",
+        "orchestrator_start",
+        "variables_extracted",
+        "batch_execution_start",
+        "batch_execution_end",
+        "system_prompt",
+        "error_detail",
+        "orchestrator_error",
+        "streaming_error",
+        "cache_error",
+        "llm_token_usage",
+        "llm_generation_start",
+        "step_token_usage",
+        "decision_evaluated",
+        "pre_validation_completed",
+        "streaming_end",
+        "cache_operation_start",
+        "mcp_server_connection_start",
+        "performance",
+        "tool_output"
       ]
     },
     "FallbackAttemptEvent": {
@@ -3385,6 +3385,88 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "LearnCodeScriptExecutionEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "script_path": {
+          "type": "string"
+        },
+        "script_content": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "fix_iteration": {
+          "type": "integer"
+        },
+        "is_saved_script": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "MCPServerConnectionEndEvent": {
       "properties": {
         "timestamp": {
@@ -4115,6 +4197,18 @@
         },
         "iteration": {
           "type": "integer"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
+        },
+        "system_prompt": {
+          "type": "string"
+        },
+        "user_message": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -4428,64 +4522,6 @@
           "type": "string"
         },
         "workspace_path": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "PrerequisiteNavigationEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "from_step_index": {
-          "type": "integer"
-        },
-        "to_step_index": {
-          "type": "integer"
-        },
-        "from_step_id": {
-          "type": "string"
-        },
-        "to_step_id": {
-          "type": "string"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "failure_type": {
           "type": "string"
         }
       },

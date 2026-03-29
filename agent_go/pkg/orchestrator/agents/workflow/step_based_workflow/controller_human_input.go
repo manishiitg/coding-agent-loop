@@ -51,7 +51,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 	// Determine execution workspace path
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 	// Ensure step execution folder exists before writing response file
 	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 		// Non-blocking: log warning but continue execution (folder will be created when files are written)

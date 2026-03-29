@@ -110,7 +110,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		} else {
 			validationWorkspacePath = hcpo.GetWorkspacePath()
 		}
-		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, executionStepPath)
+		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, step.GetID(), executionStepPath)
 		executionResultFilePath := fmt.Sprintf("%s/routing-execution.json", executionLogsFolderPath)
 		executionResponse := map[string]interface{}{
 			"step_index":      stepIndex + 1,
@@ -182,7 +182,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	// Ensure step execution folder exists
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, routingStepPath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), routingStepPath)
 	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure routing step execution folder exists: %v", err))
 	}
@@ -217,7 +217,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
 			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
 		}
-		hcpo.preSavePromptsJSON(stepIndex, routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
+		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
 	}
 
 	// Evaluate routing
@@ -266,7 +266,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	} else {
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, routingStepPath)
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, step.GetID(), routingStepPath)
 	routingEvaluationFilePath := fmt.Sprintf("%s/routing-evaluation.json", validationFolderPath)
 
 	routeNextStepIDs := make(map[string]string)

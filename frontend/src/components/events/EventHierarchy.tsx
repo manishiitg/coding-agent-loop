@@ -556,7 +556,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       // events can otherwise get sucked into an old agent card near the top of history.
       if (!parentId || !filteredEventIds.has(parentId)) {
         const agentStartId = agentSessionEventToStartId.get(event.id)
-        if (agentStartId && event.type !== 'orchestrator_agent_end') {
+        if (agentStartId
+            && event.type !== 'orchestrator_agent_end'
+            && event.type !== 'learn_code_script_execution') {
           // Don't parent the agent_start under itself
           if (event.id !== agentStartId) {
             parentId = agentStartId;
@@ -594,7 +596,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       // Never promote true agent-session child events to root — they belong inside agent cards.
       // orchestrator_agent_end is excluded: it should show at the top level after the agent card.
       const agentStartId = agentSessionEventToStartId.get(event.id)
-      if (agentStartId && event.type !== 'orchestrator_agent_end') {
+      if (agentStartId
+          && event.type !== 'orchestrator_agent_end'
+          && event.type !== 'learn_code_script_execution') {
         if (event.id !== agentStartId) return false; // Child of agent session, not root
       }
 
@@ -608,6 +612,35 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
   }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
+
+  useEffect(() => {
+    const learnCodeEvents = displayEvents.filter(event => event.type === 'learn_code_script_execution');
+    if (learnCodeEvents.length === 0) return;
+
+    const rootIds = new Set(
+      eventTree
+        .filter(node => node.event.type === 'learn_code_script_execution')
+        .map(node => node.event.id)
+    );
+
+    console.log('[FIX_LEARN_CODE_UI] hierarchy_state', {
+      tabId: tabIdProp ?? null,
+      flatHierarchy,
+      learnCodeEvents: learnCodeEvents.map(event => {
+        const agentEvent = event.data as Record<string, unknown> | undefined;
+        const payload = (agentEvent?.data && typeof agentEvent.data === 'object')
+          ? agentEvent.data as Record<string, unknown>
+          : agentEvent;
+        return {
+          eventId: event.id,
+          stepId: payload?.step_id ?? null,
+          fixIteration: payload?.fix_iteration ?? null,
+          correlationId: (event as unknown as Record<string, unknown>).correlation_id ?? agentEvent?.correlation_id ?? null,
+          isRoot: rootIds.has(event.id),
+        };
+      }),
+    });
+  }, [displayEvents, eventTree, flatHierarchy, tabIdProp]);
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];

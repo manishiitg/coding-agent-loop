@@ -106,6 +106,8 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
 	apiRouter := router.PathPrefix("/api/scheduler").Subrouter()
 
+	apiRouter.HandleFunc("/config", getSchedulerConfigHandler(svc)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/config", updateSchedulerConfigHandler(svc)).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/jobs", listScheduledJobsHandler(svc)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/jobs", createScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}", getScheduledJobHandler(svc)).Methods("GET", "OPTIONS")

@@ -213,16 +213,19 @@ func ExecuteShellCommand(c *gin.Context) {
 		return
 	}
 
-	// Inject whitelisted extra env vars (MCP_* and SECRET_* prefixed)
+	// Inject whitelisted extra env vars (MCP_*, SECRET_*, VAR_* prefixed)
+	// MCP_*    — internal API URLs and tokens
+	// SECRET_* — user-provided credentials and secrets
+	// VAR_*    — workflow variables (non-secret config values like user IDs, sheet IDs)
 	// This applies to both isolated and non-isolated execution paths
 	extraEnvCount := 0
 	for k, v := range req.ExtraEnv {
-		if strings.HasPrefix(k, "MCP_") || strings.HasPrefix(k, "SECRET_") {
+		if strings.HasPrefix(k, "MCP_") || strings.HasPrefix(k, "SECRET_") || strings.HasPrefix(k, "VAR_") || k == "STEP_OUTPUT_DIR" {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 			extraEnvCount++
 		}
 	}
-	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d whitelisted (MCP_*/SECRET_*)", len(req.ExtraEnv), extraEnvCount)
+	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d whitelisted (MCP_*/SECRET_*/VAR_*)", len(req.ExtraEnv), extraEnvCount)
 	if len(req.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(req.ExtraEnv))
 		for k := range req.ExtraEnv {

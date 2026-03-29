@@ -74,11 +74,11 @@ func (api *StreamingAPI) handleGetWorkflowManifest(w http.ResponseWriter, r *htt
 // --- Create workflow with manifest ---
 
 type CreateWorkflowManifestRequest struct {
-	Label                     string                    `json:"label"`
-	WorkspacePath             string                    `json:"workspace_path"`
-	Capabilities              *WorkflowCapabilities     `json:"capabilities,omitempty"`
+	Label                     string                     `json:"label"`
+	WorkspacePath             string                     `json:"workspace_path"`
+	Capabilities              *WorkflowCapabilities      `json:"capabilities,omitempty"`
 	ExecutionDefaults         *WorkflowExecutionDefaults `json:"execution_defaults,omitempty"`
-	HumanVerificationRequired bool                      `json:"human_verification_required"`
+	HumanVerificationRequired bool                       `json:"human_verification_required"`
 }
 
 func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +144,7 @@ type UpdateWorkflowManifestRequest struct {
 	WorkspacePath     string                     `json:"workspace_path"`
 	Label             *string                    `json:"label,omitempty"`
 	Capabilities      *WorkflowCapabilities      `json:"capabilities,omitempty"`
-	ExecutionDefaults *WorkflowExecutionDefaults  `json:"execution_defaults,omitempty"`
+	ExecutionDefaults *WorkflowExecutionDefaults `json:"execution_defaults,omitempty"`
 	Ownership         *WorkflowOwnership         `json:"ownership,omitempty"`
 	Schedules         *[]WorkflowSchedule        `json:"schedules,omitempty"`
 }
@@ -307,7 +307,7 @@ func (api *StreamingAPI) handleDuplicateWorkflowManifest(w http.ResponseWriter, 
 	} else {
 		newManifest.Label = srcManifest.Label + " (copy)"
 	}
-	newManifest.CreatedAt = ""  // Will be set by WriteWorkflowManifest
+	newManifest.CreatedAt = "" // Will be set by WriteWorkflowManifest
 	newManifest.UpdatedAt = ""
 
 	// Reset schedule IDs to avoid collisions
@@ -410,25 +410,6 @@ func (api *StreamingAPI) handleMigrateWorkflowsToManifests(w http.ResponseWriter
 				Error:         fmt.Sprintf("failed to build manifest: %v", err),
 			})
 			continue
-		}
-
-		// Copy scheduled jobs for this preset into manifest schedules
-		jobs, _, err := api.chatDB.ListScheduledJobs(r.Context(), 100, 0, nil, nil)
-		if err == nil {
-			for _, job := range jobs {
-				if job.PresetQueryID == preset.ID && job.EntityType == database.ScheduleEntityWorkflow {
-					manifest.Schedules = append(manifest.Schedules, WorkflowSchedule{
-						ID:             job.ID,
-						Name:           job.Name,
-						Description:    job.Description,
-						CronExpression: job.CronExpression,
-						Timezone:       job.Timezone,
-						Enabled:        job.Enabled,
-						TriggerPayload: job.TriggerPayload,
-						GroupIDs:       job.GroupIDs,
-					})
-				}
-			}
 		}
 
 		// Write manifest

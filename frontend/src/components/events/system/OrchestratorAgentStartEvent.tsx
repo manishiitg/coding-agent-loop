@@ -27,6 +27,12 @@ function getModelDisplayName(modelId?: string, provider?: string): string {
   return modelId
 }
 
+function formatWorkshopIteration(iteration?: number, inputIteration?: string): string | null {
+  if (inputIteration && inputIteration.trim() !== '') return inputIteration
+  if (typeof iteration === 'number' && iteration >= 0) return `iteration-${iteration}`
+  return null
+}
+
 interface OrchestratorAgentStartEventDisplayProps {
   event: OrchestratorAgentStartEvent;
   isCollapsed?: boolean;
@@ -39,6 +45,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const modeFlags = event as OrchestratorAgentStartEvent & {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
+    use_learn_code_mode?: boolean
   }
 
   const formatTimestamp = (timestamp?: string) => {
@@ -51,6 +58,15 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
   const isWorkshopStep = agentType?.startsWith('workshop-')
   const isBackgroundAgent = agentType === 'workshop-background-task'
+  const isWorkshopStepExecution = agentType === 'workshop-step-execution'
+  const workshopGroup = event.input_data?.group_display_name || event.input_data?.group_id
+  const workshopIteration = formatWorkshopIteration(event.iteration, event.input_data?.iteration)
+  const workshopMeta = isWorkshopStepExecution
+    ? [
+        workshopGroup ? `Group: ${workshopGroup}` : null,
+        workshopIteration ? `Iteration: ${workshopIteration}` : null,
+      ].filter(Boolean).join(' | ')
+    : ''
 
   const getLabel = () => {
     if (agentType === 'workshop-step-execution') return 'Step Execution'
@@ -202,9 +218,11 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  {modeFlags.use_code_execution_mode && ' | Code Exec'}
+                  {modeFlags.use_learn_code_mode ? ' | Learn Code' : modeFlags.use_code_execution_mode ? ' | Code Exec' : null}
                   {modeFlags.use_tool_search_mode && ' | Tool Search'}
-                  {' '}| Model: {getModelDisplayName(event.model_id, event.provider)} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
+                  {workshopMeta
+                    ? ` | ${workshopMeta}`
+                    : ` | Model: ${getModelDisplayName(event.model_id, event.provider)} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 </span>
                 {isCollapsed && eventCount !== undefined && (

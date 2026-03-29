@@ -1766,6 +1766,13 @@ export interface ListScheduledJobRunsResponse {
   offset: number
 }
 
+export interface SchedulerConfig {
+  globally_paused: boolean
+  paused_at?: string
+  paused_by?: string
+  updated_at?: string
+}
+
 // --- Workflow Manifest Types (file-backed workflow definitions) ---
 
 export interface WorkflowManifest {
@@ -1796,6 +1803,12 @@ export interface WorkflowCapabilities {
 export interface WorkflowExecutionDefaults {
   always_use_same_run: boolean
   skip_execution_cleanup: boolean
+  execution_mode?: 'stateless' | 'stateful'
+  // Global step overrides (replaces step_override.json)
+  disable_learning?: boolean
+  disable_parallel_tool_execution?: boolean
+  execution_max_turns?: number
+  enabled_custom_tools?: string[]
 }
 
 export interface WorkflowOwnership {

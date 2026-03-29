@@ -118,7 +118,7 @@ func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig
 		}
 	}
 
-	return sanitizeDelegationTierConfig(result)
+	return result
 }
 
 // SaveDelegationTierConfig saves delegation tier config as plain JSON to the workspace.

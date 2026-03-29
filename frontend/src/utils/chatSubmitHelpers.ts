@@ -126,7 +126,7 @@ export function buildQueryRequestPayload(params: {
   hasActivePreset: boolean
   effectivePlanPhase?: string
   decryptedSecrets?: Array<{ name: string; value: string }>
-  selectedGlobalSecrets?: string[]
+  selectedGlobalSecrets?: string[] | null
 }): AgentQueryRequest {
   const {
     queryWithContext, correctAgentMode, selectedModeCategory,
@@ -238,7 +238,9 @@ export function buildQueryRequestPayload(params: {
       : undefined,
     enable_context_editing: enableContextEditing,
     decrypted_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') && decryptedSecrets?.length ? decryptedSecrets : undefined,
-    selected_global_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') ? selectedGlobalSecrets : undefined,
+    selected_global_secrets: (isChatWithExtras || selectedModeCategory === 'workflow')
+      ? (selectedGlobalSecrets ?? undefined)
+      : undefined,
     workflow_context_paths: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,

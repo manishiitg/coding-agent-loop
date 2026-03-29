@@ -170,21 +170,9 @@
         },
         "use_code_execution_mode": {
           "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "BranchStepProgress": {
-      "additionalProperties": false,
-      "properties": {
-        "branch_executed": {
-          "type": "string"
         },
-        "completed_steps": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "use_tool_search_mode": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1049,6 +1037,27 @@
       },
       "type": "object"
     },
+    "FileCheckResultForEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "file_name": {
+          "type": "string"
+        },
+        "is_json": {
+          "type": "boolean"
+        },
+        "json_checks": {
+          "items": {
+            "$ref": "#/$defs/JSONCheckResultForEvent"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "IndependentStepsSelectedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -1102,6 +1111,24 @@
           "type": "integer"
         },
         "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "JSONCheckResultForEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "check_type": {
+          "type": "string"
+        },
+        "error_msg": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "path": {
           "type": "string"
         }
       },
@@ -1566,6 +1593,88 @@
           "type": "string"
         },
         "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "LearnCodeScriptExecutionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "fix_iteration": {
+          "type": "integer"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "is_saved_script": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "output": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "script_content": {
+          "type": "string"
+        },
+        "script_path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workspace_path": {
           "type": "string"
         }
       },
@@ -2140,11 +2249,23 @@
         "step_index": {
           "type": "integer"
         },
+        "system_prompt": {
+          "type": "string"
+        },
         "timestamp": {
           "format": "date-time",
           "type": "string"
         },
         "trace_id": {
+          "type": "string"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
+        },
+        "user_message": {
           "type": "string"
         }
       },
@@ -2319,6 +2440,91 @@
           "type": "string"
         },
         "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PreValidationCompletedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/ValidationErrorForEvent"
+          },
+          "type": "array"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "failed_checks": {
+          "type": "integer"
+        },
+        "files_checked": {
+          "items": {
+            "$ref": "#/$defs/FileCheckResultForEvent"
+          },
+          "type": "array"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_branch_step": {
+          "type": "boolean"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "overall_pass": {
+          "type": "boolean"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "passed_checks": {
+          "type": "integer"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "total_checks": {
+          "type": "integer"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workspace_path": {
           "type": "string"
         }
       },
@@ -2612,13 +2818,16 @@
       },
       "type": "object"
     },
-    "StepFailedEvent": {
+    "StepProgressUpdatedEvent": {
       "additionalProperties": false,
       "properties": {
         "component": {
           "type": "string"
         },
         "correlation_id": {
+          "type": "string"
+        },
+        "current_step_id": {
           "type": "string"
         },
         "error": {
@@ -2627,188 +2836,14 @@
         "event_id": {
           "type": "string"
         },
-        "hierarchy_level": {
+        "group_id": {
+          "type": "string"
+        },
+        "group_index": {
           "type": "integer"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "StepFinishedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
         },
         "hierarchy_level": {
           "type": "integer"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "StepProgressUpdatedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "branch_steps": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[0-9]+$": {
-              "$ref": "#/$defs/BranchStepProgress"
-            }
-          },
-          "type": "object"
-        },
-        "completed_step_indices": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "last_completed_step": {
-          "type": "integer"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "run_folder": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "total_steps": {
-          "type": "integer"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "workspace_path": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "StepStartedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_branch_step": {
-          "type": "boolean"
         },
         "is_end_event": {
           "type": "boolean"
@@ -2828,23 +2863,23 @@
         "span_id": {
           "type": "string"
         },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "step_title": {
+        "status": {
           "type": "string"
         },
         "timestamp": {
           "format": "date-time",
           "type": "string"
         },
+        "total_groups": {
+          "type": "integer"
+        },
         "trace_id": {
+          "type": "string"
+        },
+        "used_tier": {
+          "type": "integer"
+        },
+        "used_tier_label": {
           "type": "string"
         },
         "workspace_path": {
@@ -3204,6 +3239,48 @@
       },
       "type": "object"
     },
+    "TodoStep": {
+      "additionalProperties": false,
+      "properties": {
+        "context_dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "context_output": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "failure_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "success_criteria": {
+          "type": "string"
+        },
+        "success_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "why_this_step": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "TodoStepsExtractedEvent": {
       "additionalProperties": false,
       "properties": {
@@ -3327,6 +3404,9 @@
     "TokenUsageEvent": {
       "additionalProperties": false,
       "properties": {
+        "agent_mode": {
+          "type": "string"
+        },
         "cache_cost_usd": {
           "type": "number"
         },
@@ -3423,6 +3503,12 @@
         },
         "turn": {
           "type": "integer"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -3432,6 +3518,12 @@
       "properties": {
         "component": {
           "type": "string"
+        },
+        "context_usage_percent": {
+          "type": "number"
+        },
+        "context_window_usage": {
+          "type": "integer"
         },
         "correlation_id": {
           "type": "string"
@@ -3451,6 +3543,12 @@
         "metadata": {
           "type": "object"
         },
+        "model_context_window": {
+          "type": "integer"
+        },
+        "model_id": {
+          "type": "string"
+        },
         "parent_id": {
           "type": "string"
         },
@@ -3468,6 +3566,9 @@
         },
         "timestamp": {
           "format": "date-time",
+          "type": "string"
+        },
+        "tool_call_id": {
           "type": "string"
         },
         "tool_name": {
@@ -3525,6 +3626,9 @@
           "format": "date-time",
           "type": "string"
         },
+        "tool_call_id": {
+          "type": "string"
+        },
         "tool_name": {
           "type": "string"
         },
@@ -3555,6 +3659,9 @@
         "is_end_event": {
           "type": "boolean"
         },
+        "is_parallel": {
+          "type": "boolean"
+        },
         "metadata": {
           "type": "object"
         },
@@ -3572,6 +3679,9 @@
         },
         "timestamp": {
           "format": "date-time",
+          "type": "string"
+        },
+        "tool_call_id": {
           "type": "string"
         },
         "tool_name": {
@@ -3902,6 +4012,30 @@
       },
       "type": "object"
     },
+    "ValidationErrorForEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "actual": {
+          "type": "string"
+        },
+        "check_type": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Variable": {
       "additionalProperties": false,
       "properties": {
@@ -4097,6 +4231,9 @@
     "large_tool_output_server_unavailable": {
       "$ref": "#/$defs/LargeToolOutputServerUnavailableEvent"
     },
+    "learn_code_script_execution": {
+      "$ref": "#/$defs/LearnCodeScriptExecutionEvent"
+    },
     "llm_generation_end": {
       "$ref": "#/$defs/LLMGenerationEndEvent"
     },
@@ -4145,6 +4282,9 @@
     "orchestrator_start": {
       "$ref": "#/$defs/OrchestratorStartEvent"
     },
+    "pre_validation_completed": {
+      "$ref": "#/$defs/PreValidationCompletedEvent"
+    },
     "request_human_feedback": {
       "$ref": "#/$defs/RequestHumanFeedbackEvent"
     },
@@ -4153,15 +4293,6 @@
     },
     "smart_routing_start": {
       "$ref": "#/$defs/SmartRoutingStartEvent"
-    },
-    "step_execution_end": {
-      "$ref": "#/$defs/StepFinishedEvent"
-    },
-    "step_execution_failed": {
-      "$ref": "#/$defs/StepFailedEvent"
-    },
-    "step_execution_start": {
-      "$ref": "#/$defs/StepStartedEvent"
     },
     "step_progress_updated": {
       "$ref": "#/$defs/StepProgressUpdatedEvent"
@@ -4183,6 +4314,9 @@
     },
     "throttling_detected": {
       "$ref": "#/$defs/ThrottlingDetectedEvent"
+    },
+    "todo_step": {
+      "$ref": "#/$defs/TodoStep"
     },
     "todo_steps_extracted": {
       "$ref": "#/$defs/TodoStepsExtractedEvent"

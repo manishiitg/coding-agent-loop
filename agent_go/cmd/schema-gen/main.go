@@ -144,6 +144,7 @@ type EventDataUnion struct {
 	DecisionEvaluated      *todo_creation_human.DecisionEvaluatedEvent      `json:"decision_evaluated,omitempty"`
 	RoutingEvaluated       *todo_creation_human.RoutingEvaluatedEvent        `json:"routing_evaluated,omitempty"`
 	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
+	LearnCodeScriptExecution *orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -297,6 +298,7 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.DecisionEvaluated:      "decision_evaluated",
 	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
 	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
+	orchestrator_events.LearnCodeScriptExecution: "learn_code_script_execution",
 
 	// Todo/Planning Events
 	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",
@@ -703,6 +705,7 @@ type UnifiedEvent struct {
 	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
 	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
 	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`
+	LearnCodeScriptExecutionEvent orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events
 	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
@@ -733,22 +736,26 @@ type UnifiedEvent struct {
 func main() {
 	fmt.Println("Generating JSON schemas for event types...")
 
-	// Generate unified events schema (for backward compatibility)
-	// Write to agent_go/schemas/ so frontend can find it
-	if err := writeSchema("agent_go/schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
+	// Generate unified events schema (for backward compatibility).
+	// When run from agent_go/, schemas/ is the frontend-consumed path.
+	if err := writeSchema("schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
 		fmt.Printf("Error generating unified events schema: %v\n", err)
 		os.Exit(1)
 	}
+	// Also generate to the repo-root schemas/ for compatibility with older tooling.
+	if err := writeSchema("../schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
+		fmt.Printf("Error generating unified events schema to ../schemas: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Generate the new PollingEvent schema with proper wire format
-	// Generate to both root schemas/ and agent_go/schemas/ for compatibility
+	// Generate the new PollingEvent schema with proper wire format.
+	// Write to agent_go/schemas/ for the frontend and repo-root schemas/ for compatibility.
 	if err := generateDiscriminatedUnionSchema("schemas/polling-event.schema.json"); err != nil {
 		fmt.Printf("Error generating polling event schema: %v\n", err)
 		os.Exit(1)
 	}
-	// Also generate to agent_go/schemas/ for frontend to use
-	if err := generateDiscriminatedUnionSchema("agent_go/schemas/polling-event.schema.json"); err != nil {
-		fmt.Printf("Error generating polling event schema to agent_go/schemas: %v\n", err)
+	if err := generateDiscriminatedUnionSchema("../schemas/polling-event.schema.json"); err != nil {
+		fmt.Printf("Error generating polling event schema to ../schemas: %v\n", err)
 		os.Exit(1)
 	}
 

@@ -393,6 +393,22 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	schedID := sctx.Schedule.ID
 	scheduleLogf("[SCHEDULER] ⏰ Cron fired for %s (%s) at %s", schedID, sctx.Schedule.Name, time.Now().Format(time.RFC3339))
 
+	paused, cfg, err := s.IsGloballyPaused(context.Background())
+	if err != nil {
+		scheduleLogf("[SCHEDULER] ⚠️ Failed to read scheduler config before trigger %s: %v", schedID, err)
+	} else if paused {
+		pausedAt := ""
+		if cfg != nil && cfg.PausedAt != nil {
+			pausedAt = cfg.PausedAt.Format(time.RFC3339)
+		}
+		if pausedAt != "" {
+			scheduleLogf("[SCHEDULER] ⏸️ Global scheduler pause active since %s, skipping %s", pausedAt, schedID)
+		} else {
+			scheduleLogf("[SCHEDULER] ⏸️ Global scheduler pause active, skipping %s", schedID)
+		}
+		return
+	}
+
 	// Reload manifest for latest config
 	manifest, found, err := ReadWorkflowManifest(context.Background(), sctx.WorkspacePath)
 	if err != nil || !found {
@@ -694,7 +710,12 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	execOpts := map[string]interface{}{
 		"run_mode":           "create_new_runs_always",
 		"execution_strategy": "start_from_beginning_no_human",
-		"workshop_mode":      func() string { if sctx.Schedule.WorkshopMode != "" { return sctx.Schedule.WorkshopMode }; return "runner" }(),
+		"workshop_mode": func() string {
+			if sctx.Schedule.WorkshopMode != "" {
+				return sctx.Schedule.WorkshopMode
+			}
+			return "runner"
+		}(),
 	}
 	if len(sctx.Schedule.GroupIDs) > 0 {
 		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
@@ -855,8 +876,6 @@ func ValidateCronExpression(expr string) error {
 	}
 	return nil
 }
-
-
 
 // buildSchedulerAPIKeys builds API keys map from environment variables.
 func buildSchedulerAPIKeys() map[string]interface{} {

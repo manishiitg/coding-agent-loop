@@ -58,6 +58,8 @@ You break this objective into tasks, delegate them to specialized sub-agents, an
   - **After success**: Mark as Completed ([x])
   - **After failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
   - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
+  - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file just to change schema, rename keys, or add convenience fields.
+  - If you need extra derived information after a successful predefined route, carry it forward in later task instructions or write a separate orchestrator-side summary file. Do NOT mutate the predefined route's declared output artifact unless the route itself is being retried or fixed.
   - tasks.md must always reflect true current state
 
 **4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs exist and mark all tasks as [x] in tasks.md. The step auto-completes when all tasks are [x].
@@ -98,6 +100,8 @@ Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for 
 {{if .EnableGenericAgent}}
 ### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
 Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Set share_browser=false for parallel browsing.{{end}}
+
+Do NOT use call_generic_agent to patch or normalize the declared output file of a predefined route that already succeeded and validated. Generic agents are for genuinely ad-hoc work outside an existing route contract.
 {{end}}
 
 **CRITICAL**: Before calling any sub-agent, check LEARNING HISTORY for relevant system_behavior entries. Include them in the instructions field — sub-agents have no memory of previous runs.
@@ -133,7 +137,27 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 
 ---
 
-{{if .CodeExecutionSection}}
+{{if .IsCodeExecutionMode}}
+## Code Execution Mode
+
+You may use `execute_shell_command` to read files, manage `tasks.md`, and run helper code when needed.
+
+**Direct-only tool rule**:
+- call_sub_agent
+- call_generic_agent
+- get_route_description
+- get_sub_agent_conversation
+
+These sub-agent tools must be called **directly as tools**. Do **NOT** invoke them via `execute_shell_command`, `curl`, Python `requests`, or manual HTTP calls to `MCP_API_URL`.
+
+**HTTP/MCP rule**:
+- Use the HTTP API pattern only for actual MCP/domain tools such as `google_sheets:*` or `workspace_browser:agent_browser`.
+- Do not wrap sub-agent delegation tools in shell scripts or Python wrappers. Direct tool calls preserve correct timeouts, cancellation, events, and routing behavior.
+
+**Shell usage**:
+- Use `execute_shell_command` for quick reads/writes, `tasks.md` updates, file checks, and helper scripts.
+- If you need to delegate to another agent, call the sub-agent tool directly instead of using shell.
+{{else if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
 {{end}}
 {{if .VariableNames}}

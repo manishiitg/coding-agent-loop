@@ -5499,7 +5499,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7c: infer_objective — background agent that infers workflow objective from plan structure
 	if err := mcpAgent.RegisterCustomTool(
 		"infer_objective",
-		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Also produces a draft success criteria based on step outputs and validation schemas. Returns execution_id immediately. You will be notified when done. After reviewing the result, present both the proposed objective and draft success criteria to the user for confirmation/refinement before calling set_workflow_objective.",
+		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Use this only when the root objective is truly missing from planning/plan.json. It also produces a draft success criteria based on step outputs and validation schemas. Returns execution_id immediately. You will be notified when done. After reviewing the result, present both the proposed objective and draft success criteria to the user for confirmation/refinement before calling set_workflow_objective.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5514,6 +5514,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["focus"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					focus = s
+				}
+			}
+
+			// Hard guard: do not re-infer when the workflow objective already exists.
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil && iwm.controller.approvedPlan != nil {
+				existingObjective := strings.TrimSpace(iwm.controller.approvedPlan.Objective)
+				if existingObjective != "" {
+					return fmt.Sprintf("planning/plan.json already has objective=%q. infer_objective is blocked when the objective exists. If you want to revise it, update it explicitly with set_workflow_objective(objective=...).", existingObjective), nil
 				}
 			}
 

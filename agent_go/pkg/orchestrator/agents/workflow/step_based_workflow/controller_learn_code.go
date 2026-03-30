@@ -406,9 +406,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 		}
 	}
 
+	envKeys := make([]string, 0, len(extraEnv))
+	for k := range extraEnv {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	hcpo.GetLogger().Info(fmt.Sprintf(
+		"🐍 [scripted_code] Direct script MCP preflight | script=%s | workdir=%s | step_output=%s | MCP_SESSION_ID=%s | MCP_API_URL=%s | env_keys=%v",
+		mainPyAbsPath,
+		workDirRel,
+		stepOutputAbsPath,
+		extraEnv["MCP_SESSION_ID"],
+		extraEnv["MCP_API_URL"],
+		envKeys,
+	))
+
 	// Build request using the same ExecuteShellCommandParams struct the LLM agent uses,
 	// so the workspace API receives the same JSON shape and applies the same logic.
-	timeout := 300
+	// Use timeout=0 so the parent workflow/sub-agent context controls cancellation.
+	// Long-running scripted steps can legitimately exceed a fixed shell timeout.
+	timeout := 0
 	useShell := true
 	reqParams := workspace.ExecuteShellCommandParams{
 		Command:          sb.String(),
@@ -464,6 +481,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 		combined += apiResp.Data.Stderr
 	}
 	exitCode = apiResp.Data.ExitCode
+	hcpo.GetLogger().Info(fmt.Sprintf(
+		"🐍 [scripted_code] Direct script shell result | success=%t | exit_code=%d | api_error=%q | script=%s",
+		apiResp.Success,
+		exitCode,
+		apiResp.Error,
+		mainPyAbsPath,
+	))
 	if !apiResp.Success && exitCode == 0 {
 		exitCode = -1
 		execErr = fmt.Errorf("workspace API error: %s", apiResp.Error)
@@ -666,8 +690,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 	if existingFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
 		for _, f := range existingFiles {
 			fileName := filepath.Base(f)
-			if fileName == "" || fileName == "." || fileName == "script_metadata.json" {
-				continue // keep metadata; delete everything else
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" {
+				continue // keep metadata and supplemental learning notes; refresh script files only
 			}
 			entryRelPath := learnDirRelPath + "/" + fileName
 			absPath := filepath.Join(GetPromptDocsRoot(), workspacePath, entryRelPath)

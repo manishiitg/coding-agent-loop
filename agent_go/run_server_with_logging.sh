@@ -126,7 +126,9 @@ export LOG_AGENT_PROMPTS="true"
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 
-# Set tool execution timeout to 15 minutes
+# Set tool execution timeout to 15 minutes for normal tools.
+# Long-running workflow delegation tools (for example call_sub_agent) should
+# use their own per-tool timeout instead of stretching this global default.
 export TOOL_EXECUTION_TIMEOUT="15m"
 
 # Set MCP cache TTL to 7 days (10080 minutes)

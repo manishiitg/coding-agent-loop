@@ -362,14 +362,28 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 					}
 				}
 
-				if err := mcpAgent.RegisterCustomTool(
-					tool.Function.Name,
-					tool.Function.Description,
-					params,
-					finalExecutor,
-					toolCategory,
-				); err != nil {
-					return fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+				if tool.Function.Name == "call_sub_agent" {
+					const subAgentToolTimeout = 90 * time.Minute
+					if err := mcpAgent.RegisterCustomToolWithTimeout(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						finalExecutor,
+						subAgentToolTimeout,
+						toolCategory,
+					); err != nil {
+						return fmt.Errorf("failed to register tool %s with extended timeout: %w", tool.Function.Name, err)
+					}
+				} else {
+					if err := mcpAgent.RegisterCustomTool(
+						tool.Function.Name,
+						tool.Function.Description,
+						params,
+						finalExecutor,
+						toolCategory,
+					); err != nil {
+						return fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)
+					}
 				}
 			} else {
 				bo.GetLogger().Warn(fmt.Sprintf("Warning: Failed to convert executor for tool %s", tool.Function.Name))

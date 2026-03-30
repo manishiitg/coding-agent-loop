@@ -164,6 +164,10 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 **Shell usage**:
 - Use execute_shell_command for quick reads/writes, tasks.md updates, file checks, and helper scripts.
 - If you need to delegate to another agent, use the direct sub-agent tool when available; otherwise use the documented HTTP endpoint discovered via get_api_spec.
+{{if .CodeExecutionSection}}
+
+{{.CodeExecutionSection}}
+{{end}}
 {{else if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
 {{end}}

@@ -763,6 +763,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	}
 }
 
+// Long-running workflow execution agents should inherit cancellation from the
+// outer workflow/tool context instead of the generic 5-minute agent timeout.
+// Otherwise, saved-script execution and sub-agent orchestration get canceled
+// even when their tool-specific timeouts are configured correctly.
+func (hcpo *StepBasedWorkflowOrchestrator) disableParentAgentTimeout(config *agents.OrchestratorAgentConfig, agentKind string) {
+	if config == nil {
+		return
+	}
+	config.Timeout = 0
+	hcpo.GetLogger().Info(fmt.Sprintf("⏱️ Disabled parent agent timeout for %s; using outer workflow/tool cancellation instead", agentKind))
+}
+
 // prepareCustomTools filters and prepares custom tools based on step config
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentConfigs) ([]llmtypes.Tool, map[string]interface{}) {
 	var toolsToRegister []llmtypes.Tool
@@ -1170,6 +1182,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	hcpo.disableParentAgentTimeout(config, "execution-only agent")
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure both execution and orchestrator agents set the override correctly
@@ -1659,6 +1672,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
 
 	workflowServersTodo := hcpo.GetSelectedServers()
 	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)

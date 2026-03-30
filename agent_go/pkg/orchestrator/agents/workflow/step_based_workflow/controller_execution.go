@@ -1093,9 +1093,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			for k, v := range hcpo.variableValues {
 				envRef["VAR_"+k] = v
 			}
-			// Also inject the workspace path so scripts can reference it
+			// Also inject the workflow workspace path as an absolute Docker-visible path
+			// so Python/shell code can use it directly without guessing the docs root.
 			if wp := hcpo.GetWorkspacePath(); wp != "" {
-				envRef["VAR_WORKSPACE_PATH"] = wp
+				envRef["VAR_WORKSPACE_PATH"] = toAbsPath(wp)
 			}
 		}
 

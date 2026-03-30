@@ -142,25 +142,28 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 
 You may use execute_shell_command to read files, manage tasks.md, and run helper code when needed.
 
-**Direct-only tool rule**:
+**Sub-agent tool rule**:
 - call_sub_agent
 - call_generic_agent
 - get_route_description
 - get_sub_agent_conversation
 
-These sub-agent tools must be called **directly as tools**. Do **NOT** invoke them via execute_shell_command, curl, Python requests, or manual HTTP calls to MCP_API_URL.
+Prefer calling these sub-agent tools directly when they are actually available as provider-callable tools in this session.
+
+If the runtime says one of these tools is not found, not registered, or not directly callable in this provider session:
+- call get_api_spec for server_name="sub_agent_tools" and the specific tool name
+- then invoke the returned custom endpoint via MCP_API_URL and MCP_API_TOKEN from execute_shell_command
+
+Do not guess tool names or invent bridge-prefixed variants. Discover the exact callable shape first, then use either the direct tool or the documented HTTP endpoint.
 
 **HTTP/MCP rule**:
-- Use the HTTP API pattern only for actual MCP/domain tools such as google_sheets:* or workspace_browser:agent_browser.
-- Do not wrap sub-agent delegation tools in shell scripts or Python wrappers. Direct tool calls preserve correct timeouts, cancellation, events, and routing behavior.
+- Use the HTTP API pattern for MCP/domain tools such as google_sheets:* or workspace_browser:agent_browser.
+- Also use the HTTP API pattern for sub-agent tools only when direct invocation is unavailable in this provider session and get_api_spec confirms the endpoint.
+- When using HTTP for sub-agent tools, prefer a single direct request based on get_api_spec. Avoid improvised wrapper logic, background scripts, or custom retry loops unless absolutely necessary.
 
 **Shell usage**:
 - Use execute_shell_command for quick reads/writes, tasks.md updates, file checks, and helper scripts.
-- If you need to delegate to another agent, call the sub-agent tool directly instead of using shell.
-{{if .CodeExecutionSection}}
-
-{{.CodeExecutionSection}}
-{{end}}
+- If you need to delegate to another agent, use the direct sub-agent tool when available; otherwise use the documented HTTP endpoint discovered via get_api_spec.
 {{else if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
 {{end}}

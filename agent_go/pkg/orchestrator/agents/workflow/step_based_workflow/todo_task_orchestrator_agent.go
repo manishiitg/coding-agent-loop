@@ -157,6 +157,10 @@ These sub-agent tools must be called **directly as tools**. Do **NOT** invoke th
 **Shell usage**:
 - Use execute_shell_command for quick reads/writes, tasks.md updates, file checks, and helper scripts.
 - If you need to delegate to another agent, call the sub-agent tool directly instead of using shell.
+{{if .CodeExecutionSection}}
+
+{{.CodeExecutionSection}}
+{{end}}
 {{else if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
 {{end}}

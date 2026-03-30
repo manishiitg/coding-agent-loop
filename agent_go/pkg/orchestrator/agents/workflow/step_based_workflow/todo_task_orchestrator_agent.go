@@ -140,7 +140,7 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 {{if .IsCodeExecutionMode}}
 ## Code Execution Mode
 
-You may use `execute_shell_command` to read files, manage `tasks.md`, and run helper code when needed.
+You may use execute_shell_command to read files, manage tasks.md, and run helper code when needed.
 
 **Direct-only tool rule**:
 - call_sub_agent
@@ -148,14 +148,14 @@ You may use `execute_shell_command` to read files, manage `tasks.md`, and run he
 - get_route_description
 - get_sub_agent_conversation
 
-These sub-agent tools must be called **directly as tools**. Do **NOT** invoke them via `execute_shell_command`, `curl`, Python `requests`, or manual HTTP calls to `MCP_API_URL`.
+These sub-agent tools must be called **directly as tools**. Do **NOT** invoke them via execute_shell_command, curl, Python requests, or manual HTTP calls to MCP_API_URL.
 
 **HTTP/MCP rule**:
-- Use the HTTP API pattern only for actual MCP/domain tools such as `google_sheets:*` or `workspace_browser:agent_browser`.
+- Use the HTTP API pattern only for actual MCP/domain tools such as google_sheets:* or workspace_browser:agent_browser.
 - Do not wrap sub-agent delegation tools in shell scripts or Python wrappers. Direct tool calls preserve correct timeouts, cancellation, events, and routing behavior.
 
 **Shell usage**:
-- Use `execute_shell_command` for quick reads/writes, `tasks.md` updates, file checks, and helper scripts.
+- Use execute_shell_command for quick reads/writes, tasks.md updates, file checks, and helper scripts.
 - If you need to delegate to another agent, call the sub-agent tool directly instead of using shell.
 {{else if .CodeExecutionSection}}
 {{.CodeExecutionSection}}

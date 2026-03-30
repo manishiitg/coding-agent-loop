@@ -10,13 +10,6 @@ type workshopTierContextKey struct{}
 // WorkshopTierOverrideKey is the context key for workshop execute_step tier override
 var WorkshopTierOverrideKey = workshopTierContextKey{}
 
-// learnCodeRepairHighTierContextKey forces TierHigh selection for learn_code repair turns.
-// It is used only when main.py has already failed and we want a stronger model for fixing it.
-type learnCodeRepairHighTierContextKey struct{}
-
-// LearnCodeRepairHighTierContextKey is the context key for forcing high-tier LLM on learn_code repair turns.
-var LearnCodeRepairHighTierContextKey = learnCodeRepairHighTierContextKey{}
-
 // TierLevel represents a tier in the tiered LLM allocation system
 type TierLevel int
 

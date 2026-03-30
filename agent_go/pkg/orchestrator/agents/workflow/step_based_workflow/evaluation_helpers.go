@@ -90,9 +90,6 @@ func registerEvaluationValidationTools(
 				if strings.TrimSpace(step.Description) == "" {
 					return "", fmt.Errorf("evaluation step %q is missing description", step.ID)
 				}
-				if strings.TrimSpace(step.SuccessCriteria) == "" {
-					return "", fmt.Errorf("evaluation step %q is missing success_criteria", step.ID)
-				}
 				if step.PreValidation != nil {
 					if err := validateRegexPatternsInSchema(step.PreValidation); err != nil {
 						return "", fmt.Errorf("evaluation step %q has invalid pre_validation regex: %w", step.ID, err)

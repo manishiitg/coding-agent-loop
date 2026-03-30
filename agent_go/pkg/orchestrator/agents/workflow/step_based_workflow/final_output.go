@@ -25,10 +25,26 @@ const (
 	defaultOutputStepID        = "final-output"
 	internalOutputRunFolder    = "__report_generation"
 	internalOutputStepID       = "final-output-generation"
-	internalOutputStepPath     = "step-1"
 	maxFinalOutputFiles        = 80
 	maxFinalOutputFileChars    = 12000
 )
+
+// workshopInternalRunFolderForTarget normalizes non-execution workshop modes to the
+// builder-style iteration-0 sandbox while preserving the group suffix when present.
+// Examples:
+// - "iteration-23" -> "iteration-0"
+// - "iteration-23/group-a" -> "iteration-0/group-a"
+func workshopInternalRunFolderForTarget(targetRunFolder string) string {
+	targetRunFolder = filepath.ToSlash(strings.TrimSpace(targetRunFolder))
+	if targetRunFolder == "" {
+		return "iteration-0"
+	}
+	parts := strings.Split(targetRunFolder, "/")
+	if len(parts) >= 2 && strings.TrimSpace(parts[len(parts)-1]) != "" {
+		return filepath.ToSlash(filepath.Join("iteration-0", parts[len(parts)-1]))
+	}
+	return "iteration-0"
+}
 
 // WorkflowFinalOutputConfig is a simplified view of the primary output step.
 // It is kept for API compatibility with the existing frontend viewer response.
@@ -335,8 +351,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	internalRunFolder := filepath.ToSlash(filepath.Join(runFolder, internalOutputRunFolder))
-	internalOutputRelativePath := filepath.ToSlash(filepath.Join("runs", internalRunFolder, "execution", internalOutputStepPath, outputStep.OutputFilename))
+	internalRunFolder := filepath.ToSlash(filepath.Join(workshopInternalRunFolderForTarget(runFolder), internalOutputRunFolder))
+	internalOutputFolder := getArtifactFolderName(outputStep.ID, internalOutputStepID)
+	internalOutputRelativePath := filepath.ToSlash(filepath.Join("runs", internalRunFolder, "execution", internalOutputFolder, outputStep.OutputFilename))
 	targetRunAbsPath := filepath.ToSlash(filepath.Join(hcpo.GetWorkspacePath(), "runs", runFolder))
 	originalSelectedRunFolder := hcpo.selectedRunFolder
 	originalIterationFolder := hcpo.GetIterationFolder()
@@ -390,7 +407,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 		ctx,
 		reportStep,
 		0,
-		internalOutputStepPath,
+		internalOutputStepID,
 		1,
 		1,
 		nil,

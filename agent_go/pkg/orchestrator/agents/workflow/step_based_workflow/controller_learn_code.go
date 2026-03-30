@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // cleanStepOutputDir deletes all output files/folders in the step execution directory.
@@ -57,24 +59,163 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanStepOutputDir(ctx context.Contex
 // LearnCodeMetadata persists script provenance and runtime statistics.
 type LearnCodeMetadata struct {
 	StepID         string         `json:"step_id"`
-	StepHash       string         `json:"step_hash"`      // SHA256 of step definition — invalidated when step changes
 	ScriptVersion  int            `json:"script_version"` // incremented each time the LLM rewrites the script
 	CreatedAt      string         `json:"created_at"`
 	LastRunAt      string         `json:"last_run_at"`
 	TotalRuns      int            `json:"total_runs"`
-	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts: {"learn_code": N, "code_exec": N, ...}
+	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts; canonical scripted key is "code_exec"
 	FailedRuns     int            `json:"failed_runs"`
 	RelearnCount   int            `json:"relearn_count"` // how many times the LLM had to rewrite
 }
 
 // LearnCodeFastPathResult is returned by tryRunSavedLearnCodeScript.
 type LearnCodeFastPathResult struct {
-	RanScript      bool   // true if a saved script was found and attempted
-	Success        bool   // true if script ran and validation passed
-	ExitCode       int    // actual Python exit code (0 = success, -1 = not-run/API error)
-	Output         string // combined stdout from script
-	Error          string // stderr / validation error (used as relearn context for LLM)
-	ExistingScript string // old script content (for LLM relearn prompt)
+	RanScript       bool   // true if a saved script was found and attempted
+	Success         bool   // true if script ran and validation passed
+	ExitCode        int    // actual Python exit code (0 = success, -1 = not-run/API error)
+	Output          string // combined stdout from script
+	Error           string // stderr / validation error (used as relearn context for LLM)
+	ExecutionError  string // raw script execution failure, if any
+	ValidationError string // output/pre-validation failure, if any
+	FailureReason   string // "execution_error", "validation_error", or "execution_and_validation_error"
+	ExistingScript  string // old script content (for LLM relearn prompt)
+}
+
+type learnCodeSelfRunInfo struct {
+	Output   string
+	ExitCode int
+}
+
+func parseExecuteShellCommandArgs(argsJSON string) string {
+	if strings.TrimSpace(argsJSON) == "" {
+		return ""
+	}
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.Command)
+}
+
+func parseExecuteShellCommandResult(result string) (stdout, stderr string, exitCode int, ok bool) {
+	if strings.TrimSpace(result) == "" {
+		return "", "", 0, false
+	}
+	var parsed struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return "", "", 0, false
+	}
+	return parsed.Stdout, parsed.Stderr, parsed.ExitCode, true
+}
+
+func isReadOnlyMainPyCommand(command, mainPyAbsPath string) bool {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" || !strings.Contains(cmd, mainPyAbsPath) {
+		return false
+	}
+	readPrefixes := []string{
+		"cat " + shellQuotePath(mainPyAbsPath),
+		"cat " + mainPyAbsPath,
+		"sed -n ",
+		"nl -ba ",
+		"ls ",
+		"stat ",
+		"wc ",
+		"head ",
+		"tail ",
+	}
+	for _, prefix := range readPrefixes {
+		if strings.HasPrefix(cmd, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func detectSuccessfulLLMLearnCodeSelfRun(history []llmtypes.MessageContent, mainPyAbsPath string) *learnCodeSelfRunInfo {
+	type shellCall struct {
+		command string
+		index   int
+	}
+	pendingShellCalls := map[string]shellCall{}
+	lastSuccessfulRun := -1
+	lastSuccessfulOutput := ""
+	lastSuccessfulExitCode := 0
+	lastMainPyMutation := -1
+	callIndex := 0
+
+	for _, msg := range history {
+		switch msg.Role {
+		case llmtypes.ChatMessageTypeAI:
+			for _, part := range msg.Parts {
+				toolCall, ok := part.(llmtypes.ToolCall)
+				if !ok || toolCall.FunctionCall == nil {
+					continue
+				}
+				callIndex++
+				switch toolCall.FunctionCall.Name {
+				case "execute_shell_command", "mcp_api-bridge_execute_shell_command":
+					command := parseExecuteShellCommandArgs(toolCall.FunctionCall.Arguments)
+					pendingShellCalls[toolCall.ID] = shellCall{command: command, index: callIndex}
+					if strings.Contains(command, mainPyAbsPath) &&
+						!strings.Contains(command, "python3 "+shellQuotePath(mainPyAbsPath)) &&
+						!strings.Contains(command, "python3 "+mainPyAbsPath) &&
+						!isReadOnlyMainPyCommand(command, mainPyAbsPath) {
+						lastMainPyMutation = callIndex
+					}
+				case "diff_patch_workspace_file", "mcp_api-bridge_diff_patch_workspace_file":
+					var args struct {
+						Filepath string `json:"filepath"`
+					}
+					if err := json.Unmarshal([]byte(toolCall.FunctionCall.Arguments), &args); err == nil && strings.TrimSpace(args.Filepath) == mainPyAbsPath {
+						lastMainPyMutation = callIndex
+					}
+				}
+			}
+		case llmtypes.ChatMessageTypeTool:
+			for _, part := range msg.Parts {
+				toolResp, ok := part.(llmtypes.ToolCallResponse)
+				if !ok {
+					continue
+				}
+				call, exists := pendingShellCalls[toolResp.ToolCallID]
+				if !exists {
+					continue
+				}
+				stdout, stderr, exitCode, ok := parseExecuteShellCommandResult(toolResp.Content)
+				if !ok {
+					continue
+				}
+				if exitCode == 0 &&
+					(strings.Contains(call.command, "python3 "+shellQuotePath(mainPyAbsPath)) ||
+						strings.Contains(call.command, "python3 "+mainPyAbsPath)) {
+					lastSuccessfulRun = call.index
+					lastSuccessfulExitCode = exitCode
+					lastSuccessfulOutput = strings.TrimSpace(stdout)
+					if strings.TrimSpace(stderr) != "" {
+						if lastSuccessfulOutput != "" {
+							lastSuccessfulOutput += "\n"
+						}
+						lastSuccessfulOutput += strings.TrimSpace(stderr)
+					}
+				}
+			}
+		}
+	}
+
+	if lastSuccessfulRun == -1 || lastMainPyMutation > lastSuccessfulRun {
+		return nil
+	}
+	return &learnCodeSelfRunInfo{
+		Output:   lastSuccessfulOutput,
+		ExitCode: lastSuccessfulExitCode,
+	}
 }
 
 // getLearnCodeDirRelPath returns the learnings subdirectory (relative to workspace root).
@@ -101,12 +242,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearnCodeMetadataAPI(ctx context.
 	}
 	var meta LearnCodeMetadata
 	if err := json.Unmarshal([]byte(data), &meta); err == nil {
+		if meta.SuccessfulRuns == nil {
+			meta.SuccessfulRuns = map[string]int{}
+		}
+		if meta.SuccessfulRuns["code_exec"] == 0 && meta.SuccessfulRuns["learn_code"] > 0 {
+			meta.SuccessfulRuns["code_exec"] = meta.SuccessfulRuns["learn_code"]
+		}
 		return &meta
 	}
 	// Legacy format: successful_runs was a plain int, not a map.
 	var legacy struct {
 		StepID         string `json:"step_id"`
-		StepHash       string `json:"step_hash"`
 		ScriptVersion  int    `json:"script_version"`
 		CreatedAt      string `json:"created_at"`
 		LastRunAt      string `json:"last_run_at"`
@@ -120,12 +266,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearnCodeMetadataAPI(ctx context.
 	}
 	return &LearnCodeMetadata{
 		StepID:         legacy.StepID,
-		StepHash:       legacy.StepHash,
 		ScriptVersion:  legacy.ScriptVersion,
 		CreatedAt:      legacy.CreatedAt,
 		LastRunAt:      legacy.LastRunAt,
 		TotalRuns:      legacy.TotalRuns,
-		SuccessfulRuns: map[string]int{"learn_code": 0},
+		SuccessfulRuns: map[string]int{"code_exec": legacy.SuccessfulRuns},
 		FailedRuns:     legacy.FailedRuns,
 		RelearnCount:   legacy.RelearnCount,
 	}
@@ -141,49 +286,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeLearnCodeMetadataAPI(ctx context
 	return hcpo.WriteWorkspaceFile(ctx, relPath, string(data))
 }
 
-// hasValidLearnedScriptAPI returns true if main.py exists via workspace API and step_hash matches.
-func (hcpo *StepBasedWorkflowOrchestrator) hasValidLearnedScriptAPI(ctx context.Context, stepID, currentStepHash string) bool {
+// hasValidLearnedScriptAPI returns true if main.py exists via workspace API.
+func (hcpo *StepBasedWorkflowOrchestrator) hasValidLearnedScriptAPI(ctx context.Context, stepID string) bool {
 	scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
 	_, err := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
-	if err != nil {
-		return false
-	}
-	meta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
-	if meta == nil {
-		return false
-	}
-	if strings.TrimSpace(meta.StepHash) == "" && strings.TrimSpace(currentStepHash) != "" {
-		// Legacy repair: older learn_code saves could leave step_hash empty even when
-		// main.py existed. Backfill it now so the saved script can participate in fast path.
-		meta.StepID = stepID
-		meta.StepHash = currentStepHash
-		if err := hcpo.writeLearnCodeMetadataAPI(ctx, stepID, *meta); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to backfill empty step_hash for %s: %v", stepID, err))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🛠️ [learn_code] Backfilled missing step_hash for saved script: %s", stepID))
-		}
-	}
-	return meta.StepHash == currentStepHash
-}
-
-// buildLearnCodeInputArgsForPrompt returns newline-joined input arg paths for templateVars.
-// Returns "" when learn_code mode is disabled or there are no context dependencies.
-func (hcpo *StepBasedWorkflowOrchestrator) buildLearnCodeInputArgsForPrompt(
-	ctx context.Context,
-	isLearnCodeMode bool,
-	step PlanStepInterface,
-	stepIndex int,
-	stepPath string,
-	allSteps []PlanStepInterface,
-	executionWorkspacePath string,
-	docsRoot string,
-	variableValues map[string]string,
-) string {
-	if !isLearnCodeMode {
-		return ""
-	}
-	args := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, variableValues)
-	return strings.Join(args, "\n")
+	return err == nil
 }
 
 // buildLearnCodeVarMappingForPrompt returns a newline-joined list showing how workflow
@@ -365,9 +472,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 }
 
 // tryRunSavedLearnCodeScript checks for a saved main.py and runs it:
-//   - No saved script or step definition changed → RanScript=false (fall through to LLM)
-//   - Script ran + validation passed              → RanScript=true, Success=true
-//   - Script failed                               → RanScript=true, Success=false (fall through to LLM for relearn)
+//   - No saved script               → RanScript=false (fall through to LLM)
+//   - Script ran + validation passed → RanScript=true, Success=true
+//   - Script failed                  → RanScript=true, Success=false (fall through to LLM for relearn)
 func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	ctx context.Context,
 	step PlanStepInterface,
@@ -379,20 +486,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 ) *LearnCodeFastPathResult {
 	docsRoot := GetPromptDocsRoot()
 	stepID := step.GetID()
-	stepHash := hcpo.CalculateStepHash(step)
 
-	if !hcpo.hasValidLearnedScriptAPI(ctx, stepID, stepHash) {
-		// Even when the hash mismatches (step definition changed), read the existing
-		// main.py if it exists and surface it as ExistingScript so the LLM can adapt
-		// the working script instead of rewriting from scratch. This preserves tested
-		// logic (e.g. login flows) and prevents the LLM from re-adding unwanted patterns.
+	if !hcpo.hasValidLearnedScriptAPI(ctx, stepID) {
 		scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
 		existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
-		if existingScript != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d (%s) hash mismatch — passing existing script to LLM as update context", stepIndex+1, stepID))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] No valid saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
-		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] No saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
 		return &LearnCodeFastPathResult{RanScript: false, ExistingScript: existingScript}
 	}
 
@@ -413,11 +511,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 
 	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, scriptAbsPath, inputArgs, stepExecutionAbsPath, learnDirAbsPath, stepExecutionRelPath)
 	if execErr != nil || exitCode != 0 {
-		var errMsg string
+		var execErrMsg string
 		if execErr != nil {
-			errMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
+			execErrMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
 		} else {
-			errMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
+			execErrMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
 		}
 		// Even with non-zero exit, check if the script produced valid output.
 		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
@@ -429,9 +527,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 			hcpo.updateLearnCodeRunStats(ctx, stepID, true)
 			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output, ExistingScript: existingScript}
 		}
+		validationErrMsg := ""
+		failureReason := "execution_error"
+		if preValResults != nil {
+			validationErrMsg = formatWorkspaceResults(preValResults)
+			failureReason = "execution_and_validation_error"
+		}
+		errMsg := execErrMsg
+		if validationErrMsg != "" {
+			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
+		}
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script failed for step %d: %s", stepIndex+1, errMsg))
 		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
-		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg, ExistingScript: existingScript}
+		return &LearnCodeFastPathResult{
+			RanScript:       true,
+			Success:         false,
+			ExitCode:        exitCode,
+			Output:          output,
+			Error:           errMsg,
+			ExecutionError:  execErrMsg,
+			ValidationError: validationErrMsg,
+			FailureReason:   failureReason,
+			ExistingScript:  existingScript,
+		}
 	}
 
 	// Script exited 0 — run pre-validation to confirm output structure
@@ -443,7 +561,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		errMsg := formatWorkspaceResults(preValResults)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script ran but output validation failed for step %d", stepIndex+1))
 		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
-		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: 0, Error: errMsg, ExistingScript: existingScript}
+		return &LearnCodeFastPathResult{
+			RanScript:       true,
+			Success:         false,
+			ExitCode:        0,
+			Output:          output,
+			Error:           errMsg,
+			ValidationError: errMsg,
+			FailureReason:   "validation_error",
+			ExistingScript:  existingScript,
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
@@ -601,14 +728,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 		relearnCount = oldMeta.RelearnCount + 1
 	}
 
-	currentStepHash := hcpo.CalculateStepHash(step)
-	if strings.TrimSpace(currentStepHash) == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Calculated empty step hash while saving %s", stepID))
-	}
-
 	newMeta := LearnCodeMetadata{
 		StepID:        stepID,
-		StepHash:      currentStepHash,
 		ScriptVersion: version,
 		CreatedAt:     createdAt,
 		LastRunAt:     time.Now().UTC().Format(time.RFC3339),
@@ -633,7 +754,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 		if meta.SuccessfulRuns == nil {
 			meta.SuccessfulRuns = map[string]int{}
 		}
-		meta.SuccessfulRuns["learn_code"]++
+		meta.SuccessfulRuns["code_exec"]++
 	} else {
 		meta.FailedRuns++
 	}
@@ -661,15 +782,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
 	}(), stepID, stepPath)
 
 	logData := map[string]interface{}{
-		"step_index":  stepIndex + 1,
-		"step_path":   stepPath,
-		"mode":        "learn_code_fast_path",
-		"script_path": scriptPath,
-		"exit_code":   result.ExitCode,
-		"success":     result.Success,
-		"output":      result.Output,
-		"error":       result.Error,
-		"timestamp":   time.Now().Format(time.RFC3339),
+		"step_index":       stepIndex + 1,
+		"step_path":        stepPath,
+		"mode":             "learn_code_fast_path",
+		"script_path":      scriptPath,
+		"exit_code":        result.ExitCode,
+		"success":          result.Success,
+		"output":           result.Output,
+		"error":            result.Error,
+		"execution_error":  result.ExecutionError,
+		"validation_error": result.ValidationError,
+		"failure_reason":   result.FailureReason,
+		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 	if logJSON, err := json.MarshalIndent(logData, "", "  "); err == nil {
 		logPath := logDir + "/learn_code_fast_path.json"
@@ -681,15 +805,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
 	}
 }
 
-// GetLearnCodeModeInstructions returns system prompt additions for learn_code mode.
+// GetLearnCodeModeInstructions returns system prompt additions for the persistent
+// scripted-code path used by both code_exec and legacy learn_code steps.
 // codeDirAbsPath is the LLM's working directory (execution/step-x/code/).
 // stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
 // inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
 // envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
 func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string) string {
 	var sb strings.Builder
-	sb.WriteString("\n\n## Learn Code Mode\n\n")
-	sb.WriteString("You are in **learn code mode**. Your ONLY job is to write a Python solution.\n\n")
+	sb.WriteString("\n\n## Code Execution Mode\n\n")
+	sb.WriteString("You are in **code execution mode**. Your ONLY job is to write a reusable Python solution.\n\n")
 	sb.WriteString("**Your working directory (write all code files here):**\n")
 	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
 	sb.WriteString("**Rules:**\n")
@@ -698,6 +823,7 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
 	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
 	sb.WriteString("- The system will also execute it automatically after your turn ends\n")
+	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n")
 	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
 	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n\n")
@@ -772,10 +898,9 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 			sb.WriteString(priorError)
 			sb.WriteString("\n```\n")
 		} else {
-			// Step definition changed (hash mismatch) — adapt the existing working script
 			sb.WriteString("### Existing Script (Update Required)\n\n")
-			sb.WriteString("The step definition changed. Adapt this working script to match the updated step description above. ")
-			sb.WriteString("Keep all working logic intact — only change what the new description requires:\n\n")
+			sb.WriteString("A saved script already exists for this step. Adapt and improve this working script to match the current step description above. ")
+			sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change:\n\n")
 			sb.WriteString("```python\n")
 			sb.WriteString(priorScript)
 			sb.WriteString("\n```\n")

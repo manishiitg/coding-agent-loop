@@ -184,7 +184,7 @@ export const WorkflowChatTabs: React.FC = () => {
     }
 
     try {
-      await agentApi.stopSession(tab.sessionId)
+      await agentApi.stopSession(tab.sessionId, true)
       logger.debug('WorkflowChatTabs', `Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
       setTabStreaming(tab.tabId, false)
     } catch (error) {

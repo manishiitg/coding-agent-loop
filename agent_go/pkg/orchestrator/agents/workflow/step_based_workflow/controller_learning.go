@@ -206,7 +206,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	successLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
 		"StepDescription":     step.GetDescription(),
-		"StepSuccessCriteria": step.GetSuccessCriteria(),
+		"StepSuccessCriteria": "",
 		"StepContextOutput":   stepContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
 		"ExecutionHistory":    formattedHistory,
@@ -214,6 +214,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
 		"LearningTrigger":     "success",
+		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
@@ -619,7 +620,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	failureLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
 		"StepDescription":     step.GetDescription(),
-		"StepSuccessCriteria": step.GetSuccessCriteria(),
+		"StepSuccessCriteria": "",
 		"StepContextOutput":   step.GetContextOutput().String(),
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
 		// COST OPTIMIZATION: Use aggressive truncation to reduce learning agent input costs
@@ -631,6 +632,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
 		"LearningTrigger":     "failure",
+		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveToolsFailure, ", "),
 	}
 

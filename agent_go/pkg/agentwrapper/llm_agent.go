@@ -871,7 +871,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		w.mu.Unlock()
 		w.logger.Info("[STREAMING] Real-time streaming callback installed")
 
-		// Clear any stale tool call records from a previous cancelled run for this session
+		// Clear any stale tool call records from a previous canceled run for this session
 		// so we only capture calls from the current run.
 		if w.config.SessionID != "" {
 			toolcalllog.Clear(w.config.SessionID)
@@ -933,7 +933,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 				// ChatMessageTypeTool to null in their input stream, causing "choice.Content is
 				// empty" errors. A text summary in a normal AI message is universally serializable.
 				var sb strings.Builder
-				sb.WriteString("[Cancelled run context — tools executed before cancellation:\n")
+				sb.WriteString("[Canceled run context — tools executed before cancellation:\n")
 				for _, tc := range httpCompletedCalls {
 					w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] HTTP tool reconstructed: id=%s name=%s args_len=%d result_len=%d",
 						tc.ID, tc.Name, len(tc.ArgsJSON), len(tc.Result)))
@@ -952,7 +952,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 					len(httpCompletedCalls), historyBefore, len(w.history)))
 			}
 
-			// Fix dangling user message: if the conversation was cancelled before the model
+			// Fix dangling user message: if the conversation was canceled before the model
 			// produced any response, history ends with a user message and no assistant reply.
 			// Appending the next user message would create two consecutive user messages,
 			// which is invalid for Anthropic-style APIs and confuses CLI providers.
@@ -962,7 +962,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 				w.logger.Info("[CANCEL_DEBUG] History ends with dangling user message — appending synthetic assistant reply")
 				w.history = append(w.history, llmtypes.MessageContent{
 					Role:  llmtypes.ChatMessageTypeAI,
-					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "[Request cancelled — no response generated]"}},
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "[Request canceled — no response generated]"}},
 				})
 			}
 			w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] History saved | final_msgs=%d err=%v", len(w.history), err))

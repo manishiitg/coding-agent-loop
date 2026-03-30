@@ -462,39 +462,6 @@ func deleteFolderViaAPI(ctx context.Context, folderPath string) error {
 	return nil
 }
 
-// writeFileViaAPI writes a file via the Workspace API (PUT /api/documents/{filepath}).
-func writeFileViaAPI(ctx context.Context, filePath string, content string) error {
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + filePath
-
-	requestBody := map[string]string{
-		"content": content,
-	}
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to call workspace API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
 // ensureStepExecutionFolderExists ensures the step execution folder exists by creating it if needed.
 // This is called when a step starts running to ensure the folder exists even if it was previously deleted.
 // Creates folder via Workspace API only (ensures consistency with list_workspace_files).
@@ -594,14 +561,14 @@ func getLearningPathIdentifier(stepID string, stepPath string) string {
 // saveExecutionConversationLogs saves execution result, conversation history, and prompts to log files.
 // Called on both success and failure/cancellation paths so partial conversations from interrupted
 // executions can be inspected via debug_step or direct log file access.
-// Uses context.Background() internally so writes succeed even when the caller's context is cancelled.
+// Uses context.Background() internally so writes succeed even when the caller's context is canceled.
 func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	stepIndex int, stepID string, stepPath string, retryAttempt int, loopIterationCount int,
 	executionResult string, executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
 	executionAgent agents.OrchestratorAgent,
 ) {
-	// Use background context so saves succeed even when execution was cancelled/stopped by user
+	// Use background context so saves succeed even when execution was canceled/stopped by user
 	saveCtx := context.Background()
 
 	var validationWorkspacePath string
@@ -911,36 +878,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
 
-	// STEP HASH GUARD: Detect plan changes and reset learnings if needed
-	// This ensures that if the user modifies a step's description, criteria, etc.,
-	// the learning stability counters are reset and learnings are unlocked.
-	if err := hcpo.CheckAndResetStepHash(ctx, step, step.GetID(), stepIndex, stepPath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step hash guard check failed for %s: %v (continuing)", stepPath, err))
-	}
-
-	// Learn code mode — determined once per step invocation (persists across outer-loop iterations).
+	// Scripted code mode — determined once per step invocation (persists across outer-loop iterations).
 	// Check embedded plan AgentConfigs first; fall back to step_configs.json so that workshop-saved
-	// configs (use_learn_code_mode: true) also take effect for sub-agent steps whose embedded plan
+	// configs (use_code_execution_mode/use_learn_code_mode) also take effect for sub-agent steps whose embedded plan
 	// config may not have the flag.
 	isLearnCodeMode := false
 	{
 		agentCfgs := getAgentConfigs(step)
-		if (agentCfgs == nil || agentCfgs.UseLearnCodeMode == nil) && step.GetID() != "" {
+		if (agentCfgs == nil || !isScriptedExecutionModeConfig(agentCfgs)) && step.GetID() != "" {
 			if stepConfigs, err := hcpo.ReadStepConfigs(ctx); err == nil {
 				for _, sc := range stepConfigs {
-					if sc.ID == step.GetID() && sc.AgentConfigs != nil && sc.AgentConfigs.UseLearnCodeMode != nil {
+					if sc.ID == step.GetID() && isScriptedExecutionModeConfig(sc.AgentConfigs) {
 						agentCfgs = sc.AgentConfigs
 						break
 					}
 				}
 			}
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] step=%s agentCfgs_nil=%v UseLearnCodeMode=%v",
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] step=%s agentCfgs_nil=%v scripted=%v",
 			step.GetID(), agentCfgs == nil,
-			agentCfgs != nil && agentCfgs.UseLearnCodeMode != nil && *agentCfgs.UseLearnCodeMode))
-		if agentCfgs != nil && agentCfgs.UseLearnCodeMode != nil {
-			isLearnCodeMode = *agentCfgs.UseLearnCodeMode
-		}
+			isScriptedExecutionModeConfig(agentCfgs)))
+		isLearnCodeMode = isScriptedExecutionModeConfig(agentCfgs)
 	}
 	learnCodePriorScript := ""          // old script content when saved script failed (LLM relearn context)
 	learnCodePriorError := ""           // error from failed saved script (LLM relearn context)
@@ -959,6 +917,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		maxRetryAttempts = 3
 	}
 	var executionConversationHistory []llmtypes.MessageContent // Only used for learning agents after execution
+	var learnCodePreValidationResultsOverride *WorkspaceVerificationResult
 	stepCompleted := false
 
 	// Outer loop: Handle re-execution with human feedback
@@ -980,6 +939,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in applyStepConfigToAgentConfig.
 		var isCodeExecutionMode bool
 		agentConfigs := getAgentConfigs(step)
+		if (agentConfigs == nil || (agentConfigs.UseCodeExecutionMode == nil && agentConfigs.UseToolSearchMode == nil && agentConfigs.UseLearnCodeMode == nil)) && step.GetID() != "" {
+			if stepConfigs, err := hcpo.ReadStepConfigs(ctx); err == nil {
+				for _, sc := range stepConfigs {
+					if sc.ID == step.GetID() && sc.AgentConfigs != nil {
+						agentConfigs = sc.AgentConfigs
+						break
+					}
+				}
+			}
+		}
 		if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
 			isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", isCodeExecutionMode))
@@ -993,11 +962,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		if isCodeExecutionMode {
 			isToolSearchMode = false
 		}
-		// Learn code mode implies code execution mode
+		// Scripted code mode implies code execution mode
 		if isLearnCodeMode {
 			isCodeExecutionMode = true
 			isToolSearchMode = false
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Mode enabled for step %d — forcing code execution mode", stepIndex+1))
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Persistent scripted mode enabled for step %d — forcing code execution mode", stepIndex+1))
 		}
 
 		// Always use learnings folder (unified folder for all learning types)
@@ -1068,13 +1037,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		stepTitleForPrompt := ResolveVariables(step.GetTitle(), hcpo.variableValues)
 		stepDescriptionForPrompt := ResolveVariables(step.GetDescription(), hcpo.variableValues)
-		stepSuccessCriteriaForPrompt := ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues)
 		if isLearnCodeMode {
 			// In learn_code mode the saved script is reused across groups/users, so keep
-			// template placeholders in the task description/success criteria instead of
+			// template placeholders in the task description instead of
 			// injecting current-run values that the model might copy into main.py.
 			stepDescriptionForPrompt = step.GetDescription()
-			stepSuccessCriteriaForPrompt = step.GetSuccessCriteria()
 		}
 
 		contextDeps := step.GetContextDependencies()
@@ -1094,7 +1061,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		templateVars := map[string]string{
 			"StepTitle":             stepTitleForPrompt,
 			"StepDescription":       stepDescriptionForPrompt,
-			"StepSuccessCriteria":   stepSuccessCriteriaForPrompt,
+			"StepSuccessCriteria":   "",
 			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
 			"WorkspacePath":         toAbsPath(executionWorkspacePath),                         // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
 			"LearningsPath":         toAbsPath(learningsPath),                                  // Absolute learnings folder path
@@ -1278,16 +1245,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				learnCodePriorError = fastResult.Error
 				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Script failed for step %d — falling back to LLM with error context", stepIndex+1))
 			} else if fastResult.ExistingScript != "" {
-				// Hash mismatch (step definition changed) but an existing script was found.
-				// Pass it to the LLM as context so it can adapt the working script rather
-				// than rewriting from scratch (prevents reintroducing patterns that were removed).
+				// A saved script exists but wasn't executed successfully. Pass it to the LLM
+				// so it can adapt the working script rather than rewriting from scratch.
 				learnCodePriorScript = fastResult.ExistingScript
-				// No prior error — this is an update, not a failure
-				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d hash mismatch — LLM will update existing script to match new definition", stepIndex+1))
+				// No prior error — this is an update/reuse path, not a failure
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Step %d found an existing saved script — LLM will update it in place", stepIndex+1))
 			}
 
 			// templateVars were built before the fast-path check. Refresh the learn_code
-			// prompt fields here so a hash-mismatch/failure can surface the saved script
+			// prompt fields here so a saved-script reuse/failure can surface the saved script
 			// and prior error in the actual rendered prompt for this same execution pass.
 			templateVars["IsRelearnMode"] = fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != "")
 			templateVars["LearnCodePriorScript"] = learnCodePriorScript
@@ -1632,10 +1598,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
-				if isLearnCodeMode && strings.TrimSpace(learnCodePriorError) != "" {
-					executionAgentCtx = context.WithValue(executionAgentCtx, LearnCodeRepairHighTierContextKey, true)
-					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [learn_code] saved script failed previously for step %d — creating execution agent on high tier for repair", stepIndex+1))
-				}
 
 				// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
 				// For learnings / tempLLM selection, use the concrete step ID so sub-agents align with their own learnings folder.
@@ -1760,17 +1722,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						maxFixIter = *agentCfgs.LearnCodeMaxFixIter
 					}
 					codeDirAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code")
+					mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
 					learnCodeRepairAgentUpgraded := false
 					learnCodeRepairSystemPrompt := ""
 
 					var lastLcResult *LearnCodeFastPathResult
-					for fixIter := 0; fixIter <= maxFixIter; fixIter++ {
+					if selfRun := detectSuccessfulLLMLearnCodeSelfRun(executionConversationHistory, mainPyPath); selfRun != nil {
+						preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionPath, hcpo.BaseOrchestrator)
+						if preValResults != nil && preValResults.OverallPass {
+							learnCodePreValidationResultsOverride = preValResults
+							lastLcResult = &LearnCodeFastPathResult{
+								RanScript: true,
+								Success:   true,
+								ExitCode:  selfRun.ExitCode,
+								Output:    selfRun.Output,
+							}
+							hcpo.GetLogger().Info(fmt.Sprintf("♻️ [learn_code] Reusing successful LLM self-test for step %d — skipping duplicate controller rerun", stepIndex+1))
+							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+								mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
+						} else {
+							hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] LLM self-test detected for step %d, but current outputs did not pass pre-validation — running controller execution", stepIndex+1))
+						}
+					}
+
+					for fixIter := 0; fixIter <= maxFixIter && (lastLcResult == nil || !lastLcResult.Success); fixIter++ {
 						lastLcResult = hcpo.runLearnCodeMainPyFromExecution(ctx, step, stepIndex, stepPath, allSteps, stepExecutionPath, executionWorkspacePath)
 
 						// Emit UI event only when a script was actually executed (not when main.py is simply absent).
 						// The nil case (main.py not yet written) is internal control-flow — emitting a ✗ failed
 						// event for it is misleading when the LLM writes the script on the next iteration.
-						mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
 						if lastLcResult != nil {
 							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
 								mainPyPath, lastLcResult.Success, lastLcResult.ExitCode, lastLcResult.Output, lastLcResult.Error,
@@ -1799,12 +1779,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] main.py failed for step %d (fix attempt %d/%d) — continuing conversation with error", stepIndex+1, fixIter+1, maxFixIter))
 
-						// Upgrade repair turns to a high-tier execution agent after the first script failure.
-						// This keeps the initial execution cost-aware, but uses the strongest tier to debug code.
 						if !learnCodeRepairAgentUpgraded {
-							repairCtx := context.WithValue(ctx, LearnCodeRepairHighTierContextKey, true)
 							repairAgentName := fmt.Sprintf("%s-fix-%d-high", executionAgentName, fixIter+1)
-							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
+							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
 							if repairErr != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to upgrade repair agent for step %d: %v", stepIndex+1, repairErr))
 							} else {
@@ -1819,7 +1796,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								}
 								executionAgent = repairAgent
 								learnCodeRepairAgentUpgraded = true
-								hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [learn_code] upgraded repair turns for step %d to high-tier agent: %s", stepIndex+1, executionLLM))
+								hcpo.GetLogger().Info(fmt.Sprintf("🔁 [learn_code] recreated repair agent for step %d using default tier selection: %s", stepIndex+1, executionLLM))
 							}
 						}
 
@@ -1865,7 +1842,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Run pre-validation (code-based structural checks) -- always active, independent of LLM validation.
 				agentConfigs = getAgentConfigs(step)
 				preValidationSchema := getValidationSchema(step)
-				preValidationResults, preValidationErr := RunPreValidation(ctx, preValidationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
+				preValidationResults := learnCodePreValidationResultsOverride
+				var preValidationErr error
+				if preValidationResults == nil {
+					preValidationResults, preValidationErr = RunPreValidation(ctx, preValidationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
+				}
 				if preValidationErr != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("Pre-validation error for step %d: %v", stepIndex+1, preValidationErr))
 					preValidationResults = &WorkspaceVerificationResult{
@@ -1887,9 +1868,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							SchemaWarnings: []ValidationError{},
 						},
 					}
-				} else if preValidationSchema == nil || len(preValidationSchema.Files) == 0 {
+				} else if preValidationResults == nil && (preValidationSchema == nil || len(preValidationSchema.Files) == 0) {
 					hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation skipped for step %d (no validation schema)", stepIndex+1))
 				}
+				learnCodePreValidationResultsOverride = nil
 				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, preValidationResults)
 
 				// Build validation response based on pre-validation results
@@ -2391,10 +2373,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1))
 					isLearningDisabled = false
 				}
-				// LEARN CODE MODE: the saved script IS the learning artifact — skip SKILL.md learning
+				// SCRIPTED CODE MODE: keep main.py as executable truth, but still allow SKILL.md notes
 				if isLearnCodeMode {
-					isLearningDisabled = true
-					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Skipping SKILL.md learning for step %d — script saved to learnings instead", stepIndex+1))
+					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Keeping learning enabled for step %d — main.py remains executable truth and SKILL.md can capture edge cases", stepIndex+1))
 				}
 				// HUMAN-ASSISTED LEARNING MODE: Skip all automatic learning — human triggers manually via generate_learnings
 				if agentConfigs != nil && agentConfigs.LearningMode != "auto" {

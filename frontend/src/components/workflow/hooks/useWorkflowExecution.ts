@@ -364,7 +364,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     
     if (sessionId) {
       try {
-        await agentApi.stopSession(sessionId)
+        await agentApi.stopSession(sessionId, true)
         console.log(`[useWorkflowExecution] ✅ Session ${sessionId} stopped via API${targetTab ? ` (tab: ${targetTab.tabId}, phase: ${targetTab.metadata?.phaseId})` : ' (global)'}`)
       } catch (err) {
         console.error('[useWorkflowExecution] ❌ Failed to stop session:', err)

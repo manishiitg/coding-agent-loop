@@ -150,7 +150,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetSubAgentNotifier() SubAgentNotifie
 }
 
 // SetWorkshopExecutionContext wires the workshop session context and execution registry
-// into the controller so controller-managed background tasks can be tracked and cancelled.
+// into the controller so controller-managed background tasks can be tracked and canceled.
 func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionContext(sessionCtx context.Context, registry *WorkshopStepRegistry) {
 	hcpo.workshopSessionCtx = sessionCtx
 	hcpo.workshopStepRegistry = registry
@@ -445,27 +445,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Loaded variable values for selected group: %s (values: %v)", requestedGroupID, variableValues))
 
-			// Validate: Double-check that we got the right group's values
-			// Find the group in manifest to verify
+			// Validate: Double-check that we got the right group's values plus shared defaults.
+			// Find the group in manifest to verify.
 			for _, g := range hcpo.variablesManifest.Groups {
 				if g.GroupID == requestedGroupID {
+					expectedValues := MergeGroupWithDefaults(hcpo.variablesManifest, g.Values)
 					// Compare values to ensure they match
 					valuesMatch := true
-					if len(variableValues) != len(g.Values) {
+					if len(variableValues) != len(expectedValues) {
 						valuesMatch = false
 					} else {
 						for k, v := range variableValues {
-							if g.Values[k] != v {
+							if expectedValues[k] != v {
 								valuesMatch = false
-								hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Value mismatch for key %s: expected %s, got %s", k, g.Values[k], v), nil)
+								hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Value mismatch for key %s: expected %s, got %s", k, expectedValues[k], v), nil)
 								break
 							}
 						}
 					}
 					if !valuesMatch {
-						hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Variable values don't match group %s! Expected: %v, Got: %v", requestedGroupID, g.Values, variableValues), nil)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Variable values don't match merged values for group %s! Expected: %v, Got: %v", requestedGroupID, expectedValues, variableValues), nil)
 					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Verified variable values match group %s", requestedGroupID))
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Verified variable values match merged values for group %s", requestedGroupID))
 					}
 					break
 				}

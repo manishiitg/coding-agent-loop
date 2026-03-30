@@ -39,7 +39,7 @@ function applySessionStatus(tabId: string, state: RuntimeSessionState): void {
   const isDone = state.status === 'completed' || state.status === 'stopped'
   const isError = state.status === 'error'
   chatStore.setTabCompleted(tabId, isDone)
-  chatStore.setTabStreaming(isDone || isError ? false : isForegroundStreaming(state))
+  chatStore.setTabStreaming(tabId, isDone || isError ? false : isForegroundStreaming(state))
   chatStore.setTabHasRunningBgAgents(tabId, !!state.hasRunningBackgroundAgents)
   chatStore.setTabSyntheticTurn(tabId, !!state.isSyntheticTurn)
   chatStore.setTabCanSteer(tabId, !!state.canSteer)

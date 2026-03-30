@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -25,6 +25,7 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 1. **Task-Specific ONLY**: Only save patterns that help a future agent perform *this specific task* better. Exclude general knowledge (syntax rules, generic tool mechanics).
 2. **Keep it lean**: Remove patterns that aren't pulling their weight. A shorter, high-signal skill is better than a long one with noise.
 3. **Scripts**: Save successful scripts (Python, bash) to '{{.ScriptsPath}}' and reference them from SKILL.md.
+4. **For scripted code steps**: `+"`main.py`"+` and helper scripts are the executable source of truth. Use SKILL.md only for secondary notes: edge cases, selector drift, recovery strategies, and debugging guidance for future repair runs.
 
 ## FILE MANAGEMENT ALGORITHM (MANDATORY)
 **Available tools**: execute_shell_command (for listing, reading, deleting, and **creating new files** via shell — e.g. using cat heredoc or tee) and diff_patch_workspace_file (for patching/updating **existing** files only — will fail if the file does not exist yet).
@@ -36,12 +37,12 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 2. **Retrieve**: Use execute_shell_command with 'cat' to read ALL identified skill files.
 {{end}}
 3. **Read Execution Logs**: The execution logs at '{{.ExecutionLogsPath}}' are your primary source for extracting patterns. Read them efficiently:
-   - First, list files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
-   - **File naming**: ` + "`" + `execution-attempt-{N}-iteration-{M}-conversation.json` + "`" + ` (full conversation with tool calls), ` + "`" + `execution-attempt-{N}-iteration-{M}.json` + "`" + ` (result summary)
+   - First, list files: `+"`"+`ls '{{.ExecutionLogsPath}}'`+"`"+`
+   - **File naming**: `+"`"+`execution-attempt-{N}-iteration-{M}-conversation.json`+"`"+` (full conversation with tool calls), `+"`"+`execution-attempt-{N}-iteration-{M}.json`+"`"+` (result summary)
    - **Start with the result summary** (small file) to understand what happened — it has execution_result, retry_attempt, and status.
-   - **Read conversation JSON only if needed** for detailed tool call sequences. These can be large (50K+). Use ` + "`" + `tail -c 30000` + "`" + ` to read from the bottom first — the most important patterns (final tool calls, success/failure outcome) are at the end.
+   - **Read conversation JSON only if needed** for detailed tool call sequences. These can be large (50K+). Use `+"`"+`tail -c 30000`+"`"+` to read from the bottom first — the most important patterns (final tool calls, success/failure outcome) are at the end.
    - **Multiple attempts**: Higher attempt numbers are retries. Focus on the latest successful attempt, or the latest failed attempt for failure analysis.
-   - The conversation JSON has ` + "`" + `{"conversation_history": [{"Role": "system/human/ai", "Parts": [...]}]}` + "`" + ` — look for tool calls in ai messages (FunctionCall entries) and their results in subsequent human messages.
+   - The conversation JSON has `+"`"+`{"conversation_history": [{"Role": "system/human/ai", "Parts": [...]}]}`+"`"+` — look for tool calls in ai messages (FunctionCall entries) and their results in subsequent human messages.
 {{if .SkillCreatorPath}}4. **Skill Writing Guide**: Read the skill creator guide at '{{.SkillCreatorPath}}' for best practices on writing effective skills.
 {{end}}5. **Legacy Migration**: If you find '*_learning.md' files (legacy format) but no 'SKILL.md':
    - Read the legacy content and incorporate it into the new SKILL.md format with proper YAML frontmatter.
@@ -60,7 +61,7 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 {{end}}
 5. **Persist**: Use diff_patch_workspace_file to write ONE final consolidated file to '{{.WritePath}}/SKILL.md'.
    The file MUST use YAML frontmatter in the following format:
-   ` + "`" + `` + "`" + `` + "`" + `
+   `+"`"+``+"`"+``+"`"+`
    ---
    name: {{.StepTitle}}
    description: "<YOU MUST WRITE THIS: 1-2 sentence summary of what this skill teaches — what the optimal approach is and key pitfalls to avoid>"
@@ -71,9 +72,16 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
    ---
 
    (skill content here)
-   ` + "`" + `` + "`" + `` + "`" + `
+   `+"`"+``+"`"+``+"`"+`
    **IMPORTANT**: The 'description' field is critical — it determines when this skill gets loaded. Write a specific, actionable summary that covers WHAT the optimal approach is AND common pitfalls. Be concrete with tool names and parameters. Example: "Use server.create_record with batch mode for CSV imports; avoid single-record inserts which timeout on files >1000 rows due to API rate limits."
-6. **Clean Up**: Use execute_shell_command with 'rm' to remove all other '*_learning.md' files and any old files in that folder. Only 'SKILL.md' should remain.
+6. **Clean Up**:
+{{if .IsScriptedCodeMode}}
+   - Use execute_shell_command with 'rm' to remove legacy '*_learning.md' files and obsolete temporary markdown files only.
+   - **Do NOT delete** `+"`main.py`"+`, helper `+"`*.py`"+` / `+"`*.sh`"+` files, or `+"`script_metadata.json`"+`.
+   - After cleanup, the folder may contain `+"`SKILL.md`"+` plus executable script files.
+{{else}}
+   - Use execute_shell_command with 'rm' to remove all other '*_learning.md' files and any old files in that folder. Only 'SKILL.md' should remain.
+{{end}}
 
 **Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
 
@@ -119,7 +127,6 @@ var learningUserMessageTemplate = MustRegisterTemplate("learningUserMessage", `#
 ## Context
 - **Step**: {{.StepTitle}}
 - **Goal**: {{.StepDescription}}
-- **Success Criteria**: {{.SuccessCriteria}}
 
 ## Extraction Focus
 {{if .IsSuccess}}- Extract the COMPLETE, REPLAYABLE sequence of MCP tool calls.
@@ -210,7 +217,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	}
 
 	// Forward additional template vars from caller
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools"} {
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -276,15 +283,16 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 	var result strings.Builder
 	if err := learningSystemPromptTemplate.Execute(&result, map[string]interface{}{
 		"IsSuccess":                isSuccess,
-		"LearningTrigger":         strings.ToUpper(learningTrigger),
-		"WritePath":               writePath,
-		"ScriptsPath":             scriptsPath,
-		"StepTitle":               stepTitle,
-		"ExecutionLogsPath":       executionLogsPath,
+		"IsScriptedCodeMode":       templateVars["IsScriptedCodeMode"] == "true",
+		"LearningTrigger":          strings.ToUpper(learningTrigger),
+		"WritePath":                writePath,
+		"ScriptsPath":              scriptsPath,
+		"StepTitle":                stepTitle,
+		"ExecutionLogsPath":        executionLogsPath,
 		"ExistingLearningsContent": existingLearningsContent,
-		"AllowedTools":            len(allowedToolsList) > 0,
-		"AllowedToolsList":        allowedToolsList,
-		"SkillCreatorPath":        templateVars["SkillCreatorPath"],
+		"AllowedTools":             len(allowedToolsList) > 0,
+		"AllowedToolsList":         allowedToolsList,
+		"SkillCreatorPath":         templateVars["SkillCreatorPath"],
 	}); err != nil {
 		panic(fmt.Sprintf("learning system prompt template execution failed (missing variable?): %v", err))
 	}

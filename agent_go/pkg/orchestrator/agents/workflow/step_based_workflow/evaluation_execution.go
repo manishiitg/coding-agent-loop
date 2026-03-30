@@ -30,18 +30,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 		return "", fmt.Errorf("evaluation_plan.json not found at %s - evaluation planning must be run first", evalPlanPath)
 	}
 
-	// Use a special run folder for evaluation results
-	// This will cause outputs to go to evaluation/runs/<targetRunFolder>/execution/ and progress to evaluation/runs/<targetRunFolder>/execution/steps_done.json
+	// Use a special run folder for evaluation results.
+	// Like report generation, evaluation should execute inside the workshop-style
+	// iteration-0 sandbox while still reading artifacts from the requested target run.
 	if targetRunFolder == "" {
 		hcpo.GetLogger().Error("❌ targetRunFolder is empty", nil)
 		return "", fmt.Errorf("targetRunFolder is required for evaluation execution")
 	}
+	internalEvalRunFolder := workshopInternalRunFolderForTarget(targetRunFolder)
 
 	// We use ".." to step out of the standard "runs/" folder that the orchestrator assumes,
-	// and point to "evaluation/runs/<targetRunFolder>"
-	hcpo.selectedRunFolder = filepath.Join("..", "evaluation", "runs", targetRunFolder)
+	// and point to "evaluation/runs/<internalEvalRunFolder>".
+	hcpo.selectedRunFolder = filepath.Join("..", "evaluation", "runs", internalEvalRunFolder)
 
-	// Set iteration folder for token persistence - this ensures token_usage.json goes to evaluation/runs/<targetRunFolder>/
+	// Set iteration folder for token persistence - this ensures token_usage.json goes to
+	// evaluation/runs/<internalEvalRunFolder>/
 	hcpo.SetIterationFolder(hcpo.selectedRunFolder)
 
 	// Load runtime variable values if available (needed for variable resolution in evaluation steps)
@@ -111,7 +114,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 
 	// Run scoring phase after all evaluation steps complete
 	hcpo.GetLogger().Info("📊 Starting evaluation scoring phase")
-	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder)
+	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Evaluation scoring failed: %v", err), nil)
 		return "", fmt.Errorf("evaluation scoring phase failed: %w", err)
@@ -125,18 +128,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 
 // runEvaluationScoringPhase collects all eval step outputs and runs a single scoring agent
 // that scores all steps at once with holistic analysis.
-func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string) (*EvaluationReport, error) {
-	evalExecutionPath := filepath.Join("evaluation", "runs", targetRunFolder, "execution")
+func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string) (*EvaluationReport, error) {
+	evalExecutionPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "execution")
 
 	// Collect all step outputs
 	var stepInputs []EvaluationStepInput
 	for i, step := range evaluationPlan.Steps {
-		stepFolder := fmt.Sprintf("step-%d", i+1)
-		stepPath := filepath.Join(evalExecutionPath, stepFolder)
+		legacyStepPath := fmt.Sprintf("step-%d", i+1)
 
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Reading output for step %d: %s", i+1, step.Title))
 
-		executionOutput, err := hcpo.readStepExecutionOutput(ctx, stepPath)
+		executionOutput, err := hcpo.readStepExecutionOutput(ctx, evalExecutionPath, step.ID, legacyStepPath)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read execution output for step %d: %v", i+1, err))
 			executionOutput = fmt.Sprintf("Error reading output: %v", err)
@@ -159,90 +161,111 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	}
 
 	// Save report
-	reportPath := filepath.Join("evaluation", "runs", targetRunFolder, "evaluation_report.json")
+	internalReportPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "evaluation_report.json")
+	publishedReportPath := filepath.Join("evaluation", "runs", targetRunFolder, "evaluation_report.json")
 	reportJSON, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return report, fmt.Errorf("failed to marshal evaluation report: %w", err)
 	}
 
-	if err := hcpo.WriteWorkspaceFile(ctx, reportPath, string(reportJSON)); err != nil {
-		return report, fmt.Errorf("failed to write evaluation report: %w", err)
+	if err := hcpo.WriteWorkspaceFile(ctx, internalReportPath, string(reportJSON)); err != nil {
+		return report, fmt.Errorf("failed to write internal evaluation report: %w", err)
+	}
+	if filepath.ToSlash(internalReportPath) != filepath.ToSlash(publishedReportPath) {
+		if err := hcpo.WriteWorkspaceFile(ctx, publishedReportPath, string(reportJSON)); err != nil {
+			return report, fmt.Errorf("failed to publish evaluation report: %w", err)
+		}
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to: %s", reportPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to internal path: %s", internalReportPath))
+	if filepath.ToSlash(internalReportPath) != filepath.ToSlash(publishedReportPath) {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report published to target path: %s", publishedReportPath))
+	}
 	return report, nil
 }
 
 // readStepExecutionOutput reads all relevant output files from evaluation step execution
 // It looks in multiple locations since execution outputs are stored in logs folders
-func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.Context, stepPath string) (string, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.Context, evalExecutionPath string, stepID string, legacyStepPath string) (string, error) {
 	var outputs []string
-
-	// The stepPath is like: evaluation/runs/{targetRunFolder}/execution/step-{N}
-	// But execution logs are written to: evaluation/runs/{targetRunFolder}/logs/step-{N}/execution/
-	// We need to convert the path to look in the logs folder
-
-	// Extract the step folder name (e.g., "step-1") from the path
-	stepFolder := filepath.Base(stepPath)                                                          // "step-1"
-	evalRunFolder := filepath.Dir(filepath.Dir(stepPath))                                          // "evaluation/runs/{targetRunFolder}"
-	logsExecutionPath := filepath.Join(evalRunFolder, "logs", stepFolder, "execution")             // logs path for execution files
-	logsValidationPath := filepath.Join(evalRunFolder, "logs", stepFolder, "validation")           // logs path for validation files
-	executionStepPath := filepath.Join(evalRunFolder, "execution", stepFolder)                     // execution/step-{N} path for step outputs
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for execution outputs in: logs=%s, execution=%s", logsExecutionPath, executionStepPath))
-
-	// 1. Try to read execution result files from logs folder (execution-attempt-{N}-iteration-{N}.json)
-	for attempt := 1; attempt <= 5; attempt++ {
-		for iteration := 0; iteration <= 5; iteration++ {
-			executionFile := fmt.Sprintf("execution-attempt-%d-iteration-%d.json", attempt, iteration)
-			filePath := filepath.Join(logsExecutionPath, executionFile)
-			content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-			if err == nil && content != "" {
-				outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", executionFile, content))
-			}
-		}
+	evalRunFolder := filepath.Dir(evalExecutionPath)
+	folderCandidates := []string{getArtifactFolderName(stepID, legacyStepPath)}
+	if legacyStepPath != "" && legacyStepPath != folderCandidates[0] {
+		folderCandidates = append(folderCandidates, legacyStepPath)
 	}
 
-	// 2. Try to read validation files from logs folder (if validation was enabled)
-	validationFiles := []string{"validation.json", "validation-1.json", "validation-2.json"}
-	for _, filename := range validationFiles {
-		filePath := filepath.Join(logsValidationPath, filename)
-		content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-		if err == nil && content != "" {
-			outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+	seenOutputs := make(map[string]bool)
+	appendOutput := func(label string, content string) {
+		if strings.TrimSpace(content) == "" {
+			return
 		}
+		entry := fmt.Sprintf("=== %s ===\n%s", label, content)
+		if seenOutputs[entry] {
+			return
+		}
+		seenOutputs[entry] = true
+		outputs = append(outputs, entry)
 	}
 
-	// 3. Try to read step output files from execution folder (verification reports, etc.)
-	// First, try to list all files in the execution step folder and read any JSON/MD files found
-	execFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionStepPath)
-	if listErr == nil && len(execFiles) > 0 {
-		for _, filename := range execFiles {
-			// Read any JSON or MD files in the execution folder
-			if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".md") {
-				filePath := filepath.Join(executionStepPath, filename)
+	for _, stepFolder := range folderCandidates {
+		logsExecutionPath := filepath.Join(evalRunFolder, "logs", stepFolder, "execution")
+		logsValidationPath := filepath.Join(evalRunFolder, "logs", stepFolder, "validation")
+		executionStepPath := filepath.Join(evalExecutionPath, stepFolder)
+
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for execution outputs in: logs=%s, execution=%s", logsExecutionPath, executionStepPath))
+
+		// 1. Try to read execution result files from logs folder (execution-attempt-{N}-iteration-{N}.json)
+		for attempt := 1; attempt <= 5; attempt++ {
+			for iteration := 0; iteration <= 5; iteration++ {
+				executionFile := fmt.Sprintf("execution-attempt-%d-iteration-%d.json", attempt, iteration)
+				filePath := filepath.Join(logsExecutionPath, executionFile)
 				content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
 				if err == nil && content != "" {
-					outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+					appendOutput(executionFile, content)
 				}
 			}
 		}
-	} else {
-		// Fallback: Try specific file names if listing failed
-		stepOutputFiles := []string{
-			"final_verification_report.json",
-			"verification_report.json",
-			"verification_summary.json",
-			"verification_report.md",
-			"output.json",
-			"result.json",
-			"summary.json",
-		}
-		for _, filename := range stepOutputFiles {
-			filePath := filepath.Join(executionStepPath, filename)
+
+		// 2. Try to read validation files from logs folder (if validation was enabled)
+		validationFiles := []string{"validation.json", "validation-1.json", "validation-2.json"}
+		for _, filename := range validationFiles {
+			filePath := filepath.Join(logsValidationPath, filename)
 			content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
 			if err == nil && content != "" {
-				outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+				appendOutput(filename, content)
+			}
+		}
+
+		// 3. Try to read step output files from execution folder (verification reports, etc.)
+		execFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionStepPath)
+		if listErr == nil && len(execFiles) > 0 {
+			for _, filename := range execFiles {
+				if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".md") {
+					filePath := filepath.Join(executionStepPath, filename)
+					content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+					if err == nil && content != "" {
+						appendOutput(filename, content)
+					}
+				}
+			}
+		} else {
+			stepOutputFiles := []string{
+				"final_verification_report.json",
+				"verification_report.json",
+				"verification_summary.json",
+				"verification_report.md",
+				"output.json",
+				"result.json",
+				"summary.json",
+				"step_done.json",
+				"context_output.json",
+			}
+			for _, filename := range stepOutputFiles {
+				filePath := filepath.Join(executionStepPath, filename)
+				content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+				if err == nil && content != "" {
+					appendOutput(filename, content)
+				}
 			}
 		}
 	}

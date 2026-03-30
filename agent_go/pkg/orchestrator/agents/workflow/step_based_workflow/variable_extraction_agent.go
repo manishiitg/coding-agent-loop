@@ -54,8 +54,10 @@ func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
 	return enabled
 }
 
-// GetVariableValues returns variable values for a specific group
-// If groupID is empty and no groups exist, returns values from Variables directly
+// GetVariableValues returns variable values for a specific group.
+// For grouped manifests, this includes manifest-level defaults plus the group's
+// overrides so shared values (for example common sheet IDs) are always present.
+// If groupID is empty and no groups exist, returns values from Variables directly.
 func (m *VariablesManifest) GetVariableValues(groupID string) map[string]string {
 	if !m.HasGroups() {
 		// Old format: values are in Variables[].Value
@@ -69,7 +71,7 @@ func (m *VariablesManifest) GetVariableValues(groupID string) map[string]string 
 	// New format: find group by ID
 	for _, g := range m.Groups {
 		if g.GroupID == groupID {
-			return g.Values
+			return MergeGroupWithDefaults(m, g.Values)
 		}
 	}
 	return nil

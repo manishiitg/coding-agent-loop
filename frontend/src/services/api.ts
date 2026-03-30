@@ -1560,6 +1560,42 @@ export const sessionShareApi = {
     const response = await api.get(`/api/shared/${shareToken}`)
     return response.data
   },
+
+  // Workflow manifest endpoints are also consumed from this API surface by
+  // workflow stores/components, so keep them available here alongside sharing.
+  listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
+    const response = await api.get('/api/workflows/manifests')
+    return response.data
+  },
+
+  getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
+    const response = await api.get('/api/workflows/manifest', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
+    const response = await api.post('/api/workflows/manifest', request)
+    return response.data
+  },
+
+  updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
+    const response = await api.put('/api/workflows/manifest', request)
+    return response.data
+  },
+
+  deleteWorkflowManifest: async (workspacePath: string) => {
+    const response = await api.delete('/api/workflows/manifest', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
+    const response = await api.post('/api/workflows/manifest/duplicate', request)
+    return response.data
+  },
 }
 
 export default api

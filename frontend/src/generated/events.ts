@@ -904,7 +904,6 @@ export interface OrchestratorAgentStartEvent {
   timestamp?: string;
   trace_id?: string;
   use_code_execution_mode?: boolean;
-  use_learn_code_mode?: boolean;
   use_tool_search_mode?: boolean;
   user_message?: string;
 }

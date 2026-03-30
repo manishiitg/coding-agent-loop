@@ -42,9 +42,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	if decisionStep.Description == "" {
 		return false, "", fmt.Errorf("decision step %d (%s) is missing required description field", stepIndex+1, step.GetTitle())
 	}
-	if decisionStep.SuccessCriteria == "" {
-		return false, "", fmt.Errorf("decision step %d (%s) is missing required success_criteria field", stepIndex+1, step.GetTitle())
-	}
 	if decisionStep.DecisionEvaluationQuestion == "" {
 		return false, "", fmt.Errorf("decision step %d (%s) is missing required decision_evaluation_question field", stepIndex+1, step.GetTitle())
 	}

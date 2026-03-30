@@ -38,9 +38,6 @@ func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 		if decisionStep.Description == "" {
 			return fmt.Errorf("decision step at index %d (title: %q) is missing required description field", stepIndex, step.GetTitle())
 		}
-		if decisionStep.SuccessCriteria == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required success_criteria field", stepIndex, step.GetTitle())
-		}
 		if decisionStep.DecisionEvaluationQuestion == "" {
 			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle())
 		}
@@ -174,6 +171,101 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
 	return true, &planResponse, nil
+}
+
+func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
+	switch step := typedStep.(type) {
+	case *RegularPlanStep, *HumanInputPlanStep, *EvaluationStep:
+		return nil
+
+	case *DecisionPlanStep:
+		if err := validateDecisionStepTyped(step, stepIndex); err != nil {
+			return err
+		}
+		return nil
+
+	case *RoutingPlanStep:
+		if err := validateRoutingStepTyped(step, stepIndex); err != nil {
+			return err
+		}
+		return nil
+
+	case *ConditionalPlanStep:
+		if len(step.IfTrueSteps) > 0 {
+			for i, branchStep := range step.IfTrueSteps {
+				if err := validateLoadedPlanStep(branchStep, i); err != nil {
+					return fmt.Errorf("conditional if_true_steps[%d]: %w", i, err)
+				}
+			}
+		}
+		if len(step.IfFalseSteps) > 0 {
+			for i, branchStep := range step.IfFalseSteps {
+				if err := validateLoadedPlanStep(branchStep, i); err != nil {
+					return fmt.Errorf("conditional if_false_steps[%d]: %w", i, err)
+				}
+			}
+		}
+		return nil
+
+	case *OrchestrationPlanStep:
+		if err := validateOrchestrationStepFieldsTyped(step); err != nil {
+			return err
+		}
+		if step.OrchestrationStep != nil {
+			if err := validateLoadedPlanStep(step.OrchestrationStep, 0); err != nil {
+				return fmt.Errorf("orchestration_step: %w", err)
+			}
+		}
+		for i, route := range step.OrchestrationRoutes {
+			if route.SubAgentStep != nil {
+				if err := validateLoadedPlanStep(route.SubAgentStep, i); err != nil {
+					return fmt.Errorf("orchestration_route[%d] (route_id: %s): %w", i, route.RouteID, err)
+				}
+			}
+		}
+		return nil
+
+	case *TodoTaskPlanStep:
+		if err := validateTodoTaskStepFieldsTyped(step); err != nil {
+			return err
+		}
+		if step.TodoTaskStep != nil {
+			if err := validateLoadedPlanStep(step.TodoTaskStep, 0); err != nil {
+				return fmt.Errorf("todo_task_step: %w", err)
+			}
+		}
+		for i, route := range step.PredefinedRoutes {
+			if route.SubAgentStep != nil {
+				if err := validateLoadedPlanStep(route.SubAgentStep, i); err != nil {
+					return fmt.Errorf("predefined_route[%d] (route_id: %s): %w", i, route.RouteID, err)
+				}
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported step type %T during loaded plan validation", typedStep)
+	}
+}
+
+func validateLoadedPlanStructure(plan *PlanningResponse) error {
+	if plan == nil {
+		return fmt.Errorf("plan is nil")
+	}
+	if err := validatePlanStepIDs(plan.Steps); err != nil {
+		return err
+	}
+	for i, step := range plan.Steps {
+		if err := validateLoadedPlanStep(step, i); err != nil {
+			return fmt.Errorf("steps[%d] (id=%s): %w", i, step.GetID(), err)
+		}
+	}
+	for i, step := range plan.OrphanSteps {
+		if err := validateLoadedPlanStep(step, i); err != nil {
+			return fmt.Errorf("orphan_steps[%d] (id=%s): %w", i, step.GetID(), err)
+		}
+	}
+	return nil
 }
 
 // populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place
@@ -463,9 +555,10 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 func IsPlanModificationTool(name string) bool {
 	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_orchestration_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_orchestration_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
-		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" || name == "update_success_criteria" ||
+		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" ||
 		name == "add_orchestration_route" || name == "update_orchestration_route" || name == "delete_orchestration_route" ||
-		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route"
+		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
+		name == "migrate_todo_route_ids"
 }
 
 // IsStepConfigModificationTool checks if a tool name is a step_config modification tool
@@ -620,7 +713,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						changed.Updated = append(changed.Updated, stepID)
 					}
 
-				case "update_validation_schema", "update_success_criteria":
+				case "update_validation_schema":
 					// Extract existing_step_id from updated step
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)

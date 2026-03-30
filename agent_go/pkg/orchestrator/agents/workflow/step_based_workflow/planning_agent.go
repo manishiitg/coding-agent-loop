@@ -2195,24 +2195,6 @@ func getUpdateValidationSchemaSchema() string {
 	}`
 }
 
-// getUpdateSuccessCriteriaSchema returns the JSON schema for update_success_criteria tool
-func getUpdateSuccessCriteriaSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"existing_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the step in the existing plan that you want to update. Use the step's id field from the plan."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully. Focus on EXECUTION-BASED validation - what work was actually done, not just file structure. Pre-validation handles file/field existence checks automatically. Your criteria should describe: (1) What evidence proves the execution agent actually performed the work (e.g., 'Agent read source files and processed data', 'Agent made API calls and received responses', 'Agent transformed data according to business rules'). (2) What outcomes demonstrate successful execution (e.g., 'Data was correctly transformed', 'All required operations completed', 'External system was updated'). (3) Evidence that can be verified against execution history (tool calls, file reads, data transformations). GOOD EXAMPLES: 'Execution history shows agent read source_data.json, processed all entries, and created transformed_data.json with correct structure', 'Agent successfully authenticated with API (tool calls show auth requests), retrieved data, and wrote results.json', 'Agent verified data integrity by reading source files, computing checksums, and comparing values'. BAD EXAMPLES (avoid): 'File contains status: success' (too vague, can be faked), 'File exists' (pre-validation handles this), 'All fields present' (pre-validation handles this)."
-			}
-		},
-		"required": ["existing_step_id", "success_criteria"]
-	}`
-}
-
 // readPlanFromFile reads plan.json from the workspace.
 // Uses normalizePathForWorkspaceAPI to build the full path, so the readFile function
 // does not need to auto-prepend the workspace path (works with both orchestrator and chat-mode readers).
@@ -2230,6 +2212,9 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 	var plan PlanningResponse
 	if err := json.Unmarshal([]byte(content), &plan); err != nil {
 		return nil, fmt.Errorf("failed to parse plan.json: %w", err)
+	}
+	if err := validateLoadedPlanStructure(&plan); err != nil {
+		return nil, fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
 	}
 
 	return &plan, nil
@@ -4651,9 +4636,6 @@ func validateDecisionStepFieldsTyped(step *DecisionPlanStep) error {
 	if step.Description == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) is missing required description field. Please provide a description for the decision step", step.Title, step.ID)
 	}
-	if step.SuccessCriteria == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) is missing required success_criteria field. Please provide success_criteria for the decision step", step.Title, step.ID)
-	}
 	if step.DecisionEvaluationQuestion == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) is missing required decision_evaluation_question field. Please provide a question to evaluate the decision step's execution output", step.Title, step.ID)
 	}
@@ -4678,9 +4660,6 @@ func validateOrchestrationStepFieldsTyped(step *OrchestrationPlanStep) error {
 	if step.OrchestrationStep.GetDescription() == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required description field. Please provide a description for the orchestration_step", step.Title, step.ID)
 	}
-	if step.OrchestrationStep.GetSuccessCriteria() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required success_criteria field. Please provide success_criteria for the orchestration_step. This field is REQUIRED and must specify how to verify the orchestration step completed successfully", step.Title, step.ID)
-	}
 	if len(step.OrchestrationRoutes) == 0 {
 		return fmt.Errorf("step (title: %q, ID: %s) has orchestration step type but has no orchestration_routes defined. Please provide at least one orchestration route with conditions and sub-agent steps", step.Title, step.ID)
 	}
@@ -4702,9 +4681,6 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 	if step.TodoTaskStep.GetDescription() == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required description field. Please provide a description for the todo_task_step", step.Title, step.ID)
 	}
-	if step.TodoTaskStep.GetSuccessCriteria() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required success_criteria field. Please provide success_criteria for the todo_task_step", step.Title, step.ID)
-	}
 	if step.NextStepID == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required next_step_id field. Please provide the ID of the step to connect to after all todos are complete, or 'end' to terminate the workflow", step.Title, step.ID)
 	}
@@ -4720,11 +4696,289 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 		if route.SubAgentStep == nil {
 			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required sub_agent_step field", step.Title, step.ID, i, route.RouteID)
 		}
+		if route.SubAgentStep.GetID() == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required ID field", step.Title, step.ID, i, route.RouteID)
+		}
+		if route.SubAgentStep.GetID() != route.RouteID {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with mismatched IDs: route_id=%q but sub_agent_step.id=%q. For todo routes, use a single canonical ID only", step.Title, step.ID, i, route.RouteID, route.SubAgentStep.GetID())
+		}
+		if route.SubAgentStep.GetTitle() == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required title field", step.Title, step.ID, i, route.RouteID)
+		}
 	}
 	if err := validateTodoTaskNestingDepth(step, 0); err != nil {
 		return err
 	}
 	return nil
+}
+
+func setStepIdentity(step PlanStepInterface, id, title string) error {
+	switch s := step.(type) {
+	case *RegularPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *ConditionalPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *DecisionPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *OrchestrationPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *TodoTaskPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *HumanInputPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *EvaluationStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	case *RoutingPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
+	default:
+		return fmt.Errorf("unsupported sub_agent_step type %T for identity normalization", step)
+	}
+	return nil
+}
+
+type todoRouteIDMigration struct {
+	ParentStepID string
+	RouteID      string
+	OldStepID    string
+	NewStepID    string
+	OldTitle     string
+	NewTitle     string
+}
+
+func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, changes *[]todoRouteIDMigration) error {
+	switch s := step.(type) {
+	case *TodoTaskPlanStep:
+		applyRoutes := parentStepFilter == "" || s.GetID() == parentStepFilter
+		if applyRoutes {
+			for i := range s.PredefinedRoutes {
+				route := &s.PredefinedRoutes[i]
+				if route.SubAgentStep == nil {
+					continue
+				}
+				oldID := route.SubAgentStep.GetID()
+				oldTitle := route.SubAgentStep.GetTitle()
+				if err := setStepIdentity(route.SubAgentStep, route.RouteID, route.RouteName); err != nil {
+					return err
+				}
+				if oldID != route.SubAgentStep.GetID() || oldTitle != route.SubAgentStep.GetTitle() {
+					*changes = append(*changes, todoRouteIDMigration{
+						ParentStepID: s.GetID(),
+						RouteID:      route.RouteID,
+						OldStepID:    oldID,
+						NewStepID:    route.SubAgentStep.GetID(),
+						OldTitle:     oldTitle,
+						NewTitle:     route.SubAgentStep.GetTitle(),
+					})
+				}
+			}
+		}
+		if s.TodoTaskStep != nil {
+			if err := migrateTodoRouteIDsInStep(s.TodoTaskStep, parentStepFilter, changes); err != nil {
+				return err
+			}
+		}
+		for _, route := range s.PredefinedRoutes {
+			if route.SubAgentStep != nil {
+				if err := migrateTodoRouteIDsInStep(route.SubAgentStep, parentStepFilter, changes); err != nil {
+					return err
+				}
+			}
+		}
+	case *ConditionalPlanStep:
+		for _, nested := range s.IfTrueSteps {
+			if err := migrateTodoRouteIDsInStep(nested, parentStepFilter, changes); err != nil {
+				return err
+			}
+		}
+		for _, nested := range s.IfFalseSteps {
+			if err := migrateTodoRouteIDsInStep(nested, parentStepFilter, changes); err != nil {
+				return err
+			}
+		}
+	case *DecisionPlanStep:
+		// DecisionPlanStep is flattened in the current plan model; there is no nested decision sub-step to recurse into.
+	case *OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			if err := migrateTodoRouteIDsInStep(s.OrchestrationStep, parentStepFilter, changes); err != nil {
+				return err
+			}
+		}
+		for _, route := range s.OrchestrationRoutes {
+			if route.SubAgentStep != nil {
+				if err := migrateTodoRouteIDsInStep(route.SubAgentStep, parentStepFilter, changes); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func migrateTodoRouteIDsInPlan(plan *PlanningResponse, parentStepFilter string) ([]todoRouteIDMigration, error) {
+	var changes []todoRouteIDMigration
+	for _, step := range plan.Steps {
+		if err := migrateTodoRouteIDsInStep(step, parentStepFilter, &changes); err != nil {
+			return nil, err
+		}
+	}
+	for _, step := range plan.OrphanSteps {
+		if err := migrateTodoRouteIDsInStep(step, parentStepFilter, &changes); err != nil {
+			return nil, err
+		}
+	}
+	return changes, nil
+}
+
+func updateStepConfigIDsForTodoRouteMigration(configs []StepConfig, migrations []todoRouteIDMigration) error {
+	idMap := make(map[string]string)
+	for _, migration := range migrations {
+		if migration.OldStepID != "" && migration.OldStepID != migration.NewStepID {
+			idMap[migration.OldStepID] = migration.NewStepID
+		}
+	}
+	if len(idMap) == 0 {
+		return nil
+	}
+
+	existing := make(map[string]int)
+	for i, cfg := range configs {
+		existing[cfg.ID] = i
+	}
+	for oldID, newID := range idMap {
+		if oldIdx, okOld := existing[oldID]; okOld {
+			if newIdx, okNew := existing[newID]; okNew && newIdx != oldIdx {
+				return fmt.Errorf("cannot migrate step_config id %q to %q because both IDs already exist in planning/step_config.json", oldID, newID)
+			}
+		}
+	}
+	for i := range configs {
+		if newID, ok := idMap[configs[i].ID]; ok {
+			configs[i].ID = newID
+		}
+	}
+	return nil
+}
+
+func writeStepConfigsFile(ctx context.Context, writeFile func(context.Context, string, string) error, configs []StepConfig) error {
+	configFile := StepConfigFile{Steps: configs}
+	jsonData, err := json.MarshalIndent(configFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal step_config.json: %w", err)
+	}
+	if err := writeFile(ctx, filepath.Join("planning", "step_config.json"), string(jsonData)); err != nil {
+		return fmt.Errorf("failed to write planning/step_config.json: %w", err)
+	}
+	return nil
+}
+
+func createMigrateTodoRouteIDsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, _ := args["parent_step_id"].(string)
+		dryRun, _ := args["dry_run"].(bool)
+
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		migrations, err := migrateTodoRouteIDsInPlan(plan, parentStepID)
+		if err != nil {
+			return "", fmt.Errorf("failed to migrate todo route IDs: %w", err)
+		}
+		if len(migrations) == 0 {
+			if parentStepID != "" {
+				return fmt.Sprintf("No todo route ID migration needed for parent_step_id %q. plan.json already uses route_id as the canonical sub-agent ID.", parentStepID), nil
+			}
+			return "No todo route ID migration needed. plan.json already uses route_id as the canonical sub-agent ID.", nil
+		}
+
+		var stepConfigs []StepConfig
+		stepConfigContent, err := readFile(ctx, filepath.Join("planning", "step_config.json"))
+		if err == nil && strings.TrimSpace(stepConfigContent) != "" {
+			stepConfigs, err = ParseStepConfigContent(stepConfigContent)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse planning/step_config.json during migration: %w", err)
+			}
+			if err := updateStepConfigIDsForTodoRouteMigration(stepConfigs, migrations); err != nil {
+				return "", err
+			}
+		} else {
+			stepConfigs = []StepConfig{}
+		}
+
+		lines := []string{"Migrating predefined todo routes to single-ID mode (route_id = sub_agent_step.id):"}
+		for _, migration := range migrations {
+			lines = append(lines, fmt.Sprintf("- parent=%s route=%s: %q -> %q", migration.ParentStepID, migration.RouteID, migration.OldStepID, migration.NewStepID))
+		}
+		if dryRun {
+			lines = append(lines, "", "Dry run only — no files were modified.")
+			return strings.Join(lines, "\n"), nil
+		}
+
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write migrated plan.json: %w", err)
+		}
+		if len(stepConfigs) > 0 {
+			if err := writeStepConfigsFile(ctx, writeFile, stepConfigs); err != nil {
+				return "", err
+			}
+		}
+
+		learningMoves := 0
+		learningWarnings := []string{}
+		seenMoves := make(map[string]bool)
+		for _, migration := range migrations {
+			if migration.OldStepID == "" || migration.OldStepID == migration.NewStepID {
+				continue
+			}
+			moveKey := migration.OldStepID + "->" + migration.NewStepID
+			if seenMoves[moveKey] {
+				continue
+			}
+			seenMoves[moveKey] = true
+			src := filepath.Join("learnings", migration.OldStepID)
+			dst := filepath.Join("learnings", migration.NewStepID)
+			if err := moveFile(ctx, src, dst); err != nil {
+				learningWarnings = append(learningWarnings, fmt.Sprintf("- could not move %s -> %s: %v", src, dst, err))
+				continue
+			}
+			learningMoves++
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Updated plan.json routes: %d", len(migrations)))
+		lines = append(lines, fmt.Sprintf("Updated step_config IDs: %d", len(stepConfigs)))
+		lines = append(lines, fmt.Sprintf("Moved learning folders: %d", learningMoves))
+		if len(learningWarnings) > 0 {
+			lines = append(lines, "", "Warnings:")
+			lines = append(lines, learningWarnings...)
+		}
+		return strings.Join(lines, "\n"), nil
+	}
 }
 
 func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) error {
@@ -5206,7 +5460,38 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register delete_todo_task_route tool: %w", err)
 	}
 
-	// Register validation schema and success criteria update tools
+	migrateTodoRouteIDsSchema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"parent_step_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional todo_task parent step ID. If provided, migrate only that todo task's predefined routes. If omitted, migrate all todo task predefined routes in the plan.",
+			},
+			"dry_run": map[string]interface{}{
+				"type":        "boolean",
+				"description": "If true, show what would change without modifying plan.json, step_config.json, or learnings folders.",
+			},
+		},
+	}
+	migrateTodoRouteIDsSchemaJSON, err := json.Marshal(migrateTodoRouteIDsSchema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal migrate_todo_route_ids schema: %w", err)
+	}
+	migrateTodoRouteIDsParams, err := parseSchemaForToolParameters(string(migrateTodoRouteIDsSchemaJSON))
+	if err != nil {
+		return fmt.Errorf("failed to parse migrate_todo_route_ids schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"migrate_todo_route_ids",
+		"Migrate older todo_task predefined routes to the single-ID model where route_id is also the canonical sub-agent step ID. This updates plan.json, rewrites matching step_config.json IDs, and attempts to rename matching learnings folders. Use this when an older workflow still has sub_agent_step.id values like task-* that differ from route_id.",
+		migrateTodoRouteIDsParams,
+		createMigrateTodoRouteIDsExecutor(workspacePath, logger, readFile, writeFile, moveFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register migrate_todo_route_ids tool: %w", err)
+	}
+
+	// Register validation schema update tool
 	updateValidationSchemaSchema := getUpdateValidationSchemaSchema()
 	updateValidationSchemaParams, err := parseSchemaForToolParameters(updateValidationSchemaSchema)
 	if err != nil {
@@ -5220,21 +5505,6 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register update_validation_schema tool: %w", err)
-	}
-
-	updateSuccessCriteriaSchema := getUpdateSuccessCriteriaSchema()
-	updateSuccessCriteriaParams, err := parseSchemaForToolParameters(updateSuccessCriteriaSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update_success_criteria schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_success_criteria",
-		"Update the success criteria for an existing step in the plan. Provide existing_step_id (required) and success_criteria (required). Success criteria should focus on EXECUTION-BASED validation - what work was actually done, not just file structure. The plan.json file is updated immediately when this tool is called.",
-		updateSuccessCriteriaParams,
-		createUpdateSuccessCriteriaExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_success_criteria tool: %w", err)
 	}
 
 	if logger != nil {
@@ -5336,8 +5606,13 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 		}
 
 		// Validate that sub_agent_step has required fields
-		if newRoute.SubAgentStep != nil && newRoute.SubAgentStep.GetID() == "" {
-			return "", fmt.Errorf("sub_agent_step is missing required ID field")
+		if newRoute.SubAgentStep != nil {
+			if newRoute.SubAgentStep.GetID() != "" && newRoute.SubAgentStep.GetID() != newRoute.RouteID {
+				return "", fmt.Errorf("sub_agent_step.id %q must exactly match route_id %q for predefined todo routes", newRoute.SubAgentStep.GetID(), newRoute.RouteID)
+			}
+			if err := setStepIdentity(newRoute.SubAgentStep, newRoute.RouteID, newRoute.RouteName); err != nil {
+				return "", err
+			}
 		}
 
 		// Add new route
@@ -5434,11 +5709,31 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 
 		// Handle sub_agent_step update
 		if subAgentStepRaw, ok := args["sub_agent_step"].(map[string]interface{}); ok {
-			// Ensure type field is set
-			if _, hasType := subAgentStepRaw["type"]; !hasType {
-				subAgentStepRaw["type"] = "regular" // Default to regular if not specified
+			if providedID, ok := subAgentStepRaw["id"].(string); ok && providedID != "" && providedID != routeToUpdate.RouteID {
+				return "", fmt.Errorf("sub_agent_step.id %q must exactly match route_id %q for predefined todo routes", providedID, routeToUpdate.RouteID)
 			}
-			updatedSubAgentStep, err := convertMapToStep(subAgentStepRaw)
+			mergedSubAgentStepRaw := map[string]interface{}{}
+			if routeToUpdate.SubAgentStep != nil {
+				existingJSON, err := json.Marshal(routeToUpdate.SubAgentStep)
+				if err != nil {
+					return "", fmt.Errorf("failed to serialize existing sub_agent_step: %w", err)
+				}
+				if err := json.Unmarshal(existingJSON, &mergedSubAgentStepRaw); err != nil {
+					return "", fmt.Errorf("failed to parse existing sub_agent_step: %w", err)
+				}
+			}
+			for k, v := range subAgentStepRaw {
+				mergedSubAgentStepRaw[k] = v
+			}
+			// Ensure type field is set
+			if _, hasType := mergedSubAgentStepRaw["type"]; !hasType {
+				mergedSubAgentStepRaw["type"] = "regular" // Default to regular if not specified
+			}
+			mergedSubAgentStepRaw["id"] = routeToUpdate.RouteID
+			if title, ok := mergedSubAgentStepRaw["title"].(string); !ok || strings.TrimSpace(title) == "" {
+				mergedSubAgentStepRaw["title"] = routeToUpdate.RouteName
+			}
+			updatedSubAgentStep, err := convertMapToStep(mergedSubAgentStepRaw)
 			if err != nil {
 				return "", fmt.Errorf("failed to parse sub_agent_step: %w", err)
 			}
@@ -5627,76 +5922,6 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 
 		logger.Info(fmt.Sprintf("✅ Updated validation schema for step '%s' in plan", updateData.ExistingStepID))
 		return fmt.Sprintf("Successfully updated validation schema for step '%s' in the plan", updateData.ExistingStepID), nil
-	}
-}
-
-// createUpdateSuccessCriteriaExecutor creates an executor function for update_success_criteria tool
-func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to extract success criteria
-		stepJSON, err := json.Marshal(args)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal step: %w", err)
-		}
-
-		var updateData struct {
-			ExistingStepID  string `json:"existing_step_id"`
-			SuccessCriteria string `json:"success_criteria"`
-		}
-		if err := json.Unmarshal(stepJSON, &updateData); err != nil {
-			return "", fmt.Errorf("failed to parse update data: %w", err)
-		}
-
-		if updateData.ExistingStepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("existing_step_id is required"), nil)
-		}
-		if updateData.SuccessCriteria == "" {
-			return "", fmt.Errorf(fmt.Sprintf("success_criteria is required"), nil)
-		}
-
-		// Create PartialPlanStep with only success criteria
-		partialUpdate := PartialPlanStep{
-			ExistingStepID:  updateData.ExistingStepID,
-			SuccessCriteria: updateData.SuccessCriteria,
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Track changes for changelog
-		fieldChanges := make([]PlanFieldChange, 0)
-
-		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
-		if err != nil {
-			return "", err
-		}
-
-		// Validate all steps after update
-		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-
-		// Unlock learnings for updated step
-		if unlockLearningsFunc != nil && stepIndex >= 0 {
-			if err := unlockLearningsFunc(ctx, updateData.ExistingStepID, stepIndex); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", updateData.ExistingStepID, err))
-			} else {
-				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", updateData.ExistingStepID))
-			}
-		}
-
-		logger.Info(fmt.Sprintf("✅ Updated success criteria for step '%s' in plan", updateData.ExistingStepID))
-		return fmt.Sprintf("Successfully updated success criteria for step '%s' in the plan", updateData.ExistingStepID), nil
 	}
 }
 

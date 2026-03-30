@@ -19,21 +19,20 @@ type DetectionHistoryEntry struct {
 
 // LearningMetadata represents the learning metadata stored per step
 type LearningMetadata struct {
-	StepID              string                  `json:"step_id"`
-	StepPath            string                  `json:"step_path"`
-	StepHash            string                  `json:"step_hash,omitempty"`             // SHA256 of step definition
-	LearningContentHash string                  `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
-	TotalIterations     int                     `json:"total_iterations"`
-	SuccessfulRuns        int                    `json:"successful_runs"`         // Count of successful runs (auto-locks after 3)
-	FailureLearningRuns   int                    `json:"failure_learning_runs"`   // Count of failure learning runs (persisted across iterations)
-	LastTurnCount       int                     `json:"last_turn_count"`        // Last recorded TurnCount
-	LastExecutionLLM    string                  `json:"last_execution_llm,omitempty"`
-	LastLearningLLM     string                  `json:"last_learning_llm,omitempty"`
+	StepID              string `json:"step_id"`
+	StepPath            string `json:"step_path"`
+	LearningContentHash string `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
+	TotalIterations     int    `json:"total_iterations"`
+	SuccessfulRuns      int    `json:"successful_runs"`       // Count of successful runs (auto-locks after 3)
+	FailureLearningRuns int    `json:"failure_learning_runs"` // Count of failure learning runs (persisted across iterations)
+	LastTurnCount       int    `json:"last_turn_count"`       // Last recorded TurnCount
+	LastExecutionLLM    string `json:"last_execution_llm,omitempty"`
+	LastLearningLLM     string `json:"last_learning_llm,omitempty"`
 	// Detection tracking
-	LastLearningDetectedAt string               `json:"last_learning_detected_at,omitempty"`
-	LastDetectionReasoning string               `json:"last_detection_reasoning,omitempty"`
-	LastDetectionConfidence float64             `json:"last_detection_confidence,omitempty"`
-	DetectionHistory       []DetectionHistoryEntry `json:"detection_history,omitempty"`
+	LastLearningDetectedAt  string                  `json:"last_learning_detected_at,omitempty"`
+	LastDetectionReasoning  string                  `json:"last_detection_reasoning,omitempty"`
+	LastDetectionConfidence float64                 `json:"last_detection_confidence,omitempty"`
+	DetectionHistory        []DetectionHistoryEntry `json:"detection_history,omitempty"`
 	// Auto-lock information
 	AutoLockedAt      string `json:"auto_locked_at,omitempty"`
 	AutoLockReason    string `json:"auto_lock_reason,omitempty"`
@@ -128,18 +127,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	metadata.LastTurnCount = turnCount
 	metadata.LastExecutionLLM = executionLLM
 	metadata.LastLearningLLM = learningLLM
-	if step != nil {
-		// Fix: Use original step from plan to ensure hash stability
-		// Otherwise, dynamic orchestrator overrides cause hash drift and infinite auto-unlock loops
-		var stepToHash PlanStepInterface = step
-		if hcpo.approvedPlan != nil {
-			if originalStep := hcpo.findStepInPlan(hcpo.approvedPlan.Steps, step.GetID()); originalStep != nil {
-				stepToHash = originalStep
-			}
-		}
-		metadata.StepHash = hcpo.CalculateStepHash(stepToHash)
-	}
-
 	if hasNewLearning {
 		metadata.LastLearningDetectedAt = time.Now().Format(time.RFC3339)
 	}
@@ -338,61 +325,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) syncSuccessfulRunsToStepConfig(ctx co
 	if err := hcpo.WriteStepConfigs(ctx, configs); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to sync successful_runs to step_config.json: %v", err))
 	}
-}
-
-// unlockStepLearningsInConfig updates step_config.json to set LockLearnings = false (unlocks learnings)
-func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsInConfig(
-	ctx context.Context,
-	stepID string,
-) error {
-	hcpo.GetLogger().Info(fmt.Sprintf("🔓 Unlocking learnings for step %s in step_config.json", stepID))
-
-	// Read current step configs
-	configs, err := hcpo.ReadStepConfigs(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to read step configs: %w", err)
-	}
-
-	// Find step config by ID
-	var stepConfig *StepConfig
-	configIndex := -1
-	for i := range configs {
-		if configs[i].ID == stepID {
-			stepConfig = &configs[i]
-			configIndex = i
-			break
-		}
-	}
-
-	// If step config doesn't exist, nothing to unlock
-	if stepConfig == nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Step config for %s doesn't exist - nothing to unlock", stepID))
-		return nil
-	}
-
-	// Ensure AgentConfigs exists
-	if stepConfig.AgentConfigs == nil {
-		stepConfig.AgentConfigs = &AgentConfigs{}
-	}
-
-	// Set LockLearnings = false AND Optimized = false together
-	// Unlocking means the skill needs rework — revert to higher tiers
-	lockValue := false
-	stepConfig.AgentConfigs.LockLearnings = &lockValue
-	stepConfig.AgentConfigs.Optimized = &lockValue
-
-	// Update the config in the slice
-	if configIndex >= 0 {
-		configs[configIndex] = *stepConfig
-	}
-
-	// Write updated configs
-	if err := hcpo.WriteStepConfigs(ctx, configs); err != nil {
-		return fmt.Errorf("failed to write step configs: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Unlocked learnings for step %s (LockLearnings = false)", stepID))
-	return nil
 }
 
 // Note: savePreviousLearningsToMetadata has been removed

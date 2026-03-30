@@ -69,11 +69,11 @@ const maxSubAgentRetryAttempts = 3
 
 // ExecutePredefinedSubAgentFunc is the function signature for executing predefined sub-agents
 // Injected via context by the controller
-type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error)
+type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, instructions string) (string, error)
 
 // ExecuteGenericAgentFunc is the function signature for executing generic agents
 // Injected via context by the controller
-type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions, successCriteria string) (string, error)
+type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions string) (string, error)
 
 // CreateSubAgentTools creates the sub-agent calling virtual tools
 // If enableTierSelection is true, both tools include an optional preferred_tier parameter (1/2/3)
@@ -93,10 +93,6 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 		"instructions": map[string]interface{}{
 			"type":        "string",
 			"description": "Detailed instructions for what the sub-agent should accomplish. Be specific about inputs, expected outputs, and any constraints.",
-		},
-		"success_criteria": map[string]interface{}{
-			"type":        "string",
-			"description": "How to verify the task was completed successfully. Include specific checks, file existence, data validation, etc.",
 		},
 		"share_browser": map[string]interface{}{
 			"type":        "boolean",
@@ -118,7 +114,7 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callSubAgentProperties,
-				"required":   []string{"route_id", "todo_id", "instructions", "success_criteria"},
+				"required":   []string{"route_id", "todo_id", "instructions"},
 			}),
 		},
 	}
@@ -133,10 +129,6 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 		"instructions": map[string]interface{}{
 			"type":        "string",
 			"description": "Detailed instructions for what the agent should accomplish. Be very specific since there's no predefined context.",
-		},
-		"success_criteria": map[string]interface{}{
-			"type":        "string",
-			"description": "How to verify the task was completed successfully. Include specific checks the agent should perform.",
 		},
 		"share_browser": map[string]interface{}{
 			"type":        "boolean",
@@ -158,7 +150,7 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callGenericAgentProperties,
-				"required":   []string{"todo_id", "instructions", "success_criteria"},
+				"required":   []string{"todo_id", "instructions"},
 			}),
 		},
 	}
@@ -245,11 +237,6 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		return "", fmt.Errorf("instructions are required")
 	}
 
-	successCriteria, ok := args["success_criteria"].(string)
-	if !ok || successCriteria == "" {
-		return "", fmt.Errorf("success_criteria is required")
-	}
-
 	// Extract preferred_tier if provided (for tiered LLM allocation)
 	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
 		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
@@ -280,7 +267,7 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	startTime := time.Now()
 
 	// Execute the sub-agent
-	result, err := executeFunc(ctx, routeID, todoID, instructions, successCriteria)
+	result, err := executeFunc(ctx, routeID, todoID, instructions)
 
 	executionTime := time.Since(startTime)
 
@@ -327,11 +314,6 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 		return "", fmt.Errorf("instructions are required")
 	}
 
-	successCriteria, ok := args["success_criteria"].(string)
-	if !ok || successCriteria == "" {
-		return "", fmt.Errorf("success_criteria is required")
-	}
-
 	// Extract preferred_tier if provided (for tiered LLM allocation)
 	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
 		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
@@ -362,7 +344,7 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	startTime := time.Now()
 
 	// Execute the generic agent
-	result, err := executeFunc(ctx, todoID, instructions, successCriteria)
+	result, err := executeFunc(ctx, todoID, instructions)
 
 	executionTime := time.Since(startTime)
 

@@ -13,9 +13,9 @@ func GetEffectiveSecrets(bo *orchestrator.BaseOrchestrator) []orchestrator.Secre
 	return bo.GetSecrets()
 }
 
-// BuildWorkflowSecretPrompt builds the system prompt section with secret values.
-// Secrets can contain any text (not just key-value pairs), so each entry is
-// rendered as a named block that the agent can reference.
+// BuildWorkflowSecretPrompt builds the system prompt section with secret names only.
+// Secret values must never be rendered into prompts or logs. Agents should read
+// them from the injected environment at execution time.
 func BuildWorkflowSecretPrompt(secrets []orchestrator.SecretEntry) string {
 	if len(secrets) == 0 {
 		return ""
@@ -25,12 +25,14 @@ func BuildWorkflowSecretPrompt(secrets []orchestrator.SecretEntry) string {
 	parts = append(parts, `
 ## Secrets
 
-The following secrets/credentials have been provided for this task. Use them as needed.
-These are also available as environment variables in execute_shell_command (e.g., os.environ["SECRET_NAME"] in Python or $SECRET_NAME in bash).
+The following secret names are available for this task. Their raw values are intentionally hidden from the prompt and logs.
+Read secrets only from the injected environment inside execute_shell_command. Never print, echo, or hardcode secret values.
+
+Use the secret name shown below to access the corresponding injected env var at runtime.
 `)
 
 	for _, s := range secrets {
-		parts = append(parts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+		parts = append(parts, fmt.Sprintf("- `%s`", s.Name))
 	}
 
 	return strings.Join(parts, "\n")

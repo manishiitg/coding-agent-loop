@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -137,34 +138,39 @@ type SkillCallbacks struct {
 	ListSkills   func(ctx context.Context) (string, error)
 	ImportSkill  func(ctx context.Context, githubURL, token string) (string, error)
 	DeleteSkill  func(ctx context.Context, folderName string) error
-	SearchSkills func(ctx context.Context, query string) (string, error)          // Search skills registry via CLI
-	InstallSkill func(ctx context.Context, source string) (string, error)         // Install via npx skills add (owner/repo@skill)
+	SearchSkills func(ctx context.Context, query string) (string, error)  // Search skills registry via CLI
+	InstallSkill func(ctx context.Context, source string) (string, error) // Install via npx skills add (owner/repo@skill)
 }
 
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
-	controller           *StepBasedWorkflowOrchestrator
-	StepRegistry         *WorkshopStepRegistry
-	sessionCtx           context.Context
-	cancelFunc           context.CancelFunc
-	toolCallQueryFunc    ToolCallQueryFunc
-	mainSessionID        string
-	config               *WorkshopConfig // Original config for creating fresh controllers
+	controller             *StepBasedWorkflowOrchestrator
+	StepRegistry           *WorkshopStepRegistry
+	sessionCtx             context.Context
+	cancelFunc             context.CancelFunc
+	toolCallQueryFunc      ToolCallQueryFunc
+	mainSessionID          string
+	config                 *WorkshopConfig // Original config for creating fresh controllers
 	schedulerWorkspacePath string
 	schedulerFuncs         *SchedulerCallbacks
-	skillFuncs           *SkillCallbacks
-	listAvailableSecrets func(ctx context.Context) ([]string, error)
+	skillFuncs             *SkillCallbacks
+	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
-	workshopNotifier    SubAgentNotifier
-	executionNotifier   WorkshopExecutionNotifier // optional: notifies server when executions start/complete
-	workshopModeOverride string                   // frontend-selected workshop mode
+	workshopNotifier     SubAgentNotifier
+	executionNotifier    WorkshopExecutionNotifier // optional: notifies server when executions start/complete
+	workshopModeOverride string                    // frontend-selected workshop mode
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
 func (s *WorkshopChatSession) GetConfig() *WorkshopConfig {
 	return s.config
+}
+
+// MainSessionID returns the owning chat session ID for this workshop session.
+func (s *WorkshopChatSession) MainSessionID() string {
+	return s.mainSessionID
 }
 
 // SetExtraSubAgentNotifier chains a server-supplied notifier (e.g. bgAgentRegistry)
@@ -189,6 +195,32 @@ func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNo
 // This takes priority over auto-detection when building AUTO-NOTIFICATION action hints.
 func (s *WorkshopChatSession) SetWorkshopModeOverride(mode string) {
 	s.workshopModeOverride = mode
+}
+
+func splitWorkshopRunFolderParts(targetRunFolder string) (string, string) {
+	targetRunFolder = filepath.ToSlash(strings.TrimSpace(targetRunFolder))
+	if targetRunFolder == "" {
+		return "", ""
+	}
+	parts := strings.Split(targetRunFolder, "/")
+	iteration := strings.TrimSpace(parts[0])
+	group := ""
+	if len(parts) >= 2 {
+		group = strings.TrimSpace(parts[len(parts)-1])
+	}
+	return iteration, group
+}
+
+func formatWorkshopExecutionName(kind string, targetRunFolder string) string {
+	iteration, group := splitWorkshopRunFolderParts(targetRunFolder)
+	switch {
+	case iteration != "" && group != "":
+		return fmt.Sprintf("%s: %s | Group: %s", kind, iteration, group)
+	case iteration != "":
+		return fmt.Sprintf("%s: %s", kind, iteration)
+	default:
+		return fmt.Sprintf("%s: %s", kind, targetRunFolder)
+	}
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -406,18 +438,18 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	controller.SetWorkshopExecutionContext(sessionCtx, registry)
 
 	return &WorkshopChatSession{
-		controller:           controller,
-		StepRegistry:         registry,
-		sessionCtx:           sessionCtx,
-		cancelFunc:           cancelFunc,
-		toolCallQueryFunc:    cfg.ToolCallQueryFunc,
-		mainSessionID:        cfg.SessionID,
-		config:               cfg,
+		controller:             controller,
+		StepRegistry:           registry,
+		sessionCtx:             sessionCtx,
+		cancelFunc:             cancelFunc,
+		toolCallQueryFunc:      cfg.ToolCallQueryFunc,
+		mainSessionID:          cfg.SessionID,
+		config:                 cfg,
 		schedulerWorkspacePath: cfg.SchedulerWorkspacePath,
-		schedulerFuncs:       cfg.SchedulerFuncs,
-		skillFuncs:           cfg.SkillFuncs,
-		listAvailableSecrets: cfg.ListAvailableSecrets,
-		workshopNotifier:     wsn,
+		schedulerFuncs:         cfg.SchedulerFuncs,
+		skillFuncs:             cfg.SkillFuncs,
+		listAvailableSecrets:   cfg.ListAvailableSecrets,
+		workshopNotifier:       wsn,
 	}, nil
 }
 
@@ -548,17 +580,17 @@ func RegisterWorkshopChatTools(
 	logger loggerv2.Logger,
 ) {
 	iwm := &InteractiveWorkshopManager{
-		controller:           session.controller,
-		stepRegistry:         session.StepRegistry,
-		sessionCtx:           session.sessionCtx,
-		toolCallQueryFunc:    session.toolCallQueryFunc,
-		mainSessionID:        session.mainSessionID,
+		controller:             session.controller,
+		stepRegistry:           session.StepRegistry,
+		sessionCtx:             session.sessionCtx,
+		toolCallQueryFunc:      session.toolCallQueryFunc,
+		mainSessionID:          session.mainSessionID,
 		schedulerWorkspacePath: session.schedulerWorkspacePath,
-		schedulerFuncs:       session.schedulerFuncs,
-		skillFuncs:           session.skillFuncs,
-		listAvailableSecrets: session.listAvailableSecrets,
-		executionNotifier:    session.executionNotifier,
-		workshopModeOverride: session.workshopModeOverride,
+		schedulerFuncs:         session.schedulerFuncs,
+		skillFuncs:             session.skillFuncs,
+		listAvailableSecrets:   session.listAvailableSecrets,
+		executionNotifier:      session.executionNotifier,
+		workshopModeOverride:   session.workshopModeOverride,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }
@@ -579,13 +611,13 @@ func RegisterRunFullEvaluationTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
-		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Runs in background — you will be notified when complete.",
+		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Evaluation itself runs in the internal iteration-0 sandbox under evaluation/runs/. Runs in background — you will be notified when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"target_run_folder": map[string]interface{}{
 					"type":        "string",
-					"description": "The execution run folder to evaluate (e.g., 'iteration-1'). This is the folder under runs/ whose outputs will be checked.",
+					"description": "The execution run folder to evaluate (e.g., 'iteration-1' or 'iteration-1/group-a'). This identifies the source artifacts under runs/ that evaluation should inspect; evaluation execution itself uses the internal iteration-0 sandbox.",
 				},
 			},
 			"required": []string{"target_run_folder"},
@@ -620,6 +652,11 @@ func RegisterRunFullEvaluationTool(
 				cancel:         cancel,
 			}
 			session.StepRegistry.Register(exec)
+			displayName := formatWorkshopExecutionName("Evaluation", targetRunFolder)
+			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
+			if session.executionNotifier != nil {
+				session.executionNotifier.OnExecutionStart(execID, displayName)
+			}
 
 			go func() {
 				// Create a fresh controller for the full evaluation run
@@ -689,6 +726,21 @@ func RegisterRunFullEvaluationTool(
 					exec.Status = WorkshopStepDone
 					exec.Result = result
 				}
+				if session.executionNotifier != nil {
+					execMeta := map[string]string{
+						"workshop_mode":  "eval",
+						"execution_type": "full-evaluation",
+						"run_folder":     targetRunFolder,
+					}
+					if iterationName != "" {
+						execMeta["iteration"] = iterationName
+					}
+					if groupName != "" {
+						execMeta["group_id"] = groupName
+						execMeta["group_display_name"] = groupName
+					}
+					session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
+				}
 			}()
 
 			return fmt.Sprintf("Full evaluation started for run %q.\nexecution_id: %q\nThis will execute all evaluation steps and generate a scoring report.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
@@ -708,7 +760,7 @@ func RegisterRunFullReportTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_report",
-		"Run the full workflow report generation against a target execution run. Regenerates the final report artifact for that run in background and notifies when complete.",
+		"Run the full workflow report generation against a target execution run. Report generation itself runs in the internal iteration-0 sandbox and then publishes the final report artifact back to the requested run. Runs in background and notifies when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -749,6 +801,11 @@ func RegisterRunFullReportTool(
 				cancel:         cancel,
 			}
 			session.StepRegistry.Register(exec)
+			displayName := formatWorkshopExecutionName("Report", targetRunFolder)
+			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
+			if session.executionNotifier != nil {
+				session.executionNotifier.OnExecutionStart(execID, displayName)
+			}
 
 			go func() {
 				eventBridge := session.controller.GetContextAwareBridge()
@@ -756,12 +813,19 @@ func RegisterRunFullReportTool(
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-report-execution",
-						AgentName:     fmt.Sprintf("Report: %s", targetRunFolder),
+						AgentName:     displayName,
 						InputData: map[string]string{
 							"run_folder":     targetRunFolder,
 							"workshop_mode":  "output",
 							"execution_type": "report",
 						},
+					}
+					if iterationName != "" {
+						startEvent.InputData["iteration"] = iterationName
+					}
+					if groupName != "" {
+						startEvent.InputData["group_id"] = groupName
+						startEvent.InputData["group_display_name"] = groupName
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -836,18 +900,40 @@ func RegisterRunFullReportTool(
 					exec.Status = WorkshopStepDone
 					exec.Result = firstNonEmpty(strings.TrimSpace(resultText), "Report generated successfully.")
 				}
+				if session.executionNotifier != nil {
+					execMeta := map[string]string{
+						"workshop_mode":  "output",
+						"execution_type": "full-report",
+						"run_folder":     targetRunFolder,
+					}
+					if iterationName != "" {
+						execMeta["iteration"] = iterationName
+					}
+					if groupName != "" {
+						execMeta["group_id"] = groupName
+						execMeta["group_display_name"] = groupName
+					}
+					session.executionNotifier.OnExecutionComplete(execID, displayName, resultText, execMeta, execErr)
+				}
 
 				if eventBridge != nil {
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-report-execution",
-						AgentName:     fmt.Sprintf("Report: %s", targetRunFolder),
+						AgentName:     displayName,
 						Success:       execErr == nil,
 						InputData: map[string]string{
 							"run_folder":     targetRunFolder,
 							"workshop_mode":  "output",
 							"execution_type": "report",
 						},
+					}
+					if iterationName != "" {
+						endEvent.InputData["iteration"] = iterationName
+					}
+					if groupName != "" {
+						endEvent.InputData["group_id"] = groupName
+						endEvent.InputData["group_display_name"] = groupName
 					}
 					if execErr != nil {
 						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
@@ -876,10 +962,10 @@ func RegisterRunFullReportTool(
 // workflowProgressBridge wraps an existing event bridge and intercepts step completion
 // events to send progress notifications to the main workshop agent via bgAgentRegistry.
 type workflowProgressBridge struct {
-	inner     mcpagent.AgentEventListener
-	session   *WorkshopChatSession
-	logger    loggerv2.Logger
-	parentID  string // parent execution ID for correlation
+	inner    mcpagent.AgentEventListener
+	session  *WorkshopChatSession
+	logger   loggerv2.Logger
+	parentID string // parent execution ID for correlation
 }
 
 func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseevents.AgentEvent) error {

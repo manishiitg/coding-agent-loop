@@ -20,11 +20,11 @@ var todoTaskOrchestratorSystemTemplate = MustRegisterTemplate("todoTaskOrchestra
 
 ## Role & Objective
 
-You are a **task orchestrator** executing step **{{.StepTitle}}** in a multi-step workflow.
+You are a **task orchestrator** in a multi-step workflow.
 
-**Your objective**: {{.StepDescription}}
+**Your objective**: Delegate and track tasks until the current step is complete.
 
-**Done when**: {{.StepSuccessCriteria}}
+The full step-specific instructions, requirements, and success criteria appear only in the user message below.
 
 You break this objective into tasks, delegate them to specialized sub-agents, and track progress in tasks.md until the success criteria are met.
 
@@ -73,10 +73,13 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 | Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` | READ |
 | Execution folder | `+"`"+`{{.ExecutionFolderPath}}/`+"`"+` | READ |
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` | READ/WRITE |
+| Downloads (user files) | `+"`"+`{{.DownloadsPath}}/`+"`"+` | READ/WRITE |
 {{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | READ/WRITE |
 {{end}}| tasks.md | `+"`"+`{{.StepExecutionPath}}/tasks.md`+"`"+` | READ/WRITE |
 
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
+- Use the exact Step folder and tasks.md path above. Do NOT read or copy legacy step-N folders unless the Step folder shown above literally points there.
+- Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
 {{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
 {{end}}
 - Write/rewrite: Use heredoc for multi-line content
@@ -147,7 +150,6 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 | Path | Purpose | Persistence |
 | :--- | :--- | :--- |
 | tasks.md | Task tracking ([ ] pending, [~] in progress, [x] done, [REMOVED]) | Per-execution |
-| progress.md | Recovery notes — reasoning after major decisions | Per-execution |
 {{if eq .UseKnowledgebase "true"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 
@@ -176,8 +178,8 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 
 {{if .ShowToolsSection}}
 ## Tools Reference (CLI Provider)
-- call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
-{{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+- call_sub_agent(route_id, todo_id, instructions{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+{{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
 {{end}}- get_route_description(route_id)
 - get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 - execute_shell_command(command)
@@ -207,8 +209,8 @@ The following files from previous steps are available for reading:
 {{if eq .TasksState "empty"}}- tasks.md does not exist yet. Break the objective into tasks, create tasks.md, and begin dispatching.
 {{else if eq .TasksState "has_in_progress"}}- tasks.md has orphaned in-progress ([~]) tasks from a previous interrupted run. Reconcile them back to pending ([ ]), then dispatch.
 {{else if eq .TasksState "has_pending"}}- Progress: {{.ProgressSummary}}. Dispatch next pending task(s) to sub-agents.
-{{else}}- Progress: {{.ProgressSummary}}. Check if all success criteria are met.
-{{end}}- **Done when**: {{.StepSuccessCriteria}}
+{{else}}- Progress: {{.ProgressSummary}}. Verify every task is completed and required output files exist.
+{{end}}
 - When done: mark all tasks as [x] in tasks.md`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
@@ -313,6 +315,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"VariableValues":             templateVars["VariableValues"],
 		"LearningHistory":            templateVars["LearningHistory"],
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
+		"DownloadsPath":              templateVars["DownloadsPath"],
 		"ExecutionFolderPath":        templateVars["ExecutionFolderPath"],
 		"WorkspacePath":              templateVars["WorkspacePath"],
 		"WorkflowRoot":               templateVars["WorkflowRoot"],

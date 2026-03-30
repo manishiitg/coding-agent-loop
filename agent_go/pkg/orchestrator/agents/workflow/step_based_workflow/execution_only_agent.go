@@ -139,7 +139,7 @@ End your response with exactly one of:
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
-{{end}}{{if eq .IsLearnCodeMode "true"}}**LEARN CODE NOTE**: Implement the task below as Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
+{{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
 {{if eq .HasLoop "true"}}
@@ -176,13 +176,12 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 ### Requirements
 - **Inputs**: {{.StepContextDependencies}}
 - **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
-{{if .StepSuccessCriteria}}- **Success Criteria**: {{.StepSuccessCriteria}}{{end}}
 
 ### Execution Checklist
 1. Read all **Inputs** listed above before starting.
 {{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
-4. Verify success criteria are met before finishing.
+4. Verify the required outputs are fully produced before finishing.
 5. Create the output file.`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
@@ -413,33 +412,33 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 
 	// Create template data
 	templateData := WorkflowExecutionOnlyTemplate{
-		StepTitle:               templateVars["StepTitle"],
-		StepDescription:         fullDescription,
-		BaseDescription:         baseDescription,
+		StepTitle:                templateVars["StepTitle"],
+		StepDescription:          fullDescription,
+		BaseDescription:          baseDescription,
 		OrchestratorInstructions: orchestratorInstructions,
-		StepContextDependencies: templateVars["StepContextDependencies"],
-		StepContextOutput:       templateVars["StepContextOutput"],
-		WorkspacePath:           templateVars["WorkspacePath"],
-		IsCodeExecutionMode:     templateVars["IsCodeExecutionMode"],
-		ValidationFeedback:      templateVars["ValidationFeedback"],
-		HumanFeedback:           templateVars["HumanFeedback"],
-		PreviousIterationOutput: templateVars["PreviousIterationOutput"],
-		VariableNames:           templateVars["VariableNames"],
-		VariableValues:          templateVars["VariableValues"],
-		HasLoop:                 templateVars["HasLoop"],
-		LoopCondition:           templateVars["LoopCondition"],
-		LoopDescription:         templateVars["LoopDescription"],
-		CurrentIteration:        templateVars["CurrentIteration"],
-		MaxIterations:           templateVars["MaxIterations"],
-		LearningHistory:         templateVars["LearningHistory"],
-		LearningFilePaths:       templateVars["LearningFilePaths"],
-		StepNumber:              templateVars["StepNumber"],
-		StepExecutionPath:       templateVars["StepExecutionPath"],
-		DecisionReasoning:       templateVars["DecisionReasoning"],
-		PreviousStepsSummary:    templateVars["PreviousStepsSummary"],
-		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
-		HasSkill:                fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
-		IsLearnCodeMode:         fmt.Sprintf("%t", isLearnCodeMode),
+		StepContextDependencies:  templateVars["StepContextDependencies"],
+		StepContextOutput:        templateVars["StepContextOutput"],
+		WorkspacePath:            templateVars["WorkspacePath"],
+		IsCodeExecutionMode:      templateVars["IsCodeExecutionMode"],
+		ValidationFeedback:       templateVars["ValidationFeedback"],
+		HumanFeedback:            templateVars["HumanFeedback"],
+		PreviousIterationOutput:  templateVars["PreviousIterationOutput"],
+		VariableNames:            templateVars["VariableNames"],
+		VariableValues:           templateVars["VariableValues"],
+		HasLoop:                  templateVars["HasLoop"],
+		LoopCondition:            templateVars["LoopCondition"],
+		LoopDescription:          templateVars["LoopDescription"],
+		CurrentIteration:         templateVars["CurrentIteration"],
+		MaxIterations:            templateVars["MaxIterations"],
+		LearningHistory:          templateVars["LearningHistory"],
+		LearningFilePaths:        templateVars["LearningFilePaths"],
+		StepNumber:               templateVars["StepNumber"],
+		StepExecutionPath:        templateVars["StepExecutionPath"],
+		DecisionReasoning:        templateVars["DecisionReasoning"],
+		PreviousStepsSummary:     templateVars["PreviousStepsSummary"],
+		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
+		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
+		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),
 	}
 
 	// Execute the pre-parsed template

@@ -166,7 +166,6 @@ func updateEmployeeHandler() http.HandlerFunc {
 			return
 		}
 
-		found := false
 		for i := range employees {
 			if employees[i].ID == id {
 				if req.Name != nil {
@@ -191,7 +190,6 @@ func updateEmployeeHandler() http.HandlerFunc {
 					}
 				}
 				employees[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-				found = true
 
 				if err := writeEmployeesFile(employees); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -203,9 +201,7 @@ func updateEmployeeHandler() http.HandlerFunc {
 				return
 			}
 		}
-		if !found {
-			http.Error(w, "Employee not found", http.StatusNotFound)
-		}
+		http.Error(w, "Employee not found", http.StatusNotFound)
 	}
 }
 

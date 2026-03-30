@@ -86,6 +86,40 @@ func filterToolsByWorkflow(stepTools, workflowServers []string) []string {
 	return result
 }
 
+func injectStepOutputDirIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath string) {
+	if len(executors) == 0 || strings.TrimSpace(stepOutputAbsPath) == "" {
+		return
+	}
+	original, ok := executors["execute_shell_command"].(func(ctx context.Context, args map[string]interface{}) (string, error))
+	if !ok || original == nil {
+		return
+	}
+	executors["execute_shell_command"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if args == nil {
+			args = make(map[string]interface{})
+		}
+		mergedEnv := map[string]interface{}{
+			"STEP_OUTPUT_DIR": stepOutputAbsPath,
+		}
+		if rawExtraEnv, exists := args["extra_env"]; exists {
+			switch typed := rawExtraEnv.(type) {
+			case map[string]interface{}:
+				for k, v := range typed {
+					mergedEnv[k] = v
+				}
+			case map[string]string:
+				for k, v := range typed {
+					mergedEnv[k] = v
+				}
+			}
+		}
+		// Per-step STEP_OUTPUT_DIR must always win over any stale caller-provided value.
+		mergedEnv["STEP_OUTPUT_DIR"] = stepOutputAbsPath
+		args["extra_env"] = mergedEnv
+		return original(ctx, args)
+	}
+}
+
 // getWorkspaceDocsRoot returns the absolute path to the workspace-docs root directory.
 // This is used specifically for resolving absolute paths for Playwright Downloads.
 //
@@ -447,22 +481,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
 	if orchestratorLLMConfig == nil {
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
-	}
-
-	// Learn-code repair override: after main.py fails, force Tier 1 for repair turns.
-	// This intentionally beats temp overrides, step ExecutionLLM, and maturity-based tiering.
-	if forceHighRepair, ok := ctx.Value(LearnCodeRepairHighTierContextKey).(bool); ok && forceHighRepair {
-		if hcpo.tierResolver != nil {
-			llmConfig := hcpo.tierResolver.ResolveTier(TierHigh)
-			if llmConfig != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learn-code repair forcing Tier 1 (High) for step %s: %s/%s",
-					stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-				return llmConfig
-			}
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learn-code repair requested Tier 1 for step %s but no TierHigh config is available; falling back to normal selection", stepPath))
-		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learn-code repair requested Tier 1 for step %s but tier resolver is unavailable; falling back to normal selection", stepPath))
-		}
 	}
 
 	// ── 1. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
@@ -1105,16 +1123,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 3. Setup folder guard (extracted method) - uses step-specific learnings folder only if learnings exist
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, hasLearnings)
 
-	// Learn code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
+	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
-	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] stepConfig nil=%v useLearnCode=%v", stepConfig == nil, stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode))
-	if stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] stepConfig nil=%v scripted=%v", stepConfig == nil, isScriptedExecutionModeConfig(stepConfig)))
+	if isScriptedExecutionModeConfig(stepConfig) {
 		if len(writePaths) > 0 {
 			codePath := writePaths[0] + "/code"
 			writePaths = append(writePaths, codePath)
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Enforced write paths now include code/: %v", writePaths))
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Enforced write paths now include code/: %v", writePaths))
 		} else {
-			hcpo.GetLogger().Warn("🐍 [learn_code] writePaths is empty — cannot append code/ subdir to folder guard")
+			hcpo.GetLogger().Warn("🐍 [scripted_code] writePaths is empty — cannot append code/ subdir to folder guard")
 		}
 	}
 
@@ -1179,6 +1197,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
+	if isScriptedExecutionModeConfig(stepConfig) {
+		executionWorkspacePath := fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
+		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
+		injectStepOutputDirIntoShellExecutor(executorsToUse, stepOutputAbsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Injecting STEP_OUTPUT_DIR into execute_shell_command for %s: %s", stepID, stepOutputAbsPath))
+	}
 
 	// 6. Use base factory! (This handles all setup automatically)
 	pathInfo = parseStepPath(stepPath)
@@ -1938,13 +1963,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidateTodoExistsFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ValidateTodoExistsFunc {
 	return func(ctx context.Context, todoID string) (bool, int, string, error) {
-		// Build the tasks file path (relative to workspace)
-		var tasksFilePathRelative string
-		if hcpo.selectedRunFolder != "" {
-			tasksFilePathRelative = filepath.Join("runs", hcpo.selectedRunFolder, "execution", execCtx.StepPath, "tasks.md")
-		} else {
-			tasksFilePathRelative = filepath.Join("execution", execCtx.StepPath, "tasks.md")
+		// Build the tasks file path (relative to workspace) from the parent todo step's
+		// artifact folder, not the logical step path. This avoids legacy step-N lookups.
+		parentStepID := ""
+		if execCtx.TodoTaskStep != nil {
+			parentStepID = execCtx.TodoTaskStep.GetID()
 		}
+		tasksFilePathRelative := hcpo.getTodoTaskTasksFilePath(parentStepID, execCtx.StepPath)
 
 		// Build full path including workspace for error messages
 		fullTasksFilePath := filepath.Join(hcpo.GetWorkspacePath(), tasksFilePathRelative)
@@ -1997,8 +2022,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidateTodoExistsFunc(
 func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecutePredefinedSubAgentFunc {
-	return func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error) {
+	return func(ctx context.Context, routeID, todoID, instructions string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing predefined sub-agent via tool: route=%s, todo=%s", routeID, todoID))
+
+		if strings.TrimSpace(routeID) == "" {
+			return "", fmt.Errorf("invalid or missing route_id")
+		}
+		if execCtx.TodoTaskStep == nil {
+			return "", fmt.Errorf("call_sub_agent is only available inside a todo_task step")
+		}
+		validRouteIDs := make([]string, 0, len(execCtx.TodoTaskStep.PredefinedRoutes))
+		routeExists := false
+		for _, route := range execCtx.TodoTaskStep.PredefinedRoutes {
+			validRouteIDs = append(validRouteIDs, route.RouteID)
+			if route.RouteID == routeID {
+				routeExists = true
+			}
+		}
+		if !routeExists {
+			return "", fmt.Errorf("route_id %q not found in todo task step %q. Available route IDs: %v", routeID, execCtx.TodoTaskStep.GetID(), validRouteIDs)
+		}
 
 		// Propagate workshop correlation IDs to sub-agent context so events are tagged correctly.
 		// The ctx here comes from the tool call (mcpagent), which may not have the workshop's
@@ -2023,11 +2066,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 
 		// Build a TodoTaskResponse to reuse existing execution logic
 		response := &TodoTaskResponse{
-			NextAction:                 "delegate",
-			SelectedRouteID:            routeID,
-			TodoIDToExecute:            todoID,
-			InstructionsToSubAgent:     instructions,
-			SuccessCriteriaForSubAgent: successCriteria,
+			NextAction:             "delegate",
+			SelectedRouteID:        routeID,
+			TodoIDToExecute:        todoID,
+			InstructionsToSubAgent: instructions,
 		}
 
 		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card
@@ -2076,6 +2118,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [TOOL] Predefined sub-agent execution failed: %v", err))
+			if strings.Contains(err.Error(), "route ") && strings.Contains(err.Error(), " not found in predefined routes") {
+				return "", err
+			}
 			return fmt.Sprintf("ERROR: %v", err), nil // Return error as result, not as error (agent can handle)
 		}
 
@@ -2086,12 +2131,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 
 // createExecuteGenericAgentFunc creates a function that executes generic agents
 // This function is injected into context for the call_generic_agent tool to use
-// Sub-agents get all their input from the tool parameters (instructions, successCriteria)
+// Sub-agents get all their input from the tool parameters (instructions)
 // They do NOT read the tasks.md file - the orchestrator provides everything via the tool call
 func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecuteGenericAgentFunc {
-	return func(ctx context.Context, todoID, instructions, successCriteria string) (string, error) {
+	return func(ctx context.Context, todoID, instructions string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing generic agent via tool: todo=%s", todoID))
 
 		// Propagate workshop correlation IDs to sub-agent context
@@ -2116,11 +2161,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 		// Build a TodoTaskResponse to reuse existing execution logic
 		// All task info comes from the tool parameters, not from a file
 		response := &TodoTaskResponse{
-			NextAction:                 "delegate",
-			UseGenericAgent:            true,
-			TodoIDToExecute:            todoID,
-			InstructionsToSubAgent:     instructions,
-			SuccessCriteriaForSubAgent: successCriteria,
+			NextAction:             "delegate",
+			UseGenericAgent:        true,
+			TodoIDToExecute:        todoID,
+			InstructionsToSubAgent: instructions,
 		}
 
 		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card

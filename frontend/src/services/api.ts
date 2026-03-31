@@ -1142,7 +1142,10 @@ export const agentApi = {
     const response = await api.get('/api/workflow/evaluation-reports', {
       params: { workspace_path: workspacePath, run_folder: runFolder || '' }
     })
-    return response.data
+    return {
+      ...response.data,
+      reports: Array.isArray(response.data?.reports) ? response.data.reports : [],
+    }
   },
 
   // *** NEW CONSOLIDATED API ***

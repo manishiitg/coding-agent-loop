@@ -401,7 +401,8 @@ export const EmployeeDashboard: React.FC = () => {
     if (evaluationResult.status === 'fulfilled') {
       const response = evaluationResult.value
       if (response.success) {
-        evaluation = response.reports.find(item => item.run_folder === runFolder) || response.reports[0] || null
+        const reports = Array.isArray(response.reports) ? response.reports : []
+        evaluation = reports.find(item => item.run_folder === runFolder) || reports[0] || null
       } else if (response.error) {
         evaluationError = response.error
       }

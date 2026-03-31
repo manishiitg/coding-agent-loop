@@ -4,7 +4,7 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck, AlertTriangle,
-  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search
+  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -13,6 +13,7 @@ import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../servi
 import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
+import FinalOutputPopup from '../workflow/FinalOutputPopup'
 import SchedulePresetPopup from '../SchedulePresetPopup'
 import ScheduleLiveEventsPopup from './ScheduleLiveEventsPopup'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
@@ -21,7 +22,7 @@ interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
 }
 
-type ActivePopup = 'costs' | 'logs' | 'eval' | 'live' | null
+type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'issues' | 'all'
 
 interface JobPopupState {
@@ -879,20 +880,51 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </div>
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
-              {filteredJobs.map((job) => {
+              {filteredJobs.map((job, index, jobsList) => {
                 const preset = presetMap.get(job.preset_query_id)
                 const cronDesc = describeCron(job.cron_expression)
                 const localizedJobName = getLocalizedJobName(job)
-                const localizedPresetLabel = preset?.label
-                  ? localizeTimezoneLabel(preset.label, job.next_run_at)
-                  : null
+                const workflowDisplayLabel = preset?.label || job.workflow_label || job.name
                 const isExpanded = expandedJobId === job.id
                 const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
                 const runs = jobRuns[job.id] ?? []
                 const isLoadingThis = loadingRuns === job.id
+                const previousJob = index > 0 ? jobsList[index - 1] : null
+                const isRunningJob = job.last_status === 'running'
+                const showRunningHeader = isRunningJob && (!previousJob || previousJob.last_status !== 'running')
+                const showScheduledHeader = !isRunningJob && (!previousJob || previousJob.last_status === 'running')
 
                 return (
-                  <div key={job.id} className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
+                  <React.Fragment key={job.id}>
+                    {showRunningHeader && (
+                      <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Running workflows</div>
+                            <div className="text-sm font-medium text-foreground">Workflows with an active execution right now</div>
+                          </div>
+                          <div className="text-xs text-muted-foreground whitespace-nowrap">
+                            {summary.running} active
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {showScheduledHeader && (
+                      <div className="px-5 py-3 bg-muted/30 border-b border-border">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Scheduled workflows</div>
+                            <div className="text-sm font-medium text-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
+                          </div>
+                          <div className="text-xs text-muted-foreground whitespace-nowrap">
+                            {Math.max(filteredJobs.length - summary.running, 0)} listed
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
                     {/* Row top */}
                     <div className="flex items-start gap-3">
                       {/* Status dot */}
@@ -903,15 +935,24 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
                       {/* Main content */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate" title={job.name}>
+                        <div className="min-w-0">
+                          <div className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                            Workflow
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={workflowDisplayLabel}>
+                              {workflowDisplayLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-1 flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                            Schedule
+                          </span>
+                          <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate" title={job.name}>
                             {localizedJobName}
                           </span>
-                          {localizedPresetLabel && (
-                            <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                              {localizedPresetLabel}
-                            </span>
-                          )}
                           {!job.enabled && (
                             <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
                               Paused
@@ -1226,6 +1267,20 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipContent side="left">Evaluation scores</TooltipContent>
                                       </Tooltip>
                                     )}
+                                    {/* Report button */}
+                                    {effectiveFolder && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            onClick={() => openPopup(job, 'report', effectiveFolder)}
+                                            className="p-1 text-gray-300 dark:text-gray-600 hover:text-purple-500 transition-colors"
+                                          >
+                                            <FileText className="w-3 h-3" />
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">Latest archived report</TooltipContent>
+                                      </Tooltip>
+                                    )}
                                   </div>
                                 </div>
                                 )
@@ -1235,7 +1290,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         )}
                       </div>
                     )}
-                  </div>
+                    </div>
+                  </React.Fragment>
                 )
               })}
             </div>
@@ -1282,6 +1338,18 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           workspacePath={popupState.workspacePath}
           selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
           runFolders={popupState.runFolders}
+        />
+      )}
+
+      {/* Final report popup */}
+      {popupState?.popup === 'report' && (
+        <FinalOutputPopup
+          isOpen
+          onClose={() => setPopupState(null)}
+          workspacePath={popupState.workspacePath}
+          selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
+          runFolders={popupState.runFolders}
+          variablesManifest={null}
         />
       )}
 

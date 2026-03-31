@@ -209,6 +209,10 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   const isConfigEnabled = config?.enabled !== false
   const hasGroupScopedSelection = Boolean(activeRunFolder && activeRunFolder.includes('/'))
   const hasContent = Boolean(data?.exists && data?.content)
+  const archiveGroupFolderName = (activeRunFolder.split('/').pop() || '').trim()
+  const archivePathHint = data?.output_path || (archiveGroupFolderName
+    ? `reports/${archiveGroupFolderName}/<timestamp>.md`
+    : `reports/${'<group>'}/<timestamp>.md`)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -220,7 +224,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
               Final Report
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Review or regenerate the markdown report for a specific iteration/group run.
+              Generate from a specific iteration/group run and review the latest archived report for that group.
             </p>
           </div>
           <button
@@ -301,7 +305,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
                 {config?.title?.trim() || 'Workflow final report'}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                File: {config?.output_filename || 'final_output.md'}
+                Archive: {archivePathHint}
               </div>
             </div>
             <div className={`text-xs px-2 py-1 rounded-md ${isConfigEnabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
@@ -333,7 +337,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
                 <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
                 <div className="text-sm font-medium text-foreground">No group runs found</div>
                 <div className="text-sm text-muted-foreground">
-                  Final output is generated per iteration/group run. Start a workflow run first, then come back here to review the generated markdown.
+                  Final output is generated from a completed iteration/group run and archived under {`reports/${'<group>'}/`}. Start a workflow run first, then come back here to review it.
                 </div>
               </div>
             </div>
@@ -373,9 +377,9 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
             <div className="h-full flex items-center justify-center">
               <div className="max-w-md text-center space-y-3">
                 <FileText className="w-8 h-8 text-muted-foreground mx-auto" />
-                <div className="text-sm font-medium text-foreground">No final report generated yet</div>
+                <div className="text-sm font-medium text-foreground">No archived report generated yet</div>
                 <div className="text-sm text-muted-foreground">
-                  Generate the markdown artifact for <span className="font-mono">{activeRunFolder}</span> to review what the workflow did for this group run.
+                  Generate the markdown artifact from <span className="font-mono">{activeRunFolder}</span>. It will be archived under <span className="font-mono">{archivePathHint}</span>.
                 </div>
               </div>
             </div>

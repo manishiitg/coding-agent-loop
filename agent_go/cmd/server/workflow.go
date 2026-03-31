@@ -50,13 +50,13 @@ func convertProviderAPIKeysToOrchestratorAPIKeys(keys interface {
 	}
 
 	result := &orchestrator.APIKeys{
-		OpenRouter:         keys.GetOpenRouter(),
-		OpenAI:             keys.GetOpenAI(),
-		Anthropic:          keys.GetAnthropic(),
-		Vertex:             keys.GetVertex(),
-		GeminiCLI:          keys.GetGeminiCLI(),
-		MiniMax:            keys.GetMiniMax(),
-		MiniMaxCodingPlan:  keys.GetMiniMaxCodingPlan(),
+		OpenRouter:        keys.GetOpenRouter(),
+		OpenAI:            keys.GetOpenAI(),
+		Anthropic:         keys.GetAnthropic(),
+		Vertex:            keys.GetVertex(),
+		GeminiCLI:         keys.GetGeminiCLI(),
+		MiniMax:           keys.GetMiniMax(),
+		MiniMaxCodingPlan: keys.GetMiniMaxCodingPlan(),
 	}
 
 	if region := keys.GetBedrockRegion(); region != "" {
@@ -817,7 +817,7 @@ type ActiveWorkflowExecution struct {
 	PresetQueryID string    `json:"preset_query_id,omitempty"`
 	WorkspacePath string    `json:"workspace_path"`
 	RunFolder     string    `json:"run_folder,omitempty"`
-	TriggeredBy   string    `json:"triggered_by"` // "manual", "cron"
+	TriggeredBy   string    `json:"triggered_by"` // "manual", "cron", "workflow_builder", "workflow_phase"
 	StartedAt     time.Time `json:"started_at"`
 }
 
@@ -944,12 +944,12 @@ type WorkflowUpdateRequest struct {
 // This replaces the DB-backed workflows table. State doesn't survive server restarts
 // (which is fine — workflow_status is only meaningful during active execution).
 type WorkflowRuntimeState struct {
-	ID              string                           `json:"id"`
-	PresetQueryID   string                           `json:"preset_query_id"`
-	WorkflowStatus  string                           `json:"workflow_status"`
+	ID              string                            `json:"id"`
+	PresetQueryID   string                            `json:"preset_query_id"`
+	WorkflowStatus  string                            `json:"workflow_status"`
 	SelectedOptions *database.WorkflowSelectedOptions `json:"selected_options,omitempty"`
-	CreatedAt       time.Time                        `json:"created_at"`
-	UpdatedAt       time.Time                        `json:"updated_at"`
+	CreatedAt       time.Time                         `json:"created_at"`
+	UpdatedAt       time.Time                         `json:"updated_at"`
 }
 
 // workflowRuntimeStore is the in-memory store for workflow execution state.
@@ -2646,7 +2646,9 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 }
 
 // readFinalOutputConfigFromWorkspace reads planning/output_plan.json from workspace using workspace API.
-// Returns nil, nil if the file does not exist.
+// Returns the effective config. Missing/empty plans fall back to the built-in
+// execution-summary report config, while explicitly disabled plans return the
+// disabled config from the file.
 func readFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) (*todo_creation_human.WorkflowFinalOutputConfig, error) {
 	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
 	content, exists, err := readFileFromWorkspace(ctx, configPath)
@@ -2654,14 +2656,15 @@ func readFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath strin
 		return nil, err
 	}
 	if !exists || strings.TrimSpace(content) == "" {
-		return nil, nil
+		return todo_creation_human.DefaultWorkflowFinalOutputConfig(), nil
 	}
 
 	plan, err := todo_creation_human.ParseWorkflowOutputPlan(content)
 	if err != nil {
 		return nil, err
 	}
-	return todo_creation_human.ConvertOutputPlanToFinalOutputConfig(plan), nil
+	cfg, _ := todo_creation_human.ResolveWorkflowFinalOutputConfig(plan)
+	return cfg, nil
 }
 
 // writeFinalOutputConfigToWorkspace writes planning/output_plan.json to workspace using workspace API.
@@ -2723,6 +2726,44 @@ func deleteWorkspaceFile(ctx context.Context, configPath string) error {
 		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+func latestFinalOutputArchivePath(ctx context.Context, workspacePath, runFolder string) (string, bool, error) {
+	groupName := todo_creation_human.FinalOutputArchiveGroup(runFolder)
+	if groupName == "" {
+		return "", false, fmt.Errorf("failed to derive report archive group from run folder %q", runFolder)
+	}
+
+	reportsFolderPath := filepath.ToSlash(filepath.Join(workspacePath, todo_creation_human.DefaultFinalOutputReportsRoot, groupName))
+	listing, exists, err := listWorkspaceFolder(ctx, reportsFolderPath, 1)
+	if err != nil {
+		return "", false, err
+	}
+	if !exists {
+		return "", false, nil
+	}
+
+	candidates := make([]string, 0, len(listing))
+	for _, item := range listing {
+		if item.Type != "file" {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(item.FilePath), ".md") {
+			continue
+		}
+		candidates = append(candidates, filepath.ToSlash(item.FilePath))
+	}
+
+	if len(candidates) == 0 {
+		return "", false, nil
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return filepath.Base(candidates[i]) > filepath.Base(candidates[j])
+	})
+
+	relativePath := strings.TrimPrefix(candidates[0], filepath.ToSlash(workspacePath)+"/")
+	return relativePath, true, nil
 }
 
 // findInStepsWithOffset recursively searches nested steps within a step, handling ConditionalPlanStep offsets correctly
@@ -3743,7 +3784,7 @@ func (api *StreamingAPI) handleUpdateFinalOutputConfig(w http.ResponseWriter, r 
 	})
 }
 
-// handleGetFinalOutputs reads the generated final output markdown for a specific group-scoped run folder.
+// handleGetFinalOutputs reads the latest archived final output markdown for a specific group-scoped run folder.
 func (api *StreamingAPI) handleGetFinalOutputs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -3787,11 +3828,19 @@ func (api *StreamingAPI) handleGetFinalOutputs(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	filename := todo_creation_human.DefaultFinalOutputFilename
-	if cfg != nil && cfg.OutputFilename != "" {
-		filename = cfg.OutputFilename
+	outputRelativePath, exists, err := latestFinalOutputArchivePath(r.Context(), workspacePath, runFolder)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to resolve archived final output: %v", err), http.StatusInternalServerError)
+		return
 	}
-	outputPath := filepath.ToSlash(filepath.Join(workspacePath, "runs", runFolder, filename))
+	if !exists {
+		response["run_folder"] = runFolder
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	outputPath := filepath.ToSlash(filepath.Join(workspacePath, outputRelativePath))
 	content, exists, err := readFileFromWorkspace(r.Context(), outputPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read final output file: %v", err), http.StatusInternalServerError)
@@ -3799,7 +3848,7 @@ func (api *StreamingAPI) handleGetFinalOutputs(w http.ResponseWriter, r *http.Re
 	}
 
 	response["run_folder"] = runFolder
-	response["output_path"] = filepath.ToSlash(filepath.Join("runs", runFolder, filename))
+	response["output_path"] = outputRelativePath
 	response["exists"] = exists
 	if exists {
 		response["content"] = content
@@ -5973,11 +6022,11 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 
 	// Write version_meta.json
 	meta := map[string]interface{}{
-		"version":        nextVersion,
-		"label":          req.Label,
-		"created_at":     time.Now().UTC().Format(time.RFC3339),
-		"files_snapshot": filesSnapshot,
-		"managed_files":  versionedConfigFiles,
+		"version":         nextVersion,
+		"label":           req.Label,
+		"created_at":      time.Now().UTC().Format(time.RFC3339),
+		"files_snapshot":  filesSnapshot,
+		"managed_files":   versionedConfigFiles,
 		"managed_folders": versionedFolderRoots,
 	}
 	metaJSON, _ := json.MarshalIndent(meta, "", "  ")

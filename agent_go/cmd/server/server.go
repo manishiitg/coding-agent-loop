@@ -945,6 +945,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/provider-keys", api.handleSaveProviderKeys).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/provider-keys", api.handleLoadProviderKeys).Methods("GET", "OPTIONS")
 
+	// Published LLMs (workspace-backed JSON storage)
+	apiRouter.HandleFunc("/published-llms", api.handleSavePublishedLLMs).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/published-llms", api.handleLoadPublishedLLMs).Methods("GET", "OPTIONS")
+
 	// Delegation tier config (plain JSON file storage, shared by chat and bot connector)
 	apiRouter.HandleFunc("/delegation-tier-config", api.handleSaveDelegationTierConfig).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/delegation-tier-config", api.handleLoadDelegationTierConfig).Methods("GET", "OPTIONS")
@@ -2652,6 +2656,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.sessionQueryIDMux.Unlock()
 			}()
 
+			if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
+				triggeredBy := "workflow_phase"
+				if workflowPhaseID == "workflow-builder" {
+					triggeredBy = "workflow_builder"
+				}
+
+				api.activeWorkflowExecutionsMux.Lock()
+				api.activeWorkflowExecutions[queryID] = &ActiveWorkflowExecution{
+					QueryID:       queryID,
+					SessionID:     sessionID,
+					PresetQueryID: req.PresetQueryID,
+					WorkspacePath: workflowPhaseFolder,
+					TriggeredBy:   triggeredBy,
+					StartedAt:     time.Now(),
+				}
+				api.activeWorkflowExecutionsMux.Unlock()
+			}
+
 			// Check in-memory runtime state for workflow approval status
 			workflowStatus := database.WorkflowStatusPreVerification // Default status
 			var selectedOptions *database.WorkflowSelectedOptions
@@ -3786,10 +3808,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
 
-				// Extract @context file paths for additional write access
-				fileContextFolders := extractFileContextWriteFolders(req.Query)
+				// Merge @context file paths and #workflow references into additional folder-guard access.
+				// #workflow paths arrive separately in workflow_context_paths, so they must be added here
+				// or the prompt can mention a workflow while shell/file tools still cannot access it.
+				fileContextFolders := collectAdditionalFolderGuardFolders(req.Query, req.WorkflowContextPaths)
 				if len(fileContextFolders) > 0 {
-					log.Printf("[FILE CONTEXT] Extracted write paths from @context: %v", fileContextFolders)
+					log.Printf("[FILE CONTEXT] Extracted additional folder-guard paths from @context/#workflow: %v", fileContextFolders)
 				}
 
 				// Workflow phase: grant write access only to specific subfolders within the workflow folder.
@@ -4306,6 +4330,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			isMultiAgentChat := req.DelegationMode == "spawn"
 			if workspaceAccessEnabledForChat && isMultiAgentChat {
+				if err := api.registerMultiAgentLLMTools(underlyingAgent); err != nil {
+					log.Printf("[LLM TOOLS] Failed to register multi-agent LLM tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register multi-agent LLM tools: %v", err), true)
+					return
+				}
+				log.Printf("[LLM TOOLS] Registered multi-agent LLM tools")
+
 				if err := api.registerMultiAgentSkillTools(underlyingAgent); err != nil {
 					log.Printf("[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
@@ -7885,10 +7916,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 			}
 
-			// Extract @context file paths from parent query for additional write access
-			fileContextFolders := extractFileContextWriteFolders(parentReq.Query)
+			// Merge parent @context paths and #workflow references into delegated folder-guard access.
+			fileContextFolders := collectAdditionalFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
 			if len(fileContextFolders) > 0 {
-				log.Printf("[DELEGATION] Extracted write paths from parent @context: %v", fileContextFolders)
+				log.Printf("[DELEGATION] Extracted additional folder-guard paths from parent @context/#workflow: %v", fileContextFolders)
 			}
 
 			// Apply folder guards

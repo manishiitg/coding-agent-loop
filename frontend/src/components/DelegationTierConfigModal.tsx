@@ -1,4 +1,5 @@
-import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown } from 'lucide-react'
+import { useState } from 'react'
+import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import { useChatStore } from '../stores'
@@ -60,7 +61,8 @@ const FEATURES = [
 type BuiltInTierKey = 'main' | 'high' | 'medium' | 'low'
 
 export default function DelegationTierConfigModal({ isOpen, onClose }: DelegationTierConfigModalProps) {
-  const { availableLLMs, delegationTierConfig, setDelegationTierConfig } = useLLMStore()
+  const { availableLLMs, delegationTierConfig, setDelegationTierConfig, loadDelegationTierDefaults } = useLLMStore()
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   if (!isOpen) return null
 
@@ -70,6 +72,16 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
   const updateConfig = (next: DelegationTierConfig | null) => {
     setDelegationTierConfig(next)
     syncTierConfigToActiveTab(next)
+  }
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      await loadDelegationTierDefaults()
+      syncTierConfigToActiveTab(useLLMStore.getState().delegationTierConfig)
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   const updateBuiltInTier = (key: BuiltInTierKey, updater: (current?: TierModel) => TierModel | undefined) => {
@@ -179,12 +191,22 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Multi-Agent Mode</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Configure how your AI team works together</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh tier configuration"
+            >
+              <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Two-column body — scrollable */}

@@ -1,12 +1,99 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2 } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, Search, Sparkles, CheckCircle2, Wrench } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
   {
+    command: 'review-plan',
+    description: 'Critically review the current workflow plan decisions',
+    icon: <Search className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      const runText = runFolder ? ` Use target_run_folder="${runFolder}" if run evidence would help.` : ''
+      ctx.onSubmit(`Run review_plan now.${runText}${focusText} Return findings first.`)
+    }
+  },
+  {
+    command: 'optimize-workflow',
+    description: 'Analyze the workflow structure against the objective',
+    icon: <Sparkles className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      ctx.onSubmit(`Run optimize_workflow now.${focusText} Then summarize the top structural changes to make.`)
+    }
+  },
+  {
+    command: 'optimize-step',
+    description: 'Optimize one workflow step by step id',
+    icon: <Wrench className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /optimize-step <step-id>',
+    source: 'builtin',
+    execute: (ctx) => {
+      const stepId = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Run optimize_step(step_id="${stepId}") now and summarize the highest-priority fixes for that step.`)
+    }
+  },
+  {
+    command: 'replan-results',
+    description: 'Rewrite the plan from actual run results',
+    icon: <Layers className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    validate: (ctx) => ctx.getWorkflowStore().selectedRunFolder ? null : 'Select a workflow run folder before using /replan-results',
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      ctx.onSubmit(`Run replan_workflow_from_results(target_run_folder="${runFolder}") now.${focusText} Rewrite the plan from actual results and summarize what changed.`)
+    }
+  },
+  {
+    command: 'mark-workflow-optimized',
+    description: 'Run the readiness gate and show the checklist',
+    icon: <CheckCircle2 className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      ctx.onSubmit('Run mark_workflow_optimized now and show the readiness checklist.')
+    }
+  },
+  {
+    command: 'infer-objective',
+    description: 'Infer the workflow objective only if it is truly missing',
+    icon: <FileText className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'builder',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      ctx.onSubmit(`Check planning/plan.json first. If the root objective is truly missing, run infer_objective and summarize the proposed objective and draft success criteria for confirmation. If objective already exists, explain that infer_objective is not needed.${focusText}`)
+    }
+  },
+  {
     command: 'summarize',
     description: 'Summarize conversation history',
     icon: <FileText className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       if (ctx.tabSessionId && !ctx.isSummarizing && !ctx.isStreaming) {
@@ -18,6 +105,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'compact',
     description: 'Compact conversation context',
     icon: <Minimize2 className="w-4 h-4" />,
+    modes: ['workflow', 'multi-agent'],
     hidden: true,
     source: 'builtin',
     execute: (ctx) => {
@@ -30,6 +118,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'build-skill',
     description: 'Build a new skill using the skill-creator',
     icon: <Lightbulb className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       const currentSkills = ctx.tabConfig?.selectedSkills || []
@@ -52,6 +141,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'build-subagent',
     description: 'Build a new sub-agent template',
     icon: <Bot className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       const currentSkills = ctx.tabConfig?.selectedSkills || []
@@ -74,6 +164,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'add-skill',
     description: 'Import a skill from GitHub',
     icon: <Download className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.openDialog('skillImport')
@@ -83,6 +174,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'mcp',
     description: 'View MCP server details and tools',
     icon: <Server className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.getAppStore().setWorkspaceMinimized(true)
@@ -93,6 +185,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'mcp-add',
     description: 'Add or edit MCP server configuration',
     icon: <Server className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.getAppStore().setWorkspaceMinimized(true)
@@ -103,6 +196,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'models',
     description: 'Open LLM model configuration',
     icon: <Cpu className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.getAppStore().setWorkspaceMinimized(true)
@@ -113,6 +207,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'resume',
     description: 'Resume a previous conversation',
     icon: <History className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.openDialog('resume')
@@ -122,6 +217,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'spawn',
     description: 'Enable simple sub-agent delegation (fire-and-forget)',
     icon: <GitBranch className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.getAppStore().setDelegationMode('spawn')
@@ -132,6 +228,7 @@ export const builtinCommands: CommandDefinition[] = [
     command: 'nospawn',
     description: 'Disable all sub-agent delegation',
     icon: <GitBranch className="w-4 h-4" />,
+    modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       ctx.getAppStore().setDelegationMode('off')

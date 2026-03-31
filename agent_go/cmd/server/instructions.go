@@ -52,35 +52,50 @@ The workspace is organized into the following folders:
 
 ## LLM Tier Configuration
 ` + fmt.Sprintf("Edit `config/delegation-tier-config.json`%s to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.", absPath("config/delegation-tier-config.json")) + `
-- Read: `+"`execute_shell_command(command: \"cat config/delegation-tier-config.json\")`"+`
-- Write: `+"`execute_shell_command(command: \"printf '%s' '{...json...}' > config/delegation-tier-config.json\")`"+`
-- Schema: `+"`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\"},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`"+`
+- Read: ` + "`execute_shell_command(command: \"cat config/delegation-tier-config.json\")`" + `
+- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > config/delegation-tier-config.json\")`" + `
+- Schema: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\",\"fallbacks\":[{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"},{\"model_id\":\"gpt-5.4\"}]},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`" + `
+- To add fallbacks for a tier, add an ordered ` + "`fallbacks`" + ` array under that tier object.
+- Each fallback entry uses ` + "`{\"provider\":\"...\",\"model_id\":\"...\"}`" + `. If ` + "`provider`" + ` is omitted, it defaults to the tier's own provider.
+- Example: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"claude-sonnet-4-6\",\"fallbacks\":[{\"model_id\":\"claude-haiku-4-5-20251001\"},{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"}]}}`" + `
+- Preserve existing tiers when editing. Only change the specific tier or ` + "`fallbacks`" + ` entries the user asked for.
+
+## Published LLMs & Provider Auth
+` + fmt.Sprintf("Published LLM metadata lives in `config/published-llms.json`%s. Provider authentication lives separately in `config/provider-api-keys.json`%s.", absPath("config/published-llms.json"), absPath("config/provider-api-keys.json")) + `
+- Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
+- List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses the same shared metadata catalog as the frontend model picker.
+- List published LLMs: ` + "`execute_shell_command(command: \"cat config/published-llms.json\")`" + `
+- Delete a published LLM: read the file, remove the matching JSON entry, then overwrite it with ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > config/published-llms.json\")`" + `
+- Provider auth is encrypted at rest in ` + "`config/provider-api-keys.json`" + `. Do not read or hand-edit that file with shell commands.
+- Update provider auth with the ` + "`set_provider_auth`" + ` tool.
+- Verify provider auth by running ` + "`test_llm`" + ` for the provider/model you want to use.
+- Prefer shell commands only for published LLM metadata in ` + "`config/published-llms.json`" + `. Use tools for provider-auth operations.
 
 ## Employees & Workflows
 Employees are virtual team members assigned to workflows. When creating employees, give them realistic human first names (e.g., "Priya", "Arjun", "Sarah") — not functional titles or descriptions.
 
 ### Quick Reference
-- Employees: `+"`execute_shell_command(command: \"cat config/employees.json\")`"+`
-- Assignments (workflow_path → employee_id): `+"`execute_shell_command(command: \"cat config/employee-workflows.json\")`"+`
-- List workflows: `+"`execute_shell_command(command: \"ls Workflow/\")`"+`
+- Employees: ` + "`execute_shell_command(command: \"cat config/employees.json\")`" + `
+- Assignments (workflow_path → employee_id): ` + "`execute_shell_command(command: \"cat config/employee-workflows.json\")`" + `
+- List workflows: ` + "`execute_shell_command(command: \"ls Workflow/\")`" + `
 
 ### Workflow Structure
-Each workflow lives in `+"`Workflow/<name>/`"+` with:
-- `+"`workflow.json`"+` — config, schedules, capabilities (can be large)
-- `+"`planning/plan.json`"+` — step definitions with IDs and titles
-- `+"`planning/step_config.json`"+` — per-step tool/skill config
-- `+"`learnings/<step-id>/SKILL.md`"+` — learnings accumulated per step
-- `+"`runs/`"+` — execution output folders
+Each workflow lives in ` + "`Workflow/<name>/`" + ` with:
+- ` + "`workflow.json`" + ` — config, schedules, capabilities (can be large)
+- ` + "`planning/plan.json`" + ` — step definitions with IDs and titles
+- ` + "`planning/step_config.json`" + ` — per-step tool/skill config
+- ` + "`learnings/<step-id>/SKILL.md`" + ` — learnings accumulated per step
+- ` + "`runs/`" + ` — execution output folders
 
 ### Efficient Parsing
-- **Step list (IDs + titles):** `+"`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('Workflow/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`"+`
-- **Schedules:** `+"`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('Workflow/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`"+`
-- **Step learnings:** `+"`execute_shell_command(command: \"cat Workflow/<name>/learnings/<step-id>/SKILL.md\")`"+`
-- **Full config (when needed):** `+"`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`"+`
+- **Step list (IDs + titles):** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('Workflow/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`" + `
+- **Schedules:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('Workflow/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`" + `
+- **Step learnings:** ` + "`execute_shell_command(command: \"cat Workflow/<name>/learnings/<step-id>/SKILL.md\")`" + `
+- **Full config (when needed):** ` + "`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`" + `
 
 ### When the user mentions an employee by name
-1. **Always read employees first**: `+"`execute_shell_command(command: \"cat config/employees.json\")`"+` to find the employee ID
-2. **Then read assignments**: `+"`execute_shell_command(command: \"cat config/employee-workflows.json\")`"+` to find their workflows
+1. **Always read employees first**: ` + "`execute_shell_command(command: \"cat config/employees.json\")`" + ` to find the employee ID
+2. **Then read assignments**: ` + "`execute_shell_command(command: \"cat config/employee-workflows.json\")`" + ` to find their workflows
 3. **Then check workflow details**: Browse Workflow/<name>/ for runs, learnings, outputs
 
 ### What You Can Do

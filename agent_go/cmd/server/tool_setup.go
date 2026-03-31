@@ -11,8 +11,8 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // extractWorkspacePathFromObjective extracts the workspace path from the objective string
@@ -91,6 +91,55 @@ func extractFileContextWriteFolders(query string) []string {
 	}
 
 	return result
+}
+
+// extractWorkflowContextFolders normalizes workflow context paths selected via the #workflow picker
+// so they can participate in folder guard setup just like @context paths.
+// These paths come from trusted UI workflow selections, but we still clean/dedupe them and
+// drop protected/invalid values before they reach the folder guard.
+func extractWorkflowContextFolders(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, raw := range paths {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			continue
+		}
+
+		p = filepath.Clean(p)
+		if p == "." || p == string(filepath.Separator) || p == "/" || filepath.IsAbs(p) {
+			continue
+		}
+		if strings.HasPrefix(p, ".."+string(filepath.Separator)) || p == ".." || strings.HasPrefix(p, "../") {
+			continue
+		}
+
+		pLower := strings.ToLower(p)
+		if strings.HasPrefix(pLower, "_users") || strings.HasPrefix(pLower, "chats") {
+			continue
+		}
+
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		result = append(result, p)
+	}
+
+	return result
+}
+
+// collectAdditionalFolderGuardFolders merges extra folder guard paths from @file context
+// and #workflow context, preserving order and removing duplicates.
+func collectAdditionalFolderGuardFolders(query string, workflowContextPaths []string) []string {
+	combined := append([]string{}, extractFileContextWriteFolders(query)...)
+	combined = append(combined, extractWorkflowContextFolders(workflowContextPaths)...)
+	return common.DeduplicateStrings(combined)
 }
 
 // extractRootCauseError returns the raw error message without any processing

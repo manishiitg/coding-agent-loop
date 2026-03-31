@@ -17,7 +17,7 @@ import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
-import { findCommand, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { findCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
@@ -1482,6 +1482,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // submit within the same render cycle would re-send the same message
   const justSubmittedRef = useRef(false)
 
+  const clearInputState = useCallback(() => {
+    setLocalInputText('')
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    if (activeTabId) {
+      setTabConfig(activeTabId, { inputText: '' })
+    }
+  }, [activeTabId, setTabConfig])
+
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
@@ -1507,25 +1518,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Auto-resize textarea
     adjustTextareaHeight()
 
-    // Skip most special character triggers for workflow phase chat — but allow @ for file references
+    // Skip most special character triggers for workflow phase chat — but allow @, /, and #.
     if (isWorkflowPhaseChat) {
-      // Process @ and # triggers in workflow phase chat
+      // Process @, /, and # triggers in workflow phase chat
       const cursorPos = e.target.selectionStart || 0
       const textBefore = newValue.substring(0, cursorPos)
       const atIdx = textBefore.lastIndexOf('@')
+      const slashIdx = textBefore.lastIndexOf('/')
       const hashIdx = textBefore.lastIndexOf('#')
+      const slashIsPartOfAtPath = atIdx >= 0 && slashIdx > atIdx
 
       // Determine closest trigger
       const atDist = atIdx >= 0 ? cursorPos - atIdx : Infinity
+      const slashDist = slashIdx >= 0 ? cursorPos - slashIdx : Infinity
       const hashDist = hashIdx >= 0 ? cursorPos - hashIdx : Infinity
+      const closestTrigger = Math.min(atDist, slashDist, hashDist)
 
-      if (atIdx >= 0 && atDist <= hashDist && enableWorkspaceAccess) {
+      if (atIdx >= 0 && closestTrigger === atDist && enableWorkspaceAccess) {
         const textAfterAt = textBefore.substring(atIdx + 1)
         const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
         if (hasValidAt) {
           setAtPosition(atIdx)
           setFileSearchQuery(textAfterAt)
           setShowFileDialog(true)
+          setShowCommandDialog(false)
           setShowWorkflowDialog(false)
 
           const textarea = e.target
@@ -1541,7 +1557,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           setAtPosition(-1)
           setFileSearchQuery('')
         }
-      } else if (hashIdx >= 0 && hashDist < atDist) {
+      } else if (!slashIsPartOfAtPath && slashIdx >= 0 && closestTrigger === slashDist) {
+        const textAfterSlash = textBefore.substring(slashIdx + 1)
+        const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_:-]*$/)
+        if (hasValidSlash) {
+          setSlashPosition(slashIdx)
+          setCommandSearchQuery(textAfterSlash)
+          setShowCommandDialog(true)
+          setShowFileDialog(false)
+          setShowWorkflowDialog(false)
+
+          const textarea = e.target
+          const rect = textarea.getBoundingClientRect()
+          setCommandDialogPosition({
+            bottom: window.innerHeight - rect.top + 8,
+            left: rect.left + window.scrollX
+          })
+        } else {
+          setShowCommandDialog(false)
+          setSlashPosition(-1)
+          setCommandSearchQuery('')
+        }
+      } else if (hashIdx >= 0 && closestTrigger === hashDist) {
         const textAfterHash = textBefore.substring(hashIdx + 1)
         const hasValidHash = textAfterHash === '' || textAfterHash.match(/^[a-zA-Z0-9_-]*$/)
         if (hasValidHash) {
@@ -1549,6 +1586,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           setWorkflowSearchQuery(textAfterHash)
           setShowWorkflowDialog(true)
           setShowFileDialog(false)
+          setShowCommandDialog(false)
 
           const textarea = e.target
           const rect = textarea.getBoundingClientRect()
@@ -1565,6 +1603,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setShowFileDialog(false)
         setAtPosition(-1)
         setFileSearchQuery('')
+        setShowCommandDialog(false)
+        setSlashPosition(-1)
+        setCommandSearchQuery('')
         setShowWorkflowDialog(false)
         setHashPosition(-1)
         setWorkflowSearchQuery('')
@@ -1604,7 +1645,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Check for / command (only when / is not part of an @ path)
     if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && closestTrigger === slashDistance) {
       const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1)
-      const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_]*$/)
+      const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_:-]*$/)
 
       if (hasValidSlash) {
         setSlashPosition(lastSlashIndex)
@@ -1889,6 +1930,128 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
 
+  const getEffectiveWorkflowModes = useCallback(() => {
+    const workflowState = useWorkflowStore.getState()
+    const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+    const effectiveWorkshopMode = (presetId && workflowState.workshopModeByPreset[presetId]) || workflowState.workshopMode
+
+    return {
+      workflowMode: workflowState.workflowMode,
+      workshopMode: effectiveWorkshopMode,
+    }
+  }, [])
+
+  const applyWorkflowCommandRequirements = useCallback((cmd: CommandDefinition) => {
+    if (selectedModeCategory !== 'workflow') return
+    if (!cmd.requiredWorkflowMode && !cmd.requiredWorkshopMode) return
+
+    const workflowStore = useWorkflowStore.getState()
+    const { workflowMode: currentWorkflowMode, workshopMode: currentWorkshopMode } = getEffectiveWorkflowModes()
+
+    const targetWorkshopMode = cmd.requiredWorkshopMode
+    const targetWorkflowMode = cmd.requiredWorkflowMode
+      ?? (targetWorkshopMode === 'eval'
+        ? 'eval'
+        : targetWorkshopMode === 'output'
+          ? 'output'
+          : targetWorkshopMode
+            ? 'plan'
+            : undefined)
+
+    let switched = false
+
+    if (targetWorkshopMode && currentWorkshopMode !== targetWorkshopMode) {
+      workflowStore.setWorkshopMode(targetWorkshopMode)
+      switched = true
+    } else if (targetWorkflowMode && currentWorkflowMode !== targetWorkflowMode) {
+      workflowStore.setWorkflowMode(targetWorkflowMode)
+      switched = true
+    }
+
+    if (switched) {
+      const modeLabel = targetWorkshopMode
+        ? targetWorkshopMode.charAt(0).toUpperCase() + targetWorkshopMode.slice(1)
+        : targetWorkflowMode
+          ? targetWorkflowMode.charAt(0).toUpperCase() + targetWorkflowMode.slice(1)
+          : 'workflow'
+      addToast(`Switched to ${modeLabel} mode for /${cmd.command}`, 'info')
+    }
+  }, [addToast, getEffectiveWorkflowModes, selectedModeCategory])
+
+  const buildCommandContext = useCallback((beforeSlash: string): CommandContext | null => {
+    if (!activeTabId) return null
+    const effectiveModes = getEffectiveWorkflowModes()
+
+    return {
+      beforeSlash,
+      activeTabId,
+      tabSessionId,
+      tabConfig,
+      isSummarizing,
+      isStreaming,
+      onSubmit,
+      openDialog,
+      setTabConfig,
+      addToast,
+      handleSummarize,
+      handleCompact,
+      getAppStore: () => useAppStore.getState(),
+      getWorkspaceStore: () => useWorkspaceStore.getState(),
+      getWorkflowStore: () => useWorkflowStore.getState(),
+      workflowMode: effectiveModes.workflowMode,
+      workshopMode: effectiveModes.workshopMode,
+      workflowPhaseId
+    }
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, workflowPhaseId])
+
+  const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
+    if (!cmd.validate) return null
+
+    const ctx = buildCommandContext(beforeSlash)
+    if (!ctx) return 'Unable to run this command right now'
+
+    return cmd.validate(ctx)
+  }, [buildCommandContext])
+
+  const executeSlashCommandFromQuery = useCallback((trimmedQuery: string) => {
+    if (!trimmedQuery.startsWith('/')) return false
+
+    const withoutSlash = trimmedQuery.slice(1).trim()
+    if (!withoutSlash) return false
+
+    const firstSpace = withoutSlash.indexOf(' ')
+    const commandName = (firstSpace >= 0 ? withoutSlash.slice(0, firstSpace) : withoutSlash).trim()
+    const commandArgs = (firstSpace >= 0 ? withoutSlash.slice(firstSpace + 1) : '').trim()
+    if (!commandName) return false
+
+    const cmd = findCommand(commandName, selectedModeCategory)
+    if (!cmd) {
+      const modeScopedCommand = findCommandAnyMode(commandName)
+      if (modeScopedCommand && selectedModeCategory) {
+        const availableInWorkflow = modeScopedCommand.modes?.includes('workflow') ?? false
+        const targetLabel = availableInWorkflow ? 'workflow' : 'multi-agent'
+        addToast(`/${commandName} is only available in ${targetLabel} chat`, 'info')
+        return true
+      }
+      return false
+    }
+
+    const validationError = getCommandValidationError(cmd, commandArgs)
+    if (validationError) {
+      addToast(validationError, 'info')
+      return true
+    }
+
+    applyWorkflowCommandRequirements(cmd)
+
+    const ctx = buildCommandContext(commandArgs)
+    if (!ctx) return false
+
+    clearInputState()
+    cmd.execute(ctx)
+    return true
+  }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, selectedModeCategory])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
     if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup || showSubAgentPopup) {
@@ -1912,6 +2075,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       // Check for slash commands
       const trimmedQuery = queryToSubmit?.trim() || ''
+      if (executeSlashCommandFromQuery(trimmedQuery)) {
+        return
+      }
+
       const summarizeIndex = trimmedQuery.indexOf('/summarize')
       const compactIndex = trimmedQuery.indexOf('/compact')
       
@@ -1925,18 +2092,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
           
-          // Clear input after command (both local and store)
-          setLocalInputText('')
-          
-          // Clear any pending store sync to prevent overwriting the empty state
-          if (syncToStoreTimeoutRef.current) {
-            clearTimeout(syncToStoreTimeoutRef.current)
-            syncToStoreTimeoutRef.current = null
-          }
-
-          if (activeTabId) {
-            setTabConfig(activeTabId, { inputText: '' })
-          }
+          clearInputState()
         }
         return
       }
@@ -1947,173 +2103,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
           handleCompact(textBeforeCompact || undefined)
           
-          // Clear input after command (both local and store)
-          setLocalInputText('')
-
-          // Clear any pending store sync to prevent overwriting the empty state
-          if (syncToStoreTimeoutRef.current) {
-            clearTimeout(syncToStoreTimeoutRef.current)
-            syncToStoreTimeoutRef.current = null
-          }
-
-          if (activeTabId) {
-            setTabConfig(activeTabId, { inputText: '' })
-          }
+          clearInputState()
         }
-        return
-      }
-
-      // Handle /build-skill command
-      const buildSkillIndex = trimmedQuery.indexOf('/build-skill')
-      if (buildSkillIndex >= 0) {
-        const textAfterCommand = trimmedQuery.substring(buildSkillIndex + '/build-skill'.length).trim()
-
-        // Auto-add skill-creator to current tab's selectedSkills
-        if (activeTabId) {
-          const currentSkills = tabConfig?.selectedSkills || []
-          if (!currentSkills.includes('skill-creator')) {
-            setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
-          }
-        }
-
-        // Expand skills/ and skills/custom/ folders in workspace
-        const wsStore = useWorkspaceStore.getState()
-        const expanded = new Set(wsStore.expandedFolders)
-        expanded.add('skills')
-        expanded.add('skills/custom')
-        wsStore.setExpandedFolders(expanded)
-
-        // Clear input after command (both local and store)
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-
-        // Submit: always include skill-creator path context, plus user's text if provided
-        const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
-        const message = textAfterCommand
-          ? `${textAfterCommand}\n\n${skillContext}`
-          : `I want to build a skill based on our conversation. ${skillContext}`
-        onSubmit(message)
-        return
-      }
-
-      // Handle /build-subagent command
-      const buildSubAgentIndex = trimmedQuery.indexOf('/build-subagent')
-      if (buildSubAgentIndex >= 0) {
-        const textAfterCommand = trimmedQuery.substring(buildSubAgentIndex + '/build-subagent'.length).trim()
-
-        // Auto-add subagent-creator to current tab's selectedSkills
-        if (activeTabId) {
-          const currentSkills = tabConfig?.selectedSkills || []
-          if (!currentSkills.includes('subagent-creator') && !currentSkills.includes('custom/subagent-creator')) {
-            setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'custom/subagent-creator'] })
-          }
-        }
-
-        // Expand subagents/ and subagents/custom/ folders in workspace
-        const wsStore2 = useWorkspaceStore.getState()
-        const expanded2 = new Set(wsStore2.expandedFolders)
-        expanded2.add('subagents')
-        expanded2.add('subagents/custom')
-        wsStore2.setExpandedFolders(expanded2)
-
-        // Clear input after command
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-
-        // Submit with sub-agent builder context
-        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode) and markdown instructions.'
-        const message = textAfterCommand
-          ? `${textAfterCommand}\n\n${saContext}`
-          : `I want to build a sub-agent template. ${saContext}`
-        onSubmit(message)
-        return
-      }
-
-      // Handle /add-skill command — open the import dialog
-      if (trimmedQuery.startsWith('/add-skill')) {
-        // Clear input
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-
-        // Open the skill import dialog
-        openDialog('skillImport')
-        return
-      }
-
-      // Handle /mcp-add command — open MCP config editor (must be before /mcp check)
-      if (trimmedQuery.startsWith('/mcp-add')) {
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('mcpConfig')
-        return
-      }
-
-      // Handle /mcp command — open MCP server details list
-      if (trimmedQuery.startsWith('/mcp')) {
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('mcpDetails')
-        return
-      }
-
-      // Handle /models command — open LLM model config
-      if (trimmedQuery.startsWith('/models')) {
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('models')
-        return
-      }
-
-      // Handle /resume command — show previous conversations
-      if (trimmedQuery.startsWith('/resume')) {
-        setLocalInputText('')
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
-        openDialog('resume')
         return
       }
 
@@ -2123,28 +2114,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         justSubmittedRef.current = true
         setTimeout(() => { justSubmittedRef.current = false }, 300)
 
-        // Clear input text immediately (both local and store)
-        setLocalInputText('')
-
-        // Clear any pending store sync to prevent overwriting the empty state
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
+        clearInputState()
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
         // Queue message when streaming - clear input (both local and store)
-        setLocalInputText('')
-
-        // Clear any pending store sync to prevent overwriting the empty state
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
+        clearInputState()
 
         if (activeTabId) {
           const currentQueued = tabConfig?.queuedMessages || []
@@ -2170,7 +2144,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills, addToast, isMultiAgentMode])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2182,6 +2156,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
+    if (executeSlashCommandFromQuery(trimmedQuery)) {
+      return
+    }
+
     const summarizeIndex = trimmedQuery.indexOf('/summarize')
     const compactIndex = trimmedQuery.indexOf('/compact')
 
@@ -2190,18 +2168,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
         handleSummarize(textBeforeSummarize || undefined)
 
-        // Clear input after command (both local and store)
-        setLocalInputText('')
-
-        // Clear any pending store sync to prevent overwriting the empty state
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
+        clearInputState()
       }
       return
     }
@@ -2211,18 +2178,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
         handleCompact(textBeforeCompact || undefined)
         
-        // Clear input after command (both local and store)
-        setLocalInputText('')
-        
-        // Clear any pending store sync to prevent overwriting the empty state
-        if (syncToStoreTimeoutRef.current) {
-          clearTimeout(syncToStoreTimeoutRef.current)
-          syncToStoreTimeoutRef.current = null
-        }
-
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
-        }
+        clearInputState()
       }
       return
     }
@@ -2233,26 +2189,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       justSubmittedRef.current = true
       setTimeout(() => { justSubmittedRef.current = false }, 300)
 
-      setLocalInputText('')
-
-      // Clear any pending store sync to prevent overwriting the empty state
-      if (syncToStoreTimeoutRef.current) {
-        clearTimeout(syncToStoreTimeoutRef.current)
-        syncToStoreTimeoutRef.current = null
-      }
-
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: '' })
-      }
+      clearInputState()
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
-      setLocalInputText('')
-
-      // Clear any pending store sync to prevent overwriting the empty state
-      if (syncToStoreTimeoutRef.current) {
-        clearTimeout(syncToStoreTimeoutRef.current)
-        syncToStoreTimeoutRef.current = null
-      }
+      clearInputState()
 
       if (activeTabId) {
         const currentQueued = tabConfig?.queuedMessages || []
@@ -2262,7 +2202,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         })
       }
     }
-  }, [canSubmit, canSubmitImmediately, activeTabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, tabConfig?.queuedMessages])
+  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
@@ -2277,32 +2217,42 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const beforeSlash = slashPosition >= 0 ? inputText.substring(0, slashPosition).trim() : ''
 
     // Clear input
-    setLocalInputText('')
-    if (syncToStoreTimeoutRef.current) {
-      clearTimeout(syncToStoreTimeoutRef.current)
-      syncToStoreTimeoutRef.current = null
-    }
-    setTabConfig(activeTabId, { inputText: '' })
+    clearInputState()
 
     // Look up and execute the command from the registry
-    const cmd = findCommand(command)
+    const cmd = findCommand(command, selectedModeCategory)
+    const validationError = cmd ? getCommandValidationError(cmd, beforeSlash) : null
+    if (cmd && validationError) {
+      addToast(validationError, 'info')
+
+      const currentStepId = useWorkflowStore.getState().currentStepId
+      const commandText = command === 'optimize-step'
+        ? `/${command} ${currentStepId || '<step-id>'}`
+        : `/${command} `
+      setLocalInputText(commandText)
+      setTabConfig(activeTabId, { inputText: commandText })
+
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus()
+          if (command === 'optimize-step' && !currentStepId) {
+            const placeholderStart = commandText.indexOf('<step-id>')
+            const placeholderEnd = placeholderStart + '<step-id>'.length
+            textareaRef.current.setSelectionRange(placeholderStart, placeholderEnd)
+          } else {
+            textareaRef.current.setSelectionRange(commandText.length, commandText.length)
+          }
+        }
+      }, 0)
+      return
+    }
+
     if (cmd) {
-      const ctx: CommandContext = {
-        beforeSlash,
-        activeTabId,
-        tabSessionId,
-        tabConfig,
-        isSummarizing,
-        isStreaming,
-        onSubmit,
-        openDialog,
-        setTabConfig,
-        addToast,
-        handleSummarize,
-        handleCompact,
-        getAppStore: () => useAppStore.getState(),
-        getWorkspaceStore: () => useWorkspaceStore.getState()
-      }
+      applyWorkflowCommandRequirements(cmd)
+    }
+
+    const ctx = buildCommandContext(beforeSlash)
+    if (cmd && ctx) {
       cmd.execute(ctx)
     } else {
       // For unknown commands, insert into text (fallback)
@@ -2322,7 +2272,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig, setTabConfig, onSubmit, openDialog, addToast])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, selectedModeCategory])
 
   // Command management callbacks
   const handleManageCommands = useCallback(() => {
@@ -2744,7 +2694,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
     if (isWorkflowPhaseChat) {
-      return 'Chat with the workflow builder...'
+      return 'Chat with the workflow builder... (@ files, / commands, # workflows)'
     }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`

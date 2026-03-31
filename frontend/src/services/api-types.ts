@@ -26,6 +26,12 @@ export interface SavedLLM extends LLMModel {
   name: string
   model_name?: string // Display name from metadata (e.g., "Claude 3.5 Sonnet")
   auth_method?: 'api_key' | 'oauth' | 'none' // Auth method used
+  context_window?: number
+  input_cost_per_1m?: number
+  output_cost_per_1m?: number
+  reasoning_cost_per_1m?: number
+  cached_input_cost_per_1m?: number
+  cached_input_cost_write_per_1m?: number
   created_at?: string
 }
 

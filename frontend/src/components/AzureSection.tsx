@@ -241,7 +241,7 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
         }
 
         const currentModelMetadata = metadata?.find(m => m.model_id === finalModelId)
-        saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'api_key')
+        await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'api_key', currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
         setIsSubmitting(false)

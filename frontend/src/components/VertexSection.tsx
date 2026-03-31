@@ -122,7 +122,7 @@ export function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, ap
         const currentModelMetadata = metadata?.find(m => m.model_id === config.model_id)
         // Vertex uses OAuth/ADC if no API key, otherwise api_key
         const authMethod = apiKey ? 'api_key' : 'oauth'
-        saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, authMethod)
+        await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, authMethod, currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
         setIsSubmitting(false)

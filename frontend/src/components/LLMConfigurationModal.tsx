@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Layers, Lock, Upload } from 'lucide-react'
+import { X, Settings, Lock } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore, useChatStore } from '../stores'
@@ -16,80 +16,25 @@ import { CodexCLISection } from './CodexCLISection'
 import { MiniMaxSection } from './MiniMaxSection'
 import { MiniMaxCodingPlanSection } from './MiniMaxCodingPlanSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
-import { FallbacksTab } from './llm/FallbacksTab'
 import { LibraryTab } from './llm/LibraryTab'
+import { PROVIDER_ORDER, getProviderDisplayInfo, type ProviderType } from '../utils/llmDisplay'
 
 interface LLMConfigurationModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-// Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
-
 // Providers that use API keys (excludes claude-code which uses local CLI)
 type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan'
 
 // Tab type for the modal
-type TabType = 'fallbacks' | 'library' | ProviderType
+type TabType = 'library' | ProviderType
 
 type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 
 type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
 
 type APIKeyError = Record<APIKeyProviderType, string | null>
-
-/** Small button that saves all configured API keys to the server for scheduled runs. */
-function SaveKeysToServerButton() {
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-
-  const handleSave = async () => {
-    setStatus('saving')
-    try {
-      const store = useLLMStore.getState()
-      const { providerKeysApi } = await import('../api/scheduler')
-      await providerKeysApi.save({
-        openrouter: store.openrouterConfig?.api_key || undefined,
-        openai: store.openaiConfig?.api_key || undefined,
-        anthropic: store.anthropicConfig?.api_key || undefined,
-        vertex: store.vertexConfig?.api_key || undefined,
-        gemini_cli: store.geminiCliApiKey || undefined,
-        minimax: store.minimaxConfig?.api_key || undefined,
-        minimax_coding_plan: store.minimaxCodingPlanConfig?.api_key || undefined,
-        bedrock: store.bedrockConfig?.region ? { region: store.bedrockConfig.region } : undefined,
-        azure: store.azureConfig?.endpoint && store.azureConfig?.api_key
-          ? {
-              endpoint: store.azureConfig.endpoint,
-              api_key: store.azureConfig.api_key,
-              api_version: (store.azureConfig.options?.api_version as string) || undefined,
-              region: store.azureConfig.region || undefined,
-            }
-          : undefined,
-      })
-      setStatus('saved')
-      setTimeout(() => setStatus('idle'), 2000)
-    } catch {
-      setStatus('error')
-      setTimeout(() => setStatus('idle'), 3000)
-    }
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={handleSave}
-      disabled={status === 'saving'}
-      className="text-xs gap-1"
-    >
-      <Upload className="w-3 h-3" />
-      {status === 'idle' && 'Save keys to server'}
-      {status === 'saving' && 'Saving...'}
-      {status === 'saved' && 'Saved!'}
-      {status === 'error' && 'Failed'}
-    </Button>
-  )
-}
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -496,27 +441,17 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   <Settings className="w-4 h-4" />
                 </button>
 
-                <button
-                  onClick={() => setActiveTab('fallbacks')}
-                  className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
-                    activeTab === 'fallbacks' ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
-                  }`}
-                >
-                  <div className="flex-1">
-                    <div className="font-medium">Global Fallbacks</div>
-                    <div className="text-xs opacity-75">Chain configuration</div>
-                  </div>
-                  <Layers className="w-4 h-4" />
-                </button>
-
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'minimax-coding-plan', 'claude-code', 'gemini-cli', 'codex-cli'] as const)
+                {PROVIDER_ORDER
                   .filter(provider => {
                     const supported = isProviderSupported(provider)
                     console.log('[LLMModal] provider', provider, 'supported:', supported)
                     return supported
                   })
                   .map((provider) => (
+                  (() => {
+                    const providerInfo = getProviderDisplayInfo(provider)
+                    return (
                   <button
                     key={provider}
                     onClick={() => setActiveTab(provider as typeof activeTab)}
@@ -525,34 +460,27 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider === 'codex-cli' ? 'Codex CLI' : provider === 'minimax' ? 'MiniMax' : provider === 'minimax-coding-plan' ? 'MiniMax Coding Plan' : provider}</div>
+                      <div className="font-medium">{providerInfo.name}</div>
                       <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : provider === 'codex-cli' ? 'Local CLI (API key optional)' : provider === 'minimax-coding-plan' ? 'Coding Plan Key (sk-cp-)' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : providerInfo.authDescription}
                       </div>
                     </div>
                     {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
                   </button>
+                    )
+                  })()
                 ))}
               </div>
             </div>
 
             {/* Right Content */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
-              {activeTab === 'fallbacks' && modeAgentConfig && (
-                <FallbacksTab
-                  config={modeAgentConfig}
-                  onUpdate={setModeAgentConfig}
-                  metadata={metadata}
-                  isLoadingMetadata={isLoadingMetadata}
-                />
-              )}
-
               {activeTab === 'library' && (
                 <LibraryTab onSelect={handleLibrarySelect} />
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && activeTab !== 'codex-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
+              {activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && activeTab !== 'codex-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
@@ -657,11 +585,12 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {activeTab === 'claude-code' && (
-                <ClaudeCodeSection />
+                <ClaudeCodeSection metadata={metadata} />
               )}
 
               {activeTab === 'gemini-cli' && (
                 <GeminiCLISection
+                  metadata={metadata}
                   onModelChange={(modelId) => {
                     if (modePrimaryConfig.provider === 'gemini-cli') {
                       const newPrimaryConfig: LLMConfiguration = {
@@ -683,7 +612,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {activeTab === 'codex-cli' && (
-                <CodexCLISection />
+                <CodexCLISection metadata={metadata} />
               )}
             </div>
           </div>
@@ -696,7 +625,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <SaveKeysToServerButton />
               <Button variant="outline" onClick={onClose}>Close</Button>
             </div>
           </div>

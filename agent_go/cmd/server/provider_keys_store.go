@@ -12,10 +12,10 @@ import (
 	"net/http"
 )
 
-const providerKeysFilePath = "provider-api-keys.json"
+const providerKeysFilePath = "config/provider-api-keys.json"
 
 // StoredProviderKeys holds all LLM provider API keys in a single global structure.
-// Encrypted and stored in the workspace as provider-api-keys.enc.
+// Encrypted and stored in the workspace config folder.
 type StoredProviderKeys struct {
 	OpenRouter        string               `json:"openrouter,omitempty"`
 	OpenAI            string               `json:"openai,omitempty"`
@@ -24,8 +24,8 @@ type StoredProviderKeys struct {
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
-	Bedrock           *StoredBedrockConfig  `json:"bedrock,omitempty"`
-	Azure             *StoredAzureConfig    `json:"azure,omitempty"`
+	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
+	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
 }
 
 // StoredBedrockConfig holds Bedrock region config.

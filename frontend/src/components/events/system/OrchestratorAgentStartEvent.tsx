@@ -3,29 +3,8 @@ import type { OrchestratorAgentStartEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
 import { useExpandable } from '../useExpandable';
 import { Plus, Minus } from 'lucide-react';
-
-const MINIMAX_CODING_PLAN_NAMES: Record<string, string> = {
-  'claude-opus-4-6': 'Claude Opus 4.6 (MiniMax)',
-  'claude-sonnet-4-5': 'Claude Sonnet 4.5 (MiniMax)',
-  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5 (MiniMax)',
-}
-
-function getModelDisplayName(modelId?: string, provider?: string): string {
-  if (!modelId) return 'Unknown'
-  if (provider === 'minimax-coding-plan') {
-    return MINIMAX_CODING_PLAN_NAMES[modelId] ?? modelId
-  }
-  if (provider === 'codex-cli') {
-    return `Codex CLI ${modelId === 'codex-cli' ? '(Auto)' : modelId}`
-  }
-  if (provider === 'claude-code') {
-    return `Claude Code ${modelId === 'claude-code' ? '(Auto)' : modelId}`
-  }
-  if (provider === 'gemini-cli') {
-    return `Gemini CLI ${modelId === 'gemini-cli' || modelId === 'auto' ? '(Auto)' : modelId}`
-  }
-  return modelId
-}
+import { useLLMStore } from '../../../stores'
+import { getModelDisplayName } from '../../../utils/llmDisplay'
 
 function formatWorkshopIteration(iteration?: number, inputIteration?: string): string | null {
   if (inputIteration && inputIteration.trim() !== '') return inputIteration
@@ -42,6 +21,9 @@ interface OrchestratorAgentStartEventDisplayProps {
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
   const { isExpanded: isInputsExpanded, toggle } = useExpandable(true)
+  const savedLLMs = useLLMStore(state => state.savedLLMs)
+  const availableLLMs = useLLMStore(state => state.availableLLMs)
+  const modelMetadataCatalog = useLLMStore(state => state.modelMetadataCatalog)
   const modeFlags = event as OrchestratorAgentStartEvent & {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
@@ -203,6 +185,13 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const hasSystemPrompt = !!(event as OrchestratorAgentStartEvent & { system_prompt?: string }).system_prompt;
   const hasUserMessage = !!(event as OrchestratorAgentStartEvent & { user_message?: string }).user_message;
   const hasExpandableContent = event.objective || (event.input_data && event.input_data.context) || hasInputData || hasSystemPrompt || hasUserMessage;
+  const modelDisplayName = getModelDisplayName({
+    provider: event.provider,
+    modelId: event.model_id,
+    metadata: modelMetadataCatalog,
+    savedLLMs,
+    availableLLMs,
+  })
 
   return (
     <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200 ${isWorkshopStep ? 'border-l-4 ml-2' : ''}`}>
@@ -222,7 +211,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                   {modeFlags.use_tool_search_mode && ' | Tool Search'}
                   {workshopMeta
                     ? ` | ${workshopMeta}`
-                    : ` | Model: ${getModelDisplayName(event.model_id, event.provider)} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}
+                    : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 </span>
                 {isCollapsed && eventCount !== undefined && (

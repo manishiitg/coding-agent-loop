@@ -20,14 +20,19 @@ import (
 )
 
 const (
-	DefaultFinalOutputFilename = "final_output.md"
-	DefaultOutputPlanPath      = "planning/output_plan.json"
-	defaultOutputStepID        = "final-output"
-	internalOutputRunFolder    = "__report_generation"
-	internalOutputStepID       = "final-output-generation"
-	maxFinalOutputFiles        = 80
-	maxFinalOutputFileChars    = 12000
+	DefaultFinalOutputFilename    = "final_output.md"
+	DefaultOutputPlanPath         = "planning/output_plan.json"
+	DefaultFinalOutputReportsRoot = "reports"
+	defaultOutputStepID           = "final-output"
+	internalOutputRunFolder       = "__report_generation"
+	internalOutputStepID          = "final-output-generation"
+	maxFinalOutputFiles           = 80
+	maxFinalOutputFileChars       = 12000
 )
+
+const defaultFinalOutputTitle = "Execution Summary"
+
+const defaultFinalOutputInstructions = "Summarize what happened during execution for someone reviewing the run later. Cover the workflow goal, the major steps completed, key outputs or artifacts produced, important failures or retries, and any follow-up a human should know."
 
 // workshopInternalRunFolderForTarget normalizes non-execution workshop modes to the
 // builder-style iteration-0 sandbox while preserving the group suffix when present.
@@ -44,6 +49,33 @@ func workshopInternalRunFolderForTarget(targetRunFolder string) string {
 		return filepath.ToSlash(filepath.Join("iteration-0", parts[len(parts)-1]))
 	}
 	return "iteration-0"
+}
+
+func FinalOutputArchiveGroup(runFolder string) string {
+	runFolder = filepath.ToSlash(strings.TrimSpace(runFolder))
+	if runFolder == "" {
+		return ""
+	}
+	parts := strings.Split(runFolder, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
+func finalOutputArchiveTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	return ts.UTC().Format("2006-01-02_15-04-05_000000Z")
+}
+
+func BuildFinalOutputArchivePath(runFolder string, ts time.Time) string {
+	groupName := FinalOutputArchiveGroup(runFolder)
+	if groupName == "" {
+		groupName = "unknown-group"
+	}
+	return filepath.ToSlash(filepath.Join(DefaultFinalOutputReportsRoot, groupName, finalOutputArchiveTimestamp(ts)+".md"))
 }
 
 // WorkflowFinalOutputConfig is a simplified view of the primary output step.
@@ -227,6 +259,59 @@ func ConvertOutputPlanToFinalOutputConfig(plan *WorkflowOutputPlan) *WorkflowFin
 	}
 }
 
+func DefaultWorkflowOutputPlanStep() *WorkflowOutputPlanStep {
+	step := &WorkflowOutputPlanStep{
+		ID:             defaultOutputStepID,
+		Title:          defaultFinalOutputTitle,
+		Instructions:   defaultFinalOutputInstructions,
+		OutputFilename: DefaultFinalOutputFilename,
+		Enabled:        true,
+	}
+	step.Normalize()
+	return step
+}
+
+func DefaultWorkflowFinalOutputConfig() *WorkflowFinalOutputConfig {
+	step := DefaultWorkflowOutputPlanStep()
+	return &WorkflowFinalOutputConfig{
+		Enabled:        true,
+		Title:          step.Title,
+		Instructions:   step.Instructions,
+		OutputFilename: step.OutputFilename,
+	}
+}
+
+func ResolveWorkflowOutputStep(plan *WorkflowOutputPlan) (*WorkflowOutputPlanStep, bool) {
+	if plan == nil {
+		return DefaultWorkflowOutputPlanStep(), true
+	}
+	if step := plan.PrimaryStep(); step != nil {
+		clone := *step
+		clone.Normalize()
+		return &clone, false
+	}
+	if step := plan.FirstStep(); step != nil {
+		return nil, false
+	}
+	return DefaultWorkflowOutputPlanStep(), true
+}
+
+func ResolveWorkflowFinalOutputConfig(plan *WorkflowOutputPlan) (*WorkflowFinalOutputConfig, bool) {
+	step, isDefault := ResolveWorkflowOutputStep(plan)
+	if step == nil {
+		return nil, false
+	}
+	if isDefault {
+		return DefaultWorkflowFinalOutputConfig(), true
+	}
+	return &WorkflowFinalOutputConfig{
+		Enabled:        step.Enabled,
+		Title:          step.Title,
+		Instructions:   step.Instructions,
+		OutputFilename: step.OutputFilename,
+	}, false
+}
+
 type WorkflowFinalOutputAgent struct {
 	*agents.BaseOrchestratorAgent
 }
@@ -334,13 +419,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	outputStep := outputPlan.PrimaryStep()
+	outputStep, _ := ResolveWorkflowOutputStep(outputPlan)
 	if outputStep == nil {
 		return nil, fmt.Errorf("no enabled output step found in planning/output_plan.json")
 	}
 
-	config := ConvertOutputPlanToFinalOutputConfig(outputPlan)
-	outputRelativePath := filepath.ToSlash(filepath.Join("runs", runFolder, outputStep.OutputFilename))
+	config, _ := ResolveWorkflowFinalOutputConfig(outputPlan)
+	archiveRelativePath := BuildFinalOutputArchivePath(runFolder, time.Now().UTC())
 	runRelativePath := filepath.ToSlash(filepath.Join("runs", runFolder))
 	_, artifactSummary, _, err := hcpo.collectFinalOutputArtifacts(ctx, runRelativePath, outputStep.OutputFilename)
 	if err != nil {
@@ -435,14 +520,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 		return nil, fmt.Errorf("final output step created an empty markdown file")
 	}
 
-	if err := hcpo.WriteWorkspaceFile(ctx, outputRelativePath, result); err != nil {
-		return nil, fmt.Errorf("failed to publish final output markdown: %w", err)
+	if err := hcpo.WriteWorkspaceFile(ctx, archiveRelativePath, result); err != nil {
+		return nil, fmt.Errorf("failed to publish final output markdown archive: %w", err)
 	}
 
 	return &finalOutputResponse{
 		Success:    true,
 		RunFolder:  runFolder,
-		OutputPath: outputRelativePath,
+		OutputPath: archiveRelativePath,
 		Content:    result,
 		Exists:     true,
 		Config:     config,
@@ -592,8 +677,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoFinalOutput(ctx context.C
 	if err != nil {
 		return fmt.Errorf("failed to check output plan: %w", err)
 	}
-	if outputPlan == nil || outputPlan.PrimaryStep() == nil {
-		hcpo.GetLogger().Info("ℹ️ No enabled output step found - skipping auto-output")
+	outputStep, isDefault := ResolveWorkflowOutputStep(outputPlan)
+	if outputStep == nil {
+		hcpo.GetLogger().Info("ℹ️ Output plan is explicitly disabled - skipping auto-output")
 		return nil
 	}
 
@@ -603,7 +689,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoFinalOutput(ctx context.C
 		return nil
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📝 Starting auto-output generation for run folder: %s", targetRunFolder))
+	if isDefault {
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Starting default execution-summary report generation for run folder: %s", targetRunFolder))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Starting auto-output generation for run folder: %s", targetRunFolder))
+	}
 	_, err = hcpo.GenerateFinalOutput(ctx, hcpo.GetObjective(), targetRunFolder)
 	if err != nil {
 		return fmt.Errorf("auto-output generation failed: %w", err)
@@ -623,7 +713,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteFinalOutputOnly(ctx context.Co
 	if err != nil {
 		return "", fmt.Errorf("failed to check report plan: %w", err)
 	}
-	if outputPlan == nil || outputPlan.PrimaryStep() == nil {
+	if outputStep, _ := ResolveWorkflowOutputStep(outputPlan); outputStep == nil {
 		return "", fmt.Errorf("no enabled output step found in %s", DefaultOutputPlanPath)
 	}
 	if targetRunFolder == "" {

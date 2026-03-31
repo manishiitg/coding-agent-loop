@@ -68,6 +68,11 @@ type JSONCheckResult struct {
 // WorkspaceToolExecutors is a type alias for the workspace tool executors map
 type WorkspaceToolExecutors map[string]interface{}
 
+type validationPathScopes struct {
+	StepExecutionPath string
+	WorkflowRootPath  string
+}
+
 // RunPreValidation runs pre-validation on a step's output
 // validationSchema can be passed directly (preferred) or extracted from PlanStepInterface
 // If validationSchema is nil, pre-validation is skipped and a result indicating skip is returned
@@ -225,7 +230,8 @@ func validateFile(
 		JSONChecks: []JSONCheckResult{},
 	}
 
-	// Validate file path (prevent path traversal)
+	// Resolve schema path against the correct scope.
+	// Bare filenames are step-local; workflow paths like knowledgebase/... are workflow-root relative.
 	fullPath, err := validateFilePath(workspacePath, fileRule.FileName)
 	if err != nil {
 		// Path validation failed - add error and return
@@ -916,40 +922,94 @@ func getNumericValue(value interface{}) (float64, bool) {
 	}
 }
 
-// validateFilePath validates and sanitizes a file path to prevent path traversal
+// validateFilePath resolves a validation schema file path to either the step execution folder
+// or the workflow root and rejects paths outside the current workflow workspace.
 func validateFilePath(workspacePath string, fileName string) (string, error) {
-	// Reject absolute paths
-	if filepath.IsAbs(fileName) {
-		return "", fmt.Errorf("absolute paths not allowed")
+	scopes := deriveValidationPathScopes(workspacePath)
+	cleanPath, err := sanitizeValidationFileName(fileName)
+	if err != nil {
+		return "", err
 	}
 
-	// Reject paths with ".."
-	if strings.Contains(fileName, "..") {
+	// Absolute /app/workspace-docs paths are allowed only when they stay inside the current workflow.
+	if filepath.IsAbs(cleanPath) {
+		return resolveAbsoluteValidationPath(cleanPath, scopes)
+	}
+
+	// Allow callers that already pass a full workflow-relative or step-relative path.
+	if cleanPath == scopes.WorkflowRootPath || strings.HasPrefix(cleanPath, scopes.WorkflowRootPath+"/") {
+		return cleanPath, nil
+	}
+	if cleanPath == scopes.StepExecutionPath || strings.HasPrefix(cleanPath, scopes.StepExecutionPath+"/") {
+		return cleanPath, nil
+	}
+	if strings.HasPrefix(cleanPath, "Workflow/") {
+		return "", fmt.Errorf("path outside workflow workspace")
+	}
+
+	if isWorkflowRootValidationPath(cleanPath) {
+		return filepath.Join(scopes.WorkflowRootPath, cleanPath), nil
+	}
+
+	return filepath.Join(scopes.StepExecutionPath, cleanPath), nil
+}
+
+func deriveValidationPathScopes(stepExecutionPath string) validationPathScopes {
+	cleanStepPath := filepath.Clean(strings.TrimSpace(stepExecutionPath))
+	workflowRootPath := cleanStepPath
+
+	if idx := strings.Index(cleanStepPath, "/runs/"); idx > 0 {
+		workflowRootPath = cleanStepPath[:idx]
+	} else if idx := strings.Index(cleanStepPath, "/execution/"); idx > 0 {
+		workflowRootPath = cleanStepPath[:idx]
+	}
+
+	return validationPathScopes{
+		StepExecutionPath: cleanStepPath,
+		WorkflowRootPath:  workflowRootPath,
+	}
+}
+
+func sanitizeValidationFileName(fileName string) (string, error) {
+	trimmed := strings.TrimSpace(fileName)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty file path")
+	}
+
+	if !filepath.IsAbs(trimmed) && strings.Contains(trimmed, "..") {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 
-	// Clean the path
-	cleanPath := filepath.Clean(fileName)
+	return filepath.Clean(trimmed), nil
+}
 
-	// Join with workspace path
-	fullPath := filepath.Join(workspacePath, cleanPath)
+func resolveAbsoluteValidationPath(fileName string, scopes validationPathScopes) (string, error) {
+	docsRoot := filepath.Clean(GetPromptDocsRoot())
+	workflowRootAbs := filepath.Join(docsRoot, scopes.WorkflowRootPath)
+	cleanAbsPath := filepath.Clean(fileName)
 
-	// Verify the result is still within workspace
-	workspaceAbs, err := filepath.Abs(workspacePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get absolute workspace path: %w", err)
+	if !strings.HasPrefix(cleanAbsPath, docsRoot+"/") && cleanAbsPath != docsRoot {
+		return "", fmt.Errorf("absolute path outside workspace docs root")
+	}
+	if !strings.HasPrefix(cleanAbsPath, workflowRootAbs+"/") && cleanAbsPath != workflowRootAbs {
+		return "", fmt.Errorf("absolute path outside workflow workspace")
 	}
 
-	fullPathAbs, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get absolute file path: %w", err)
+	return strings.TrimPrefix(cleanAbsPath, docsRoot+"/"), nil
+}
+
+func isWorkflowRootValidationPath(fileName string) bool {
+	topLevel := fileName
+	if idx := strings.Index(fileName, "/"); idx >= 0 {
+		topLevel = fileName[:idx]
 	}
 
-	if !strings.HasPrefix(fullPathAbs, workspaceAbs) {
-		return "", fmt.Errorf("path outside workspace")
+	switch topLevel {
+	case "knowledgebase", "planning", "variables", "learnings", "memory", "output", "evaluation", "runs", "logs":
+		return true
+	default:
+		return false
 	}
-
-	return fullPath, nil
 }
 
 // formatWorkspaceResults formats the pre-validation results for the validation agent

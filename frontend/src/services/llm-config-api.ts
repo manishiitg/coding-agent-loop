@@ -4,7 +4,8 @@ import type {
   LLMDefaultsResponse,
   APIKeyValidationRequest,
   APIKeyValidationResponse,
-  DelegationTierConfig
+  DelegationTierConfig,
+  SavedLLM,
 } from './api-types'
 
 export interface ModelMetadata {
@@ -13,6 +14,9 @@ export interface ModelMetadata {
   context_window: number
   input_cost_per_1m: number
   output_cost_per_1m: number
+  reasoning_cost_per_1m?: number
+  cached_input_cost_per_1m?: number
+  cached_input_cost_write_per_1m?: number
   provider: string
   supports_reasoning_effort?: boolean
   reasoning_effort_levels?: string[]
@@ -75,6 +79,18 @@ export const llmConfigService = {
   // Get delegation tier defaults from environment variables
   getDelegationTierDefaults: async (): Promise<DelegationTierConfig> => {
     const response = await llmConfigApi.get('/api/llm-config/delegation-tiers')
+    return response.data
+  },
+
+  // Load published LLMs from the workspace config folder
+  getPublishedLLMs: async (): Promise<SavedLLM[]> => {
+    const response = await llmConfigApi.get('/api/published-llms')
+    return response.data
+  },
+
+  // Save published LLMs to the workspace config folder
+  savePublishedLLMs: async (llms: SavedLLM[]): Promise<{ status: string }> => {
+    const response = await llmConfigApi.put('/api/published-llms', llms)
     return response.data
   },
 }

@@ -779,7 +779,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Step config & analysis tools
 	stepConfig := []string{
 		"update_step_config", "analyze_step", "generate_learnings", "optimize_step",
-		"infer_objective", "set_workflow_objective", "optimize_workflow", "mark_workflow_optimized",
+		"infer_objective", "set_workflow_objective", "optimize_workflow", "review_plan", "mark_workflow_optimized",
 		"replan_workflow_from_results",
 	}
 
@@ -1213,11 +1213,11 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
 **When creating or configuring each step, choose its execution mode (preference order):**
-1. **Code execution mode** (best): step is deterministic or can be stabilized into reusable Python — data transforms, file processing, calculations, fixed API calls, or only very stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first.
-2. **Tool search mode**: exact tools aren't known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
+1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first.
+2. **Tool search mode**: use when discovery is intrinsic to the task — the exact tools, resources, or paths genuinely are not known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
 3. **Simple mode** (default): single tool call, no config needed
 
-When in doubt: if the step is browser-heavy, depends on interactive page inspection, or will likely take many tool calls, start with tool_search. Choose code_exec only when the full flow can be stabilized into one reusable script.
+When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? Stable logic → code_exec. Runtime discovery → tool_search. If the step is browser-heavy, depends on interactive page inspection, or will likely take many tool calls, start with tool_search unless the full flow can clearly be stabilized into one reusable script.
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
@@ -1230,20 +1230,21 @@ When in doubt: if the step is browser-heavy, depends on interactive page inspect
 3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — confirm by checking `+"`planning/plan.json`"+`. Only if it is truly missing there should you run `+"`infer_objective`"+`, then confirm the result with the user before saving it. Never call `+"`infer_objective`"+` when `+"`objective`"+` already exists in `+"`planning/plan.json`"+`.{{end}}
 4. Once both are set, run `+"`optimize_workflow`"+` **once** at the start. It analyzes the full plan — including nested orchestrators and evaluation coverage — against the objective and success criteria. **Fix all structural issues before touching individual steps.**
 5. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools. Do NOT defer to the user.
-6. If the workflow has already run and the **actual outputs / validation failures / eval results** show that the current plan still misses the success criteria, run `+"`replan_workflow_from_results(target_run_folder)`"+` before step-by-step optimization. That tool rewrites the plan from evidence, not from static structure alone.
-7. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires, and what is the strongest execution mode it can support?**
-8. If a todo_task workflow still uses legacy sub-agent IDs where `+"`route_id`"+` and `+"`sub_agent_step.id`"+` differ (for example `+"`icici-login`"+` vs `+"`task-icici-login`"+`), run `+"`migrate_todo_route_ids`"+` before optimizing those sub-agents.
+6. Use `+"`review_plan`"+` when you want a critical findings-first pass on the decisions already made. This is especially useful before locking a workflow or after major plan edits, because it challenges weak assumptions without rewriting the plan automatically.
+7. If the workflow has already run and the **actual outputs / validation failures / eval results** show that the current plan still misses the success criteria, run `+"`replan_workflow_from_results(target_run_folder)`"+` before step-by-step optimization. That tool rewrites the plan from evidence, not from static structure alone.
+8. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires, and what is the best-fit execution mode it can support?**
+9. If a todo_task workflow still uses legacy sub-agent IDs where `+"`route_id`"+` and `+"`sub_agent_step.id`"+` differ (for example `+"`icici-login`"+` vs `+"`task-icici-login`"+`), run `+"`migrate_todo_route_ids`"+` before optimizing those sub-agents.
 
 **IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
 
-**Optimization is discovery-driven:** optimize by running the step, inspecting what actually happened, and then moving it toward the strongest viable execution mode in this order: `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`. Do not assume the current mode is correct just because it is already configured.
+**Optimization is discovery-driven:** optimize by running the step and inspecting what actually happened. Decide whether the step is fundamentally a `+"`code_exec`"+` problem (stable logic with known tools), a `+"`tool_search`"+` problem (runtime discovery is part of the work), or a `+"`simple`"+` problem (tiny/direct). Do not assume `+"`code_exec`"+` is always stronger than `+"`tool_search`"+`.
 
 **Optimization workflow depends on the step's execution mode:**
 
 **For scripted code steps** (`+"`use_code_execution_mode=true`"+` or legacy `+"`use_learn_code_mode=true`"+`):
 1. **Check mode** — Read step_config.json. If step isn't in scripted code mode yet, set it: update_step_config(step_id, use_code_execution_mode=true)
 2. **Run the step** — execute_step(step_id). The controller first tries saved main.py from learnings/{step-id}/. If needed, the LLM writes/repairs main.py and the controller saves it back on success.
-3. **Run optimize_step(step_id)** — uses the observed run plus the saved main.py to decide whether code_exec is truly the strongest viable mode, whether the script is correct, and what cleanup would make it stable across groups/runs.
+3. **Run optimize_step(step_id)** — uses the observed run plus the saved main.py to decide whether `+"`code_exec`"+` is still the best fit for this step, whether the script is correct, and what cleanup would make it stable across groups/runs.
 4. **Apply script fixes** — Two options:
    - **Small fix** (logic bug, wrong field): Edit learnings/{step-id}/main.py directly with diff_patch_workspace_file. Next run uses the updated script immediately.
    - **Full rewrite needed**: Delete learnings/{step-id}/main.py (and script_metadata.json) via execute_shell_command, then re-run. LLM rewrites from scratch.
@@ -1262,7 +1263,8 @@ When in doubt: if the step is browser-heavy, depends on interactive page inspect
    - Did it search for tools that should already be configured? (wasted turns)
    - Did it call the wrong server/tool names? (stale learnings)
    - Could the same result be achieved with fewer tool calls?
-   - Could the work be moved upward in the mode ladder: from `+"`tool_search`"+` to `+"`code_exec`"+`?
+   - Was tool discovery actually necessary, or was the agent searching because the step/config was vague?
+   - Should this remain `+"`tool_search`"+`, or can it be stabilized into `+"`code_exec`"+`?
 4. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/SKILL.md
    - Do they reference the correct server/tool names matching the step config?
    - Are they guiding the agent to use the minimum number of tool calls?
@@ -1277,7 +1279,7 @@ When in doubt: if the step is browser-heavy, depends on interactive page inspect
    - No wasted tool calls (minimum necessary calls only)
    - Learnings guided the agent correctly
    - Output passes validation
-   - The step is now using the strongest viable mode discovered from the run evidence
+   - The step is now using the best-fit mode discovered from the run evidence
 8. **Mark optimized** — When the step has **at least 3 successful runs** and runs cleanly: update_step_config(step_id, optimized=true)
    - Setting optimized=true also locks learnings automatically (they always move together)
    - **Cost impact**: optimized steps automatically use **lower-cost LLM tiers** at runtime
@@ -1313,11 +1315,11 @@ Update: update_step_config(step_id, use_tool_search_mode=true)
 
 **4. Simple mode** (no config needed) — for single-tool-call steps only.
 
-**Browser automation guidance:** Do NOT blanket-ban Python for browser steps. Use **code_exec** for browser workflows only when they can be scripted end-to-end with stable selectors and predictable control flow. If the browser work will likely require lots of tool calls, repeated inspection, or deciding each action from live page state, prefer **tool_search** instead of code_exec. Keep a browser step in **simple** mode only when the work is genuinely tiny and does not benefit from reusable scripting or adaptive tool discovery.
+**Browser automation guidance:** Do NOT blanket-ban Python for browser steps. Use **code_exec** when the browser flow can be scripted with known selectors/navigation and the control flow is stable. Use **tool_search** when the browser work genuinely depends on discovering the right tool/resource/path at runtime, or when it needs lots of tool calls, repeated inspection, or adaptive action selection. Keep a browser step in **simple** mode only when the work is genuinely tiny or the agent must inspect page state turn-by-turn and decide interactively after each action.
 
-**When reviewing a step during optimization**: ask "can this step be stabilized into reusable Python?" If yes, and the browser/API flow is predictable, switch to code_exec. If the step needs repeated browser inspection, many tool calls, or adaptive action selection, prefer tool_search. Default to the strongest mode the run evidence supports, not blindly to code_exec.
+**When reviewing a step during optimization**: ask "is the hard part reusable logic, or runtime discovery?" Reusable logic → `+"`code_exec`"+`. Runtime discovery that is intrinsic to the task, especially for browser-heavy adaptive flows, → `+"`tool_search`"+`. Tiny direct action → `+"`simple`"+`.
 
-**Goal**: Each step should run with the **fewest possible LLM tokens and tool calls**. Reusable `+"`code_exec`"+` is the gold standard — stable steps often hit 0 tokens after the first run. Simple mode for trivial steps. Tool search only when unavoidable.
+**Goal**: Each step should run with the **fewest possible LLM tokens and tool calls while still using the right mode for the job**. Reusable `+"`code_exec`"+` is excellent for stable logic. `+"`tool_search`"+` is the right answer when discovery is the real work, not merely a temporary inconvenience.
 
 If structural changes are needed (add/remove/reorder steps based on optimize_workflow output), use plan modification tools directly — same tools available as in Build mode.
 {{else if eq .WorkshopMode "debugger"}}
@@ -1339,17 +1341,17 @@ If structural changes are needed (add/remove/reorder steps based on optimize_wor
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
 2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
 3. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-4. Prefer **code_exec** for eval steps whenever the check can be expressed as deterministic Python over files, JSON, markdown, or structured outputs. Eval steps should maximize saved Python logic (`+"`main.py`"+`) so scoring is reproducible and cheap. Use **tool_search** only as a last resort.
+4. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
 5. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
    - `+"`declared_execution_mode`"+` + `+"`declared_execution_mode_reason`"+`
-   - rejection reasons for stronger modes not chosen
+   - rejection reasons for other plausible modes not chosen
    - `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`, `+"`description_learnings_alignment_reason`"+`
    - `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
    The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
 6. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
 7. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
 8. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
-9. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the strongest viable execution mode for that eval step.
+9. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
 10. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
 11. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
 
@@ -1369,8 +1371,8 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 1. Edit `+"`planning/output_plan.json`"+` directly using shell/file tools.
 2. Keep the file in the single-step report-plan shape — one `+"`step`"+` object, not a `+"`steps`"+` array.
 3. After editing, run **validate_report_plan** to confirm the JSON is valid and the report step shape is acceptable.
-4. Prefer **code_exec** for deterministic report-prep logic: aggregating metrics, building tables, extracting evidence, preparing chart JSON, or composing stable markdown sections from structured data.
-5. The final narrative markdown-writing step may intentionally stay **code_exec** or LLM-driven if prose quality, emphasis, or judgment matters.
+4. Choose report-step mode by the kind of work being done. Use **code_exec** for stable report-prep logic: aggregating metrics, building tables, extracting evidence, preparing chart JSON, or composing repeatable markdown sections from structured data.
+5. Use **tool_search** when the report step genuinely depends on discovering which files, artifacts, or resources are relevant at runtime. The final narrative markdown-writing layer may intentionally stay **code_exec**, **simple**, or more open-ended if prose quality, emphasis, or judgment matters.
 6. Use **pre_validation** on the report step when the final markdown must satisfy concrete file checks.
 7. Keep the report focused on human review: what happened, what succeeded, what failed, what was produced, and what should be reviewed later.
 8. If the user wants lightweight visuals in the markdown report, ask for fenced `+"`chart`"+` blocks with JSON data using supported types `+"`bar`"+` or `+"`line`"+`.
@@ -1704,19 +1706,21 @@ Steps have three execution modes — set via **update_step_config(step_id, use_c
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
   - Stable browser automation with known selectors, predictable navigation, and a reusable scripted flow
   - The user explicitly asks for code execution mode
-- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools aren't known upfront or the step needs to adapt to available tools.
-- Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection.
+- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools, resources, or paths genuinely are not known upfront and discovery is part of the task itself.
+- Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection, unless the full browser flow can clearly be stabilized into one reusable script.
 
 `+"`use_learn_code_mode`"+` remains as a deprecated alias for older plans, but the canonical scripted mode is now `+"`code_exec`"+`.
+
+Choose the mode that best matches the work. `+"`code_exec`"+` is not automatically better than `+"`tool_search`"+` — if discovery is intrinsic, `+"`tool_search`"+` is the correct answer. Likewise, `+"`simple`"+` is often best for tiny direct tasks where scripting or discovery would add overhead.
 
 **Mode declaration is required**: Every optimized step must also store:
 - `+"`declared_execution_mode`"+`
 - `+"`declared_execution_mode_reason`"+`
-- rejection reasons for stronger modes that were not chosen:
+- rejection reasons for the other modes that were not chosen:
   - not `+"`code_exec`"+` → `+"`code_exec_rejection_reason`"+`
-  - not `+"`tool_search`"+` when using `+"`simple`"+` → `+"`tool_search_rejection_reason`"+`
+  - not `+"`tool_search`"+` → `+"`tool_search_rejection_reason`"+`
 
-This is deliberate: it forces you to think through why the step is not using the stronger preferred mode. Do not mark a step optimized until these fields are filled in.
+This is deliberate: it forces you to think through why this mode fits better than the alternatives. Do not mark a step optimized until these fields are filled in.
 
 When the user asks to enable scripted execution for a step, use: update_step_config(step_id, use_code_execution_mode=true)
 If the user explicitly mentions legacy learn_code mode, you may still accept it, but normalize it to code_exec behavior.
@@ -1778,8 +1782,8 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 **Workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly with shell/file tools
 2. Default to **one eval step** when a single coherent deterministic check can cover the outcome. Split into multiple eval steps only for genuinely separate concerns.
-3. Default each eval step to `+"`code_exec`"+` when the check is deterministic. Favor saved Python over repeated LLM reasoning so evaluations stay reproducible and cheap.
-4. Use `+"`update_step_config`"+` to record each eval step's declared mode, why stronger modes were not chosen, and whether the description is optimized and free of secrets. In eval mode this persists to `+"`evaluation/step_config.json`"+`.
+3. Choose each eval step's mode by task shape. Use `+"`code_exec`"+` for stable deterministic checks, `+"`tool_search`"+` when runtime discovery is intrinsic to the evaluation, and `+"`simple`"+` for very small direct checks. Favor saved Python when it genuinely improves reproducibility and cost.
+4. Use `+"`update_step_config`"+` to record each eval step's declared mode, why the other plausible modes were not chosen, and whether the description is optimized and free of secrets. In eval mode this persists to `+"`evaluation/step_config.json`"+`.
 5. Run **validate_evaluation_plan** after editing
 6. Run **run_full_evaluation(target_run_folder)** to score against an execution run. Eval execution itself uses the internal `+"`iteration-0`"+` sandbox under `+"`evaluation/runs/`"+`.
 7. Run **optimize_eval_step(step_id, target_run_folder?)** when you need focused recommendations for one evaluation step
@@ -1826,6 +1830,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **infer_objective(focus?)** — Last resort only. Use this only after you have checked `+"`planning/plan.json`"+` and confirmed the root `+"`objective`"+` is actually missing. It infers the workflow objective from the plan and drafts success criteria from step outputs; returns both for user confirmation before saving
 - **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json (at least one required)
 - **optimize_workflow(focus?)** — Analyze the entire plan structure against the objective; flags structural issues (missing steps, wrong order, redundant steps, bad step types)
+- **review_plan(focus?, target_run_folder?)** — Critically review the current plan decisions and challenge weak assumptions, risky step boundaries, poor mode choices, hardcoded values, and gaps in justification. Read-only; findings first.
 - **replan_workflow_from_results(target_run_folder?, focus?)** — Rewrite the plan using actual outputs, validation failures, and evaluation results from a real run. Keeps the existing objective/success criteria as the north star.
 - **migrate_todo_route_ids(parent_step_id?, dry_run?)** — Upgrade older todo_task predefined routes to the single-ID model where `+"`route_id`"+` is also the canonical sub-agent step ID; updates plan.json and matching step_config/learnings IDs
 - **mark_workflow_optimized** — Code-based readiness check: verifies all steps are optimized, learnings present, pre-discovered tools set (for tool-search steps), eval plan exists, output plan configured, no orphan learnings or skill references. Marks workflow_optimized=true in plan.json only if all checks pass.{{end}}
@@ -4913,7 +4918,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b: optimize_step — background optimization agent
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_step",
-		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It discovers the strongest viable execution mode in order: code_exec, then tool_search, then simple. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
+		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It decides whether the step is fundamentally best served by code_exec, tool_search, or simple mode based on real evidence — without assuming code_exec is always better. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5101,7 +5106,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b2: optimize_eval_step — background optimization agent for a single evaluation step
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_eval_step",
-		"Start a background optimization agent that analyzes one evaluation step from evaluation/evaluation_plan.json. It focuses on scoring quality, determinism, pre_validation opportunities, redundancy, and the strongest viable execution mode for that eval step. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background optimization agent that analyzes one evaluation step from evaluation/evaluation_plan.json. It focuses on scoring quality, determinism, pre_validation opportunities, redundancy, and the best-fit execution mode for that eval step based on the actual kind of work it does. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5337,7 +5342,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b3: optimize_report_step — background optimization agent for the report/output step
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_report_step",
-		"Start a background optimization agent that analyzes one report step from planning/output_plan.json. It focuses on deterministic prep vs final narrative generation, markdown/report quality, chart/table opportunities, and the strongest viable execution mode for the report step. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background optimization agent that analyzes one report step from planning/output_plan.json. It focuses on deterministic prep vs final narrative generation, markdown/report quality, chart/table opportunities, and the best-fit execution mode for the report step based on the actual work involved. Returns execution_id immediately — you will be automatically notified when it completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5840,7 +5845,139 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_workflow tool: %v", err))
 	}
 
-	// Tool 7f: replan_workflow_from_results — background agent that rewrites the plan from actual run evidence
+	// Tool 7f: review_plan — background agent that critically reviews current plan decisions
+	if err := mcpAgent.RegisterCustomTool(
+		"review_plan",
+		"Start a background agent that critically reviews the current workflow plan and challenges the decisions already made: step boundaries, step types, mode choices, context flow, portability, and whether the plan decisions are actually justified by the objective, success criteria, and optional run evidence. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus for the review, e.g., 'step boundaries', 'mode decisions', 'context flow', 'hardcoded values', 'decision quality'.",
+				},
+				"target_run_folder": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional run folder to use as extra evidence while reviewing current plan decisions, e.g. 'iteration-3' or 'iteration-3/group-a'. If omitted, the review stays plan-centric unless a run folder is already selected.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+			targetRunFolder := ""
+			if val, ok := args["target_run_folder"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetRunFolder = strings.TrimSpace(s)
+				}
+			}
+			if targetRunFolder == "" {
+				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
+			}
+
+			execID := fmt.Sprintf("review-plan-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-review-plan-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "review-plan",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, "Review Workflow Plan")
+			}
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-review-plan",
+						AgentName:     "Review Workflow Plan",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.runReviewPlanAgent(execCtx, targetRunFolder, focus)
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+						} else {
+							exec.Status = WorkshopStepFailed
+						}
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-review-plan",
+						AgentName:     "Review Workflow Plan",
+						Success:       err == nil,
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+						Data: endEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Plan", result, nil, err)
+				}
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			runInfo := ""
+			if targetRunFolder != "" {
+				runInfo = fmt.Sprintf("\nTarget run folder: %s", targetRunFolder)
+			}
+			logger.Info(fmt.Sprintf("🧪 Workshop: review_plan agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
+			return fmt.Sprintf("Workflow plan review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, runInfo, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_plan tool: %v", err))
+	}
+
+	// Tool 7g: replan_workflow_from_results — background agent that rewrites the plan from actual run evidence
 	if err := mcpAgent.RegisterCustomTool(
 		"replan_workflow_from_results",
 		"Start a background agent that reads actual outputs, validation failures, and evaluation results from a real run, then rewrites planning/plan.json to better satisfy the existing objective and success criteria. This is result-driven replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
@@ -5971,7 +6108,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register replan_workflow_from_results tool: %v", err))
 	}
 
-	// Tool 7g: mark_workflow_optimized — code-based readiness check, no LLM
+	// Tool 7h: mark_workflow_optimized — code-based readiness check, no LLM
 	if err := mcpAgent.RegisterCustomTool(
 		"mark_workflow_optimized",
 		"Run a code-based readiness check and mark the workflow as optimized if all criteria pass. Checks: all executable steps are optimized, learnings exist for each step, pre-discovered tools set for tool-search steps, evaluation plan exists, output plan is configured, no orphan learnings or skill references. Writes workflow_optimized=true to plan.json only when every check passes. Returns a detailed checklist either way.",
@@ -7639,10 +7776,10 @@ var optimizationAgentSystemTemplate = MustRegisterTemplate("optimizationAgentSys
 You are a read-only step optimization analyst. You analyze execution logs, output files, learnings, and configuration for a specific workflow step and produce a structured report with actionable recommendations.
 
 ## ROLE
-Perform deep analysis of a step's observed executions and produce a comprehensive optimization report. Optimize by **discovery from real runs**, not by speculation. Your job is to infer the strongest viable execution mode from evidence in this order:
-1. `+"`code_exec`"+`
-2. `+"`tool_search`"+`
-3. `+"`simple`"+`
+Perform deep analysis of a step's observed executions and produce a comprehensive optimization report. Optimize by **discovery from real runs**, not by speculation. Your job is to determine whether the step is fundamentally best served by:
+1. `+"`code_exec`"+` for stable logic with known tools
+2. `+"`tool_search`"+` when runtime discovery is intrinsic to the task
+3. `+"`simple`"+` when the step is tiny and direct
 
 You are **read-only** — you do NOT modify any files, plans, or configurations.
 
@@ -7651,7 +7788,7 @@ You are **read-only** — you do NOT modify any files, plans, or configurations.
 2. **Be Specific**: Reference exact file paths, line numbers, field names, and values in your analysis.
 3. **Be Actionable**: Every recommendation must be something the user can act on immediately.
 4. **Prioritize by Impact**: Rank recommendations by how much they'd improve the step's reliability and output quality.
-5. **Use the mode ladder strictly**: Always test the step conceptually against `+"`code_exec`"+` first. Only reject it if the observed run shows why it cannot work. Then evaluate `+"`tool_search`"+`, then `+"`simple`"+`. Do not skip directly to weaker modes without explaining why stronger ones fail.
+5. **Compare modes by fit, not dogma**: Evaluate both `+"`code_exec`"+` and `+"`tool_search`"+` explicitly from the observed run. Do not assume `+"`code_exec`"+` is superior by default. Choose `+"`tool_search`"+` when discovery is genuinely part of the task, not just a symptom of vague instructions or bad config.
 
 ## STEP CONTEXT
 
@@ -7701,11 +7838,11 @@ All paths relative to workspace root:
 
 1. **Read execution logs first** — Treat the latest successful or failing run as the main evidence. Check the conversation history for tool calls, retries, dead ends, and whether the agent behaved deterministically or reactively.
 2. **Read actual output files** — Compare output against success criteria and validation schema.
-3. **Discover the strongest viable execution mode** — Evaluate in order:
+3. **Discover the best-fit execution mode** — Evaluate:
    - `+"`code_exec`"+`: Could the observed behavior be captured as a stable Python script with fixed inputs, env vars, deterministic outputs, and a reusable saved `+"`main.py`"+`?
-   - `+"`tool_search`"+`: Only if the observed run genuinely needed tool discovery that could not have been known up front.
-   - `+"`simple`"+`: Only if the step is truly tiny and direct.
-   For each rejected stronger mode, cite the concrete evidence from the run.
+   - `+"`tool_search`"+`: Did the observed run genuinely need runtime discovery of the right tool/resource/path, such that pre-scripting would be brittle or misleading?
+   - `+"`simple`"+`: Is the step truly tiny and direct, with little value from either scripting or discovery?
+   For each mode considered, cite the concrete evidence from the run.
 4. **Review learning artifacts** — For regular steps, inspect SKILL.md and related learning files. For scripted code steps, inspect saved Python scripts, optional SKILL.md notes, and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
 5. **Analyze tool/server usage** — Are there unused servers? Missing tools? Did the run reveal that the step boundary should move so more work can be done in Python?
 6. **Check validation schema** — Does it catch stale files? Are there enough field checks?
@@ -7740,23 +7877,23 @@ For each hardcoded value found, recommend the specific variable placeholder to u
 - What patterns are missing that should be captured more clearly in the learning artifact for this mode?
 
 ### Execution Mode Discovery
-- Starting from the strongest preferred mode, evaluate the step in this order: `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`.
+- Evaluate `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` as competing fits for the task.
 - For each mode considered, say:
   - **Can it work?** yes / no
   - **Evidence from the observed run**: what in the logs/output supports that conclusion
   - **Why not**: if rejected, what specifically blocks it
 - End with:
   - **Recommended mode now**
-  - **Next mode to try after one more cleanup/refactor**, if different
-  - **What step-description, learning, or boundary change would unlock a stronger mode**
+  - **What evidence makes this a better fit than the alternatives**
+  - **What step-description, learning, config, or boundary change would make another mode a better fit later**
 
 ### Config Recommendations
 - Tool/server scoping: should servers be added or removed?
 - LLM tier: is the current model appropriate for this step's complexity?
-- **Execution mode**: recommend the first viable mode from this required sequence:
-  1. **Code execution mode** (`+"`use_code_execution_mode=true`"+`): If the observed run could be turned into a stable Python program with fixed inputs and environment variables, recommend this first.
-  2. **Tool search fallback**: If the step still needs runtime adaptation or browser/tool orchestration that cannot be stabilized into one Python script, recommend tool_search next.
-  3. **Simple mode**: Only if the step is genuinely tiny and does not benefit from scripted code or tool search.
+- **Execution mode**: choose the mode that best matches the observed work:
+  1. **Code execution mode** (`+"`use_code_execution_mode=true`"+`): Best when the run evidence shows stable logic with known tools/inputs that can be scripted and reused.
+  2. **Tool search mode** (`+"`use_tool_search_mode=true`"+`): Best when the run evidence shows discovery is genuinely intrinsic to the task, not merely caused by weak config or vague instructions.
+  3. **Simple mode**: Best only when the step is genuinely tiny and direct.
 - Learning config: should learning be disabled, locked, or detail level changed?
 - **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise. If it WAS used, check whether it could be automated.
 
@@ -7824,10 +7961,10 @@ If this is a todo_task step with sub-agents, analyze tier usage from the routing
 
 ### Priority Actions
 Ranked list of the top 3-5 most impactful changes, with specific instructions for each.
-The first action should usually be the next experiment in the mode ladder (`+"`code_exec`"+` first, then `+"`tool_search`"+`, then `+"`simple`"+`) unless the step has a blocking correctness issue that must be fixed before mode changes.
+The first action should usually be the next highest-confidence improvement from the observed run evidence, whether that means stabilizing into `+"`code_exec`"+`, keeping/cleaning `+"`tool_search`"+`, or simplifying the step.
 `)
 
-var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Discover the strongest viable execution mode in order: code_exec, then tool_search, then simple.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Decide whether code_exec, tool_search, or simple is the best fit from evidence, without assuming code_exec is always superior.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var evalOptimizationAgentSystemTemplate = MustRegisterTemplate("evalOptimizationAgentSystem", `# Evaluation Step Optimization Agent
 
@@ -7839,7 +7976,7 @@ Optimize for:
 - deterministic checks over vague LLM judgment
 - strong `+"`pre_validation`"+` where possible
 - minimal overlap with other eval steps
-- the strongest viable execution mode for the eval step itself
+- the best-fit execution mode for the eval step itself
 
 You are **read-only** — do not modify files.
 
@@ -7899,7 +8036,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 3. If a target run is provided, use the actual eval step output and the evaluation report entry as primary evidence.
 4. Check whether the step is redundant with common checks like file existence, shape validation, or another eval step.
 5. Decide whether this concern should remain a single eval step or be split into multiple steps. Default to staying single-step unless there is strong evidence for separation.
-6. Decide the strongest viable execution mode for the eval step itself, with deterministic modes preferred.
+6. Decide the best-fit execution mode for the eval step itself based on the actual work required. Prefer saved deterministic Python when it truly fits, but choose `+"`tool_search`"+` when runtime discovery is intrinsic and `+"`simple`"+` when the check is tiny and direct.
 
 ## REPORT FORMAT
 
@@ -7923,12 +8060,12 @@ The user wants you to focus specifically on: **{{.Focus}}**
 - Should this concern stay as **one eval step**, or is there a strong reason to split it into multiple eval steps?
 
 ### Execution Mode Recommendation
-- Evaluate in order: `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`
-- For each rejected stronger mode, cite concrete evidence.
+- Compare `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` by fit.
+- For each rejected alternative, cite concrete evidence.
 - End with:
   - **Single-step or split recommendation**
   - **Recommended mode now**
-  - **What change would unlock a stronger mode**
+  - **What change would unlock a different mode, if that would help**
 
 ### Priority Actions
 Top 3-5 concrete next edits for `+"`evaluation/evaluation_plan.json`"+` and/or `+"`evaluation/step_config.json`"+`.
@@ -7946,14 +8083,14 @@ Analyze the report step and produce a concrete optimization report for:
 - deterministic preparation vs final narrative generation
 - markdown structure quality
 - chart/table opportunities grounded in real artifacts
-- the strongest viable execution mode for the report step itself
+- the best-fit execution mode for the report step itself
 
 You are **read-only** — do not modify files.
 
 ## RULES
 1. Base recommendations on the configured report instructions, the completed run artifacts, and any generated markdown report.
-2. Strongly prefer `+"`code_exec`"+` for deterministic prep/report-assembly logic.
-3. Allow the final narrative markdown step to remain `+"`code_exec`"+` or LLM-driven when prose quality and judgment matter.
+2. Prefer `+"`code_exec`"+` for stable deterministic prep/report-assembly logic, but do not force it when the report work genuinely depends on runtime discovery.
+3. Allow the final narrative markdown step to remain `+"`code_exec`"+`, `+"`simple`"+`, or more open-ended when prose quality and judgment matter.
 4. Be explicit about what should be moved into deterministic prep versus what should remain narrative.
 5. Do not recommend changing the main workflow unless the report is impossible without a missing upstream artifact.
 
@@ -7987,7 +8124,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 2. Identify what should become deterministic Python (`+"`code_exec`"+`) versus what can remain narrative synthesis.
 3. Review the markdown structure: headings, tables, chart opportunities, evidence linkage, and readability.
 4. If a target run is provided, compare the generated markdown against the available artifacts and note omissions, hallucination risk, or weak summaries.
-5. Recommend the strongest viable mode for the current report step, while explicitly calling out if the best long-term shape is a split into prep + final render.
+5. Recommend the best-fit mode for the current report step, while explicitly calling out if the best long-term shape is a split into prep + final render.
 
 ## REPORT FORMAT
 
@@ -8005,8 +8142,8 @@ The user wants you to focus specifically on: **{{.Focus}}**
 - Would a split into two steps improve reliability?
 
 ### Execution Mode Recommendation
-- Evaluate in order: `+"`code_exec`"+` → `+"`tool_search`"+` → `+"`simple`"+`
-- For each rejected stronger mode, cite concrete evidence.
+- Compare `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` by fit.
+- For each rejected alternative, cite concrete evidence.
 - Explicitly answer:
   - **Can this report step itself be `+"`code_exec`"+`?**
   - **If not, which parts should be `+"`code_exec`"+` in a prep step?**
@@ -8069,7 +8206,7 @@ var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflow
 
 You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective and success criteria, and produce a structured report that the builder can act on immediately.
 
-Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to increase the share of steps that can run as `+"`code_exec`"+`, and use `+"`tool_search`"+` only as a last resort.
+Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to create clearer mode fit: `+"`code_exec`"+` for stable scripted logic, `+"`tool_search`"+` when runtime discovery is genuinely part of the work, and `+"`simple`"+` for tiny direct steps.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files.
@@ -8078,7 +8215,7 @@ Your primary job is structural optimization, but you must also flag plan-level p
 4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
 5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
 6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
-7. **Prefer deterministic execution**: When recommending structure changes, prefer designs that make steps more deterministic and easier to run in this order: `+"`code_exec`"+` > `+"`tool_search`"+` > `+"`simple`"+`.
+7. **Prefer correct mode fit**: When recommending structure changes, prefer designs that make the intended execution mode obvious. Use `+"`code_exec`"+` for stable scripted logic, `+"`tool_search`"+` when discovery is intrinsic, and `+"`simple`"+` for tiny direct steps.
 8. **Check portability hazards**: If plan-visible text contains hardcoded secrets, user-specific values, absolute paths, or run-folder-specific paths, flag them even if they are not yet causing a failure.
 
 ## CONTEXT
@@ -8127,8 +8264,8 @@ Work through these checks in order:
 2. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
 3. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective or success criteria requires is unhandled.
 4. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
-5. **Execution mode fit** — For each step, decide whether the current structure makes `+"`code_exec`"+` or `+"`tool_search`"+` the right mode. If the current structure forces a weaker mode than necessary, explain what structural change would unlock a better mode.
-6. **Granularity for mode optimization** — Any step too coarse (multiple distinct outputs, mixed deterministic and exploratory work, should be split)? Any two steps that should be merged because they share the same deterministic transform and splitting them adds unnecessary handoff overhead? Optimize for the highest proportion of steps that can use `+"`code_exec`"+`, and minimize `+"`tool_search`"+`.
+5. **Execution mode fit** — For each step, decide whether the current structure makes `+"`code_exec`"+`, `+"`tool_search`"+`, or `+"`simple`"+` the right mode. If the current structure forces the wrong mode, explain what structural change would unlock a better fit.
+6. **Granularity for mode optimization** — Any step too coarse (multiple distinct outputs, mixed deterministic and discovery-heavy work, should be split)? Any two steps that should be merged because they share the same stable transform and splitting them adds unnecessary handoff overhead? Optimize for clearer mode fit, not just "more code_exec".
 7. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
 8. **Redundancy** — Any two steps or routes doing the same work?
 9. **Portability / hardcoded values** — Scan plan-visible fields for hardcoded values that will break reuse across users/groups/environments:
@@ -8159,10 +8296,10 @@ For each step where the current design is preventing the best mode:
 - **Structural fix**: <split before/after [step-id] | merge with [step-id] | keep as-is but rewrite step boundaries>
 
 Use these rules:
-- Prefer `+"`code_exec`"+` for deterministic transforms, extraction, normalization, calculations, and fixed API calls.
-- Use `+"`code_exec`"+` when a step needs runtime adaptation or multiple MCP calls but still benefits from a single script.
-- Use `+"`tool_search`"+` only when the exact tools genuinely cannot be known up front.
-- If a step mixes deterministic work with exploratory/browser/tool-discovery work, recommend splitting it so the deterministic portion can move to `+"`code_exec`"+`.
+- Prefer `+"`code_exec`"+` for deterministic transforms, extraction, normalization, calculations, and fixed API calls with known tools.
+- Prefer `+"`tool_search`"+` when selecting/discovering the right tool, resource, or path is intrinsic to the work itself.
+- If a step uses `+"`tool_search`"+` only because the step description/config is weak, recommend restructuring toward `+"`code_exec`"+`.
+- If a step mixes deterministic work with exploratory/browser/tool-discovery work, recommend splitting it so each part can use the right mode.
 - If two adjacent deterministic steps only exist because of an artificial file handoff and would be cleaner as one stable transform, recommend merging them.
 
 ### Missing Steps / Routes
@@ -8212,6 +8349,91 @@ The top 3-5 changes ordered by impact. Each must be a concrete tool call the bui
 
 var optimizeWorkflowAgentUserTemplate = MustRegisterTemplate("optimizeWorkflowAgentUser", `Analyze the complete workflow plan structure against the objective and produce a structural optimization report.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
+var reviewPlanAgentSystemTemplate = MustRegisterTemplate("reviewPlanAgentSystem", `# Workflow Plan Review Agent
+
+You are a critical reviewer of the current workflow plan. Your job is not to optimize or rewrite the plan. Your job is to challenge the decisions already made and identify where the current plan is weak, unjustified, risky, overfit, or internally inconsistent.
+
+This is a **read-only review**:
+- do not modify files
+- do not invent missing evidence
+- focus on findings first, not redesign first
+
+## RULES
+1. **Read-Only**: Do NOT modify any files.
+2. **Findings first**: Lead with concrete problems, ordered by severity. Do not hide important issues under summaries.
+3. **Be specific**: Always reference exact step IDs, and nested IDs as `+"`parent-id > sub-id`"+`.
+4. **Review current decisions**: Critique the decisions that exist now: step boundaries, step types, mode declarations, context dependencies, context outputs, validation shape, portability, and eval coverage.
+5. **Challenge assumptions**: If a decision appears to depend on unstated assumptions, call that out explicitly.
+6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current plan decisions were actually justified.
+7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
+8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
+
+## CONTEXT
+
+- **Workspace**: {{.WorkspacePath}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level review finding{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level review finding{{end}}
+{{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{end}}
+
+{{if .PlanJSON}}## CURRENT PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
+
+{{if .StepConfigSummary}}## STEP CONFIG SUMMARY
+{{.StepConfigSummary}}
+{{end}}
+
+## EVALUATION PLAN
+Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. If it does not exist, treat missing evaluation as a review finding when the workflow clearly needs measurable verification.
+
+{{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
+If useful, read:
+- execution outputs under `+"`runs/{{.TargetRunFolder}}/execution/`"+`
+- logs under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
+- evaluation report at `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+`
+Use the run evidence to assess whether the plan decisions were justified in practice.
+{{end}}
+
+{{if .Focus}}## FOCUS
+Prioritize this area: **{{.Focus}}**
+{{end}}
+
+## REVIEW CHECKS
+
+Review the plan through these lenses:
+
+1. **Decision justification** — Does each important design choice have a clear reason, or does it look accidental?
+2. **Step boundaries** — Are steps split or merged in a way that makes execution harder, more ambiguous, or more fragile?
+3. **Step type choice** — Is each step using the right type for the actual job?
+4. **Execution mode choice** — Do declared/current modes fit the work, or are they cargo-cult choices? Is `+"`tool_search`"+` being used where discovery is not intrinsic? Is `+"`code_exec`"+` being used where runtime discovery is the real work?
+5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
+6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
+7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
+8. **Operational risk** — Which current choices are most likely to fail, confuse the agent, or create maintenance burden later?
+
+## OUTPUT FORMAT
+
+### Findings
+List only real findings, ordered by severity. If there are none, say so explicitly.
+
+For each finding use:
+- **[severity: high|medium|low] [actual-step-id or plan-wide]**: <what decision is weak or risky>
+  - **Why this is a problem**: <impact on objective / success criteria / maintainability>
+  - **Evidence**: <plan field, mode setting, run evidence, missing eval, hardcoded value, etc.>
+  - **Better decision**: <what decision should likely replace it, briefly>
+
+### Decisions That Look Sound
+Call out 0-5 current decisions that appear well-justified so the builder knows what not to churn.
+
+### Open Risks
+List any important uncertainties where the plan might be fine, but the current evidence is too weak to trust the decision yet.
+
+### Priority Rechecks
+Give the top 3-5 follow-up checks or tool calls to validate the riskiest decisions next.
+`)
+
+var reviewPlanAgentUserTemplate = MustRegisterTemplate("reviewPlanAgentUser", `Critically review the current workflow plan decisions and produce a findings-first report.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}" where it helps test whether current decisions are justified.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
 var replanWorkflowFromResultsAgentSystemTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentSystem", `# Workflow Replanning Agent
 
 You are a workflow architect and editor. Your job is to read the **actual results** from a real workflow run, compare them to the existing objective and success criteria, and then rewrite `+"`planning/plan.json`"+` so the workflow is more likely to achieve the desired outcome on the next run.
@@ -8227,7 +8449,7 @@ This tool is **evidence-driven and mutating**:
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
-6. **Prefer deterministic execution**: When restructuring, maximize the share of steps that can run as `+"`code_exec`"+`, then `+"`tool_search`"+`, then `+"`simple`"+`.
+6. **Prefer the mode that matches the work**: When restructuring, choose `+"`code_exec`"+` for stable deterministic logic, `+"`tool_search`"+` when runtime discovery is intrinsic, and `+"`simple`"+` for tiny direct steps. Do not maximize `+"`code_exec`"+` blindly.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
 
@@ -8484,6 +8706,35 @@ func (agent *WorkflowPlanOptimizationAgent) Execute(ctx context.Context, templat
 		return "", nil, err
 	}
 	if err := optimizeWorkflowAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
+	return result, updatedHistory, nil
+}
+
+// WorkflowPlanReviewAgent critically reviews current plan decisions without modifying files.
+type WorkflowPlanReviewAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowPlanReviewAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowPlanReviewAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowPlanReviewAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowPlanReviewAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := reviewPlanAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := reviewPlanAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
 		return "", nil, err
 	}
 	inputProcessor := func(map[string]string) string { return userMessage.String() }
@@ -9217,6 +9468,123 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("optimize_workflow agent failed: %w", err)
+	}
+	return result, nil
+}
+
+// runReviewPlanAgent performs a read-only critical review of the current plan decisions.
+func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+	logger := iwm.controller.GetLogger()
+
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	stepConfigSummary := ""
+	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
+		var sb strings.Builder
+		for _, sc := range stepConfigs {
+			optimized := false
+			mode := "simple"
+			declaredMode := ""
+			lockLearnings := false
+			disableLearning := false
+			descriptionReviewed := false
+			descriptionNoSecrets := false
+			if sc.AgentConfigs != nil {
+				if sc.AgentConfigs.Optimized != nil {
+					optimized = *sc.AgentConfigs.Optimized
+				}
+				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
+					mode = "code_exec"
+				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
+					mode = "tool_search"
+				}
+				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+				if sc.AgentConfigs.LockLearnings != nil {
+					lockLearnings = *sc.AgentConfigs.LockLearnings
+				}
+				if sc.AgentConfigs.DisableLearning != nil {
+					disableLearning = *sc.AgentConfigs.DisableLearning
+				}
+				if sc.AgentConfigs.DescriptionOptimized != nil {
+					descriptionReviewed = *sc.AgentConfigs.DescriptionOptimized
+				}
+				if sc.AgentConfigs.DescriptionNoSecrets != nil {
+					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, disableLearning, descriptionReviewed, descriptionNoSecrets))
+		}
+		stepConfigSummary = sb.String()
+	}
+
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ review_plan: failed to reload plan for objective: %v (using cached value)", err))
+	}
+	workflowObjective := ""
+	workflowSuccessCriteria := ""
+	if iwm.controller.approvedPlan != nil {
+		workflowObjective = iwm.controller.approvedPlan.Objective
+		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
+	}
+
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for review_plan agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
+	config.UseToolSearchMode = false
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowPlanReviewAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "review-plan", 0, 0, "review-plan",
+		createAgentFunc, phaseTools, phaseExecutors, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create review_plan agent: %w", err)
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath":           workspacePath,
+		"TargetRunFolder":         targetRunFolder,
+		"PlanJSON":                planJSON,
+		"StepConfigSummary":       stepConfigSummary,
+		"WorkflowObjective":       workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
+	}
+
+	logger.Info(fmt.Sprintf("🧪 Running review_plan agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("review_plan agent failed: %w", err)
 	}
 	return result, nil
 }

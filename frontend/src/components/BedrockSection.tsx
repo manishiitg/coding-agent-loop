@@ -111,7 +111,7 @@ export function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, a
         
         const currentModelMetadata = metadata?.find(m => m.model_id === config.model_id)
         // Bedrock uses OAuth/IAM, so auth_method is 'oauth' or 'none'
-        saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'oauth')
+        await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'oauth', currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
         setIsSubmitting(false)

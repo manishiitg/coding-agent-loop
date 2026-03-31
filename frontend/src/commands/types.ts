@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
+import type { ExecutionOptions } from '../services/api-types'
 
 export interface CommandContext {
   beforeSlash: string
@@ -14,8 +15,13 @@ export interface CommandContext {
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void
   handleSummarize: (ctx?: string) => void
   handleCompact: (ctx?: string) => void
+  submitWithExecutionOptions?: (msg: string, executionOptions?: ExecutionOptions) => void
   getAppStore: () => any
   getWorkspaceStore: () => any
+  getWorkflowStore: () => any
+  workflowMode?: 'plan' | 'eval' | 'output'
+  workshopMode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+  workflowPhaseId?: string
 }
 
 export interface CommandDefinition {
@@ -23,6 +29,9 @@ export interface CommandDefinition {
   description: string
   icon: ReactNode
   modes?: ModeCategory[]
+  requiredWorkflowMode?: 'plan' | 'eval' | 'output'
+  requiredWorkshopMode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+  validate?: (ctx: CommandContext) => string | null
   hidden?: boolean
   source: 'builtin' | 'user'
   execute: (ctx: CommandContext) => void

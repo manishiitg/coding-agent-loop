@@ -99,7 +99,7 @@ func LoadDelegationTierConfig(ctx context.Context, workspaceURL string) (map[str
 // Returns a map in the api_keys format used by llm_config.
 // Returns (nil, false, nil) if the file doesn't exist.
 func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]interface{}, bool, error) {
-	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "provider-api-keys.json")
+	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "config/provider-api-keys.json")
 	if err != nil || !exists {
 		return nil, exists, err
 	}
@@ -115,13 +115,13 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 
 	var stored struct {
-		OpenRouter        string  `json:"openrouter,omitempty"`
-		OpenAI            string  `json:"openai,omitempty"`
-		Anthropic         string  `json:"anthropic,omitempty"`
-		Vertex            string  `json:"vertex,omitempty"`
-		GeminiCLI         string  `json:"gemini_cli,omitempty"`
-		MiniMax           string  `json:"minimax,omitempty"`
-		MiniMaxCodingPlan string  `json:"minimax_coding_plan,omitempty"`
+		OpenRouter        string `json:"openrouter,omitempty"`
+		OpenAI            string `json:"openai,omitempty"`
+		Anthropic         string `json:"anthropic,omitempty"`
+		Vertex            string `json:"vertex,omitempty"`
+		GeminiCLI         string `json:"gemini_cli,omitempty"`
+		MiniMax           string `json:"minimax,omitempty"`
+		MiniMaxCodingPlan string `json:"minimax_coding_plan,omitempty"`
 		Bedrock           *struct {
 			Region string `json:"region"`
 		} `json:"bedrock,omitempty"`

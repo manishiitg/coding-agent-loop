@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Trash2, Box, DollarSign, Thermometer, CheckCircle, Play, Loader2 } from 'lucide-react'
+import { Trash2, Box, DollarSign, Thermometer, CheckCircle, Play, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { useLLMStore, useChatStore, useAppStore } from '../../stores'
@@ -48,11 +48,12 @@ interface LibraryTabProps {
 }
 
 export function LibraryTab({ onSelect }: LibraryTabProps) {
-  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig, defaultPublishedLLMsLocked } = useLLMStore()
+  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig, defaultPublishedLLMsLocked, loadDefaultsFromBackend } = useLLMStore()
   const { createChatTab, setTabConfig } = useChatStore()
   const { setAgentMode } = useAppStore()
   const [metadataMap, setMetadataMap] = useState<Record<string, ModelMetadata>>({})
   const [testStatus, setTestStatus] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Check if a saved LLM matches the current primary
   const isPrimary = (llm: SavedLLM): boolean => {
@@ -85,16 +86,16 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
     // Switch to Simple/Chat Mode
     setAgentMode('simple')
 
-    // If testing an Azure model, update the store's azureConfig with the saved credentials
-    // This is needed because ChatArea.tsx pulls api_keys from the store, not from the tab config
-    if (llm.provider === 'azure' && llm.endpoint && llm.api_key) {
+    // Published LLMs no longer carry secrets; Azure auth is loaded from workspace-backed
+    // provider config and still needs to be present in the store for runtime execution.
+    if (llm.provider === 'azure' && azureConfig.endpoint && azureConfig.api_key) {
       setAzureConfig({
         ...azureConfig,
         provider: 'azure',
         model_id: llm.model_id,
-        api_key: llm.api_key,
-        endpoint: llm.endpoint,
-        region: llm.region,
+        api_key: azureConfig.api_key,
+        endpoint: azureConfig.endpoint,
+        region: azureConfig.region,
         options: llm.options,
         temperature: llm.temperature
       })
@@ -130,10 +131,29 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
     }, 500)
   }
 
+  const handleRefreshLibrary = async () => {
+    setIsRefreshing(true)
+    try {
+      await loadDefaultsFromBackend()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-foreground">Published LLM</h3>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => { void handleRefreshLibrary() }}
+          disabled={isRefreshing}
+          className="h-8 px-2"
+          title="Refresh published LLMs from workspace"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </Button>
       </div>
 
       {testStatus && (
@@ -247,7 +267,7 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
                       </Button>
                     )}
                     {!defaultPublishedLLMsLocked && (
-                      <Button size="sm" variant="ghost" onClick={() => deleteSavedLLM(llm.id)} className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                      <Button size="sm" variant="ghost" onClick={() => { void deleteSavedLLM(llm.id) }} className="text-destructive hover:text-destructive hover:bg-destructive/10">
                         <Trash2 className="w-4 h-4" />
                       </Button>
                     )}

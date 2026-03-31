@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -433,6 +434,16 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		return
 	}
 
+	if activeExec := s.findActiveExecutionForWorkspace(sctx.WorkspacePath); activeExec != nil {
+		triggeredBy := activeExec.TriggeredBy
+		if strings.TrimSpace(triggeredBy) == "" {
+			triggeredBy = "unknown"
+		}
+		scheduleLogf("[SCHEDULER] ⏭️ Workflow %s already has an active %s run (session: %s), skipping schedule %s",
+			sctx.WorkspacePath, triggeredBy, activeExec.SessionID, schedID)
+		return
+	}
+
 	// Prevent concurrent runs — check and mark atomically under the write lock
 	startTime := time.Now().UTC()
 	s.runtimeStatesMu.Lock()
@@ -816,6 +827,29 @@ func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRun
 	state := &ScheduleRuntimeState{}
 	s.runtimeStates[scheduleID] = state
 	return state
+}
+
+func (s *SchedulerService) findActiveExecutionForWorkspace(workspacePath string) *ActiveWorkflowExecution {
+	if s == nil || s.api == nil || strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+
+	normalizedWorkspace := filepath.Clean(workspacePath)
+
+	s.api.activeWorkflowExecutionsMux.RLock()
+	defer s.api.activeWorkflowExecutionsMux.RUnlock()
+
+	for _, exec := range s.api.activeWorkflowExecutions {
+		if exec == nil || strings.TrimSpace(exec.WorkspacePath) == "" {
+			continue
+		}
+		if filepath.Clean(exec.WorkspacePath) == normalizedWorkspace {
+			execCopy := *exec
+			return &execCopy
+		}
+	}
+
+	return nil
 }
 
 // findScheduleByID scans all workspace manifests to find a schedule by ID.

@@ -1,23 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
-import { llmConfigService } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 
 interface CodexCLISectionProps {
   onPublished?: () => void
+  metadata?: ModelMetadata[]
 }
 
-const CODEX_CLI_MODELS = [
-  { id: 'codex-cli', label: 'Auto (default)', description: 'Uses the CLI default model' },
-  { id: 'gpt-5.4', label: 'GPT-5.4 — Flagship', description: '1M context, strongest reasoning' },
-  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini — Fast', description: '400K context, fast and affordable' },
-  { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex — Coding', description: '400K context, industry-leading code' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3-Codex-Spark — Ultra Fast', description: '400K context, ultra-fast coding responses' },
-]
-
-export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
+export function CodexCLISection({ onPublished, metadata = [] }: CodexCLISectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
@@ -30,6 +23,22 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
   // Test connection state
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
+  const codexModels = useMemo(
+    () => metadata.filter(m => m.provider === 'codex-cli'),
+    [metadata]
+  )
+  const currentModelMetadata = codexModels.find(m => m.model_id === selectedModel)
+  const reasoningLevels = currentModelMetadata?.reasoning_effort_levels?.length
+    ? currentModelMetadata.reasoning_effort_levels
+    : ['low', 'medium', 'high', 'xhigh']
+
+  useEffect(() => {
+    if (codexModels.length === 0) return
+    const modelExists = codexModels.some(m => m.model_id === selectedModel)
+    if (!modelExists) {
+      setSelectedModel(codexModels[0].model_id)
+    }
+  }, [codexModels, selectedModel])
 
   const alreadyPublished = savedLLMs.some(
     llm => llm.provider === 'codex-cli' && llm.model_id === selectedModel
@@ -57,7 +66,7 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
     }
   }
 
-  const handlePublishToLibrary = () => {
+  const handlePublishToLibrary = async () => {
     if (!publishName.trim()) return
 
     setIsSubmitting(true)
@@ -70,7 +79,7 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
         options: { reasoning_effort: reasoningEffort },
       }
 
-      saveLLM(llmModel, publishName.trim(), 'OpenAI Codex CLI', 'none')
+      await saveLLM(llmModel, publishName.trim(), 'OpenAI Codex CLI', 'none', currentModelMetadata)
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -113,8 +122,8 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
           onChange={e => setSelectedModel(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {CODEX_CLI_MODELS.map(m => (
-            <option key={m.id} value={m.id}>{m.label}</option>
+          {codexModels.map(m => (
+            <option key={m.model_id} value={m.model_id}>{m.model_name || m.model_id}</option>
           ))}
         </select>
         {selectedModel !== 'codex-cli' && (
@@ -131,10 +140,7 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
           onChange={e => setReasoningEffort(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {(selectedModel === 'gpt-5.4'
-            ? ['none', 'low', 'medium', 'high', 'xhigh']
-            : ['low', 'medium', 'high', 'xhigh']
-          ).map(level => (
+          {reasoningLevels.map(level => (
             <option key={level} value={level}>
               {level.charAt(0).toUpperCase() + level.slice(1)}
             </option>
@@ -218,8 +224,7 @@ export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
             size="sm"
             onClick={() => {
               setIsPublishing(true)
-              const modelEntry = CODEX_CLI_MODELS.find(m => m.id === selectedModel)
-              setPublishName(modelEntry ? `Codex CLI (${modelEntry.label.split(' —')[0]}, ${reasoningEffort} effort)` : 'Codex CLI')
+              setPublishName(currentModelMetadata ? `Codex CLI (${currentModelMetadata.model_name}, ${reasoningEffort} effort)` : 'Codex CLI')
               setPublishError(null)
             }}
           >

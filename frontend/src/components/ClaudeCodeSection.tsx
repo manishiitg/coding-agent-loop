@@ -1,22 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Terminal, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
-import { llmConfigService } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 
 interface ClaudeCodeSectionProps {
   onPublished?: () => void
+  metadata?: ModelMetadata[]
 }
 
-const CLAUDE_CODE_MODELS = [
-  { id: 'claude-code', label: 'Auto (default)', description: 'Uses the CLI default model' },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6 — High Reasoning', description: 'Most capable, best for complex tasks' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — Medium', description: 'Balanced speed and capability' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — Fast', description: 'Fastest, best for simple tasks' },
-]
-
-export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
+export function ClaudeCodeSection({ onPublished, metadata = [] }: ClaudeCodeSectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
@@ -29,6 +23,22 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
   // Test connection state
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
+  const claudeModels = useMemo(
+    () => metadata.filter(m => m.provider === 'claude-code'),
+    [metadata]
+  )
+  const currentModelMetadata = claudeModels.find(m => m.model_id === selectedModel)
+  const effortLevels = currentModelMetadata?.reasoning_effort_levels?.length
+    ? currentModelMetadata.reasoning_effort_levels
+    : ['low', 'medium', 'high', 'max']
+
+  useEffect(() => {
+    if (claudeModels.length === 0) return
+    const modelExists = claudeModels.some(m => m.model_id === selectedModel)
+    if (!modelExists) {
+      setSelectedModel(claudeModels[0].model_id)
+    }
+  }, [claudeModels, selectedModel])
 
   const alreadyPublished = savedLLMs.some(
     llm => llm.provider === 'claude-code' && llm.model_id === selectedModel
@@ -56,7 +66,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
     }
   }
 
-  const handlePublishToLibrary = () => {
+  const handlePublishToLibrary = async () => {
     if (!publishName.trim()) return
 
     setIsSubmitting(true)
@@ -69,7 +79,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
         options: { reasoning_effort: effortLevel },
       }
 
-      saveLLM(llmModel, publishName.trim(), 'Claude Code CLI', 'none')
+      await saveLLM(llmModel, publishName.trim(), 'Claude Code CLI', 'none', currentModelMetadata)
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -112,8 +122,8 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
           onChange={e => setSelectedModel(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {CLAUDE_CODE_MODELS.map(m => (
-            <option key={m.id} value={m.id}>{m.label}</option>
+          {claudeModels.map(m => (
+            <option key={m.model_id} value={m.model_id}>{m.model_name || m.model_id}</option>
           ))}
         </select>
         {selectedModel !== 'claude-code' && (
@@ -130,7 +140,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
           onChange={e => setEffortLevel(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {['low', 'medium', 'high', 'max'].map(level => (
+          {effortLevels.map(level => (
             <option key={level} value={level}>
               {level.charAt(0).toUpperCase() + level.slice(1)}
             </option>
@@ -214,8 +224,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
             size="sm"
             onClick={() => {
               setIsPublishing(true)
-              const modelEntry = CLAUDE_CODE_MODELS.find(m => m.id === selectedModel)
-              setPublishName(modelEntry ? `Claude Code (${modelEntry.label.split(' —')[0]}, ${effortLevel} effort)` : 'Claude Code')
+              setPublishName(currentModelMetadata ? `Claude Code (${currentModelMetadata.model_name}, ${effortLevel} effort)` : 'Claude Code')
               setPublishError(null)
             }}
           >

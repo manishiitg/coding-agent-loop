@@ -3,8 +3,127 @@ import { persist } from 'zustand/middleware'
 import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
-import { llmConfigService } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { agentApi } from '../services/api'
+import { providerKeysApi, type StoredProviderKeys } from '../api/scheduler'
+
+type PublishedLLMMetadataSnapshot = {
+  context_window?: number
+  input_cost_per_1m?: number
+  output_cost_per_1m?: number
+  reasoning_cost_per_1m?: number
+  cached_input_cost_per_1m?: number
+  cached_input_cost_write_per_1m?: number
+}
+
+function sanitizeLLMModel(model: LLMModel): LLMModel {
+  return {
+    provider: model.provider,
+    model_id: model.model_id,
+    region: model.region,
+    options: model.options,
+    temperature: model.temperature,
+  }
+}
+
+function sanitizeSavedLLM(llm: SavedLLM): SavedLLM {
+  return {
+    ...sanitizeLLMModel(llm),
+    id: llm.id,
+    name: llm.name,
+    model_name: llm.model_name,
+    auth_method: llm.auth_method,
+    context_window: llm.context_window,
+    input_cost_per_1m: llm.input_cost_per_1m,
+    output_cost_per_1m: llm.output_cost_per_1m,
+    reasoning_cost_per_1m: llm.reasoning_cost_per_1m,
+    cached_input_cost_per_1m: llm.cached_input_cost_per_1m,
+    cached_input_cost_write_per_1m: llm.cached_input_cost_write_per_1m,
+    created_at: llm.created_at,
+  }
+}
+
+function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConfiguration | null {
+  if (!config) return null
+  return {
+    primary: sanitizeLLMModel(config.primary),
+    fallbacks: config.fallbacks.map(sanitizeLLMModel),
+  }
+}
+
+function sanitizeProviderConfigForPersistence(config: ExtendedLLMConfiguration): ExtendedLLMConfiguration {
+  return {
+    ...config,
+    api_key: undefined,
+    endpoint: undefined,
+  }
+}
+
+function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
+  return !!(
+    keys?.openrouter ||
+    keys?.openai ||
+    keys?.anthropic ||
+    keys?.vertex ||
+    keys?.gemini_cli ||
+    keys?.minimax ||
+    keys?.minimax_coding_plan ||
+    keys?.bedrock?.region ||
+    (keys?.azure?.endpoint && keys?.azure?.api_key)
+  )
+}
+
+function extractStoredProviderKeysFromState(state: {
+  openrouterConfig: ExtendedLLMConfiguration
+  openaiConfig: ExtendedLLMConfiguration
+  anthropicConfig: ExtendedLLMConfiguration
+  vertexConfig: ExtendedLLMConfiguration
+  bedrockConfig: ExtendedLLMConfiguration
+  azureConfig: ExtendedLLMConfiguration
+  minimaxConfig: ExtendedLLMConfiguration
+  minimaxCodingPlanConfig: ExtendedLLMConfiguration
+  geminiCliApiKey: string
+  savedLLMs: SavedLLM[]
+}): StoredProviderKeys {
+  const keys: StoredProviderKeys = {
+    openrouter: state.openrouterConfig?.api_key || undefined,
+    openai: state.openaiConfig?.api_key || undefined,
+    anthropic: state.anthropicConfig?.api_key || undefined,
+    vertex: state.vertexConfig?.api_key || undefined,
+    gemini_cli: state.geminiCliApiKey || undefined,
+    minimax: state.minimaxConfig?.api_key || undefined,
+    minimax_coding_plan: state.minimaxCodingPlanConfig?.api_key || undefined,
+    bedrock: state.bedrockConfig?.region ? { region: state.bedrockConfig.region } : undefined,
+    azure: state.azureConfig?.endpoint && state.azureConfig?.api_key
+      ? {
+          endpoint: state.azureConfig.endpoint,
+          api_key: state.azureConfig.api_key,
+          api_version: (state.azureConfig.options?.api_version as string) || undefined,
+          region: state.azureConfig.region || undefined,
+        }
+      : undefined,
+  }
+
+  for (const llm of state.savedLLMs || []) {
+    if (llm.provider === 'openrouter' && llm.api_key && !keys.openrouter) keys.openrouter = llm.api_key
+    if (llm.provider === 'openai' && llm.api_key && !keys.openai) keys.openai = llm.api_key
+    if (llm.provider === 'anthropic' && llm.api_key && !keys.anthropic) keys.anthropic = llm.api_key
+    if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
+    if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
+    if (llm.provider === 'minimax-coding-plan' && llm.api_key && !keys.minimax_coding_plan) keys.minimax_coding_plan = llm.api_key
+    if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
+    if (llm.provider === 'azure' && llm.endpoint && llm.api_key && !keys.azure) {
+      keys.azure = {
+        endpoint: llm.endpoint,
+        api_key: llm.api_key,
+        api_version: (llm.options?.api_version as string) || undefined,
+        region: llm.region || undefined,
+      }
+    }
+  }
+
+  return keys
+}
 
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
@@ -64,6 +183,7 @@ interface LLMState extends StoreActions {
   
   // Available LLMs for selection
   availableLLMs: LLMOption[]
+  modelMetadataCatalog: ModelMetadata[]
   
   // Loading and error states
   isLoadingLLMs: boolean
@@ -106,8 +226,8 @@ interface LLMState extends StoreActions {
   loadDefaultsFromBackend: () => Promise<void>
   
   // Library management
-  saveLLM: (llm: LLMModel, name: string, modelName?: string, authMethod?: 'api_key' | 'oauth' | 'none') => void
-  deleteSavedLLM: (id: string) => void
+  saveLLM: (llm: LLMModel, name: string, modelName?: string, authMethod?: 'api_key' | 'oauth' | 'none', metadata?: PublishedLLMMetadataSnapshot) => Promise<void>
+  deleteSavedLLM: (id: string) => Promise<void>
 
   // Custom model management
   addCustomBedrockModel: (model: string) => void
@@ -266,6 +386,7 @@ export const useLLMStore = create<LLMState>()(
         showLLMModal: false,
         
         availableLLMs: [],
+        modelMetadataCatalog: [],
         isLoadingLLMs: false,
         error: null,
         defaultsLoaded: false,
@@ -426,26 +547,36 @@ export const useLLMStore = create<LLMState>()(
         },
 
         // Library management
-        saveLLM: (llm, name, modelName, authMethod) => {
+        saveLLM: async (llm, name, modelName, authMethod, metadata) => {
           const { savedLLMs, refreshAvailableLLMs } = get()
-          const newSavedLLM: SavedLLM = {
+          const newSavedLLM = sanitizeSavedLLM({
             ...llm,
             id: crypto.randomUUID(),
             name,
             model_name: modelName,
             auth_method: authMethod,
+            context_window: metadata?.context_window,
+            input_cost_per_1m: metadata?.input_cost_per_1m,
+            output_cost_per_1m: metadata?.output_cost_per_1m,
+            reasoning_cost_per_1m: metadata?.reasoning_cost_per_1m,
+            cached_input_cost_per_1m: metadata?.cached_input_cost_per_1m,
+            cached_input_cost_write_per_1m: metadata?.cached_input_cost_write_per_1m,
             created_at: new Date().toISOString()
-          }
-          set({ savedLLMs: [...savedLLMs, newSavedLLM] })
-          // Auto-refresh availableLLMs when a new LLM is published
-          refreshAvailableLLMs()
+          })
+          const nextSavedLLMs = [...savedLLMs, newSavedLLM]
+
+          await llmConfigService.savePublishedLLMs(nextSavedLLMs)
+          set({ savedLLMs: nextSavedLLMs })
+          await refreshAvailableLLMs()
         },
 
-        deleteSavedLLM: (id) => {
+        deleteSavedLLM: async (id) => {
           const { savedLLMs, refreshAvailableLLMs } = get()
-          set({ savedLLMs: savedLLMs.filter(llm => llm.id !== id) })
-          // Auto-refresh availableLLMs when an LLM is deleted
-          refreshAvailableLLMs()
+          const nextSavedLLMs = savedLLMs.filter(llm => llm.id !== id)
+
+          await llmConfigService.savePublishedLLMs(nextSavedLLMs)
+          set({ savedLLMs: nextSavedLLMs })
+          await refreshAvailableLLMs()
         },
 
         // Custom model management
@@ -537,8 +668,12 @@ export const useLLMStore = create<LLMState>()(
         loadDefaultsFromBackend: async () => {
           try {
             set({ isLoadingLLMs: true })
-            const defaults = await llmConfigService.getLLMDefaults()
-            
+            const [defaults, loadedProviderKeys, loadedPublishedLLMs] = await Promise.all([
+              llmConfigService.getLLMDefaults(),
+              providerKeysApi.load().catch(() => undefined),
+              llmConfigService.getPublishedLLMs().catch(() => undefined),
+            ])
+
             // Get current state to check if user has already selected a model
             const currentState = get()
             // Check if user has made a selection (both provider and model_id should be set)
@@ -575,17 +710,45 @@ export const useLLMStore = create<LLMState>()(
                 temperature: savedConfig?.temperature ?? defaultConfig?.temperature
               }
             }
-            
+
+            const localProviderKeys = extractStoredProviderKeysFromState(currentState)
+            let workspaceProviderKeys = loadedProviderKeys
+            if (!hasStoredProviderKeys(workspaceProviderKeys) && hasStoredProviderKeys(localProviderKeys)) {
+              try {
+                await providerKeysApi.save(localProviderKeys)
+                workspaceProviderKeys = localProviderKeys
+              } catch (error) {
+                console.warn('Failed to migrate provider keys from legacy local storage:', error)
+                workspaceProviderKeys = localProviderKeys
+              }
+            }
+
+            const localPublishedLLMs = (currentState.savedLLMs || []).map(sanitizeSavedLLM)
+            let workspacePublishedLLMs = Array.isArray(loadedPublishedLLMs)
+              ? loadedPublishedLLMs.map(sanitizeSavedLLM)
+              : []
+            if (workspacePublishedLLMs.length === 0 && localPublishedLLMs.length > 0) {
+              try {
+                await llmConfigService.savePublishedLLMs(localPublishedLLMs)
+                workspacePublishedLLMs = localPublishedLLMs
+              } catch (error) {
+                console.warn('Failed to migrate published LLMs from legacy local storage:', error)
+                workspacePublishedLLMs = localPublishedLLMs
+              }
+            }
+
             const locked = !!defaults.llm_config_locked
             const defaultPublishedLocked = !!defaults.default_published_llms_locked
-            const defaultList = Array.isArray(defaults.default_published_llms) ? defaults.default_published_llms as SavedLLM[] : []
+            const defaultList = Array.isArray(defaults.default_published_llms)
+              ? (defaults.default_published_llms as SavedLLM[]).map(sanitizeSavedLLM)
+              : []
 
-            let newSavedLLMs = currentState.savedLLMs
+            let newSavedLLMs = workspacePublishedLLMs
             if (defaultList.length > 0) {
               if (defaultPublishedLocked) {
                 newSavedLLMs = defaultList
               } else {
-                const byId = new Map(currentState.savedLLMs.map((llm) => [llm.id, llm]))
+                const byId = new Map(newSavedLLMs.map((llm) => [llm.id, llm]))
                 for (const d of defaultList) {
                   if (d.id && !byId.has(d.id)) {
                     byId.set(d.id, d)
@@ -597,6 +760,80 @@ export const useLLMStore = create<LLMState>()(
                   }
                 }
                 newSavedLLMs = Array.from(byId.values())
+              }
+            }
+
+            const openrouterConfig = preserveUserConfig(currentState.openrouterConfig, defaults.openrouter_config)
+            const bedrockConfig = preserveUserConfig(currentState.bedrockConfig, defaults.bedrock_config)
+            const openaiConfig = preserveUserConfig(currentState.openaiConfig, defaults.openai_config)
+            const vertexConfig = preserveUserConfig(
+              currentState.vertexConfig,
+              defaults.vertex_config || {
+                provider: 'vertex',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              }
+            )
+            const anthropicConfig = preserveUserConfig(
+              currentState.anthropicConfig,
+              defaults.anthropic_config || {
+                provider: 'anthropic',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              }
+            )
+            const azureConfig = preserveUserConfig(
+              currentState.azureConfig,
+              defaults.azure_config || {
+                provider: 'azure',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: '',
+                endpoint: ''
+              }
+            )
+            const minimaxConfig = preserveUserConfig(
+              currentState.minimaxConfig,
+              defaults.minimax_config || {
+                provider: 'minimax',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              }
+            )
+            const minimaxCodingPlanConfig = preserveUserConfig(
+              currentState.minimaxCodingPlanConfig,
+              defaults.minimax_coding_plan_config || {
+                provider: 'minimax-coding-plan',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              }
+            )
+
+            if (workspaceProviderKeys?.openrouter) openrouterConfig.api_key = workspaceProviderKeys.openrouter
+            if (workspaceProviderKeys?.openai) openaiConfig.api_key = workspaceProviderKeys.openai
+            if (workspaceProviderKeys?.anthropic) anthropicConfig.api_key = workspaceProviderKeys.anthropic
+            if (workspaceProviderKeys?.vertex) vertexConfig.api_key = workspaceProviderKeys.vertex
+            if (workspaceProviderKeys?.minimax) minimaxConfig.api_key = workspaceProviderKeys.minimax
+            if (workspaceProviderKeys?.minimax_coding_plan) minimaxCodingPlanConfig.api_key = workspaceProviderKeys.minimax_coding_plan
+            if (workspaceProviderKeys?.bedrock?.region) {
+              bedrockConfig.region = workspaceProviderKeys.bedrock.region
+            }
+            if (workspaceProviderKeys?.azure) {
+              azureConfig.api_key = workspaceProviderKeys.azure.api_key
+              azureConfig.endpoint = workspaceProviderKeys.azure.endpoint
+              azureConfig.region = workspaceProviderKeys.azure.region || azureConfig.region
+              azureConfig.options = {
+                ...(azureConfig.options || {}),
+                ...(workspaceProviderKeys.azure.api_version ? { api_version: workspaceProviderKeys.azure.api_version } : {}),
               }
             }
 
@@ -613,60 +850,15 @@ export const useLLMStore = create<LLMState>()(
 
             set({
               primaryConfig: newPrimaryConfig,
-              openrouterConfig: preserveUserConfig(currentState.openrouterConfig, defaults.openrouter_config),
-              bedrockConfig: preserveUserConfig(currentState.bedrockConfig, defaults.bedrock_config),
-              openaiConfig: preserveUserConfig(currentState.openaiConfig, defaults.openai_config),
-              vertexConfig: preserveUserConfig(
-                currentState.vertexConfig,
-                defaults.vertex_config || {
-                provider: 'vertex',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-                }
-              ),
-              anthropicConfig: preserveUserConfig(
-                currentState.anthropicConfig,
-                defaults.anthropic_config || {
-                provider: 'anthropic',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-                }
-              ),
-              azureConfig: preserveUserConfig(
-                currentState.azureConfig,
-                defaults.azure_config || {
-                provider: 'azure',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: '',
-                endpoint: ''
-                }
-              ),
-              minimaxConfig: preserveUserConfig(
-                currentState.minimaxConfig,
-                defaults.minimax_config || {
-                provider: 'minimax',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-                }
-              ),
-              minimaxCodingPlanConfig: preserveUserConfig(
-                currentState.minimaxCodingPlanConfig,
-                defaults.minimax_coding_plan_config || {
-                provider: 'minimax-coding-plan',
-                model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
-                api_key: ''
-                }
-              ),
+              openrouterConfig,
+              bedrockConfig,
+              openaiConfig,
+              vertexConfig,
+              anthropicConfig,
+              azureConfig,
+              minimaxConfig,
+              minimaxCodingPlanConfig,
+              geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
               savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
@@ -830,7 +1022,7 @@ export const useLLMStore = create<LLMState>()(
           const state = get()
           // Don't build list until backend defaults are loaded (so supported_providers is set)
           if (!state.defaultsLoaded) {
-            set({ availableLLMs: [], isLoadingLLMs: false })
+            set({ availableLLMs: [], modelMetadataCatalog: [], isLoadingLLMs: false })
             return
           }
 
@@ -839,13 +1031,15 @@ export const useLLMStore = create<LLMState>()(
           try {
             const currentState = get()
             const availableLLMs: LLMOption[] = []
+            let modelMetadataCatalog: ModelMetadata[] = []
 
             // Fetch model metadata for cost/context info
             const metadataMap: Record<string, { contextWindow: number; inputCost: number; outputCost: number }> = {}
             try {
               const metadataResponse = await llmConfigService.getModelMetadata()
+              modelMetadataCatalog = metadataResponse.models
               metadataResponse.models.forEach(m => {
-                metadataMap[m.model_id] = {
+                metadataMap[`${m.provider}:${m.model_id}`] = {
                   contextWindow: m.context_window,
                   inputCost: m.input_cost_per_1m,
                   outputCost: m.output_cost_per_1m
@@ -864,7 +1058,7 @@ export const useLLMStore = create<LLMState>()(
                 return
               }
 
-              const metadata = metadataMap[savedLLM.model_id]
+              const metadata = metadataMap[`${savedLLM.provider}:${savedLLM.model_id}`]
               availableLLMs.push({
                 provider: savedLLM.provider,
                 model: savedLLM.model_id,
@@ -878,7 +1072,7 @@ export const useLLMStore = create<LLMState>()(
               })
             })
 
-            set({ availableLLMs, isLoadingLLMs: false })
+            set({ availableLLMs, modelMetadataCatalog, isLoadingLLMs: false })
           } catch (error) {
             set({
               error: error instanceof Error ? error.message : 'Failed to load LLMs',
@@ -995,8 +1189,11 @@ export const useLLMStore = create<LLMState>()(
               cross_provider_fallback: undefined,
               api_key: ''
             },
+            savedLLMs: [],
+            geminiCliApiKey: '',
             showLLMModal: false,
             availableLLMs: [],
+            modelMetadataCatalog: [],
             isLoadingLLMs: false,
             error: null
           })
@@ -1013,25 +1210,25 @@ export const useLLMStore = create<LLMState>()(
       {
         name: 'llm-store',
         partialize: (state) => ({
-          // Persist user configurations and custom models, but NOT default models from backend
+          // Persist user configurations and custom models, but keep secrets/workspace-backed
+          // LLM library data out of localStorage.
           // Legacy configs (kept for backward compatibility)
           primaryConfig: state.primaryConfig,
-          agentConfig: state.agentConfig,
+          agentConfig: sanitizeAgentConfig(state.agentConfig),
           // Mode-specific configs
           chatPrimaryConfig: state.chatPrimaryConfig,
-          chatAgentConfig: state.chatAgentConfig,
+          chatAgentConfig: sanitizeAgentConfig(state.chatAgentConfig),
           workflowPrimaryConfig: state.workflowPrimaryConfig,
-          workflowAgentConfig: state.workflowAgentConfig,
+          workflowAgentConfig: sanitizeAgentConfig(state.workflowAgentConfig),
           // Other persisted state
-          savedLLMs: state.savedLLMs,
-          openrouterConfig: state.openrouterConfig,
-          bedrockConfig: state.bedrockConfig,
-          openaiConfig: state.openaiConfig,
-          vertexConfig: state.vertexConfig,
-          anthropicConfig: state.anthropicConfig,
-          azureConfig: state.azureConfig,
-          minimaxConfig: state.minimaxConfig,
-          minimaxCodingPlanConfig: state.minimaxCodingPlanConfig,
+          openrouterConfig: sanitizeProviderConfigForPersistence(state.openrouterConfig),
+          bedrockConfig: sanitizeProviderConfigForPersistence(state.bedrockConfig),
+          openaiConfig: sanitizeProviderConfigForPersistence(state.openaiConfig),
+          vertexConfig: sanitizeProviderConfigForPersistence(state.vertexConfig),
+          anthropicConfig: sanitizeProviderConfigForPersistence(state.anthropicConfig),
+          azureConfig: sanitizeProviderConfigForPersistence(state.azureConfig),
+          minimaxConfig: sanitizeProviderConfigForPersistence(state.minimaxConfig),
+          minimaxCodingPlanConfig: sanitizeProviderConfigForPersistence(state.minimaxCodingPlanConfig),
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,
@@ -1039,7 +1236,6 @@ export const useLLMStore = create<LLMState>()(
           customAzureModels: state.customAzureModels,
           customMinimaxModels: state.customMinimaxModels,
           customMinimaxCodingPlanModels: state.customMinimaxCodingPlanModels,
-          geminiCliApiKey: state.geminiCliApiKey,
           geminiCliModel: state.geminiCliModel,
           showLLMModal: state.showLLMModal,
           delegationTierConfig: state.delegationTierConfig,
@@ -1069,7 +1265,7 @@ export const useLLMStore = create<LLMState>()(
     )
 )
 
-// --- Auto-sync provider API keys to server (for scheduled runs) ---
+// --- Auto-sync provider API keys to server (workspace-backed storage) ---
 // Debounced: saves 2 seconds after the last key change to avoid spamming on every keystroke.
 let _syncTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -1078,7 +1274,6 @@ function syncProviderKeysToServer() {
   _syncTimer = setTimeout(async () => {
     try {
       const s = useLLMStore.getState()
-      const { providerKeysApi } = await import('../api/scheduler')
       await providerKeysApi.save({
         openrouter: s.openrouterConfig?.api_key || undefined,
         openai: s.openaiConfig?.api_key || undefined,
@@ -1097,8 +1292,8 @@ function syncProviderKeysToServer() {
             }
           : undefined,
       })
-    } catch {
-      // Silent fail — keys are still in localStorage as fallback
+    } catch (error) {
+      console.warn('Failed to sync provider keys to workspace config:', error)
     }
   }, 2000)
 }

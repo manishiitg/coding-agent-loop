@@ -80,7 +80,7 @@ export function MiniMaxSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, a
         }
 
         const currentModelMetadata = metadata?.find(m => m.model_id === config.model_id)
-        saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'api_key')
+        await saveLLM(llmModel, publishName.trim(), currentModelMetadata?.model_name, 'api_key', currentModelMetadata)
         setPublishName('')
         setIsPublishing(false)
         setIsSubmitting(false)

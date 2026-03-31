@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
 import { Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
-import { useLLMStore, useAppStore, useChatStore } from '../../stores'
+import { useLLMStore, useAppStore } from '../../stores'
+import { getModelDisplayName, getProviderDisplayInfo } from '../../utils/llmDisplay'
 
 interface LLMConfigurationSummaryProps {
   minimized?: boolean
@@ -14,10 +15,7 @@ export default function LLMConfigurationSummary({
   const agentMode = useAppStore(state => state.agentMode)
   const currentMode: 'multi-agent' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'multi-agent'
 
-  const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
-  const activeTabConfig = useChatStore(state =>
-    state.activeTabId ? state.chatTabs[state.activeTabId]?.config?.llmConfig : undefined
-  )
+  const { getConfigForMode, setShowLLMModal, savedLLMs, availableLLMs, modelMetadataCatalog } = useLLMStore()
 
   // Get mode-specific config
   const modeConfig = getConfigForMode(currentMode)
@@ -26,40 +24,33 @@ export default function LLMConfigurationSummary({
 
   const [isExpanded, setIsExpanded] = useState(false)
 
-  // In multi-agent mode: show active tab's LLM if set, so sidebar reflects the actual selection/default
-  // In workflow mode: use agentConfig.primary or primaryConfig
   const currentLLM = useMemo(() => {
-    if (currentMode === 'multi-agent' && activeTabConfig?.provider && activeTabConfig?.model_id) {
-      return { provider: activeTabConfig.provider, model_id: activeTabConfig.model_id }
+    const primaryLLM = agentConfig?.primary || primaryConfig
+    if (primaryLLM?.provider && primaryLLM?.model_id) {
+      return { provider: primaryLLM.provider, model_id: primaryLLM.model_id }
     }
-    return agentConfig?.primary || primaryConfig
-  }, [currentMode, activeTabConfig, agentConfig?.primary, primaryConfig])
 
-  // Get provider display info
-  const getProviderInfo = (provider: string) => {
-    switch (provider) {
-      case 'openrouter':
-        return { name: 'OpenRouter', color: 'text-blue-600 dark:text-blue-400' }
-      case 'bedrock':
-        return { name: 'AWS Bedrock', color: 'text-orange-600 dark:text-orange-400' }
-      case 'openai':
-        return { name: 'OpenAI', color: 'text-green-600 dark:text-green-400' }
-      case 'vertex':
-        return { name: 'Google Vertex', color: 'text-purple-600 dark:text-purple-400' }
-      case 'anthropic':
-        return { name: 'Anthropic', color: 'text-red-600 dark:text-red-400' }
-      default:
-        return { name: provider, color: 'text-gray-600 dark:text-gray-400' }
+    const firstPublishedLLM = savedLLMs[0]
+    if (firstPublishedLLM?.provider && firstPublishedLLM?.model_id) {
+      return { provider: firstPublishedLLM.provider, model_id: firstPublishedLLM.model_id }
     }
-  }
 
-  const providerInfo = getProviderInfo(currentLLM.provider)
+    const firstAvailableLLM = availableLLMs[0]
+    if (firstAvailableLLM?.provider && firstAvailableLLM?.model) {
+      return { provider: firstAvailableLLM.provider, model_id: firstAvailableLLM.model }
+    }
 
-  // Find matching published LLM for better label
-  const publishedLLM = savedLLMs.find(
-    (llm) => llm.provider === currentLLM.provider && llm.model_id === currentLLM.model_id
-  )
-  const modelDisplayName = publishedLLM?.name || currentLLM.model_id
+    return { provider: '', model_id: '' }
+  }, [agentConfig?.primary, primaryConfig, savedLLMs, availableLLMs])
+
+  const providerInfo = getProviderDisplayInfo(currentLLM.provider)
+  const modelDisplayName = getModelDisplayName({
+    provider: currentLLM.provider,
+    modelId: currentLLM.model_id,
+    metadata: modelMetadataCatalog,
+    savedLLMs,
+    availableLLMs,
+  })
 
   if (minimized) {
     return (
@@ -120,7 +111,7 @@ export default function LLMConfigurationSummary({
             <div className="bg-card rounded-md p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Provider:</span>
-                <span className={`text-sm font-medium ${providerInfo.color}`}>
+                <span className={`text-sm font-medium ${providerInfo.colorClass}`}>
                   {providerInfo.name}
                 </span>
               </div>
@@ -132,13 +123,6 @@ export default function LLMConfigurationSummary({
                   title={currentLLM.model_id}
                 >
                   {modelDisplayName}
-                </span>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">Fallbacks:</span>
-                <span className="text-sm font-mono text-foreground">
-                  {agentConfig?.fallbacks?.length || primaryConfig.fallback_models?.length || 0}
                 </span>
               </div>
             </div>
@@ -156,7 +140,7 @@ export default function LLMConfigurationSummary({
 
             {/* Quick Info */}
             <div className="text-xs text-muted-foreground space-y-1">
-              <div>• API keys stored securely in browser</div>
+              <div>• API keys stored securely in workspace</div>
               <div>• Changes apply to new conversations</div>
               <div>• Test keys before saving</div>
             </div>
@@ -174,7 +158,7 @@ export default function LLMConfigurationSummary({
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className={`text-sm font-medium ${providerInfo.color}`}>
+                <div className={`text-sm font-medium ${providerInfo.colorClass}`}>
                   {providerInfo.name}
                 </div>
                 <div className="text-xs text-muted-foreground truncate max-w-24">

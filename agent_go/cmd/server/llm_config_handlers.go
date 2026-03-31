@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
-	"github.com/manishiitg/mcpagent/llm"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
@@ -322,17 +322,17 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 
 	// Build response (same shape as before)
 	response := map[string]interface{}{
-		"primary_config":              defaults.PrimaryConfig,
-		"openrouter_config":           defaults.OpenrouterConfig,
-		"bedrock_config":              defaults.BedrockConfig,
-		"openai_config":               defaults.OpenaiConfig,
-		"anthropic_config":            defaults.AnthropicConfig,
-		"azure_config":                defaults.AzureConfig,
-		"minimax_config":              defaults.MinimaxConfig,
-		"minimax_coding_plan_config":  defaults.MinimaxCodingPlanConfig,
-		"available_models":            defaults.AvailableModels,
-		"supported_providers":         getSupportedProviders(),
-		"locked_providers":            lockedProviders,
+		"primary_config":             defaults.PrimaryConfig,
+		"openrouter_config":          defaults.OpenrouterConfig,
+		"bedrock_config":             defaults.BedrockConfig,
+		"openai_config":              defaults.OpenaiConfig,
+		"anthropic_config":           defaults.AnthropicConfig,
+		"azure_config":               defaults.AzureConfig,
+		"minimax_config":             defaults.MinimaxConfig,
+		"minimax_coding_plan_config": defaults.MinimaxCodingPlanConfig,
+		"available_models":           defaults.AvailableModels,
+		"supported_providers":        getSupportedProviders(),
+		"locked_providers":           lockedProviders,
 	}
 
 	// Helper to safely strip secrets from a specific config map
@@ -428,35 +428,23 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 	}
 
 	log.Printf("Received API key validation request for provider: %s", req.Provider)
-
-	// Claude Code uses the local CLI — validate by running a test prompt
-	if req.Provider == "claude-code" {
-		response := validateClaudeCodeCLI()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// Gemini CLI uses the local CLI — validate by checking it exists and sending a test prompt
-	if req.Provider == "gemini-cli" {
-		response := validateGeminiCLI(req.APIKey)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// Codex CLI uses the local CLI — validate by running a test prompt
-	if req.Provider == "codex-cli" {
-		response := validateCodexCLI(req.APIKey)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	response := llm.ValidateAPIKey(req)
+	response := validateProviderConfig(req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
+	switch req.Provider {
+	case "claude-code":
+		return validateClaudeCodeCLI()
+	case "gemini-cli":
+		return validateGeminiCLI(req.APIKey)
+	case "codex-cli":
+		return validateCodexCLI(req.APIKey)
+	default:
+		return llm.ValidateAPIKey(req)
+	}
 }
 
 // validateClaudeCodeCLI validates the Claude Code CLI by checking it exists and sending a test prompt

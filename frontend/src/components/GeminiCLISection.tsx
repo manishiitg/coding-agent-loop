@@ -1,16 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Terminal, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, ChevronDown } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
-import { llmConfigService } from '../services/llm-config-api'
+import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 
 interface GeminiCLISectionProps {
   onPublished?: () => void
   onModelChange?: (modelId: string) => void
+  metadata?: ModelMetadata[]
 }
 
-export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectionProps) {
+export function GeminiCLISection({ onPublished, onModelChange, metadata = [] }: GeminiCLISectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
@@ -22,6 +23,21 @@ export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectio
   // Test connection state
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
+  const geminiModels = useMemo(
+    () => metadata.filter(m => m.provider === 'gemini-cli'),
+    [metadata]
+  )
+  const currentModelMetadata = geminiModels.find(m => m.model_id === geminiCliModel)
+
+  useEffect(() => {
+    if (geminiModels.length === 0) return
+    const modelExists = geminiModels.some(m => m.model_id === geminiCliModel)
+    if (!modelExists) {
+      const nextModel = geminiModels[0].model_id
+      setGeminiCliModel(nextModel)
+      onModelChange?.(nextModel)
+    }
+  }, [geminiModels, geminiCliModel, onModelChange, setGeminiCliModel])
 
   const alreadyPublished = savedLLMs.some(
     llm => llm.provider === 'gemini-cli' && llm.model_id === geminiCliModel
@@ -50,7 +66,7 @@ export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectio
     }
   }
 
-  const handlePublishToLibrary = () => {
+  const handlePublishToLibrary = async () => {
     if (!publishName.trim()) return
 
     setIsSubmitting(true)
@@ -62,7 +78,7 @@ export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectio
         model_id: geminiCliModel,
       }
 
-      saveLLM(llmModel, publishName.trim(), `Gemini CLI (${geminiCliModel})`, 'none')
+      await saveLLM(llmModel, publishName.trim(), `Gemini CLI (${geminiCliModel})`, 'none', currentModelMetadata)
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -137,10 +153,11 @@ export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectio
             }}
             className="w-full appearance-none px-3 py-2 pr-8 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
           >
-            <option value="auto">auto (recommended)</option>
-            <option value="pro">pro</option>
-            <option value="flash">flash</option>
-            <option value="flash-lite">flash-lite</option>
+            {geminiModels.map(model => (
+              <option key={model.model_id} value={model.model_id}>
+                {model.model_name || model.model_id}
+              </option>
+            ))}
           </select>
           <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         </div>

@@ -813,9 +813,9 @@ export const EmployeeDashboard: React.FC = () => {
                   reviewState.report?.exists && reviewState.report.content ? (
                     <div className="space-y-4">
                       <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Latest Report</div>
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Latest Archived Report</div>
                         <div className="mt-1 text-sm text-foreground">
-                          {reviewState.report.output_path || `runs/${selectedWorkflow.latestRunFolder}/final_output.md`}
+                          {reviewState.report.output_path || `reports/${selectedWorkflow.latestRunFolder.split('/').pop() || 'group'}/<timestamp>.md`}
                         </div>
                       </div>
                       <MarkdownRenderer content={reviewState.report.content} className="max-w-none" showScrollbar={true} />

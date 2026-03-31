@@ -3,22 +3,10 @@ import ReactDOM from 'react-dom'
 import { X, Radio } from 'lucide-react'
 import { SSEConnection } from '../../services/sse'
 import { EventList } from '../events'
+import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { useChatStore } from '../../stores'
 import type { PollingEvent, SSEEventMessage } from '../../services/api-types'
 import { getTypedEventData } from '../../generated/event-types'
-
-// Event types that EventDispatcher can render (all others show as "Unknown")
-const KNOWN_EVENT_TYPES = new Set([
-  'agent_start', 'agent_end', 'agent_error',
-  'llm_generation_start', 'llm_generation_end', 'llm_generation_error', 'llm_generation_with_retry',
-  'tool_call_start', 'tool_call_end', 'tool_call_error',
-  'unified_completion', 'streaming_chunk',
-  'delegation_start', 'delegation_end',
-  'background_agent_started', 'background_agent_completed', 'background_agent_terminated',
-  'blocking_human_questions', 'user_message', 'conversation_resumed',
-  'plan_approval', 'synthetic_turn_ready', 'temp_llm_skipped',
-  'workflow_error',
-])
 
 interface ScheduleLiveEventsPopupProps {
   sessionId: string
@@ -33,9 +21,9 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }:
   const eventsEndRef = useRef<HTMLDivElement>(null)
   const appendStreamingChunk = useChatStore(state => state.appendStreamingChunk)
 
-  // Filter to only events that EventDispatcher can render
+  // Match the same visibility rules the regular chat uses.
   const displayEvents = useMemo(
-    () => allEvents.filter(e => !!e.type && KNOWN_EVENT_TYPES.has(e.type)),
+    () => allEvents.filter(e => !!e.type && e.type !== 'workspace_file_operation' && shouldShowEventByMode(e.type)),
     [allEvents]
   )
 

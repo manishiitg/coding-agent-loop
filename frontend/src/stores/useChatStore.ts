@@ -283,7 +283,7 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     enableGWSAccess: appStore?.lastGWSAccess ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
     selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
-    delegationTierConfig: isMultiAgentMode ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
+    delegationTierConfig: undefined,
     queuedMessages: [],
     autoRun: false,
     planPhaseOverride: isMultiAgentMode ? (appStore?.lastMultiAgentPlanPhase ?? 'planning') : undefined,

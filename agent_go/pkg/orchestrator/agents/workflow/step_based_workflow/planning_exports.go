@@ -600,6 +600,9 @@ func (s *WorkshopChatSession) Close() {
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
+	if s.controller != nil {
+		s.controller.CloseWorkshopGroupSessions()
+	}
 }
 
 // RegisterRunFullEvaluationTool registers a run_full_evaluation tool that executes all

@@ -227,9 +227,7 @@ export function buildQueryRequestPayload(params: {
     plan_phase: isMultiAgentMode
       ? ('execution' as const)
       : undefined,
-    delegation_tier_config: isMultiAgentMode
-      ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
-      : undefined,
+    delegation_tier_config: undefined,
     selected_skills: isChatWithExtras && currentTab?.config?.selectedSkills?.length
       ? currentTab.config.selectedSkills
       : undefined,

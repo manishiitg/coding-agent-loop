@@ -311,6 +311,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx context.Context, opts *WorkshopExecuteOptions) error {
 	if opts.GroupID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] applyWorkshopExecuteOptions: groupID=%s, manifestLoaded=%v", opts.GroupID, hcpo.variablesManifest != nil))
+		resolvedGroupID := opts.GroupID
 
 		// Reload manifest from disk if not loaded (can happen on cached sessions)
 		if hcpo.variablesManifest == nil {
@@ -329,7 +330,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 		// (agents often pass the folder name which is derived from the display name).
 		if hcpo.variablesManifest != nil {
 			groupValues := hcpo.variablesManifest.GetVariableValues(opts.GroupID)
-			resolvedGroupID := opts.GroupID
 			if groupValues == nil {
 				// Try matching by sanitized display name
 				for _, g := range hcpo.variablesManifest.Groups {
@@ -364,6 +364,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 		} else {
 			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Cannot resolve group %q — variables manifest is nil even after reload attempt", opts.GroupID))
 		}
+
+		if err := hcpo.switchWorkshopGroupSession(resolvedGroupID); err != nil {
+			return fmt.Errorf("failed to switch workshop MCP session for group %q: %w", resolvedGroupID, err)
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Active MCP session for group %s: %s", resolvedGroupID, hcpo.GetMCPSessionID()))
 
 		// Resolve run folder if not explicitly provided
 		if opts.RunFolder == "" {

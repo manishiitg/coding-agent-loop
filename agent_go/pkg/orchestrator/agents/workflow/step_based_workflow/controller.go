@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -62,6 +64,12 @@ type StepBasedWorkflowOrchestrator struct {
 	httpSessionID string // HTTP session ID for MCP cleanup scoping
 	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
 	browserMode   string // Browser mode: "playwright", "stealth", "cdp", "headless", "" (auto-detect)
+
+	// Workshop MCP session cache: one reusable MCP session per group_id within a
+	// workshop session. This preserves browser/login state when the user runs
+	// multiple steps for the same group, while isolating different groups.
+	workshopGroupSessionsMu sync.Mutex
+	workshopGroupSessionIDs map[string]string
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
@@ -266,6 +274,68 @@ func NewStepBasedWorkflowOrchestrator(
 // This allows CloseHTTPSession to close all group sessions when the workflow stops.
 func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 	hcpo.httpSessionID = httpSessionID
+}
+
+// switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
+// session per group_id instead of the controller's "default-group" placeholder.
+// Reusing a cached per-group session preserves browser/login state across steps
+// for the same group while keeping different groups isolated.
+func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID string) error {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return nil
+	}
+
+	hcpo.workshopGroupSessionsMu.Lock()
+	if hcpo.workshopGroupSessionIDs == nil {
+		hcpo.workshopGroupSessionIDs = make(map[string]string)
+	}
+	groupSessionID, exists := hcpo.workshopGroupSessionIDs[groupID]
+	if !exists {
+		groupSessionID = fmt.Sprintf("session-group-%s-%d", groupID, time.Now().UnixNano())
+		hcpo.workshopGroupSessionIDs[groupID] = groupSessionID
+		if hcpo.httpSessionID != "" {
+			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
+		}
+	}
+	hcpo.workshopGroupSessionsMu.Unlock()
+
+	previousSessionID := hcpo.GetMCPSessionID()
+	hcpo.sessionID = groupSessionID
+	hcpo.BaseOrchestrator.SetMCPSessionID(groupSessionID)
+
+	cacheAction := "reused"
+	if !exists {
+		cacheAction = "created"
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s)", cacheAction, groupID, groupSessionID, previousSessionID))
+
+	if strings.Contains(hcpo.GetMCPSessionID(), "default-group") {
+		return fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupID, hcpo.GetMCPSessionID())
+	}
+	return nil
+}
+
+// CloseWorkshopGroupSessions closes all cached workshop group MCP sessions.
+// This is best-effort cleanup for workshop sessions that switched groups.
+func (hcpo *StepBasedWorkflowOrchestrator) CloseWorkshopGroupSessions() {
+	hcpo.workshopGroupSessionsMu.Lock()
+	if len(hcpo.workshopGroupSessionIDs) == 0 {
+		hcpo.workshopGroupSessionsMu.Unlock()
+		return
+	}
+	sessionIDs := make([]string, 0, len(hcpo.workshopGroupSessionIDs))
+	for _, sessionID := range hcpo.workshopGroupSessionIDs {
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	hcpo.workshopGroupSessionIDs = make(map[string]string)
+	hcpo.workshopGroupSessionsMu.Unlock()
+
+	sort.Strings(sessionIDs)
+	for _, sessionID := range sessionIDs {
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Closing cached group MCP session: %s", sessionID))
+		mcpagent.CloseSession(sessionID)
+	}
 }
 
 // SetCdpPort sets the CDP port for browser mode detection.

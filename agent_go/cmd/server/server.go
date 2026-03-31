@@ -3324,7 +3324,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
 		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
+			tierConfig := LoadAndResolveTierConfig(streamCtx, req.DelegationTierConfig)
 			if tierConfig != nil {
 				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
 					finalProvider = tierConfig.Main.Provider

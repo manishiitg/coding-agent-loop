@@ -24,6 +24,31 @@ function getErrorSummary(error: string): string {
     if (remainder && !/^exit status \d+$/i.test(remainder)) return remainder
   }
 
+  const jsonStart = trimmed.indexOf('{')
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(jsonStart)) as {
+        metadata?: { raw?: string }
+        error?: string
+        message?: string
+      }
+      if (parsed.metadata?.raw?.trim()) return parsed.metadata.raw.trim()
+      if (parsed.error?.trim()) return parsed.error.trim()
+      if (parsed.message?.trim()) return parsed.message.trim()
+    } catch {
+      // Fall through to regex-based extraction for non-JSON error strings.
+    }
+  }
+
+  const rawMatch = trimmed.match(/"raw"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  if (rawMatch?.[1]) {
+    try {
+      return JSON.parse(`"${rawMatch[1]}"`)
+    } catch {
+      return rawMatch[1]
+    }
+  }
+
   const msgMatch = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)
   if (msgMatch?.[1]) return msgMatch[1]
 

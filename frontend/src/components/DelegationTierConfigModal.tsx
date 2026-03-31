@@ -2,19 +2,9 @@ import { useState } from 'react'
 import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown, RefreshCw } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
-import { useChatStore } from '../stores'
 import type { DelegationTierConfig, TierModel, CustomTierModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
-
-// Helper: sync delegation tier config to the active multi-agent tab
-const syncTierConfigToActiveTab = (newConfig: DelegationTierConfig | null) => {
-  const chatStore = useChatStore.getState()
-  const activeTab = chatStore.getActiveTab()
-  if (activeTab?.metadata?.mode === 'multi-agent') {
-    chatStore.setTabConfig(activeTab.tabId, { delegationTierConfig: newConfig ?? undefined })
-  }
-}
 
 // Generate a slug from the first 4 words of a description, guarding against reserved names
 const descToSlug = (desc: string): string => {
@@ -71,14 +61,12 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
   const updateConfig = (next: DelegationTierConfig | null) => {
     setDelegationTierConfig(next)
-    syncTierConfigToActiveTab(next)
   }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
       await loadDelegationTierDefaults()
-      syncTierConfigToActiveTab(useLLMStore.getState().delegationTierConfig)
     } finally {
       setIsRefreshing(false)
     }
@@ -262,8 +250,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                       const newConfig: DelegationTierConfig = { ...delegationTierConfig }
                       delete newConfig.main
                       const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
-                      setDelegationTierConfig(finalConfig)
-                      syncTierConfigToActiveTab(finalConfig)
+                      updateConfig(finalConfig)
                     }}
                     className="text-xs text-red-400 hover:text-red-600"
                   >

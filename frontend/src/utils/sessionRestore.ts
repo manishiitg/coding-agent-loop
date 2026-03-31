@@ -273,11 +273,6 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
     configUpdate.selectedSubAgents = config.selected_subagents
   }
 
-  // Restore delegation tier config (for multi-agent sessions)
-  if (config.delegation_tier_config) {
-    configUpdate.delegationTierConfig = config.delegation_tier_config
-  }
-
   return configUpdate
 }
 

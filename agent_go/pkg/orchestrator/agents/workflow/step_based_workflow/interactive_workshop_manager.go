@@ -178,6 +178,9 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg == nil {
 		return false
 	}
+	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
+		return false
+	}
 	return (cfg.UseLearnCodeMode != nil && *cfg.UseLearnCodeMode) ||
 		(cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode)
 }
@@ -1049,7 +1052,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"PlanJSON":                planContent,
 		"StepConfigSummary":       stepConfigSummary,
 		"IsCodeExecutionMode":     fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
-		"UseToolSearchMode":       fmt.Sprintf("%v", agent.GetConfig().UseToolSearchMode),
+		"UseToolSearchMode":       fmt.Sprintf("%v", getEffectiveToolSearchMode(agent.GetConfig())),
 		"WorkshopMode":            workshopMode,
 		"UnoptimizedSteps":        unoptimizedSteps,
 		"ProgressSummary":         progressSummary,
@@ -1210,11 +1213,11 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
 **When creating or configuring each step, choose its execution mode (preference order):**
-1. **Code execution mode** (best): step is deterministic or can be stabilized into reusable Python — data transforms, file processing, calculations, fixed API calls, stable browser automation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first.
-2. **Tool search mode**: exact tools aren't known upfront → update_step_config(step_id, use_tool_search_mode=true)
+1. **Code execution mode** (best): step is deterministic or can be stabilized into reusable Python — data transforms, file processing, calculations, fixed API calls, or only very stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first.
+2. **Tool search mode**: exact tools aren't known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
 3. **Simple mode** (default): single tool call, no config needed
 
-When in doubt: start with code_exec. If the step can't be stabilized into one reusable script, fall back to tool_search or simple.
+When in doubt: if the step is browser-heavy, depends on interactive page inspection, or will likely take many tool calls, start with tool_search. Choose code_exec only when the full flow can be stabilized into one reusable script.
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
@@ -1299,20 +1302,20 @@ Update: update_step_config(step_id, use_code_execution_mode=true)
 - **Future runs reuse the saved script first, so stable steps often use 0 LLM tokens.**
 - Use whenever: data transforms, file processing, calculations, fixed API calls, extraction/normalization, report generation from structured data, any step whose logic doesn't change run-to-run.
 - Also valid for stable browser automation when the flow is repeatable: known selectors, fixed navigation, predictable waits, deterministic extraction, or scripted form submission.
-- Not suitable for: highly reactive browser tasks where the script cannot know the next action until it interprets arbitrary page state, or steps whose reasoning logic itself changes each run.
+- Not suitable for: highly reactive browser tasks where the script cannot know the next action until it interprets arbitrary page state, browser-heavy flows that require repeated inspection and many back-and-forth tool calls, or steps whose reasoning logic itself changes each run.
 
 **2. Tool search mode** ← fallback when code_exec cannot be stabilized
 Update: update_step_config(step_id, use_tool_search_mode=true)
-- Use only when the exact tools needed aren't known upfront or vary at runtime. All other modes are preferred.
+- Use when the exact tools needed aren't known upfront or vary at runtime, and prefer it for browser-heavy steps that need adaptive interaction or many tool calls before the path is clear. All other modes are preferred.
 
 **3. Simple mode** ← only for tiny one-shot work
 - Keep a step in simple mode only when it is genuinely trivial and does not benefit from reusable Python or tool discovery.
 
 **4. Simple mode** (no config needed) — for single-tool-call steps only.
 
-**Browser automation guidance:** Do NOT blanket-ban Python for browser steps. Prefer **code_exec** first for browser workflows that can be scripted. Keep a browser step in **simple** mode only when the agent truly must inspect page state turn-by-turn and decide interactively after each action.
+**Browser automation guidance:** Do NOT blanket-ban Python for browser steps. Use **code_exec** for browser workflows only when they can be scripted end-to-end with stable selectors and predictable control flow. If the browser work will likely require lots of tool calls, repeated inspection, or deciding each action from live page state, prefer **tool_search** instead of code_exec. Keep a browser step in **simple** mode only when the work is genuinely tiny and does not benefit from reusable scripting or adaptive tool discovery.
 
-**When reviewing a step during optimization**: ask "can this step be stabilized into reusable Python?" If yes → switch to code_exec. If it makes 2+ MCP tool calls but still cannot be stabilized, consider tool_search. Default to code_exec first and downgrade only if it fails.
+**When reviewing a step during optimization**: ask "can this step be stabilized into reusable Python?" If yes, and the browser/API flow is predictable, switch to code_exec. If the step needs repeated browser inspection, many tool calls, or adaptive action selection, prefer tool_search. Default to the strongest mode the run evidence supports, not blindly to code_exec.
 
 **Goal**: Each step should run with the **fewest possible LLM tokens and tool calls**. Reusable `+"`code_exec`"+` is the gold standard — stable steps often hit 0 tokens after the first run. Simple mode for trivial steps. Tool search only when unavoidable.
 
@@ -1699,8 +1702,10 @@ Steps have three execution modes — set via **update_step_config(step_id, use_c
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
+  - Stable browser automation with known selectors, predictable navigation, and a reusable scripted flow
   - The user explicitly asks for code execution mode
 - **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools aren't known upfront or the step needs to adapt to available tools.
+- Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection.
 
 `+"`use_learn_code_mode`"+` remains as a deprecated alias for older plans, but the canonical scripted mode is now `+"`code_exec`"+`.
 

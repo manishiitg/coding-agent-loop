@@ -559,6 +559,8 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		}
 	}
 
+	effectiveToolSearchMode := boa.config.UseToolSearchMode || boa.config.LogicalUseToolSearchMode
+
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp:     time.Now(),
@@ -572,7 +574,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		ServersCount:         len(boa.config.ServerNames),
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
-		UseToolSearchMode:    boa.config.UseToolSearchMode,
+		UseToolSearchMode:    effectiveToolSearchMode,
 		UseLearnCodeMode:     boa.config.UseLearnCodeMode,
 		SystemPrompt:         fullSystemPrompt,
 		UserMessage:          userMessage,

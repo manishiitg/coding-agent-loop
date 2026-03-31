@@ -40,7 +40,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 
 **Handling**: Step descriptions are already resolved. For code and tool calls, use the resolved values directly.
-{{if and .IsCodeExecutionMode .VarMapping}}**Env var access** (VAR_* for variables, SECRET_* for credentials, never hardcode): {{.VarMapping}}{{end}}
+{{if and .UseCodeStyleRules .VarMapping}}**Env var access** (VAR_* for variables, SECRET_* for credentials, never hardcode): {{.VarMapping}}{{end}}
 {{end}}
 
 ## Workspace & Paths
@@ -65,7 +65,7 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 {{end}}
 ## EXECUTION RULES
 1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
-{{if .IsCodeExecutionMode}}2. Use absolute paths in code. E.g., `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
+{{if .UseCodeStyleRules}}2. Use absolute paths in code. E.g., `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
 3. **No env var fallbacks in Python**: always `+"`"+`os.environ['KEY']`+"`"+` — never `+"`"+`os.environ.get('KEY', 'default')`+"`"+`. Variables use `+"`"+`VAR_<NAME>`+"`"+`, secrets use `+"`"+`SECRET_<NAME>`+"`"+`. Missing var must raise KeyError, not silently use a hardcoded value.
 {{else}}2. Use absolute paths in shell commands. E.g., `+"`"+`echo '...' > '{{.StepExecutionPath}}/{{.StepContextOutput}}'`+"`"+`.
 {{end}}
@@ -255,7 +255,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 // buildCodeExecBestPractices returns the Python best practices section for code_exec mode.
 // Returns "" when not in code execution mode or no variables/inputs present.
 func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
-	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" {
+	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" || templateVars["UseToolSearchMode"] == "true" {
 		return ""
 	}
 	var varMappingLines []string
@@ -293,6 +293,21 @@ func sanitizeLearnCodeDescription(desc string) string {
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
+func buildBridgeBackedToolSearchSection() string {
+	return `## Bridge-Backed Tool Search Mode
+
+This step is logically in **tool_search** mode, but this provider session reaches MCP tools through the HTTP bridge.
+
+{{TOOL_STRUCTURE}}
+
+**How to work in this mode:**
+1. Inspect the available servers and tools in the tool index above.
+2. If you need the exact schema for a tool, call ` + "`" + `get_api_spec(server_name="...", tool_name="...")` + "`" + `.
+3. Use ` + "`" + `execute_shell_command` + "`" + ` to call tools via ` + "`" + `MCP_API_URL` + "`" + ` and ` + "`" + `MCP_API_TOKEN` + "`" + `.
+4. Focus on completing the current step with targeted calls. Do **not** create or rely on a reusable ` + "`" + `main.py` + "`" + ` unless the step is explicitly in scripted code mode.
+`
+}
+
 // executionOnlySystemPromptProcessor generates the system prompt for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
@@ -315,7 +330,11 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 
 	// Build code execution or tool search section using common builder
 	useToolSearchMode := templateVars["UseToolSearchMode"] == "true"
+	useCodeStyleRules := isCodeExecutionMode && !useToolSearchMode
 	codeExecutionSection := BuildCodeExecutionSection(isCodeExecutionMode, useToolSearchMode, workspacePath)
+	if isCodeExecutionMode && useToolSearchMode {
+		codeExecutionSection = buildBridgeBackedToolSearchSection()
+	}
 
 	// Learn code mode: append instructions to write main.py (added on top of code execution section)
 	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"
@@ -374,6 +393,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"VariableNames":              variableNames,
 		"VariableValues":             variableValues,
 		"VarMapping":                 templateVars["LearnCodeVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
+		"UseCodeStyleRules":          useCodeStyleRules,
 		"PythonBestPractices":        buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,

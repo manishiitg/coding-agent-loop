@@ -1616,14 +1616,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				default:
 				}
 
-				// Sync templateVars with the agent's resolved config.
-				// applyStepConfigToAgentConfig may have changed UseCodeExecutionMode/UseToolSearchMode
-				// (e.g., CLI providers like codex-cli force code execution mode on and tool search off),
-				// but templateVars were built before the agent was created. The system prompt template
-				// reads these vars, so they must reflect the final resolved values.
+				// Sync only the transport-level code execution flag from the resolved agent config.
+				// Keep UseToolSearchMode from the step's logical config so a CLI-backed tool_search
+				// step does not get rewritten into scripted-code prompt semantics.
 				if executionAgent.GetConfig() != nil {
 					templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseCodeExecutionMode)
-					templateVars["UseToolSearchMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseToolSearchMode)
 				}
 
 				// Pre-save prompts.json so get_step_prompts works during execution (not just after)

@@ -406,6 +406,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) getToolSearchMode(stepConfig *AgentCo
 	return isToolSearchMode
 }
 
+// getLogicalToolSearchMode preserves the step's semantic mode even when transport-specific
+// runtime behavior forces code execution mode on for CLI providers.
+func (hcpo *StepBasedWorkflowOrchestrator) getLogicalToolSearchMode(stepConfig *AgentConfigs) bool {
+	if stepConfig != nil && stepConfig.UseToolSearchMode != nil {
+		isToolSearchMode := *stepConfig.UseToolSearchMode
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific logical tool search mode: %v", isToolSearchMode))
+		return isToolSearchMode
+	}
+	if stepConfig != nil {
+		if stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
+			hcpo.GetLogger().Info("🔧 Step-specific learn_code/code_exec semantics disable logical tool search mode")
+			return false
+		}
+		if stepConfig.UseCodeExecutionMode != nil && *stepConfig.UseCodeExecutionMode {
+			hcpo.GetLogger().Info("🔧 Step-specific code execution semantics disable logical tool search mode")
+			return false
+		}
+	}
+	isToolSearchMode := hcpo.GetUseToolSearchMode()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset logical tool search mode: %v", isToolSearchMode))
+	return isToolSearchMode
+}
+
 // getPreDiscoveredTools determines pre-discovered tools with priority: step config > preset default.
 // Always ensures execute_shell_command is included (needed for file operations in both tool search and code exec modes).
 func (hcpo *StepBasedWorkflowOrchestrator) getPreDiscoveredTools(stepConfig *AgentConfigs) []string {
@@ -688,6 +711,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
 func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs, isCodeExecutionMode bool) {
 	workflowServers := hcpo.GetSelectedServers()
+	logicalToolSearchMode := hcpo.getLogicalToolSearchMode(stepConfig)
 	// Use step-specific servers if provided, filtered against workflow-level servers.
 	// Workflow is the hard cap: if a server was removed from the workflow no step can use it.
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
@@ -725,18 +749,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		// Rule 1: CLI providers always use code execution mode
 		config.UseCodeExecutionMode = true
 		config.UseToolSearchMode = false
+		config.LogicalUseToolSearchMode = logicalToolSearchMode
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge (logical tool search mode: %v)", actualProvider, config.LogicalUseToolSearchMode))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		// Rule 2: Step explicitly set code execution mode
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		// If code execution is enabled and tool search is NOT explicitly set on the step,
-		// default tool search to false — they are mutually exclusive, don't inherit preset default
-		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
-			config.UseToolSearchMode = false
-		} else {
-			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
-		}
+		config.UseToolSearchMode = logicalToolSearchMode
+		config.LogicalUseToolSearchMode = logicalToolSearchMode
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {
@@ -745,8 +765,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		// explicitly set by the user (not auto-enabled for claude-code at workflow level).
 		// For non-CLI providers, code execution mode is false unless step explicitly enables it.
 		config.UseCodeExecutionMode = false
-		isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
-		config.UseToolSearchMode = isToolSearchMode
+		config.UseToolSearchMode = logicalToolSearchMode
+		config.LogicalUseToolSearchMode = logicalToolSearchMode
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Provider '%s': code execution mode disabled (not CLI provider), tool search mode: %v", actualProvider, config.UseToolSearchMode))
 	}

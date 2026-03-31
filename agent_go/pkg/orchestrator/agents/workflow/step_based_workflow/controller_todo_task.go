@@ -620,7 +620,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		if agent.GetConfig().UseCodeExecutionMode {
 			templateVars["IsCodeExecutionMode"] = "true"
 		}
-		if agent.GetConfig().UseToolSearchMode {
+		if getEffectiveToolSearchMode(agent.GetConfig()) {
 			templateVars["UseToolSearchMode"] = "true"
 		}
 		// Show tools reference section for CLI providers ONLY when NOT in code execution mode.

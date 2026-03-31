@@ -112,6 +112,8 @@ type OrchestratorAgentConfig struct {
 	UseLearnCodeMode bool `json:"use_learn_code_mode,omitempty"`
 	// Tool search mode: When enabled, tools are discovered on-demand via search_tools
 	UseToolSearchMode  bool     `json:"use_tool_search_mode,omitempty"`
+	// Logical tool search mode: preserves step semantics when CLI providers force code-exec transport
+	LogicalUseToolSearchMode bool     `json:"logical_use_tool_search_mode,omitempty"`
 	PreDiscoveredTools []string `json:"pre_discovered_tools,omitempty"` // Tools always available without searching
 	// Context offloading configuration
 	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)

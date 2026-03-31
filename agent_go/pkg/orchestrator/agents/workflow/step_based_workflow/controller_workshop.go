@@ -64,6 +64,7 @@ type WorkshopExecuteOptions struct {
 	Iteration        string // e.g., "iteration-3" — combined with group folder name to form RunFolder
 	RunFolder        string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
 	SkipLearning     bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
+	SavedScriptOnly  bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
 	Instructions     string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
 	HumanInput       string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
 	Tier             int    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
@@ -85,7 +86,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		stepID, hcpo.selectedRunFolder, hcpo.GetUseCodeExecutionMode()))
 	// 1. Apply per-call overrides (group_id, run_folder, human_input)
 	if opts != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s, humanInput=%d chars", opts.GroupID, opts.RunFolder, len(opts.HumanInput)))
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s, humanInput=%d chars, savedScriptOnly=%v", opts.GroupID, opts.RunFolder, len(opts.HumanInput), opts.SavedScriptOnly))
 		if err := hcpo.applyWorkshopExecuteOptions(ctx, opts); err != nil {
 			return "", fmt.Errorf("failed to apply execute options: %w", err)
 		}
@@ -171,6 +172,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Step %q not found. Valid IDs: %v", stepID, allIDs))
 		return "", fmt.Errorf("step with ID %q not found in plan", stepID)
 	}
+	if opts != nil && opts.SavedScriptOnly {
+		agentCfgs := getAgentConfigs(stepInfo.Step)
+		if !isScriptedExecutionModeConfig(agentCfgs) {
+			return "", fmt.Errorf("step %q is not in scripted code mode, so there is no saved main.py fast path to run", stepID)
+		}
+	}
 
 	isInnerStep := stepInfo.TopIndex < 0
 	if isInnerStep {
@@ -235,6 +242,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	setup, err := execManager.PrepareExecution(ctx, execOpts, progress, totalSteps, hcpo.selectedRunFolder)
 	if err != nil {
 		return "", fmt.Errorf("failed to prepare execution: %w", err)
+	}
+	if opts != nil && opts.SavedScriptOnly {
+		setup.Context.SavedScriptOnly = true
 	}
 
 	// For inner steps: skip cleanup and set step path override so the inner step

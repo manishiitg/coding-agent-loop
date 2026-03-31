@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps
@@ -115,6 +115,7 @@ type ExecutionContext struct {
 	FastExecuteEndStep int                     // Last step index to fast execute (0-based, -1 means not set)
 	RunSingleStepOnly  bool                    // Whether to run only a single step and stop
 	SingleStepTarget   int                     // Target step index to run (0-based)
+	SavedScriptOnly    bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
 	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
 	StepPathOverride   string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)

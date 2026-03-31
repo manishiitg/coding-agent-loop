@@ -46,7 +46,6 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   }
 
   const [selectedGroupKey, setSelectedGroupKey] = useState('')
-  const [selectedIteration, setSelectedIteration] = useState('')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,24 +96,18 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
     }))
   }, [runEntries])
 
-  const iterationOptions = useMemo(() => {
-    const seen = new Set<string>()
-    return runEntries
-      .filter(entry => entry.groupKey === selectedGroupKey)
-      .filter(entry => {
-        if (seen.has(entry.iteration)) return false
-        seen.add(entry.iteration)
-        return true
-      })
-      .map(entry => entry.iteration)
-  }, [runEntries, selectedGroupKey])
-
   const activeRunFolder = useMemo(() => {
-    if (!selectedGroupKey || !selectedIteration) return ''
-    return runEntries.find(entry =>
-      entry.groupKey === selectedGroupKey && entry.iteration === selectedIteration
-    )?.runFolder || ''
-  }, [runEntries, selectedGroupKey, selectedIteration])
+    if (!selectedGroupKey) return ''
+
+    const preferredEntry = runEntries.find(entry =>
+      entry.groupKey === selectedGroupKey && entry.runFolder === selectedRunFolder
+    )
+    if (preferredEntry) {
+      return preferredEntry.runFolder
+    }
+
+    return runEntries.find(entry => entry.groupKey === selectedGroupKey)?.runFolder || ''
+  }, [runEntries, selectedGroupKey, selectedRunFolder])
 
   useEffect(() => {
     if (!isOpen) return
@@ -124,7 +117,6 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
       || null
 
     setSelectedGroupKey(preferredEntry?.groupKey || '')
-    setSelectedIteration(preferredEntry?.iteration || '')
     setError(null)
     setData(null)
     setCopied(false)
@@ -133,18 +125,13 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   useEffect(() => {
     if (!isOpen) return
 
-    const selectionStillExists = runEntries.some(entry =>
-      entry.groupKey === selectedGroupKey && entry.iteration === selectedIteration
-    )
+    const selectionStillExists = runEntries.some(entry => entry.groupKey === selectedGroupKey)
     if (selectionStillExists) return
 
-    const preferredEntry = runEntries.find(entry => entry.groupKey === selectedGroupKey)
-      || runEntries[0]
-      || null
+    const preferredEntry = runEntries.find(entry => entry.groupKey === selectedGroupKey) || runEntries[0] || null
 
     setSelectedGroupKey(preferredEntry?.groupKey || '')
-    setSelectedIteration(preferredEntry?.iteration || '')
-  }, [isOpen, runEntries, selectedGroupKey, selectedIteration])
+  }, [isOpen, runEntries, selectedGroupKey])
 
   const loadOutput = useCallback(async (runFolder: string) => {
     if (!workspacePath || !runFolder) return
@@ -213,6 +200,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   const archivePathHint = data?.output_path || (archiveGroupFolderName
     ? `reports/${archiveGroupFolderName}/<timestamp>.md`
     : `reports/${'<group>'}/<timestamp>.md`)
+  const latestArchiveLabel = data?.output_path?.split('/').pop() || ''
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -224,7 +212,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
               Final Report
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Generate from a specific iteration/group run and review the latest archived report for that group.
+              Generate from the latest available run for a group and review that group's latest archived report.
             </p>
           </div>
           <button
@@ -241,31 +229,13 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
             <select
               value={selectedGroupKey}
               onChange={(e) => {
-                const nextGroupKey = e.target.value
-                const nextIteration = runEntries.find(entry => entry.groupKey === nextGroupKey)?.iteration || ''
-                setSelectedGroupKey(nextGroupKey)
-                setSelectedIteration(nextIteration)
+                setSelectedGroupKey(e.target.value)
               }}
               className="min-w-[280px] rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
               {!selectedGroupKey && <option value="">Select group</option>}
               {groupOptions.map(group => (
                 <option key={group.value} value={group.value}>{group.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Iteration</span>
-            <select
-              value={selectedIteration}
-              onChange={(e) => setSelectedIteration(e.target.value)}
-              disabled={!selectedGroupKey || iterationOptions.length === 0}
-              className="min-w-[220px] rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
-            >
-              {!selectedIteration && <option value="">Select iteration</option>}
-              {iterationOptions.map(iteration => (
-                <option key={iteration} value={iteration}>{iteration}</option>
               ))}
             </select>
           </div>
@@ -307,6 +277,11 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
               <div className="text-xs text-muted-foreground mt-1">
                 Archive: {archivePathHint}
               </div>
+              {latestArchiveLabel && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  Latest archived file: {latestArchiveLabel}
+                </div>
+              )}
             </div>
             <div className={`text-xs px-2 py-1 rounded-md ${isConfigEnabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
               {isConfigEnabled ? 'Enabled' : 'Disabled'}
@@ -337,7 +312,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
                 <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
                 <div className="text-sm font-medium text-foreground">No group runs found</div>
                 <div className="text-sm text-muted-foreground">
-                  Final output is generated from a completed iteration/group run and archived under {`reports/${'<group>'}/`}. Start a workflow run first, then come back here to review it.
+                  Final output is generated from a completed group run and archived under {`reports/${'<group>'}/`}. Start a workflow run first, then come back here to review it.
                 </div>
               </div>
             </div>
@@ -345,7 +320,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
 
           {workspacePath && runEntries.length > 0 && !hasGroupScopedSelection && (
             <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-              Select a group and iteration to view its final output.
+              Select a group to view its latest archived report.
             </div>
           )}
 
@@ -379,7 +354,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
                 <FileText className="w-8 h-8 text-muted-foreground mx-auto" />
                 <div className="text-sm font-medium text-foreground">No archived report generated yet</div>
                 <div className="text-sm text-muted-foreground">
-                  Generate the markdown artifact from <span className="font-mono">{activeRunFolder}</span>. It will be archived under <span className="font-mono">{archivePathHint}</span>.
+                  Generate the markdown artifact using the latest available run for this group, currently <span className="font-mono">{activeRunFolder}</span>. It will be archived under <span className="font-mono">{archivePathHint}</span>.
                 </div>
               </div>
             </div>

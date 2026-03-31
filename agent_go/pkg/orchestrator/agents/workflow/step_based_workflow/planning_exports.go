@@ -534,9 +534,7 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 			s.config.PreDiscoveredTools = preDiscoveredTools
 		}
 		s.config.UseKnowledgebase = useKnowledgebase
-		if len(secrets) > 0 {
-			s.config.Secrets = secrets
-		}
+		s.config.Secrets = append([]orchestrator.SecretEntry(nil), secrets...)
 	}
 }
 
@@ -581,6 +579,7 @@ func RegisterWorkshopChatTools(
 ) {
 	iwm := &InteractiveWorkshopManager{
 		controller:             session.controller,
+		workshopConfig:         session.config,
 		stepRegistry:           session.StepRegistry,
 		sessionCtx:             session.sessionCtx,
 		toolCallQueryFunc:      session.toolCallQueryFunc,

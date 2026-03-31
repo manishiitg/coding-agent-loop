@@ -581,6 +581,7 @@ type WorkshopExecutionNotifier interface {
 // InteractiveWorkshopManager manages the interactive workshop phase
 type InteractiveWorkshopManager struct {
 	controller             *StepBasedWorkflowOrchestrator
+	workshopConfig         *WorkshopConfig
 	presetLLM              *AgentLLMConfig
 	sessionID              string
 	workflowID             string
@@ -772,7 +773,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Workshop execution tools
 	execution := []string{
-		"execute_step", "query_step", "stop_step", "stop_all_executions",
+		"execute_step", "run_saved_main_py", "query_step", "stop_step", "stop_all_executions",
 		"list_executions", "run_in_background",
 	}
 
@@ -1213,7 +1214,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
 **When creating or configuring each step, choose its execution mode (preference order):**
-1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first.
+1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first. To test only the currently saved script with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
 2. **Tool search mode**: use when discovery is intrinsic to the task — the exact tools, resources, or paths genuinely are not known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
 3. **Simple mode** (default): single tool call, no config needed
 
@@ -1801,6 +1802,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
+- **run_saved_main_py(step_id, group_id?)** — Run the saved `+"`learnings/{step-id}/main.py`"+` fast path only, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM. Use this when you want to test the current saved script directly.
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
 {{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
@@ -2641,6 +2643,240 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register execute_step tool: %v", err))
+	}
+
+	// Tool 1b: run_saved_main_py — run the saved scripted-code fast path only
+	if err := mcpAgent.RegisterCustomTool(
+		"run_saved_main_py",
+		"Run the saved learnings/{step-id}/main.py fast path for a scripted code step. Uses the same workflow env vars, context dependency args, output folder, and validation checks as a real workflow run, but never falls back to LLM. Fails if the step is not in scripted code mode or if no saved main.py exists.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"step_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1', 'step1')",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Read variables.json to see available groups.",
+				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
+				},
+			},
+			"required": []string{"step_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			stepIDRaw, ok := args["step_id"]
+			if !ok || stepIDRaw == nil {
+				return "step_id is required", nil
+			}
+			stepID, ok := stepIDRaw.(string)
+			if !ok || stepID == "" {
+				return "step_id must be a non-empty string", nil
+			}
+
+			groupIDRaw, _ := args["group_id"]
+			groupID, _ := groupIDRaw.(string)
+			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
+				groupID = iwm.controller.enabledGroupIDs[0]
+			}
+			if groupID == "" {
+				iwm.refreshVariablesManifest(ctx)
+				if iwm.controller.variablesManifest == nil || len(iwm.controller.variablesManifest.Groups) == 0 {
+					return "No variable groups exist. Create a group first using add_group before running steps.", nil
+				}
+				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
+			}
+
+			iteration := workshopFixedIteration
+			iwm.refreshVariablesManifest(ctx)
+			groupFolderName := groupID
+			groupDisplayName := ""
+			if iwm.controller.variablesManifest != nil && groupID != "" {
+				for _, g := range iwm.controller.variablesManifest.Groups {
+					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+						if g.DisplayName != "" {
+							groupDisplayName = g.DisplayName
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+							if sanitized != "" {
+								groupFolderName = sanitized
+							}
+						}
+						break
+					}
+				}
+			}
+			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
+
+			execOpts := &WorkshopExecuteOptions{
+				GroupID:          groupID,
+				GroupDisplayName: groupDisplayName,
+				Iteration:        iteration,
+				RunFolder:        runFolder,
+				SkipLearning:     true,
+				SavedScriptOnly:  true,
+			}
+
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				return fmt.Sprintf("Failed to load plan: %v. Cannot resolve step ID.", err), nil
+			}
+			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
+			if resolveErr != nil {
+				return resolveErr.Error(), nil
+			}
+			stepID = resolvedID
+
+			execID := fmt.Sprintf("saved-main-py-%s-%05d", stepID, time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-saved-main-py-%s-%d", stepID, time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         stepID,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			go func() {
+				stepDisplayName := stepID
+				stepType := ""
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						stepDisplayName = stepInfo.Step.GetTitle()
+						stepType = string(stepInfo.Step.StepType())
+					}
+				}
+
+				notifierName := fmt.Sprintf("Saved Script: %s", stepDisplayName)
+				if iwm.executionNotifier != nil {
+					iwm.executionNotifier.OnExecutionStart(execID, notifierName)
+				}
+
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					inputData := map[string]string{
+						"saved_script_only": "true",
+					}
+					if execOpts.GroupID != "" {
+						inputData["group_id"] = execOpts.GroupID
+					}
+					if execOpts.GroupDisplayName != "" {
+						inputData["group_display_name"] = execOpts.GroupDisplayName
+					}
+					if execOpts.Iteration != "" {
+						inputData["iteration"] = execOpts.Iteration
+					}
+					if execOpts.RunFolder != "" {
+						inputData["run_folder"] = execOpts.RunFolder
+					}
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-saved-main-py",
+						AgentName:     notifierName,
+						InputData:     inputData,
+						Iteration:     parseWorkshopIterationNumber(execOpts.Iteration),
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
+
+				workshopModeForMeta := ""
+				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
+					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
+				}
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = err
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = err
+						}
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-saved-main-py",
+						AgentName:     notifierName,
+						Success:       err == nil,
+						InputData: map[string]string{
+							"saved_script_only": "true",
+						},
+					}
+					if execOpts.RunFolder != "" {
+						endEvent.InputData["run_folder"] = execOpts.RunFolder
+					}
+					if workshopModeForMeta != "" {
+						endEvent.InputData["workshop_mode"] = workshopModeForMeta
+					}
+					if stepType != "" {
+						endEvent.InputData["step_type"] = stepType
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					execMeta := map[string]string{
+						"saved_script_only": "true",
+					}
+					if iwm.workshopModeOverride != "" {
+						execMeta["workshop_mode"] = iwm.workshopModeOverride
+					} else if workshopModeForMeta != "" {
+						execMeta["workshop_mode"] = workshopModeForMeta
+					}
+					iwm.executionNotifier.OnExecutionComplete(execID, notifierName, result, execMeta, err)
+				}
+			}()
+
+			groupInfo := ""
+			if groupID != "" {
+				groupInfo = fmt.Sprintf(", group=%q", groupID)
+			}
+			logger.Info(fmt.Sprintf("🚀 Workshop: saved main.py run for step %q started in background, execution_id=%q%s", stepID, execID, groupInfo))
+			return fmt.Sprintf("Saved main.py run for step %q started in background.\nexecution_id: %q\nThis will run only the current learnings/%s/main.py fast path with no LLM fallback.\nYou will be automatically notified when it completes.", stepID, execID, stepID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_saved_main_py tool: %v", err))
 	}
 
 	// Tool: run_in_background — spawn independent background agent (not tied to a workflow step)
@@ -7013,6 +7249,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				if changed {
 					iwm.controller.SetSecrets(currentSecrets)
+					if iwm.workshopConfig != nil {
+						cloned := make([]orchestrator.SecretEntry, len(currentSecrets))
+						copy(cloned, currentSecrets)
+						iwm.workshopConfig.Secrets = cloned
+					}
 					anyChanged = true
 					sb.WriteString("\n### Secrets (updated)\n")
 					if len(currentSecrets) == 0 {

@@ -900,6 +900,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			isScriptedExecutionModeConfig(agentCfgs)))
 		isLearnCodeMode = isScriptedExecutionModeConfig(agentCfgs)
 	}
+	if execCtx != nil && execCtx.SavedScriptOnly && !isLearnCodeMode {
+		return "", updatedContextFiles, fmt.Errorf("step %q is not in scripted code mode", step.GetID())
+	}
 	learnCodePriorScript := ""          // old script content when saved script failed (LLM relearn context)
 	learnCodePriorError := ""           // error from failed saved script (LLM relearn context)
 	learnCodeScriptNeedsSaving := false // set after LLM writes main.py and pre-validation passes
@@ -1259,6 +1262,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["IsRelearnMode"] = fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != "")
 			templateVars["LearnCodePriorScript"] = learnCodePriorScript
 			templateVars["LearnCodePriorError"] = learnCodePriorError
+
+			if execCtx != nil && execCtx.SavedScriptOnly {
+				if fastResult.RanScript && fastResult.Success {
+					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Saved-script-only run succeeded for step %d", stepIndex+1))
+				} else if fastResult.RanScript {
+					return "", updatedContextFiles, fmt.Errorf("saved main.py failed for step %q:\n%s", step.GetID(), fastResult.Error)
+				} else {
+					return "", updatedContextFiles, fmt.Errorf("no saved main.py found for scripted step %q in learnings/%s/main.py", step.GetID(), step.GetID())
+				}
+			}
 		}
 
 		// Loop handling: if step has loop, wrap execution in loop that checks loop condition

@@ -113,7 +113,23 @@ func (bo *BaseOrchestrator) GetSecrets() []SecretEntry {
 
 // SetSecrets sets the decrypted secrets to inject into agents
 func (bo *BaseOrchestrator) SetSecrets(secrets []SecretEntry) {
+	oldSecrets := bo.secrets
 	bo.secrets = secrets
+	if bo.workspaceEnvRef != nil {
+		newSecretSet := make(map[string]bool, len(secrets))
+		for _, s := range secrets {
+			envKey := "SECRET_" + s.Name
+			bo.workspaceEnvRef[envKey] = s.Value
+			newSecretSet[envKey] = true
+		}
+		for _, s := range oldSecrets {
+			envKey := "SECRET_" + s.Name
+			if !newSecretSet[envKey] {
+				delete(bo.workspaceEnvRef, envKey)
+			}
+		}
+		bo.GetLogger().Info(fmt.Sprintf("🔐 Synced %d secrets into workspace env ref", len(secrets)))
+	}
 	bo.GetLogger().Info(fmt.Sprintf("🔐 Set %d secrets for agent injection", len(secrets)))
 }
 
@@ -273,4 +289,3 @@ func (bo *BaseOrchestrator) GetBrowserDownloadsPath() string {
 func (bo *BaseOrchestrator) SetBrowserDownloadsPath(path string) {
 	bo.browserDownloadsPath = path
 }
-

@@ -1313,6 +1313,50 @@ func mergeGlobalSecrets(userSecrets []struct {
 	return merged
 }
 
+// loadSelectedUserSecrets decrypts the named user-stored secrets from the DB.
+// Workflow manifests store only selected secret names, so runtime must rehydrate
+// the actual values server-side instead of relying on stale request payloads.
+func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID string, selectedNames []string) []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+} {
+	if userID == "" || len(selectedNames) == 0 || api.chatDB == nil {
+		return nil
+	}
+
+	stored, err := api.chatDB.ListUserSecrets(ctx, userID)
+	if err != nil {
+		log.Printf("[SECRETS] Failed to list stored user secrets for %s: %v", userID, err)
+		return nil
+	}
+
+	selectedSet := make(map[string]bool, len(selectedNames))
+	for _, name := range selectedNames {
+		selectedSet[name] = true
+	}
+
+	var result []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	for _, s := range stored {
+		if !selectedSet[s.Name] {
+			continue
+		}
+		plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
+		if err != nil {
+			log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
+			continue
+		}
+		result = append(result, struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: s.Name, Value: plaintext})
+	}
+
+	return result
+}
+
 // getOrCreatePlanSessionState returns the session-level plan state, creating one if needed.
 // On first access for a session, it restores plan state from the database if available,
 // allowing resumed sessions to pick up existing plans.
@@ -2233,6 +2277,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if req.SelectedGlobalSecrets == nil && manifest.Capabilities.SelectedGlobalSecretNames != nil {
 					req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
 				}
+				// Manifest is the source of truth for workflow-selected user secrets too.
+				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
 			}
 		}
 
@@ -2332,6 +2378,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if caps.SelectedGlobalSecretNames != nil {
 					req.SelectedGlobalSecrets = caps.SelectedGlobalSecretNames
 				}
+				// User-stored secrets from manifest are authoritative for workflow UI edits.
+				req.DecryptedSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, caps.SelectedSecrets)
 
 				// Browser mode from manifest
 				if caps.BrowserMode != "" && caps.BrowserMode != "none" && req.BrowserMode == "" {
@@ -4902,11 +4950,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								skillsParsed := true
 
 								// Refresh secrets
+								refreshedUserSecrets := api.loadSelectedUserSecrets(context.Background(), currentUserID, caps.SelectedSecrets)
 								effectiveSecretSelection := req.SelectedGlobalSecrets
 								if caps.SelectedGlobalSecretNames != nil {
 									effectiveSecretSelection = caps.SelectedGlobalSecretNames
 								}
-								allRefreshedSecrets := mergeGlobalSecrets(req.DecryptedSecrets, effectiveSecretSelection)
+								allRefreshedSecrets := mergeGlobalSecrets(refreshedUserSecrets, effectiveSecretSelection)
 								var secretEntries []orchestrator.SecretEntry
 								for _, s := range allRefreshedSecrets {
 									secretEntries = append(secretEntries, orchestrator.SecretEntry{Name: s.Name, Value: s.Value})
@@ -5658,6 +5707,8 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 
 	// Update active session status to stopped
 	api.updateSessionStatus(sessionID, "stopped")
+	api.setSessionBusy(sessionID, false)
+	api.setSyntheticTurn(sessionID, false)
 
 	// Cancel background agents if explicitly requested (e.g. user pressed the stop button).
 	// When called before sending a new message, cancelAgents is NOT set so agents survive
@@ -5666,6 +5717,23 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		api.bgAgentRegistry.CancelAll(sessionID)
 		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
 	}
+
+	// Prevent stopped sessions from being revived by queued background completions or
+	// synthetic auto-notification turns that reuse the stored agent after stop.
+	api.pendingMu.Lock()
+	delete(api.pendingCompletions, sessionID)
+	api.pendingMu.Unlock()
+
+	api.lastQueryMu.Lock()
+	delete(api.lastQueryRequests, sessionID)
+	api.lastQueryMu.Unlock()
+
+	api.sessionAgentsMux.Lock()
+	delete(api.sessionAgents, sessionID)
+	api.sessionAgentsMux.Unlock()
+
+	api.bgAgentRegistry.Cleanup(sessionID)
+	log.Printf("[SESSION DEBUG] Cleared synthetic-turn state for stopped session %s", sessionID)
 
 	// Close workshop chat sessions for this session — cancels all running step executions.
 	// Workshop sessions use context.Background() so they survive agent context cancellation above;
@@ -8597,6 +8665,18 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	api.sessionBusyMu.Unlock()
 }
 
+// isSessionStoppedOrInactive returns true when a session has been explicitly stopped
+// or aged out, in which case background completions must not trigger synthetic turns.
+func (api *StreamingAPI) isSessionStoppedOrInactive(sessionID string) bool {
+	api.activeSessionsMux.RLock()
+	defer api.activeSessionsMux.RUnlock()
+	session, exists := api.activeSessions[sessionID]
+	if !exists {
+		return false
+	}
+	return session.Status == "stopped" || session.Status == "inactive"
+}
+
 // setSyntheticTurn marks a session as running an auto-notification synthetic turn.
 // The frontend uses this to avoid blocking user input during background agent notifications.
 func (api *StreamingAPI) setSyntheticTurn(sessionID string, synthetic bool) {
@@ -8639,6 +8719,10 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	log.Printf("[BG AGENT] Started completion loop for session %s", sessionID)
 
 	for agentID := range ch {
+		if api.isSessionStoppedOrInactive(sessionID) {
+			log.Printf("[BG AGENT] Session %s is stopped/inactive, dropping completion for agent %s", sessionID, agentID)
+			continue
+		}
 		if api.isSessionBusy(sessionID) {
 			// Session is busy — queue the completion for later processing
 			api.queuePendingCompletion(sessionID, agentID)
@@ -8656,6 +8740,10 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 // the synthetic turn's own defer, avoiding concurrent StreamWithEvents calls.
 func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID string, agentIDs []string) {
 	if len(agentIDs) == 0 {
+		return
+	}
+	if api.isSessionStoppedOrInactive(sessionID) {
+		log.Printf("[BG AGENT] Session %s is stopped/inactive, skipping %d batched completion(s)", sessionID, len(agentIDs))
 		return
 	}
 
@@ -8682,6 +8770,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		agent.mu.Unlock()
 
 		snap := agent.GetSnapshot()
+		if snap.Status == BGAgentCanceled {
+			continue
+		}
 		var resultText string
 		if snap.Status == BGAgentCompleted {
 			resultText = snap.Result // Full result — no truncation in auto-notification
@@ -8749,6 +8840,10 @@ func buildWorkshopActionHint(workshopMode string, isOptimized bool, failed bool)
 
 // processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
 func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID string) {
+	if api.isSessionStoppedOrInactive(sessionID) {
+		log.Printf("[BG AGENT] Session %s is stopped/inactive, skipping completion for agent %s", sessionID, agentID)
+		return
+	}
 	agent := api.bgAgentRegistry.Get(sessionID, agentID)
 	if agent == nil {
 		log.Printf("[BG AGENT] Warning: agent %s not found for completion processing", agentID)
@@ -8765,6 +8860,10 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	agent.mu.Unlock()
 
 	snap := agent.GetSnapshot()
+	if snap.Status == BGAgentCanceled {
+		log.Printf("[BG AGENT] Agent %s for session %s was canceled, suppressing synthetic turn", agentID, sessionID)
+		return
+	}
 
 	var resultText string
 	if snap.Status == BGAgentCompleted {
@@ -8816,6 +8915,10 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 // This is called synchronously from processBackgroundAgentCompletion — it sets session busy
 // before spawning the goroutine, preventing concurrent synthetic turns.
 func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
+	if api.isSessionStoppedOrInactive(sessionID) {
+		log.Printf("[BG AGENT] Session %s is stopped/inactive, suppressing synthetic turn", sessionID)
+		return
+	}
 	// Get stored agent for this session
 	api.sessionAgentsMux.RLock()
 	llmAgent, ok := api.sessionAgents[sessionID]
@@ -9783,7 +9886,13 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if presetGlobalSecretNames != nil {
 		effectiveGlobalSecretSelection = presetGlobalSecretNames
 	}
-	allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, effectiveGlobalSecretSelection)
+	userSecrets := req.DecryptedSecrets
+	if workspacePath != "" {
+		if manifest, found, err := ReadWorkflowManifest(context.Background(), workspacePath); err == nil && found {
+			userSecrets = api.loadSelectedUserSecrets(context.Background(), currentUserID, manifest.Capabilities.SelectedSecrets)
+		}
+	}
+	allSecrets := mergeGlobalSecrets(userSecrets, effectiveGlobalSecretSelection)
 	if len(allSecrets) > 0 {
 		entries := make([]orchestrator.SecretEntry, len(allSecrets))
 		for i, s := range allSecrets {

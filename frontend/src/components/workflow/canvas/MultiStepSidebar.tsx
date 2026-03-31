@@ -33,7 +33,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   onBulkUpdate,
   isCompact = false,
 }) => {
-  const { availableLLMs, getCurrentLLMOption } = useLLMStore()
+  const { availableLLMs, getCurrentLLMOption, loadDefaultsFromBackend } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()
   const { currentPresetTools } = usePresetApplication()
   const [isExpanded, setIsExpanded] = useState(true)
@@ -589,6 +589,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                         availableLLMs={availableLLMs}
                         selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
                         onLLMSelect={handleExecutionLLMSelect}
+                        onRefresh={loadDefaultsFromBackend}
                         inModal={false}
                         openDirection="down"
                       />
@@ -633,6 +634,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                         availableLLMs={availableLLMs}
                         selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption()}
                         onLLMSelect={handleLearningLLMSelect}
+                        onRefresh={loadDefaultsFromBackend}
                         inModal={false}
                         openDirection="down"
                       />

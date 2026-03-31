@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
 import {
@@ -9,7 +9,7 @@ import {
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
-import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../services/api-types'
+import type { ScheduledJob, ScheduledJobRun, SchedulerConfig, RunFolderInfo, RunMetadataModels, TokenUsageFile } from '../../services/api-types'
 import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
@@ -33,6 +33,55 @@ interface JobPopupState {
   popup: ActivePopup
   selectedRunFolder?: string
   sessionId?: string
+}
+
+type RunCostData = {
+  cost: number
+  tokens: number
+  tierTokens?: Array<{ label: 'T1' | 'T2' | 'T3'; tokens: number }>
+}
+
+function getResolvedRunFolder(
+  run: ScheduledJobRun,
+  runIndex: number,
+  inferredRunFolders: Record<string, string>,
+  latestRunFolderForJob?: string
+): string {
+  if (run.run_folder) return run.run_folder
+  if (inferredRunFolders[run.id]) return inferredRunFolders[run.id]
+  if (runIndex === 0 && latestRunFolderForJob) return latestRunFolderForJob
+  return ''
+}
+
+function getRunFolderIterationNumber(folderName: string): number {
+  const match = folderName.match(/iteration-(\d+)/)
+  return parseInt(match?.[1] ?? '-1', 10)
+}
+
+function getRunFolderActivityTime(folder: RunFolderInfo): number {
+  const activityTimestamp =
+    folder.metadata?.completed_at ||
+    folder.progress?.last_updated ||
+    folder.metadata?.created_at ||
+    ''
+
+  const parsed = Date.parse(activityTimestamp)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function getMostRelevantRunFolder(folders: RunFolderInfo[]): string {
+  if (folders.length === 0) return ''
+
+  return [...folders]
+    .sort((a, b) => {
+      const activityDiff = getRunFolderActivityTime(b) - getRunFolderActivityTime(a)
+      if (activityDiff !== 0) return activityDiff
+
+      const iterationDiff = getRunFolderIterationNumber(b.name) - getRunFolderIterationNumber(a.name)
+      if (iterationDiff !== 0) return iterationDiff
+
+      return b.name.localeCompare(a.name)
+    })[0]?.name ?? ''
 }
 
 function describeCron(expr: string): string {
@@ -78,6 +127,72 @@ function formatTokens(n: number): string {
   if (n < 1000) return `${n}`
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
   return `${(n / 1_000_000).toFixed(2)}M`
+}
+
+function normalizeModelIdentifier(value?: string): string {
+  return (value || '').trim().toLowerCase()
+}
+
+function buildModelVariants(value?: string): Set<string> {
+  const variants = new Set<string>()
+  const normalized = normalizeModelIdentifier(value)
+  if (!normalized) return variants
+
+  variants.add(normalized)
+
+  const slashPart = normalized.split('/').pop()
+  if (slashPart) variants.add(slashPart)
+
+  const colonPart = normalized.split(':').pop()
+  if (colonPart) variants.add(colonPart)
+
+  return variants
+}
+
+function getTierLabelForUsage(modelKey: string, usageProvider: string | undefined, models?: RunMetadataModels): 'T1' | 'T2' | 'T3' | null {
+  if (models?.allocation_mode !== 'tiered') return null
+
+  const usageVariants = buildModelVariants(modelKey)
+  const normalizedProvider = normalizeModelIdentifier(usageProvider)
+
+  const tierEntries: Array<{ label: 'T1' | 'T2' | 'T3'; model?: { provider?: string; model_id?: string } }> = [
+    { label: 'T1', model: models.tier_1 },
+    { label: 'T2', model: models.tier_2 },
+    { label: 'T3', model: models.tier_3 },
+  ]
+
+  for (const entry of tierEntries) {
+    const tierModel = entry.model
+    if (!tierModel?.model_id) continue
+
+    const tierProvider = normalizeModelIdentifier(tierModel.provider)
+    if (tierProvider && normalizedProvider && tierProvider !== normalizedProvider) continue
+
+    const tierVariants = buildModelVariants(tierModel.model_id)
+    for (const variant of usageVariants) {
+      if (tierVariants.has(variant)) {
+        return entry.label
+      }
+    }
+  }
+
+  return null
+}
+
+function calculateTierTokenBreakdown(tokenUsage: TokenUsageFile | undefined, models?: RunMetadataModels): Array<{ label: 'T1' | 'T2' | 'T3'; tokens: number }> {
+  if (!tokenUsage?.by_model || models?.allocation_mode !== 'tiered') return []
+
+  const totals: Record<'T1' | 'T2' | 'T3', number> = { T1: 0, T2: 0, T3: 0 }
+
+  for (const [modelKey, usage] of Object.entries(tokenUsage.by_model)) {
+    const tierLabel = getTierLabelForUsage(modelKey, usage.provider, models)
+    if (!tierLabel) continue
+    totals[tierLabel] += (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0)
+  }
+
+  return (['T1', 'T2', 'T3'] as const)
+    .map(label => ({ label, tokens: totals[label] }))
+    .filter(entry => entry.tokens > 0)
 }
 
 function formatRunTime(dateStr: string): string {
@@ -167,6 +282,20 @@ function getLocalizedJobName(job: ScheduledJob): string {
   return localizeTimezoneLabel(job.name, job.next_run_at)
 }
 
+function getWorkflowFilterMeta(
+  job: ScheduledJob,
+  presetMap: Map<string, { label: string; workspacePath: string | null }>
+): { value: string; label: string; workflowLabel: string } {
+  const workflowLabel = presetMap.get(job.preset_query_id)?.label || job.workflow_label || job.name
+  const value = job.workflow_id || job.preset_query_id || job.workspace_path || workflowLabel
+
+  return {
+    value,
+    label: workflowLabel,
+    workflowLabel,
+  }
+}
+
 function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   const rank = (job: ScheduledJob) => {
     if (job.last_status === 'running') return 0
@@ -219,9 +348,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [jobRuns, setJobRuns] = useState<Record<string, ScheduledJobRun[]>>({})
   const [loadingRuns, setLoadingRuns] = useState<string | null>(null)
   // Cost summary per run_folder: { totalCost, totalTokens }
-  const [runCosts, setRunCosts] = useState<Record<string, { cost: number; tokens: number } | null>>({})
+  const [runCosts, setRunCosts] = useState<Record<string, RunCostData | null>>({})
   // For running runs without run_folder, we detect the latest iteration folder
   const [runningRunFolders, setRunningRunFolders] = useState<Record<string, string>>({})
+  const [latestRunFoldersByJob, setLatestRunFoldersByJob] = useState<Record<string, string>>({})
 
   const { customPresets, predefinedPresets, refreshPresets } = useGlobalPresetStore()
 
@@ -278,19 +408,24 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const workspacePath = job?.workspace_path || preset?.workspacePath
     if (!workspacePath) return
 
+    const latestRunFolderForJob = latestRunFoldersByJob[jobId]
     const foldersToLoad = runs
-      .map(r => r.run_folder || runningRunFolders[r.id])
+      .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
       .filter((f): f is string => !!f && !(f in runCosts))
 
     if (foldersToLoad.length === 0) return
 
     // Fetch in parallel (limit to 5 to avoid overload)
     const batch = foldersToLoad.slice(0, 5)
+    const runFoldersResp = await agentApi.getRunFolders(workspacePath).catch(() => null)
+    const runFolderInfoMap = new Map<string, RunFolderInfo>(
+      (runFoldersResp?.folders || []).map(folder => [folder.name, folder])
+    )
     const results = await Promise.allSettled(
       batch.map(folder => agentApi.getCosts(workspacePath, folder))
     )
 
-    const newCosts: Record<string, { cost: number; tokens: number } | null> = {}
+    const newCosts: Record<string, RunCostData | null> = {}
     batch.forEach((folder, i) => {
       const result = results[i]
       if (result.status === 'fulfilled' && result.value.token_usage?.by_model) {
@@ -307,13 +442,21 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             totalTokens += (model.input_tokens ?? 0) + (model.output_tokens ?? 0)
           }
         }
-        newCosts[folder] = { cost: totalCost, tokens: totalTokens }
+        const tierTokens = calculateTierTokenBreakdown(
+          result.value.token_usage,
+          runFolderInfoMap.get(folder)?.metadata?.models
+        )
+        newCosts[folder] = {
+          cost: totalCost,
+          tokens: totalTokens,
+          tierTokens: tierTokens.length > 0 ? tierTokens : undefined,
+        }
       } else {
         newCosts[folder] = null
       }
     })
     setRunCosts(prev => ({ ...prev, ...newCosts }))
-  }, [presetMap, jobs, runCosts, runningRunFolders])
+  }, [presetMap, jobs, runCosts, runningRunFolders, latestRunFoldersByJob])
 
   // Auto-load runs when a job is expanded
   useEffect(() => {
@@ -321,11 +464,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     loadRunsForJob(expandedJobId)
   }, [expandedJobId, loadRunsForJob])
 
-  // Detect latest iteration folder for running runs that don't have run_folder yet
-  const detectRunningFolders = useCallback(async (jobId: string, runs: ScheduledJobRun[]) => {
-    const runningWithoutFolder = runs.filter(r => r.status === 'running' && !r.run_folder)
-    if (runningWithoutFolder.length === 0) return
-
+  // Detect the latest run folder so the newest completed run keeps its artifacts
+  // even if the explicit run_folder arrives slightly after the run status update.
+  const detectRunFolders = useCallback(async (jobId: string, runs: ScheduledJobRun[]) => {
     const djob = jobs.find(j => j.id === jobId)
     const preset = presetMap.get(djob?.preset_query_id ?? '')
     const workspacePath = djob?.workspace_path || preset?.workspacePath
@@ -333,17 +474,21 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
     try {
       const resp = await agentApi.getRunFolders(workspacePath)
-      const folders = resp.folders?.map(f => f.name) ?? []
+      const folders = resp.folders ?? []
       if (folders.length > 0) {
-        // Find the highest iteration number (API sorts alphabetically, not numerically)
-        const latestFolder = [...folders].sort((a, b) => {
-          const numA = parseInt(a.match(/iteration-(\d+)/)?.[1] ?? '0')
-          const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
-          return numB - numA // descending
-        })[0]
+        const latestFolder = getMostRelevantRunFolder(folders)
+        setLatestRunFoldersByJob(prev => (
+          prev[jobId] === latestFolder ? prev : { ...prev, [jobId]: latestFolder }
+        ))
+
         const newMap: Record<string, string> = {}
-        runningWithoutFolder.forEach(r => { newMap[r.id] = latestFolder })
-        setRunningRunFolders(prev => ({ ...prev, ...newMap }))
+        runs
+          .filter((run, index) => !run.run_folder && (run.status === 'running' || index === 0))
+          .forEach((run) => { newMap[run.id] = latestFolder })
+
+        if (Object.keys(newMap).length > 0) {
+          setRunningRunFolders(prev => ({ ...prev, ...newMap }))
+        }
       }
     } catch { /* ignore */ }
   }, [presetMap, jobs])
@@ -354,6 +499,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const isSchedulerPaused = !!schedulerConfig?.globally_paused
   const isSchedulerExecutionEnabled = schedulerConfig?.execution_enabled !== false
   const schedulerDisabledReason = schedulerConfig?.disabled_reason
+
+  const previousHasRunningJobRef = useRef(hasRunningJob)
+
+  useEffect(() => {
+    if (previousHasRunningJobRef.current && !hasRunningJob && expandedJobId) {
+      loadRunsForJob(expandedJobId)
+    }
+    previousHasRunningJobRef.current = hasRunningJob
+  }, [hasRunningJob, expandedJobId, loadRunsForJob])
 
   useEffect(() => {
     if (schedulerConfig?.execution_enabled === false) {
@@ -379,13 +533,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const seen = new Map<string, string>()
 
     jobs.forEach((job) => {
-      const preset = presetMap.get(job.preset_query_id)
-      const label = localizeTimezoneLabel(
-        preset?.label || job.workflow_label || job.name,
-        job.next_run_at
-      )
-      if (!label) return
-      if (!seen.has(label)) seen.set(label, label)
+      const meta = getWorkflowFilterMeta(job, presetMap)
+      if (!meta.label) return
+      if (!seen.has(meta.value)) seen.set(meta.value, meta.label)
     })
 
     return Array.from(seen.entries())
@@ -398,9 +548,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       .filter(job => {
         if (!job.enabled || !job.next_run_at) return false
         if (selectedWorkflowFilter === 'all') return true
-        const preset = presetMap.get(job.preset_query_id)
-        const workflowLabel = preset?.label || job.workflow_label || job.name
-        return workflowLabel === selectedWorkflowFilter
+        return getWorkflowFilterMeta(job, presetMap).value === selectedWorkflowFilter
       })
       .sort((a, b) => (a.next_run_at || '').localeCompare(b.next_run_at || ''))
       .slice(0, 4)
@@ -428,14 +576,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             break
         }
 
-        if (!normalizedSearch) return true
-
         const preset = presetMap.get(job.preset_query_id)
-        const workflowLabel = preset?.label || job.workflow_label || job.name
+        const workflowMeta = getWorkflowFilterMeta(job, presetMap)
+        const workflowLabel = workflowMeta.workflowLabel
 
-        if (selectedWorkflowFilter !== 'all' && workflowLabel !== selectedWorkflowFilter) {
+        if (selectedWorkflowFilter !== 'all' && workflowMeta.value !== selectedWorkflowFilter) {
           return false
         }
+
+        if (!normalizedSearch) return true
 
         const haystack = [
           job.name,
@@ -460,10 +609,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       if (expandedJobId) {
         await loadRunsForJob(expandedJobId)
         const runs = jobRuns[expandedJobId] ?? []
+        const latestRunFolderForJob = latestRunFoldersByJob[expandedJobId]
         // Clear cached costs for running runs so they re-fetch
         const runningFolders = runs
           .filter(r => r.status === 'running')
-          .map(r => r.run_folder || runningRunFolders[r.id])
+          .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
           .filter((f): f is string => !!f)
         if (runningFolders.length > 0) {
           setRunCosts(prev => {
@@ -472,11 +622,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             return next
           })
         }
-        detectRunningFolders(expandedJobId, runs)
+        detectRunFolders(expandedJobId, runs)
       }
     }, 5000)
     return () => clearInterval(interval)
-  }, [hasRunningJob, loadJobs, expandedJobId, jobRuns, runningRunFolders, detectRunningFolders, loadRunsForJob])
+  }, [hasRunningJob, loadJobs, expandedJobId, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders, loadRunsForJob])
 
   // Auto-load costs when runs are loaded
   useEffect(() => {
@@ -484,16 +634,17 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const runs = jobRuns[expandedJobId]
     if (!runs || runs.length === 0) return
     loadCostsForRuns(expandedJobId, runs)
-    detectRunningFolders(expandedJobId, runs)
-  }, [expandedJobId, jobRuns, loadCostsForRuns, detectRunningFolders])
+    detectRunFolders(expandedJobId, runs)
+  }, [expandedJobId, jobRuns, loadCostsForRuns, detectRunFolders])
 
   // Auto-refresh costs for running jobs (every 10s)
   useEffect(() => {
     if (!expandedJobId) return
     const runs = jobRuns[expandedJobId]
+    const latestRunFolderForJob = latestRunFoldersByJob[expandedJobId]
     const runningFolders = (runs ?? [])
       .filter(r => r.status === 'running')
-      .map(r => r.run_folder || runningRunFolders[r.id])
+      .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
       .filter((f): f is string => !!f)
     if (runningFolders.length === 0) return
     const interval = setInterval(() => {
@@ -504,10 +655,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         return next
       })
       // Also re-detect folders for runs that still don't have one
-      detectRunningFolders(expandedJobId, runs!)
+      detectRunFolders(expandedJobId, runs!)
     }, 10000)
     return () => clearInterval(interval)
-  }, [expandedJobId, jobRuns, runningRunFolders, detectRunningFolders])
+  }, [expandedJobId, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders])
 
   const handleToggle = async (job: ScheduledJob) => {
     try {
@@ -1124,9 +1275,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               Run history ({runs.length} runs):
                             </div>
                             <div className="space-y-1 max-h-48 overflow-y-auto">
-                              {runs.map((run) => {
-                                // For running runs without run_folder, use detected folder
-                                const effectiveFolder = run.run_folder || runningRunFolders[run.id] || ''
+                              {runs.map((run, runIndex) => {
+                                const effectiveFolder = getResolvedRunFolder(
+                                  run,
+                                  runIndex,
+                                  runningRunFolders,
+                                  latestRunFoldersByJob[job.id]
+                                )
                                 return (
                                 <div
                                   key={run.id}
@@ -1177,13 +1332,29 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipTrigger asChild>
                                           <button
                                             onClick={() => openPopup(job, 'costs', effectiveFolder)}
-                                            className="flex items-center gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 flex-shrink-0 transition-colors"
+                                            className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 flex-shrink-0 transition-colors"
                                           >
                                             <span>{formatCost(costData.cost)}</span>
                                             <span className="text-gray-400 dark:text-gray-500">{formatTokens(costData.tokens)}t</span>
+                                            {costData.tierTokens && costData.tierTokens.length > 0 && (
+                                              <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
+                                                {costData.tierTokens.map((tier) => (
+                                                  <span
+                                                    key={`${effectiveFolder}-${tier.label}`}
+                                                    className="rounded border border-amber-200/60 bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+                                                  >
+                                                    {tier.label} {formatTokens(tier.tokens)}
+                                                  </span>
+                                                ))}
+                                              </span>
+                                            )}
                                           </button>
                                         </TooltipTrigger>
-                                        <TooltipContent side="left">Click for full cost breakdown</TooltipContent>
+                                        <TooltipContent side="left">
+                                          {costData.tierTokens && costData.tierTokens.length > 0
+                                            ? `Click for full cost breakdown. Tier tokens: ${costData.tierTokens.map(tier => `${tier.label} ${formatTokens(tier.tokens)}`).join(' · ')}`
+                                            : 'Click for full cost breakdown'}
+                                        </TooltipContent>
                                       </Tooltip>
                                     )
                                   })()}

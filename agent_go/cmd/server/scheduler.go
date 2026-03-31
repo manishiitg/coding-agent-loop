@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 // ScheduleContext bundles everything needed to identify and execute a schedule.
@@ -608,6 +610,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	if len(messages) == 0 {
 		messages = []string{"Run the full workflow using run_full_workflow tool."}
 	}
+	runFolder := resolveWorkshopScheduleRunFolder(ctx, sctx.WorkspacePath, sctx.Schedule.GroupIDs)
 
 	idPrefix := sctx.Schedule.ID
 	if len(idPrefix) > 8 {
@@ -619,11 +622,11 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	state.LastSessionID = sessionID
 
 	if runID != "" {
-		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, "", sessionID)
+		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, runFolder, sessionID)
 	}
 
-	scheduleLogf("[SCHEDULER] Workshop mode: executing %d messages for %s (session=%s workspace=%s)",
-		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath)
+	scheduleLogf("[SCHEDULER] Workshop mode: executing %d messages for %s (session=%s workspace=%s run_folder=%s)",
+		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath, runFolder)
 
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
 
@@ -637,18 +640,128 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		reqMap["query"] = msg
 
 		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
-			return sessionID, "", fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
+			return sessionID, runFolder, fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
 		}
 
 		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
-			return sessionID, "", fmt.Errorf("workshop idle wait failed after message %d: %w", i+1, err)
+			return sessionID, runFolder, fmt.Errorf("workshop idle wait failed after message %d: %w", i+1, err)
 		}
 
 		scheduleLogf("[SCHEDULER] Workshop message %d/%d completed", i+1, len(messages))
 	}
 
-	scheduleLogf("[SCHEDULER] ✅ Workshop execution completed for %s, session=%s", sctx.Schedule.ID, sessionID)
-	return sessionID, "", nil
+	if shouldAutoGenerateWorkshopReport(sctx.Schedule, messages) {
+		reportPath, reportErr := s.generateWorkshopScheduleReport(ctx, sctx, sessionID, runFolder)
+		if reportErr != nil {
+			scheduleLogf("[SCHEDULER] ⚠️ Auto-report generation failed for %s run %s: %v", sctx.Schedule.ID, runFolder, reportErr)
+		} else if reportPath != "" {
+			scheduleLogf("[SCHEDULER] 📝 Auto-report generated for %s run %s → %s", sctx.Schedule.ID, runFolder, reportPath)
+		} else {
+			scheduleLogf("[SCHEDULER] 📝 Auto-report generated for %s run %s", sctx.Schedule.ID, runFolder)
+		}
+	}
+
+	scheduleLogf("[SCHEDULER] ✅ Workshop execution completed for %s, session=%s, folder=%s", sctx.Schedule.ID, sessionID, runFolder)
+	return sessionID, runFolder, nil
+}
+
+func shouldAutoGenerateWorkshopReport(schedule WorkflowSchedule, messages []string) bool {
+	workshopMode := strings.TrimSpace(schedule.WorkshopMode)
+	if workshopMode == "" {
+		workshopMode = "runner"
+	}
+	if workshopMode != "runner" {
+		return false
+	}
+	for _, message := range messages {
+		if strings.Contains(message, "run_full_report") {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *SchedulerService) generateWorkshopScheduleReport(ctx context.Context, sctx *ScheduleContext, sessionID, runFolder string) (string, error) {
+	runFolder = strings.TrimSpace(runFolder)
+	if runFolder == "" {
+		return "", fmt.Errorf("run folder is required for report generation")
+	}
+	if !strings.Contains(runFolder, "/") {
+		return "", fmt.Errorf("run folder must be group-scoped for report generation: %s", runFolder)
+	}
+
+	reqMap := s.buildWorkshopRequest(ctx, sctx)
+	reqMap["preset_query_id"] = sctx.WorkflowID
+	reqMap["selected_folder"] = sctx.WorkspacePath
+
+	reqJSON, err := json.Marshal(reqMap)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal workshop request for report generation: %w", err)
+	}
+
+	var req QueryRequest
+	if err := json.Unmarshal(reqJSON, &req); err != nil {
+		return "", fmt.Errorf("failed to parse workshop request for report generation: %w", err)
+	}
+
+	workshopCfg, err := s.api.buildWorkshopConfig(ctx, req, "", sctx.WorkspacePath, runFolder, sctx.Capabilities.SelectedServers, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("failed to build workshop config for report generation: %w", err)
+	}
+
+	controller, err := todo_creation_human.NewStepBasedWorkflowOrchestrator(
+		ctx,
+		"", "", 0.7, "simple",
+		workshopCfg.SelectedServers,
+		workshopCfg.SelectedTools,
+		workshopCfg.UseCodeExecutionMode,
+		workshopCfg.UseToolSearchMode,
+		workshopCfg.PreDiscoveredTools,
+		workshopCfg.MCPConfigPath,
+		workshopCfg.LLMConfig,
+		100,
+		workshopCfg.Logger,
+		nil,
+		workshopCfg.EventBridge,
+		workshopCfg.CustomTools,
+		workshopCfg.CustomToolExecutors,
+		workshopCfg.ToolCategories,
+		workshopCfg.PresetPhaseLLM,
+		workshopCfg.UseKnowledgebase,
+		workshopCfg.TieredConfig,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create report controller: %w", err)
+	}
+
+	controller.SetWorkspacePath(workshopCfg.WorkspacePath)
+	controller.SetSelectedRunFolder(runFolder)
+	if workshopCfg.SessionID != "" {
+		controller.SetHTTPSessionID(workshopCfg.SessionID)
+	}
+	if len(workshopCfg.Secrets) > 0 {
+		controller.SetSecrets(workshopCfg.Secrets)
+	}
+	if len(workshopCfg.SelectedSkills) > 0 {
+		controller.SetSelectedSkills(workshopCfg.SelectedSkills)
+	}
+	if workshopCfg.WorkspaceEnvRef != nil {
+		controller.SetWorkspaceEnvRef(workshopCfg.WorkspaceEnvRef)
+	}
+
+	result, err := controller.ExecuteFinalOutputOnly(ctx, sctx.WorkflowLabel, workshopCfg.WorkspacePath, runFolder)
+	if err != nil {
+		return "", err
+	}
+
+	for _, line := range strings.Split(result, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "output_path:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "output_path:")), nil
+		}
+	}
+
+	return "", nil
 }
 
 // applyLLMAndSecretsToReqMap adds LLM config, API keys, secrets, and trigger payload to a request map.
@@ -702,6 +815,7 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 
 // buildWorkshopRequest creates the base request map for workshop mode execution.
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
+	selectedRunFolder := resolveWorkshopScheduleRunFolder(ctx, sctx.WorkspacePath, sctx.Schedule.GroupIDs)
 	reqMap := map[string]interface{}{
 		"agent_mode":              "workflow_phase",
 		"phase_id":                "workflow-builder",
@@ -731,9 +845,70 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	if len(sctx.Schedule.GroupIDs) > 0 {
 		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
 	}
+	if selectedRunFolder != "" {
+		execOpts["selected_run_folder"] = selectedRunFolder
+	}
 	reqMap["execution_options"] = execOpts
 
 	return reqMap
+}
+
+func sanitizeGroupDisplayNameForFolder(displayName string) string {
+	sanitized := strings.TrimSpace(displayName)
+	if sanitized == "" {
+		return ""
+	}
+
+	whitespacePattern := regexp.MustCompile(`\s+`)
+	sanitized = whitespacePattern.ReplaceAllString(sanitized, "-")
+
+	specialCharPattern := regexp.MustCompile(`[^a-zA-Z0-9-]`)
+	sanitized = specialCharPattern.ReplaceAllString(sanitized, "-")
+
+	multiDashPattern := regexp.MustCompile(`-+`)
+	sanitized = multiDashPattern.ReplaceAllString(sanitized, "-")
+
+	sanitized = strings.Trim(sanitized, "-")
+	sanitized = strings.ToLower(sanitized)
+	if sanitized == "" {
+		return ""
+	}
+
+	return sanitized
+}
+
+func resolveWorkshopScheduleRunFolder(ctx context.Context, workspacePath string, groupIDs []string) string {
+	baseRunFolder := "iteration-0"
+	if strings.TrimSpace(workspacePath) == "" {
+		return baseRunFolder
+	}
+
+	if len(groupIDs) != 1 {
+		return baseRunFolder
+	}
+
+	groupFolderName := strings.TrimSpace(groupIDs[0])
+	if groupFolderName == "" {
+		return baseRunFolder
+	}
+
+	content, exists, err := readFileFromWorkspace(ctx, workspacePath+"/variables/variables.json")
+	if err == nil && exists {
+		var manifest VariablesManifest
+		if jsonErr := json.Unmarshal([]byte(content), &manifest); jsonErr == nil {
+			for _, group := range manifest.Groups {
+				if group.GroupID != groupIDs[0] {
+					continue
+				}
+				if sanitized := sanitizeGroupDisplayNameForFolder(group.DisplayName); sanitized != "" {
+					groupFolderName = sanitized
+				}
+				break
+			}
+		}
+	}
+
+	return fmt.Sprintf("%s/%s", baseRunFolder, groupFolderName)
 }
 
 // waitForWorkshopIdle polls until all background agents and synthetic turns have completed.

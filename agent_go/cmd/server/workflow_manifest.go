@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/database"
@@ -115,9 +117,75 @@ func ValidateManifest(m *WorkflowManifest) error {
 		if sched.CronExpression == "" {
 			return fmt.Errorf("schedules[%d].cron_expression is required", i)
 		}
+		if len(normalizeScheduleGroupIDs(sched.GroupIDs)) == 0 {
+			return fmt.Errorf("schedules[%d].group_ids is required", i)
+		}
 	}
 
 	return nil
+}
+
+func normalizeScheduleGroupIDs(groupIDs []string) []string {
+	seen := make(map[string]struct{}, len(groupIDs))
+	normalized := make([]string, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		trimmed := strings.TrimSpace(groupID)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
+}
+
+func validateScheduleGroupIDsForWorkspace(ctx context.Context, workspacePath string, groupIDs []string) ([]string, error) {
+	normalized := normalizeScheduleGroupIDs(groupIDs)
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("group_ids is required and must contain at least one group ID")
+	}
+
+	content, exists, err := readFileFromWorkspace(ctx, workspacePath+"/variables/variables.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read variables.json: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("variables/variables.json not found for %s", workspacePath)
+	}
+
+	var manifest VariablesManifest
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
+	}
+	if len(manifest.Groups) == 0 {
+		return nil, fmt.Errorf("workflow has no variable groups; schedules must specify at least one valid group_id")
+	}
+
+	validGroups := make(map[string]struct{}, len(manifest.Groups))
+	available := make([]string, 0, len(manifest.Groups))
+	for _, group := range manifest.Groups {
+		groupID := strings.TrimSpace(group.GroupID)
+		if groupID == "" {
+			continue
+		}
+		if _, exists := validGroups[groupID]; exists {
+			continue
+		}
+		validGroups[groupID] = struct{}{}
+		available = append(available, groupID)
+	}
+	sort.Strings(available)
+
+	for _, groupID := range normalized {
+		if _, ok := validGroups[groupID]; !ok {
+			return nil, fmt.Errorf("unknown group_id %q; available groups: %s", groupID, strings.Join(available, ", "))
+		}
+	}
+
+	return normalized, nil
 }
 
 // --- Default factory ---

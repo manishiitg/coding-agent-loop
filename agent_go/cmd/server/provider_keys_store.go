@@ -131,7 +131,11 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 // encryptProviderKeys encrypts data using AES-256-GCM with the derived secrets key.
 // Uses "provider-keys" as AAD (global, not per-user).
 func encryptProviderKeys(plaintext []byte) ([]byte, error) {
-	key := deriveSecretsKey()
+	return encryptProviderKeysWithSecret(plaintext, GetAuthSecret())
+}
+
+func encryptProviderKeysWithSecret(plaintext []byte, authSecret []byte) ([]byte, error) {
+	key := deriveSecretsKeyFromSecret(authSecret)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -153,7 +157,11 @@ func encryptProviderKeys(plaintext []byte) ([]byte, error) {
 
 // decryptProviderKeys decrypts data using AES-256-GCM with the derived secrets key.
 func decryptProviderKeys(data []byte) ([]byte, error) {
-	key := deriveSecretsKey()
+	return decryptProviderKeysWithSecret(data, GetAuthSecret())
+}
+
+func decryptProviderKeysWithSecret(data []byte, authSecret []byte) ([]byte, error) {
+	key := deriveSecretsKeyFromSecret(authSecret)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err

@@ -123,7 +123,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const primaryConfig = useLLMStore(state => state.primaryConfig);
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
-  const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
+  const loadDefaultsFromBackend = useLLMStore(state => state.loadDefaultsFromBackend);
 
   const effectiveAgentMode = useMemo(() => {
     if (fixedAgentMode) return fixedAgentMode;
@@ -509,7 +509,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               provider: llm.provider as AgentLLMConfig['provider'],
                               model_id: llm.model
                             })}
-                            onRefresh={refreshAvailableLLMs}
+                            onRefresh={loadDefaultsFromBackend}
                             disabled={false}
                             inModal={true}
                             openDirection="down"
@@ -530,7 +530,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               )}
                               selectedLLM={null}
                               onLLMSelect={(llm) => tier.setFallbacks(prev => [...prev, { provider: llm.provider, model_id: llm.model }])}
-                              onRefresh={refreshAvailableLLMs}
+                              onRefresh={loadDefaultsFromBackend}
                               disabled={false}
                               inModal={true}
                               openDirection="down"
@@ -570,7 +570,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                               model_id: llm.model
                             })}
-                            onRefresh={refreshAvailableLLMs}
+                            onRefresh={loadDefaultsFromBackend}
                             disabled={false}
                             inModal={true}
                             openDirection="down"
@@ -1116,7 +1116,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           availableLLMs={availableLLMs}
                           selectedLLM={currentLLMOption}
                           onLLMSelect={handleLLMSelect}
-                          onRefresh={refreshAvailableLLMs}
+                          onRefresh={loadDefaultsFromBackend}
                           disabled={false}
                           inModal={true}
                           openDirection="down"

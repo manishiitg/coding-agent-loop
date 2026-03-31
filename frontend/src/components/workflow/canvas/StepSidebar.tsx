@@ -58,7 +58,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   plan,
   isCompact = false,
 }) => {
-  const { availableLLMs } = useLLMStore()
+  const { availableLLMs, loadDefaultsFromBackend } = useLLMStore()
   
   // Get step-specific phases from workflow store (already filtered)
   const { getStepSpecificPhases, loadPhases } = useWorkflowStore()
@@ -947,6 +947,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                     availableLLMs={availableLLMs}
                     selectedLLM={currentLLMOption}
                     onLLMSelect={handleLLMSelect}
+                    onRefresh={loadDefaultsFromBackend}
                     inModal={false}
                     openDirection="down"
                   />

@@ -48,10 +48,13 @@ type ValidationError struct {
 
 // FileCheckResult represents the result of checking a single file
 type FileCheckResult struct {
-	FileName   string
-	Exists     bool
-	IsJSON     bool
-	JSONChecks []JSONCheckResult
+	FileName        string
+	Exists          bool
+	IsJSON          bool
+	ResolvedPath    string
+	AlternatePath   string
+	AlternateExists bool
+	JSONChecks      []JSONCheckResult
 }
 
 // JSONCheckResult represents the result of a single JSON validation check
@@ -199,13 +202,17 @@ func validateWithSchema(
 			result.OverallPass = false
 			result.Summary.TotalChecks++
 			result.Summary.FailedChecks++
+			message := fmt.Sprintf("File %s must exist but was not found", fileResult.FileName)
+			if hint := buildValidationPathHint(fileResult.ResolvedPath, fileResult.AlternatePath, fileResult.AlternateExists); hint != "" {
+				message += " " + hint
+			}
 			result.Summary.Errors = append(result.Summary.Errors, ValidationError{
 				File:      fileResult.FileName,
 				Path:      "",
 				CheckType: "must_exist",
 				Expected:  "file exists",
 				Actual:    "file not found",
-				Message:   fmt.Sprintf("File %s must exist but was not found", fileResult.FileName),
+				Message:   message,
 			})
 		} else if fileRule.MustExist && fileResult.Exists {
 			result.Summary.TotalChecks++
@@ -244,6 +251,16 @@ func validateFile(
 			ErrorMsg:  fmt.Sprintf("Invalid file path: %v", err),
 		})
 		return result
+	}
+	result.ResolvedPath = fullPath
+
+	alternatePath := deriveAlternateValidationPath(workspacePath, fileRule.FileName, fullPath)
+	if alternatePath != "" && alternatePath != fullPath {
+		result.AlternatePath = alternatePath
+		alternateExists, altErr := baseOrchestrator.CheckWorkspaceFileExists(ctx, alternatePath)
+		if altErr == nil {
+			result.AlternateExists = alternateExists
+		}
 	}
 
 	// Check if file exists
@@ -333,6 +350,8 @@ func validateFile(
 		checkResult := validateJSONCheck(ctx, check, jsonData)
 		result.JSONChecks = append(result.JSONChecks, checkResult)
 	}
+
+	annotateJSONCheckPathHints(&result)
 
 	return result
 }
@@ -1010,6 +1029,69 @@ func isWorkflowRootValidationPath(fileName string) bool {
 	default:
 		return false
 	}
+}
+
+func deriveAlternateValidationPath(stepExecutionPath string, fileName string, resolvedPath string) string {
+	scopes := deriveValidationPathScopes(stepExecutionPath)
+	cleanPath, err := sanitizeValidationFileName(fileName)
+	if err != nil {
+		return ""
+	}
+
+	if filepath.IsAbs(cleanPath) {
+		cleanPath, err = resolveAbsoluteValidationPath(cleanPath, scopes)
+		if err != nil {
+			return ""
+		}
+	}
+
+	if strings.HasPrefix(resolvedPath, scopes.StepExecutionPath+"/") {
+		rel := strings.TrimPrefix(resolvedPath, scopes.StepExecutionPath+"/")
+		if rel != "" {
+			return filepath.Join(scopes.WorkflowRootPath, rel)
+		}
+	}
+
+	if strings.HasPrefix(resolvedPath, scopes.WorkflowRootPath+"/") {
+		rel := strings.TrimPrefix(resolvedPath, scopes.WorkflowRootPath+"/")
+		if rel != "" {
+			return filepath.Join(scopes.StepExecutionPath, rel)
+		}
+	}
+
+	if isWorkflowRootValidationPath(cleanPath) {
+		return filepath.Join(scopes.StepExecutionPath, cleanPath)
+	}
+
+	return filepath.Join(scopes.WorkflowRootPath, cleanPath)
+}
+
+func annotateJSONCheckPathHints(result *FileCheckResult) {
+	hint := buildValidationPathHint(result.ResolvedPath, result.AlternatePath, result.AlternateExists)
+	if hint == "" {
+		return
+	}
+
+	for i := range result.JSONChecks {
+		check := &result.JSONChecks[i]
+		if check.Passed || check.SchemaError || check.ErrorMsg == "" {
+			continue
+		}
+		check.ErrorMsg += " " + hint
+	}
+}
+
+func buildValidationPathHint(resolvedPath string, alternatePath string, alternateExists bool) string {
+	if resolvedPath == "" {
+		return ""
+	}
+	if alternatePath == "" {
+		return fmt.Sprintf("(Validation checked %s.)", resolvedPath)
+	}
+	if alternateExists {
+		return fmt.Sprintf("(Validation checked %s. Another copy also exists at %s. This often means execution wrote one copy while validation read the other.)", resolvedPath, alternatePath)
+	}
+	return fmt.Sprintf("(Validation checked %s. No alternate copy was found at %s.)", resolvedPath, alternatePath)
 }
 
 // formatWorkspaceResults formats the pre-validation results for the validation agent

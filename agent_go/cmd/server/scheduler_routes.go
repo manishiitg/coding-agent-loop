@@ -222,6 +222,11 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, "workflow manifest not found at "+req.WorkspacePath, http.StatusBadRequest)
 			return
 		}
+		req.GroupIDs, err = validateScheduleGroupIDsForWorkspace(r.Context(), req.WorkspacePath, req.GroupIDs)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		// Create new schedule
 		newSched := WorkflowSchedule{
@@ -338,7 +343,12 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			sched.TriggerPayload = req.TriggerPayload
 		}
 		if req.GroupIDs != nil {
-			sched.GroupIDs = req.GroupIDs
+			validGroupIDs, err := validateScheduleGroupIDsForWorkspace(r.Context(), workspacePath, req.GroupIDs)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			sched.GroupIDs = validGroupIDs
 		}
 		if req.Mode != "" {
 			sched.Mode = req.Mode
@@ -349,6 +359,12 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.WorkshopMode != "" {
 			sched.WorkshopMode = req.WorkshopMode
 		}
+		validGroupIDs, err := validateScheduleGroupIDsForWorkspace(r.Context(), workspacePath, sched.GroupIDs)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		sched.GroupIDs = validGroupIDs
 
 		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
 			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)

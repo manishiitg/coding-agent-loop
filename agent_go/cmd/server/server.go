@@ -470,6 +470,8 @@ func init() {
 
 	// Bind flags to viper
 	viper.BindPFlags(ServerCmd.Flags())
+
+	ServerCmd.AddCommand(rotateProviderKeysCmd)
 }
 
 func runServer(cmd *cobra.Command, args []string) {
@@ -2668,8 +2670,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SessionID:     sessionID,
 					PresetQueryID: req.PresetQueryID,
 					WorkspacePath: workflowPhaseFolder,
-					TriggeredBy:   triggeredBy,
-					StartedAt:     time.Now(),
+					RunFolder: func() string {
+						if req.ExecutionOptions != nil {
+							return req.ExecutionOptions.SelectedRunFolder
+						}
+						return ""
+					}(),
+					TriggeredBy: triggeredBy,
+					StartedAt:   time.Now(),
 				}
 				api.activeWorkflowExecutionsMux.Unlock()
 			}
@@ -9907,6 +9915,10 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if err != nil || !found {
 				return "", fmt.Errorf("workflow manifest not found at %s", workspacePath)
 			}
+			groupIDs, err = validateScheduleGroupIDsForWorkspace(ctx, workspacePath, groupIDs)
+			if err != nil {
+				return "", err
+			}
 			newSched := WorkflowSchedule{
 				ID:             generateScheduleID(),
 				Name:           name,
@@ -9957,7 +9969,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				sched.Timezone = timezone
 			}
 			if setGroupIDs {
-				sched.GroupIDs = groupIDs
+				validGroupIDs, err := validateScheduleGroupIDsForWorkspace(ctx, workspacePath, groupIDs)
+				if err != nil {
+					return "", err
+				}
+				sched.GroupIDs = validGroupIDs
 			}
 			if enabled != nil {
 				sched.Enabled = *enabled
@@ -9971,6 +9987,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if workshopMode != "" {
 				sched.WorkshopMode = workshopMode
 			}
+			validGroupIDs, err := validateScheduleGroupIDsForWorkspace(ctx, workspacePath, sched.GroupIDs)
+			if err != nil {
+				return "", err
+			}
+			sched.GroupIDs = validGroupIDs
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)
 			}

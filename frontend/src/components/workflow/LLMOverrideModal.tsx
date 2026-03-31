@@ -13,7 +13,7 @@ interface LLMOverrideModalProps {
 }
 
 export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalProps) {
-  const { availableLLMs, refreshAvailableLLMs } = useLLMStore()
+  const { availableLLMs, loadDefaultsFromBackend } = useLLMStore()
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
   const setTempOverrideLLM = useWorkflowStore(state => state.setTempOverrideLLM)
   const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
@@ -180,7 +180,7 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
                   availableLLMs={availableLLMs}
                   selectedLLM={selectedLLM1}
                   onLLMSelect={handleLLM1Select}
-                  onRefresh={refreshAvailableLLMs}
+                  onRefresh={loadDefaultsFromBackend}
                   disabled={!tempOverrideLLMEnabled}
                   inModal={true}
                   openDirection="down"
@@ -231,7 +231,7 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
                   availableLLMs={availableLLMs}
                   selectedLLM={selectedLLM2}
                   onLLMSelect={handleLLM2Select}
-                  onRefresh={refreshAvailableLLMs}
+                  onRefresh={loadDefaultsFromBackend}
                   disabled={!tempOverrideLLMEnabled}
                   inModal={true}
                   openDirection="down"
@@ -282,7 +282,7 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
                   availableLLMs={availableLLMs}
                   selectedLLM={selectedLearningLLM}
                   onLLMSelect={handleLearningLLMSelect}
-                  onRefresh={refreshAvailableLLMs}
+                  onRefresh={loadDefaultsFromBackend}
                   disabled={false}
                   inModal={true}
                   openDirection="down"
@@ -389,4 +389,3 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
     </div>
   )
 }
-

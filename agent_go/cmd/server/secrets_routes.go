@@ -96,8 +96,12 @@ type secretDecryptResponse struct {
 
 // deriveSecretsKey derives a 32-byte AES-256 key from AUTH_SECRET using HMAC-SHA256
 func deriveSecretsKey() []byte {
-	authSecret := GetAuthSecret()
-	mac := hmac.New(sha256.New, authSecret)
+	return deriveSecretsKeyFromSecret(GetAuthSecret())
+}
+
+// deriveSecretsKeyFromSecret derives a 32-byte AES-256 key from the provided secret using HMAC-SHA256.
+func deriveSecretsKeyFromSecret(secret []byte) []byte {
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte("secrets-encryption-key"))
 	return mac.Sum(nil) // 32 bytes = AES-256
 }

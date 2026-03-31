@@ -1870,8 +1870,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 - To view existing schedules, read `+"`workflow.json`"+` via `+"`execute_shell_command`"+` — schedules are under the `+"`schedules`"+` key.
 - Each schedule entry in `+"`workflow.json`"+` has this shape:
-  `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_ids": [] }`+"`"+`
-  Fields: `+"`id`"+` (auto-assigned), `+"`name`"+` (display label), `+"`description`"+` (optional), `+"`cron_expression`"+` (standard 5-field cron), `+"`timezone`"+` (IANA tz e.g. America/New_York), `+"`enabled`"+` (bool), `+"`trigger_payload`"+` (arbitrary JSON passed to the run), `+"`group_ids`"+` (array of group strings for filtering).
+  `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_ids": ["group-1"] }`+"`"+`
+  Fields: `+"`id`"+` (auto-assigned), `+"`name`"+` (display label), `+"`description`"+` (optional), `+"`cron_expression`"+` (standard 5-field cron), `+"`timezone`"+` (IANA tz e.g. America/New_York), `+"`enabled`"+` (bool), `+"`trigger_payload`"+` (arbitrary JSON passed to the run), `+"`group_ids`"+` (required array of one or more explicit group IDs from `+"`variables.json`"+`).
 - Schedule management is available in **builder and optimizer modes**. If the user asks about schedules in another mode, tell them to switch to builder or optimizer mode.
 - **3 ways to schedule a workflow:**
   1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
@@ -7347,7 +7347,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Variable group IDs to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Empty = run all groups.",
+					"description": "Required. Variable group IDs to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Do not leave empty.",
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
@@ -7365,7 +7365,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"enum":        []string{"runner", "optimizer"},
 				},
 			},
-			"required": []string{"name", "cron_expression"},
+			"required": []string{"name", "cron_expression", "group_ids"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if iwm.schedulerFuncs == nil {
@@ -7405,6 +7405,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
 			}
+			if len(groupIDs) == 0 {
+				return "group_ids is required. Read variables.json and provide at least one explicit group_id, e.g. ['group-1'].", nil
+			}
 			// Validate: workshop mode requires messages
 			if mode == "workshop" && len(messages) == 0 {
 				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_id=\"group-1\")'].", nil
@@ -7442,7 +7445,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "New variable group IDs (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Pass empty array to clear (run all groups).",
+					"description": "Explicit variable group IDs for the schedule (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Omit to keep the current groups; do not pass an empty array.",
 				},
 				"enabled": map[string]interface{}{
 					"type":        "boolean",
@@ -7488,6 +7491,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 				}
+			}
+			if setGroupIDs && len(groupIDs) == 0 {
+				return "group_ids cannot be empty. Provide at least one explicit group_id from variables.json, or omit group_ids to keep the current selection.", nil
 			}
 			var enabled *bool
 			if raw, ok := args["enabled"]; ok && raw != nil {

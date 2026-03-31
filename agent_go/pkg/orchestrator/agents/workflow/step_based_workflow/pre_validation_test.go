@@ -1,6 +1,9 @@
 package step_based_workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateFilePath(t *testing.T) {
 	stepExecutionPath := "Workflow/linkedin/runs/iteration-0/default/execution/step-global-research"
@@ -65,5 +68,55 @@ func TestValidateFilePath(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestDeriveAlternateValidationPath(t *testing.T) {
+	stepExecutionPath := "Workflow/linkedin/runs/iteration-0/default/execution/step-global-hn"
+
+	testCases := []struct {
+		name         string
+		fileName     string
+		resolvedPath string
+		want         string
+	}{
+		{
+			name:         "workflow root file gets step local alternate",
+			fileName:     "knowledgebase/research/current/hn_raw.json",
+			resolvedPath: "Workflow/linkedin/knowledgebase/research/current/hn_raw.json",
+			want:         "Workflow/linkedin/runs/iteration-0/default/execution/step-global-hn/knowledgebase/research/current/hn_raw.json",
+		},
+		{
+			name:         "step local file gets workflow root alternate",
+			fileName:     "knowledgebase/research/current/hn_raw.json",
+			resolvedPath: "Workflow/linkedin/runs/iteration-0/default/execution/step-global-hn/knowledgebase/research/current/hn_raw.json",
+			want:         "Workflow/linkedin/knowledgebase/research/current/hn_raw.json",
+		},
+		{
+			name:         "bare step file gets workflow root alternate",
+			fileName:     "auth_context.json",
+			resolvedPath: "Workflow/linkedin/runs/iteration-0/default/execution/step-global-hn/auth_context.json",
+			want:         "Workflow/linkedin/auth_context.json",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveAlternateValidationPath(stepExecutionPath, tc.fileName, tc.resolvedPath)
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestBuildValidationPathHint(t *testing.T) {
+	got := buildValidationPathHint(
+		"Workflow/linkedin/knowledgebase/research/current/hn_raw.json",
+		"Workflow/linkedin/runs/iteration-0/default/execution/step-global-hn/knowledgebase/research/current/hn_raw.json",
+		true,
+	)
+	if got == "" || !strings.Contains(got, "Another copy also exists") || !strings.Contains(got, "validation read the other") {
+		t.Fatalf("unexpected hint: %q", got)
 	}
 }

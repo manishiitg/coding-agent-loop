@@ -43,7 +43,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
 }) => {
-  const { availableLLMs, getCurrentLLMOption } = useLLMStore();
+  const { availableLLMs, getCurrentLLMOption, loadDefaultsFromBackend } = useLLMStore();
   const { currentPresetTools } = usePresetApplication();
   const { capabilities } = useCapabilitiesStore();
   
@@ -1280,6 +1280,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     availableLLMs={availableLLMs}
                     selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
                     onLLMSelect={handleExecutionLLMSelect}
+                    onRefresh={loadDefaultsFromBackend}
                     inModal={false}
                     openDirection="down"
                   />
@@ -1424,6 +1425,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         availableLLMs={availableLLMs}
                         selectedLLM={llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption()}
                         onLLMSelect={handleLearningLLMSelect}
+                        onRefresh={loadDefaultsFromBackend}
                         inModal={false}
                         openDirection="down"
                       />
@@ -1520,6 +1522,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                             availableLLMs={availableLLMs}
                             selectedLLM={llmConfigToOption(agentConfigs.conditional_llm) || getPresetDefaultLLM('conditional') || getCurrentLLMOption()}
                             onLLMSelect={handleConditionalLLMSelect}
+                            onRefresh={loadDefaultsFromBackend}
                             inModal={false}
                             openDirection="down"
                           />
@@ -2014,4 +2017,3 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     </div>
   );
 };
-

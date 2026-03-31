@@ -2100,7 +2100,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // it is loaded from workflow.json execution_defaults in WorkflowLayout.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
-            selectedExecutionMode: 'stateless',
             selectedStartPoint: 0,  // Always start fresh - calculated from progress
             selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,

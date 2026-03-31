@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
-import { X, Clock, Play, Trash2, Save, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
+import { X, Clock, Play, Trash2, Save, ChevronDown, ChevronUp, ExternalLink, AlertTriangle } from 'lucide-react'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
-import type { ScheduledJob, CreateScheduledJobRequest, VariableGroup } from '../services/api-types'
+import type { ScheduledJob, CreateScheduledJobRequest, VariableGroup, SchedulerConfig } from '../services/api-types'
 
 const LOCAL_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 
@@ -48,6 +48,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [schedulerConfig, setSchedulerConfig] = useState<SchedulerConfig | null>(null)
 
   // Group selection — at least one group must be selected
   const [availableGroups, setAvailableGroups] = useState<VariableGroup[]>([])
@@ -56,6 +57,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   const cronDescription = describeCron(cronExpr)
   const isValidCron = cronDescription !== ''
   const schedulerEntityType = entityType === 'workflow' ? 'workflow' : 'chat'
+  const isSchedulerExecutionEnabled = schedulerConfig?.execution_enabled !== false
 
   const allGroupsSelected = availableGroups.length > 0 && selectedGroupIds.length === availableGroups.length
   const hasGroupSelection = availableGroups.length === 0 || selectedGroupIds.length > 0
@@ -95,7 +97,11 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           .catch(() => {})
       : Promise.resolve()
 
-    Promise.all([loadJobs, loadGroups])
+    const loadSchedulerConfig = schedulerApi.getConfig()
+      .then((config) => setSchedulerConfig(config))
+      .catch(() => setSchedulerConfig(null))
+
+    Promise.all([loadJobs, loadGroups, loadSchedulerConfig])
       .catch(() => {})
       .finally(() => setIsLoading(false))
   }, [presetQueryId, schedulerEntityType, presetLabel, workspacePath])
@@ -219,6 +225,22 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading...</p>
           ) : (
             <>
+              {!isSchedulerExecutionEnabled && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/40 dark:bg-red-950/30">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
+                    <div>
+                      <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+                        Automatic schedules are disabled on this server
+                      </div>
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-200/90">
+                        {schedulerConfig?.disabled_reason || 'Timed cron executions are currently turned off. You can still save this schedule and run it manually.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Status badge */}
               {existingJob && (
                 <div className="flex items-center justify-between">

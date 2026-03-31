@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -14,10 +15,13 @@ const schedulerConfigFilePath = "config/scheduler.json"
 // SchedulerConfig stores workspace-level scheduler settings in config/scheduler.json.
 // Schedule definitions remain in each workflow manifest.
 type SchedulerConfig struct {
-	GloballyPaused bool       `json:"globally_paused"`
-	PausedAt       *time.Time `json:"paused_at,omitempty"`
-	PausedBy       string     `json:"paused_by,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	GloballyPaused   bool       `json:"globally_paused"`
+	PausedAt         *time.Time `json:"paused_at,omitempty"`
+	PausedBy         string     `json:"paused_by,omitempty"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+	ExecutionEnabled bool       `json:"execution_enabled"`
+	DisabledViaEnv   bool       `json:"disabled_via_env,omitempty"`
+	DisabledReason   string     `json:"disabled_reason,omitempty"`
 }
 
 func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
@@ -38,6 +42,24 @@ func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
 		sanitized.UpdatedAt = &updatedAt
 	}
 	return sanitized
+}
+
+func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
+	if cfg == nil {
+		cfg = &SchedulerConfig{}
+	}
+
+	cfg.ExecutionEnabled = true
+	cfg.DisabledViaEnv = false
+	cfg.DisabledReason = ""
+
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SCHEDULER_ENABLED")), "false") {
+		cfg.ExecutionEnabled = false
+		cfg.DisabledViaEnv = true
+		cfg.DisabledReason = "Automatic cron execution is disabled on this server because SCHEDULER_ENABLED=false. Manual runs still work."
+	}
+
+	return cfg
 }
 
 func SaveSchedulerConfig(ctx context.Context, cfg *SchedulerConfig) error {
@@ -68,14 +90,14 @@ func LoadSchedulerConfig(ctx context.Context) (*SchedulerConfig, error) {
 		return nil, fmt.Errorf("failed to read scheduler config: %w", err)
 	}
 	if !exists {
-		return &SchedulerConfig{}, nil
+		return applySchedulerRuntimeState(&SchedulerConfig{}), nil
 	}
 
 	var cfg SchedulerConfig
 	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal scheduler config: %w", err)
 	}
-	return sanitizeSchedulerConfig(&cfg), nil
+	return applySchedulerRuntimeState(sanitizeSchedulerConfig(&cfg)), nil
 }
 
 func (s *SchedulerService) IsGloballyPaused(ctx context.Context) (bool, *SchedulerConfig, error) {

@@ -60,6 +60,8 @@ You break this objective into tasks, delegate them to specialized sub-agents, an
   - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
   - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file just to change schema, rename keys, or add convenience fields.
   - If you need extra derived information after a successful predefined route, carry it forward in later task instructions or write a separate orchestrator-side summary file. Do NOT mutate the predefined route's declared output artifact unless the route itself is being retried or fixed.
+  - **Current-state-first reasoning**: Trust the current tasks.md, current file contents, and current tool results over any earlier assistant text. Do NOT repeat or carry forward a prior diagnosis unless you re-verified it in this iteration.
+  - **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow, that another workflow is interfering, or that a path belongs to a different project unless you verified it in this iteration with exact evidence (for example: a tool error, a file read, or a returned path). If you do not have direct evidence, say the issue is unverified instead of naming another workflow.
   - tasks.md must always reflect true current state
 
 **4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs exist and mark all tasks as [x] in tasks.md. The step auto-completes when all tasks are [x].

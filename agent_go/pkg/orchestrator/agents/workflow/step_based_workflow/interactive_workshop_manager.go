@@ -777,6 +777,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	stepConfig := []string{
 		"update_step_config", "analyze_step", "generate_learnings", "optimize_step",
 		"infer_objective", "set_workflow_objective", "optimize_workflow", "mark_workflow_optimized",
+		"replan_workflow_from_results",
 	}
 
 	// Plan modification tools
@@ -879,6 +880,32 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	return tools
+}
+
+func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[string]interface{}, allowedToolNames []string) ([]llmtypes.Tool, map[string]interface{}) {
+	allowed := make(map[string]bool, len(allowedToolNames))
+	for _, name := range allowedToolNames {
+		allowed[name] = true
+	}
+
+	var filteredTools []llmtypes.Tool
+	filteredExecutors := make(map[string]interface{})
+
+	for _, tool := range allTools {
+		if tool.Function == nil {
+			continue
+		}
+		name := tool.Function.Name
+		if !allowed[name] {
+			continue
+		}
+		filteredTools = append(filteredTools, tool)
+		if exec, ok := allExecutors[name]; ok {
+			filteredExecutors[name] = exec
+		}
+	}
+
+	return filteredTools, filteredExecutors
 }
 
 // detectWorkshopMode determines the current workshop mode based on step optimization state.
@@ -1200,8 +1227,9 @@ When in doubt: start with code_exec. If the step can't be stabilized into one re
 3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — confirm by checking `+"`planning/plan.json`"+`. Only if it is truly missing there should you run `+"`infer_objective`"+`, then confirm the result with the user before saving it. Never call `+"`infer_objective`"+` when `+"`objective`"+` already exists in `+"`planning/plan.json`"+`.{{end}}
 4. Once both are set, run `+"`optimize_workflow`"+` **once** at the start. It analyzes the full plan — including nested orchestrators and evaluation coverage — against the objective and success criteria. **Fix all structural issues before touching individual steps.**
 5. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools. Do NOT defer to the user.
-6. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires, and what is the strongest execution mode it can support?**
-7. If a todo_task workflow still uses legacy sub-agent IDs where `+"`route_id`"+` and `+"`sub_agent_step.id`"+` differ (for example `+"`icici-login`"+` vs `+"`task-icici-login`"+`), run `+"`migrate_todo_route_ids`"+` before optimizing those sub-agents.
+6. If the workflow has already run and the **actual outputs / validation failures / eval results** show that the current plan still misses the success criteria, run `+"`replan_workflow_from_results(target_run_folder)`"+` before step-by-step optimization. That tool rewrites the plan from evidence, not from static structure alone.
+7. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires, and what is the strongest execution mode it can support?**
+8. If a todo_task workflow still uses legacy sub-agent IDs where `+"`route_id`"+` and `+"`sub_agent_step.id`"+` differ (for example `+"`icici-login`"+` vs `+"`task-icici-login`"+`), run `+"`migrate_todo_route_ids`"+` before optimizing those sub-agents.
 
 **IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
 
@@ -1793,6 +1821,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **infer_objective(focus?)** — Last resort only. Use this only after you have checked `+"`planning/plan.json`"+` and confirmed the root `+"`objective`"+` is actually missing. It infers the workflow objective from the plan and drafts success criteria from step outputs; returns both for user confirmation before saving
 - **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json (at least one required)
 - **optimize_workflow(focus?)** — Analyze the entire plan structure against the objective; flags structural issues (missing steps, wrong order, redundant steps, bad step types)
+- **replan_workflow_from_results(target_run_folder?, focus?)** — Rewrite the plan using actual outputs, validation failures, and evaluation results from a real run. Keeps the existing objective/success criteria as the north star.
 - **migrate_todo_route_ids(parent_step_id?, dry_run?)** — Upgrade older todo_task predefined routes to the single-ID model where `+"`route_id`"+` is also the canonical sub-agent step ID; updates plan.json and matching step_config/learnings IDs
 - **mark_workflow_optimized** — Code-based readiness check: verifies all steps are optimized, learnings present, pre-discovered tools set (for tool-search steps), eval plan exists, output plan configured, no orphan learnings or skill references. Marks workflow_optimized=true in plan.json only if all checks pass.{{end}}
 - **get_cost_summary** — Token usage and cost breakdown
@@ -5806,7 +5835,138 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_workflow tool: %v", err))
 	}
 
-	// Tool 7f: mark_workflow_optimized — code-based readiness check, no LLM
+	// Tool 7f: replan_workflow_from_results — background agent that rewrites the plan from actual run evidence
+	if err := mcpAgent.RegisterCustomTool(
+		"replan_workflow_from_results",
+		"Start a background agent that reads actual outputs, validation failures, and evaluation results from a real run, then rewrites planning/plan.json to better satisfy the existing objective and success criteria. This is result-driven replanning, not static structural review. Returns execution_id immediately — you will be automatically notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_run_folder": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional run folder to use as evidence, e.g. 'iteration-3' or 'iteration-3/group-a'. Defaults to the currently selected run folder.",
+				},
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus for the replanning pass, e.g. 'combine steps', 'missing outputs', 'browser flow', 'evaluation failures'.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			targetRunFolder := ""
+			if val, ok := args["target_run_folder"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetRunFolder = strings.TrimSpace(s)
+				}
+			}
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+			if targetRunFolder == "" {
+				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
+			}
+			if targetRunFolder == "" {
+				return "target_run_folder is required when no run folder is currently selected. Run the workflow first or pass target_run_folder explicitly.", nil
+			}
+
+			execID := fmt.Sprintf("replan-results-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-replan-results-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "replan-workflow-from-results",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, "Replan Workflow From Results")
+			}
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-replan-workflow",
+						AgentName:     "Replan Workflow From Results",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.runReplanWorkflowFromResultsAgent(execCtx, targetRunFolder, focus)
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+						} else {
+							exec.Status = WorkshopStepFailed
+						}
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-replan-workflow",
+						AgentName:     "Replan Workflow From Results",
+						Success:       err == nil,
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+						Data: endEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, "Replan Workflow From Results", result, nil, err)
+				}
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			logger.Info(fmt.Sprintf("🔄 Workshop: replan_workflow_from_results agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
+			return fmt.Sprintf("Workflow result-driven replanning agent started in background.\nexecution_id: %q\nTarget run folder: %s%s\nYou will be automatically notified when it completes.", execID, targetRunFolder, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register replan_workflow_from_results tool: %v", err))
+	}
+
+	// Tool 7g: mark_workflow_optimized — code-based readiness check, no LLM
 	if err := mcpAgent.RegisterCustomTool(
 		"mark_workflow_optimized",
 		"Run a code-based readiness check and mark the workflow as optimized if all criteria pass. Checks: all executable steps are optimized, learnings exist for each step, pre-discovered tools set for tool-search steps, evaluation plan exists, output plan is configured, no orphan learnings or skill references. Writes workflow_optimized=true to plan.json only when every check passes. Returns a detailed checklist either way.",
@@ -8047,6 +8207,97 @@ The top 3-5 changes ordered by impact. Each must be a concrete tool call the bui
 
 var optimizeWorkflowAgentUserTemplate = MustRegisterTemplate("optimizeWorkflowAgentUser", `Analyze the complete workflow plan structure against the objective and produce a structural optimization report.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
+var replanWorkflowFromResultsAgentSystemTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentSystem", `# Workflow Replanning Agent
+
+You are a workflow architect and editor. Your job is to read the **actual results** from a real workflow run, compare them to the existing objective and success criteria, and then rewrite `+"`planning/plan.json`"+` so the workflow is more likely to achieve the desired outcome on the next run.
+
+This tool is **evidence-driven and mutating**:
+- read real execution outputs, validation failures, evaluation results, and logs
+- identify where the current plan failed in practice
+- apply plan changes directly using workflow plan modification tools
+
+## RULES
+1. **Use real evidence first**: Base every structural change on what actually happened in the target run. Do not make speculative edits when the artifacts do not support them.
+2. **Do not re-infer the objective**: Treat the existing root `+"`objective`"+` and `+"`success_criteria`"+` in `+"`planning/plan.json`"+` as the north star. Do NOT call `+"`infer_objective`"+` in this tool. If the objective is missing, leave it unchanged and continue using the visible success criteria/plan context.
+3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
+4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
+5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
+6. **Prefer deterministic execution**: When restructuring, maximize the share of steps that can run as `+"`code_exec`"+`, then `+"`tool_search`"+`, then `+"`simple`"+`.
+7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
+8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
+
+## CONTEXT
+
+- **Workspace**: {{.WorkspacePath}}
+- **Target Run Folder**: {{.TargetRunFolder}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ Missing in plan.json — do not infer it in this tool{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ Missing in plan.json — rely on the best visible run/eval evidence and note this in your summary{{end}}
+
+{{if .PlanJSON}}## CURRENT PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read `+"`planning/plan.json`"+` before making changes.{{end}}
+
+{{if .StepConfigSummary}}## STEP CONFIG SUMMARY
+{{.StepConfigSummary}}
+{{end}}
+
+## RESULT SOURCES TO READ
+
+Read all relevant evidence for `+"`{{.TargetRunFolder}}`"+`:
+- execution outputs under `+"`runs/{{.TargetRunFolder}}/execution/`"+`
+- step logs under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
+- validation results under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
+- evaluation report at `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+` if it exists
+- output plan / final output artifacts if relevant
+
+Use targeted shell commands (`+"`find`"+`, `+"`jq`"+`, `+"`cat`"+`, `+"`head`"+`) to inspect only the files needed.
+
+{{if .Focus}}## FOCUS
+Prioritize this area while replanning: **{{.Focus}}**
+{{end}}
+
+## WORKFLOW
+
+1. Read the current plan and the target run evidence.
+2. Identify where the run failed to satisfy the objective or success criteria:
+   - missing outputs
+   - wrong outputs
+   - redundant steps that produced no useful value
+   - broken context flow
+   - step boundaries that are too split or too merged
+   - missing validation or missing evaluation coverage
+3. Decide what structural changes are required:
+   - add missing steps
+   - remove useless steps
+   - combine steps when the handoff is artificial
+   - split steps when one failing step hides multiple responsibilities
+   - reorder steps to reflect actual dependencies
+   - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` / `+"`decision`"+` when the results show hidden branching
+4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
+5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
+6. If step configs obviously need mode changes because of the new structure, update them too. Prefer `+"`code_exec`"+` whenever the run evidence shows a stable Python path.
+7. End with a concise summary of what you changed, why, and what should be run next to verify the new plan.
+
+## OUTPUT FORMAT
+
+Return a short markdown summary with:
+
+### Replan Summary
+- What run evidence you used
+- Whether the plan changed materially
+
+### Plan Changes Applied
+- Concrete changes you made to planning/plan.json
+
+### Why These Changes
+- Tie each major change back to actual outputs, validation failures, or evaluation findings
+
+### Next Verification Step
+- What the builder should run next to test the new plan
+`)
+
+var replanWorkflowFromResultsAgentUserTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentUser", `Replan the workflow from actual run results in "{{.TargetRunFolder}}". Read the evidence, rewrite the plan directly, and summarize what changed.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
 // WorkflowOptimizationAgent performs deep read-only analysis of a step
 type WorkflowOptimizationAgent struct {
 	*agents.BaseOrchestratorAgent
@@ -8228,6 +8479,35 @@ func (agent *WorkflowPlanOptimizationAgent) Execute(ctx context.Context, templat
 		return "", nil, err
 	}
 	if err := optimizeWorkflowAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
+	return result, updatedHistory, nil
+}
+
+// WorkflowResultsReplanAgent rewrites the plan using actual run evidence.
+type WorkflowResultsReplanAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowResultsReplanAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowResultsReplanAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowResultsReplanAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowResultsReplanAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := replanWorkflowFromResultsAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := replanWorkflowFromResultsAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
 		return "", nil, err
 	}
 	inputProcessor := func(map[string]string) string { return userMessage.String() }
@@ -8932,6 +9212,122 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("optimize_workflow agent failed: %w", err)
+	}
+	return result, nil
+}
+
+// runReplanWorkflowFromResultsAgent rewrites the workflow plan using actual run evidence.
+func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+	logger := iwm.controller.GetLogger()
+
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	stepConfigSummary := ""
+	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
+		var sb strings.Builder
+		for _, sc := range stepConfigs {
+			optimized := false
+			mode := "simple"
+			declaredMode := ""
+			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
+				optimized = *sc.AgentConfigs.Optimized
+			}
+			if sc.AgentConfigs != nil {
+				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
+					mode = "code_exec"
+				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
+					mode = "tool_search"
+				}
+				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s\n", sc.ID, optimized, mode, declaredMode))
+		}
+		stepConfigSummary = sb.String()
+	}
+
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ replan_workflow_from_results: failed to reload plan for objective: %v (using cached value)", err))
+	}
+	workflowObjective := ""
+	workflowSuccessCriteria := ""
+	if iwm.controller.approvedPlan != nil {
+		workflowObjective = iwm.controller.approvedPlan.Objective
+		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
+	}
+
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+	}
+	writePaths := []string{
+		workspacePath,
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for replan_workflow_from_results agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("replan-workflow-from-results-agent", 90, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	allowedToolNames := []string{
+		"execute_shell_command", "diff_patch_workspace_file",
+		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
+		"update_step_config", "analyze_step",
+		"add_regular_step", "add_decision_step", "add_routing_step",
+		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
+		"update_regular_step", "update_decision_step", "update_routing_step",
+		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
+		"delete_todo_task_route", "migrate_todo_route_ids", "delete_plan_steps",
+		"update_validation_schema",
+	}
+	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)
+
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowResultsReplanAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "replan-workflow-from-results", 0, 0, "replan-workflow-from-results",
+		createAgentFunc, toolsToRegister, executorsToUse, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create replan_workflow_from_results agent: %w", err)
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath":           workspacePath,
+		"TargetRunFolder":         targetRunFolder,
+		"PlanJSON":                planJSON,
+		"StepConfigSummary":       stepConfigSummary,
+		"WorkflowObjective":       workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
+	}
+
+	logger.Info(fmt.Sprintf("🔄 Running replan_workflow_from_results agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("replan_workflow_from_results agent failed: %w", err)
 	}
 	return result, nil
 }

@@ -129,7 +129,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// The LLM creates and updates tasks.md directly using execute_shell_command
 	// Sub-agents receive instructions via tool parameters (NOT by reading files)
 
-	// Keep conversation history in-memory
+	// Keep only the latest iteration conversation history in-memory.
+	// Todo-task state should come from current files (tasks.md, outputs, tool results),
+	// not from replaying previous assistant narration across loop iterations.
 	var conversationHistory []llmtypes.MessageContent
 	defer func() {
 		if execCtx != nil && execCtx.ConversationHistoryCapture != nil {
@@ -158,6 +160,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// Main todo task orchestration loop
 	for taskIteration := 0; taskIteration < maxIterations; taskIteration++ {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Todo task iteration %d/%d", taskIteration+1, maxIterations))
+
+		// Start each orchestration loop from fresh conversational context.
+		// Previous iterations may contain speculative diagnoses that are no longer true.
+		conversationHistory = nil
 
 		// Check for context cancellation
 		select {

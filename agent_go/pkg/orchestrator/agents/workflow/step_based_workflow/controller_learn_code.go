@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -348,6 +349,45 @@ func shellQuotePath(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) resolveLearnCodeShellGuard(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	stepExecutionRelPath string,
+	includeCodeDir bool,
+) *workspace.FolderGuardConfig {
+	stepConfig := getAgentConfigs(step)
+	useKnowledgebase := hcpo.UseKnowledgebase()
+	if stepConfig != nil && stepConfig.DisableKnowledgebase != nil {
+		if *stepConfig.DisableKnowledgebase {
+			useKnowledgebase = false
+		} else {
+			useKnowledgebase = true
+		}
+	}
+
+	hasLearnings := false
+	learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
+	if err == nil {
+		hasLearnings = !learningsEmpty
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted_code] Failed to inspect learnings folder for shell guard on step %d: %v", stepIndex+1, err))
+	}
+
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings, useKnowledgebase)
+	if includeCodeDir && len(writePaths) > 0 {
+		writePaths = append(writePaths, writePaths[0]+"/code")
+	}
+	readPaths = common.DeduplicateStrings(append(readPaths, writePaths...))
+
+	return &workspace.FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  readPaths,
+		WritePaths: writePaths,
+	}
+}
+
 // execLearnCodeScript runs python3 <mainPy> <args...> via the workspace shell API.
 // Uses workspace.Client (same path as the LLM agent's execute_shell_command tool) so that
 // folder guard, ExtraEnv (SECRET_*, MCP_API_URL), and path handling all work consistently.
@@ -357,6 +397,9 @@ func shellQuotePath(s string) string {
 // stepExecutionRelPath — workspace-relative path to the execution folder (for FolderGuard write paths)
 func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
 	mainPyAbsPath string,
 	inputArgs []string,
 	stepOutputAbsPath string,
@@ -376,29 +419,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	// Build command: STEP_OUTPUT_DIR is passed via ExtraEnv so no inline env prefix needed.
 	// Use absolute paths for main.py and args — /app/workspace-docs/... is valid inside Docker.
 	var sb strings.Builder
-	sb.WriteString("python3 ")
+	sb.WriteString("python3 -B ")
 	sb.WriteString(shellQuotePath(mainPyAbsPath))
 	for _, arg := range inputArgs {
 		sb.WriteString(" ")
 		sb.WriteString(shellQuotePath(arg))
 	}
 
-	// FolderGuard: allow broad workspace reads for dependencies, but explicitly block the
-	// root workspace Downloads/ area. Workflow runs should only touch their run-scoped
-	// execution/Downloads folder, not the shared per-user Downloads namespace.
-	// Saved scripted steps also need write access to the shared execution/Downloads folder,
-	// because browser-driven downloads may be renamed/copied there after Playwright saves them.
-	executionDownloadsRelPath := filepath.Join(filepath.Dir(stepExecutionRelPath), "Downloads")
-	guard := &workspace.FolderGuardConfig{
-		Enabled:      true,
-		ReadPaths:    []string{"."},
-		WritePaths:   []string{stepExecutionRelPath, executionDownloadsRelPath},
-		BlockedPaths: []string{"Downloads"},
-	}
+	includeCodeDir := workDirRel == stepExecutionRelPath+"/code"
+	guard := hcpo.resolveLearnCodeShellGuard(ctx, step, stepIndex, stepPath, stepExecutionRelPath, includeCodeDir)
 
 	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR.
 	extraEnv := map[string]string{
-		"STEP_OUTPUT_DIR": stepOutputAbsPath,
+		"STEP_OUTPUT_DIR":         stepOutputAbsPath,
+		"PYTHONDONTWRITEBYTECODE": "1",
 	}
 	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
 		for k, v := range envRef {
@@ -418,10 +452,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	}
 	sort.Strings(envKeys)
 	hcpo.GetLogger().Info(fmt.Sprintf(
-		"🐍 [scripted_code] Direct script MCP preflight | script=%s | workdir=%s | step_output=%s | MCP_SESSION_ID=%s | MCP_API_URL=%s | env_keys=%v",
+		"🐍 [scripted_code] Direct script MCP preflight | script=%s | workdir=%s | step_output=%s | read_paths=%v | write_paths=%v | MCP_SESSION_ID=%s | MCP_API_URL=%s | env_keys=%v",
 		mainPyAbsPath,
 		workDirRel,
 		stepOutputAbsPath,
+		guard.ReadPaths,
+		guard.WritePaths,
 		extraEnv["MCP_SESSION_ID"],
 		extraEnv["MCP_API_URL"],
 		envKeys,
@@ -546,7 +582,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	// Clean previous output files before running saved script — fresh slate for this execution.
 	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath)
 
-	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, scriptAbsPath, inputArgs, stepExecutionAbsPath, learnDirAbsPath, stepExecutionRelPath)
+	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, scriptAbsPath, inputArgs, stepExecutionAbsPath, learnDirAbsPath, stepExecutionRelPath)
 	if execErr != nil || exitCode != 0 {
 		var execErrMsg string
 		if execErr != nil {
@@ -645,7 +681,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runLearnCodeMainPyFromExecution(
 	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath, "code")
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Running main.py from code/ folder for step %d (LLM phase)", stepIndex+1))
-	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, mainPyPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
+	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, mainPyPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
 	if execErr != nil || exitCode != 0 {
 		var errMsg string
 		if execErr != nil {

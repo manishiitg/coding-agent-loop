@@ -22,7 +22,7 @@ import (
 // SubAgentNotifier is called by the todo task controller when a sub-agent starts and completes.
 // Implemented by the server layer to inject auto-notifications into the main workshop agent.
 type SubAgentNotifier interface {
-	OnSubAgentStart(agentID, name string)
+	OnSubAgentStart(start WorkshopExecutionStart)
 	OnSubAgentComplete(agentID, name, result string, err error)
 }
 
@@ -31,9 +31,9 @@ type compositeSubAgentNotifier struct {
 	notifiers []SubAgentNotifier
 }
 
-func (c *compositeSubAgentNotifier) OnSubAgentStart(agentID, name string) {
+func (c *compositeSubAgentNotifier) OnSubAgentStart(start WorkshopExecutionStart) {
 	for _, n := range c.notifiers {
-		n.OnSubAgentStart(agentID, name)
+		n.OnSubAgentStart(start)
 	}
 }
 

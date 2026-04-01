@@ -657,7 +657,7 @@ func RegisterRunFullEvaluationTool(
 			displayName := formatWorkshopExecutionName("Evaluation", targetRunFolder)
 			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(execID, displayName)
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: displayName, Cancel: cancel})
 			}
 
 			go func() {
@@ -806,7 +806,7 @@ func RegisterRunFullReportTool(
 			displayName := formatWorkshopExecutionName("Report", targetRunFolder)
 			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(execID, displayName)
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: displayName, Cancel: cancel})
 			}
 
 			go func() {
@@ -1010,7 +1010,7 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 
 				// Notify so backgroundCompletionLoop picks it up
 				if b.session.executionNotifier != nil {
-					b.session.executionNotifier.OnExecutionStart(progressID, fmt.Sprintf("step-%s", stepName))
+					b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: progressID, Name: fmt.Sprintf("step-%s", stepName), Cancel: nil})
 					if endEvent.Success {
 						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil, nil)
 					} else {
@@ -1128,7 +1128,7 @@ func RegisterRunFullWorkflowTool(
 
 			// Notify workshop execution notifier so frontend keeps polling
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(execID, "full-workflow")
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "full-workflow", Cancel: cancel})
 			}
 
 			go func() {

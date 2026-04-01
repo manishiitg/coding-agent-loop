@@ -485,6 +485,43 @@ type WorkshopStepExecution struct {
 	mu             sync.RWMutex
 }
 
+// WorkshopExecutionStart carries the canonical information needed to register a running execution.
+type WorkshopExecutionStart struct {
+	ID     string
+	Name   string
+	Cancel context.CancelFunc
+}
+
+// WorkshopStepSnapshot is a read-only copy of a tracked execution for external callers.
+type WorkshopStepSnapshot struct {
+	ID             string
+	StepID         string
+	AgentSessionID string
+	Status         WorkshopStepStatus
+	Result         string
+	Err            error
+	CanCancel      bool
+}
+
+var (
+	ErrWorkshopExecutionNotFound      = errors.New("workshop execution not found")
+	ErrWorkshopExecutionNotCancelable = errors.New("workshop execution is not cancelable")
+)
+
+func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return WorkshopStepSnapshot{
+		ID:             e.ID,
+		StepID:         e.StepID,
+		AgentSessionID: e.AgentSessionID,
+		Status:         e.Status,
+		Result:         e.Result,
+		Err:            e.Err,
+		CanCancel:      e.cancel != nil,
+	}
+}
+
 // WorkshopStepRegistry tracks all background step executions for a workshop session
 type WorkshopStepRegistry struct {
 	mu         sync.RWMutex
@@ -509,27 +546,47 @@ func (r *WorkshopStepRegistry) Register(exec *WorkshopStepExecution) {
 	r.executions[exec.ID] = exec
 }
 
-// Get retrieves an execution by ID; returns nil if not found
+// Get retrieves an execution by ID; returns nil if not found.
+// Internal callers may use this for in-place status/result updates.
 func (r *WorkshopStepRegistry) Get(id string) *WorkshopStepExecution {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.executions[id]
 }
 
-// Cancel cancels an execution by ID; no-op if not found
-func (r *WorkshopStepRegistry) Cancel(id string) {
+// GetSnapshot retrieves a read-only snapshot of an execution by ID.
+func (r *WorkshopStepRegistry) GetSnapshot(id string) (WorkshopStepSnapshot, bool) {
 	r.mu.RLock()
 	exec := r.executions[id]
 	r.mu.RUnlock()
-	if exec != nil && exec.cancel != nil {
-		exec.cancel()
+	if exec == nil {
+		return WorkshopStepSnapshot{}, false
 	}
+	return exec.Snapshot(), true
 }
 
-// CancelAll cancels all running executions and returns the list of cancelled execution IDs.
-func (r *WorkshopStepRegistry) CancelAll() []string {
+// Cancel cancels an execution by ID and returns its updated snapshot.
+func (r *WorkshopStepRegistry) Cancel(id string) (WorkshopStepSnapshot, error) {
 	r.mu.RLock()
-	// Collect running executions
+	exec := r.executions[id]
+	r.mu.RUnlock()
+	if exec == nil {
+		return WorkshopStepSnapshot{}, ErrWorkshopExecutionNotFound
+	}
+	if exec.cancel == nil {
+		return exec.Snapshot(), ErrWorkshopExecutionNotCancelable
+	}
+
+	exec.cancel()
+	exec.mu.Lock()
+	exec.Status = WorkshopStepCancelled
+	exec.mu.Unlock()
+	return exec.Snapshot(), nil
+}
+
+// CancelAll cancels all running executions and returns their updated snapshots.
+func (r *WorkshopStepRegistry) CancelAll() []WorkshopStepSnapshot {
+	r.mu.RLock()
 	var toCancel []*WorkshopStepExecution
 	for _, exec := range r.executions {
 		exec.mu.RLock()
@@ -541,7 +598,7 @@ func (r *WorkshopStepRegistry) CancelAll() []string {
 	}
 	r.mu.RUnlock()
 
-	var cancelledIDs []string
+	cancelled := make([]WorkshopStepSnapshot, 0, len(toCancel))
 	for _, exec := range toCancel {
 		if exec.cancel != nil {
 			exec.cancel()
@@ -549,18 +606,18 @@ func (r *WorkshopStepRegistry) CancelAll() []string {
 		exec.mu.Lock()
 		exec.Status = WorkshopStepCancelled
 		exec.mu.Unlock()
-		cancelledIDs = append(cancelledIDs, exec.ID+" (step: "+exec.StepID+")")
+		cancelled = append(cancelled, exec.Snapshot())
 	}
-	return cancelledIDs
+	return cancelled
 }
 
-// List returns all tracked executions
-func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
+// ListSnapshots returns read-only snapshots of all tracked executions.
+func (r *WorkshopStepRegistry) ListSnapshots() []WorkshopStepSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	list := make([]*WorkshopStepExecution, 0, len(r.executions))
+	list := make([]WorkshopStepSnapshot, 0, len(r.executions))
 	for _, e := range r.executions {
-		list = append(list, e)
+		list = append(list, e.Snapshot())
 	}
 	return list
 }
@@ -569,7 +626,7 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 // Implemented by the server layer to register executions in bgAgentRegistry so that
 // HasRunningAgents() returns true and the frontend keeps polling for events.
 type WorkshopExecutionNotifier interface {
-	OnExecutionStart(execID, name string)
+	OnExecutionStart(start WorkshopExecutionStart)
 	OnExecutionComplete(execID, name, result string, meta map[string]string, err error)
 	OnExecutionTerminated(execID, name string) // explicit cancellation via stop_step/stop_all
 }
@@ -676,11 +733,12 @@ type workshopSubAgentNotifier struct {
 	registry *WorkshopStepRegistry
 }
 
-func (n *workshopSubAgentNotifier) OnSubAgentStart(agentID, name string) {
+func (n *workshopSubAgentNotifier) OnSubAgentStart(start WorkshopExecutionStart) {
 	exec := &WorkshopStepExecution{
-		ID:     agentID,
-		StepID: name,
+		ID:     start.ID,
+		StepID: start.Name,
 		Status: WorkshopStepRunning,
+		cancel: start.Cancel,
 	}
 	n.registry.Register(exec)
 }
@@ -2495,7 +2553,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 				if iwm.executionNotifier != nil {
-					iwm.executionNotifier.OnExecutionStart(execID, stepDisplayName)
+					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: stepDisplayName, Cancel: cancel})
 				}
 
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
@@ -2760,7 +2818,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				notifierName := fmt.Sprintf("Saved Script: %s", stepDisplayName)
 				if iwm.executionNotifier != nil {
-					iwm.executionNotifier.OnExecutionStart(execID, notifierName)
+					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: notifierName, Cancel: cancel})
 				}
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
@@ -2956,7 +3014,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, name)
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: name, Cancel: cancel})
 			}
 
 			go func() {
@@ -3082,18 +3140,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			exec := iwm.stepRegistry.Get(execID)
-			if exec == nil {
+			exec, found := iwm.stepRegistry.GetSnapshot(execID)
+			if !found {
 				return fmt.Sprintf("execution %q not found", execID), nil
 			}
 
-			exec.mu.RLock()
 			status := exec.Status
 			stepID := exec.StepID
 			result := exec.Result
 			execErr := exec.Err
 			agentSessID := exec.AgentSessionID
-			exec.mu.RUnlock()
 
 			switch status {
 			case WorkshopStepRunning:
@@ -3325,7 +3381,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			statusFilter, _ := args["status_filter"].(string)
 
-			allExecs := iwm.stepRegistry.List()
+			allExecs := iwm.stepRegistry.ListSnapshots()
 			if len(allExecs) == 0 {
 				return "No background executions tracked in this session.", nil
 			}
@@ -3338,10 +3394,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			var sb strings.Builder
 			count := 0
 			for _, exec := range allExecs {
-				exec.mu.RLock()
 				status := string(exec.Status)
 				execErr := exec.Err
-				exec.mu.RUnlock()
 
 				if statusFilter != "" && status != statusFilter {
 					continue
@@ -3398,15 +3452,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "execution_id must be a non-empty string", nil
 			}
 
-			exec := iwm.stepRegistry.Get(execID)
-			if exec == nil {
+			exec, err := iwm.stepRegistry.Cancel(execID)
+			if errors.Is(err, ErrWorkshopExecutionNotFound) {
 				return fmt.Sprintf("execution %q not found", execID), nil
 			}
-
-			exec.cancel()
-			exec.mu.Lock()
-			exec.Status = WorkshopStepCancelled
-			exec.mu.Unlock()
+			if errors.Is(err, ErrWorkshopExecutionNotCancelable) {
+				logger.Warn(fmt.Sprintf("⚠️ Workshop: step %q (execution_id=%q) has no cancel function", exec.StepID, execID))
+				return fmt.Sprintf("Step %q (execution_id=%q) is tracked but cannot be cancelled individually.", exec.StepID, execID), nil
+			}
+			if err != nil {
+				return "", err
+			}
 
 			// Notify server layer so bgAgentRegistry marks this as terminated and frontend updates
 			if iwm.executionNotifier != nil {
@@ -3430,27 +3486,22 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			cancelledIDs := iwm.stepRegistry.CancelAll()
-			if len(cancelledIDs) == 0 {
+			cancelledExecs := iwm.stepRegistry.CancelAll()
+			if len(cancelledExecs) == 0 {
 				return "No running executions found to cancel.", nil
 			}
 			// Notify server layer for each cancelled execution
 			if iwm.executionNotifier != nil {
-				for _, id := range cancelledIDs {
-					exec := iwm.stepRegistry.Get(id)
-					name := id
-					if exec != nil {
-						name = exec.StepID
-					}
-					iwm.executionNotifier.OnExecutionTerminated(id, name)
+				for _, exec := range cancelledExecs {
+					iwm.executionNotifier.OnExecutionTerminated(exec.ID, exec.StepID)
 				}
 			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledIDs)))
-			for _, id := range cancelledIDs {
-				sb.WriteString(fmt.Sprintf("- %s\n", id))
+			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledExecs)))
+			for _, exec := range cancelledExecs {
+				sb.WriteString(fmt.Sprintf("- %s (step: %s)\n", exec.ID, exec.StepID))
 			}
-			logger.Info(fmt.Sprintf("🛑 Workshop: cancelled all %d running executions", len(cancelledIDs)))
+			logger.Info(fmt.Sprintf("🛑 Workshop: cancelled all %d running executions", len(cancelledExecs)))
 			return sb.String(), nil
 		},
 		"workflow",
@@ -5000,7 +5051,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Learning: %s", resolvedID))
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: fmt.Sprintf("Learning: %s", resolvedID), Cancel: cancel})
 			}
 
 			go func() {
@@ -5249,7 +5300,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Optimize: %s", stepID))
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: fmt.Sprintf("Optimize: %s", stepID), Cancel: cancel})
 			}
 
 			go func() {
@@ -5451,7 +5502,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, startDisplayName)
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: startDisplayName, Cancel: cancel})
 			}
 
 			go func() {
@@ -5654,7 +5705,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, startDisplayName)
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: startDisplayName, Cancel: cancel})
 			}
 
 			go func() {
@@ -5821,7 +5872,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, "Infer Objective")
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Infer Objective", Cancel: cancel})
 			}
 
 			go func() {
@@ -6008,7 +6059,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, "Optimize Workflow Structure")
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Optimize Workflow Structure", Cancel: cancel})
 			}
 
 			go func() {
@@ -6136,7 +6187,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, "Review Workflow Plan")
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Review Workflow Plan", Cancel: cancel})
 			}
 
 			go func() {
@@ -6271,7 +6322,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(execID, "Replan Workflow From Results")
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Replan Workflow From Results", Cancel: cancel})
 			}
 
 			go func() {

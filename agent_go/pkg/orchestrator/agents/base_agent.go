@@ -115,7 +115,7 @@ func NewBaseAgent(
 	serverNames []string,
 	selectedTools []string, // NEW parameter
 	useCodeExecutionMode bool, // NEW parameter
-	useLearnCodeMode bool, // Learn code mode: LLM writes main.py once, controller caches it
+	useLearnCodeMode bool, // Legacy alias for code execution mode
 	useToolSearchMode bool, // Enable tool search mode
 	preDiscoveredTools []string, // Tools always available without searching
 	mode AgentMode,
@@ -195,10 +195,9 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithSelectedTools(selectedTools))
 	}
 
-	// Add learn code mode if enabled (implies code execution mode)
-	if useLearnCodeMode {
-		agentOptions = append(agentOptions, mcpagent.WithLearnCodeMode(true))
-	} else if useCodeExecutionMode {
+	// Treat the deprecated learn-code flag as a code-execution alias when bridging
+	// into mcpagent, which no longer exposes a separate learn-code mode.
+	if useLearnCodeMode || useCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 	}
 

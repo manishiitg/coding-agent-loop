@@ -790,8 +790,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	// Notify sub-agent start
 	agentID := fmt.Sprintf("todo-generic-%s-%s", stepPath, response.TodoIDToExecute)
 	agentName := fmt.Sprintf("%s -> Generic (%s)", parentTodoTitle, taskTitle)
+	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
+	defer subAgentCancel()
 	if hcpo.subAgentNotifier != nil {
-		hcpo.subAgentNotifier.OnSubAgentStart(agentID, agentName)
+		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
+			ID:     agentID,
+			Name:   agentName,
+			Cancel: subAgentCancel,
+		})
 	}
 
 	// Push context before sub-agent execution (preserve orchestrator context)
@@ -801,7 +807,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 
 	// Execute using executeSingleStep (reuses standard execution infrastructure)
 	executionResult, _, err := hcpo.executeSingleStep(
-		ctx,
+		subAgentCtx,
 		genericStep,
 		stepIndex,       // Use parent step index for context
 		genericStepPath, // stepPath
@@ -1102,8 +1108,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	// Notify sub-agent start
 	subAgentNotifID := fmt.Sprintf("todo-sub-%s-%s", stepPath, route.RouteID)
 	subAgentNotifName := fmt.Sprintf("%s -> %s (%s)", parentTodoTitle, route.RouteName, response.TodoIDToExecute)
+	subAgentCtx, subAgentCancel := context.WithCancel(ctx)
+	defer subAgentCancel()
 	if hcpo.subAgentNotifier != nil {
-		hcpo.subAgentNotifier.OnSubAgentStart(subAgentNotifID, subAgentNotifName)
+		hcpo.subAgentNotifier.OnSubAgentStart(WorkshopExecutionStart{
+			ID:     subAgentNotifID,
+			Name:   subAgentNotifName,
+			Cancel: subAgentCancel,
+		})
 	}
 
 	// Push context before sub-agent execution (preserve orchestrator context)
@@ -1112,7 +1124,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	}
 
 	executionResult, capturedHistory, err := hcpo.executeRoutedSubAgentStep(
-		ctx,
+		subAgentCtx,
 		stepToExecute,
 		stepIndex,
 		subAgentStepPath,

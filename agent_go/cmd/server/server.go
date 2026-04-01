@@ -8375,13 +8375,14 @@ type workshopExecutionBgNotifier struct {
 	sessionID string
 }
 
-func (n *workshopExecutionBgNotifier) OnExecutionStart(execID, name string) {
+func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human.WorkshopExecutionStart) {
 	bgAgent := &BackgroundAgent{
-		ID:        execID,
-		Name:      name,
+		ID:        start.ID,
+		Name:      start.Name,
 		SessionID: n.sessionID,
 		Status:    BGAgentRunning,
 		CreatedAt: time.Now(),
+		cancel:    start.Cancel,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
 
@@ -8397,9 +8398,9 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(execID, name string) {
 	n.api.completionLoopStartedMu.Unlock()
 
 	// Emit background_agent_started event so BackgroundAgentsStatusBar shows a pill
-	n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_started", map[string]interface{}{
-		"agent_id": execID,
-		"name":     name,
+	n.api.emitBackgroundAgentEvent(n.sessionID, start.ID, "background_agent_started", map[string]interface{}{
+		"agent_id": start.ID,
+		"name":     start.Name,
 	})
 }
 

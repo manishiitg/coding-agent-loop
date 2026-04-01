@@ -425,7 +425,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	hcpo.workshopStepRegistry.Register(exec)
 
 	if hcpo.workshopExecutionNotifier != nil {
-		hcpo.workshopExecutionNotifier.OnExecutionStart(execID, execLabel)
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Started tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))

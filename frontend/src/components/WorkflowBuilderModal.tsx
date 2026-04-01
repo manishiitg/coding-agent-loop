@@ -15,6 +15,8 @@ interface CreatedWorkflow {
   planNames: string[]
   prompt: string
   presetId: string
+  objective: string
+  successCriteria: string
 }
 
 export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalProps) {
@@ -27,6 +29,8 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
   const [searchQuery, setSearchQuery] = useState('')
   const [created, setCreated] = useState<CreatedWorkflow | null>(null)
   const [copied, setCopied] = useState(false)
+  const [objective, setObjective] = useState('')
+  const [successCriteria, setSuccessCriteria] = useState('')
 
   // Fetch multi-agent plan folders on mount
   useEffect(() => {
@@ -179,7 +183,16 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
 
       // 5. Build the prompt the user can paste into planning
       const planRefs = planNames.map(n => `- planning/reference-plans/${n}/`).join('\n')
-      const prompt = `I've placed reference plans in the workspace for you to study:\n${planRefs}\n\nEach folder has a plan.md with the task breakdown and outputs from previous executions. Analyze these plans — understand what was done, the steps involved, and the results produced. Then design a structured workflow that reproduces this work reliably. Use orchestrator and task agent node types so the workflow can be re-run consistently across different inputs.`
+      const objectiveLine = objective.trim()
+        ? `\n\nObjective: ${objective.trim()}`
+        : ''
+      const successLine = successCriteria.trim()
+        ? `\nSuccess criteria: ${successCriteria.trim()}`
+        : ''
+      const setObjectiveInstruction = (objective.trim() || successCriteria.trim())
+        ? `\n\nBefore designing the workflow, call set_workflow_objective(${objective.trim() ? `objective="${objective.trim()}"` : ''}${objective.trim() && successCriteria.trim() ? ', ' : ''}${successCriteria.trim() ? `success_criteria="${successCriteria.trim()}"` : ''}) to save the objective and success criteria to plan.json.`
+        : ''
+      const prompt = `I've placed reference plans in the workspace for you to study:\n${planRefs}\n\nEach folder has a plan.md with the task breakdown and outputs from previous executions. Analyze these plans — understand what was done, the steps involved, and the results produced. Then design a structured workflow that reproduces this work reliably. Use orchestrator and task agent node types so the workflow can be re-run consistently across different inputs.${objectiveLine}${successLine}${setObjectiveInstruction}`
 
       // Show success state
       setCreated({
@@ -188,6 +201,8 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
         planNames,
         prompt,
         presetId: newPreset.id,
+        objective: objective.trim(),
+        successCriteria: successCriteria.trim(),
       })
     } catch (err: unknown) {
       console.error('[WorkflowBuilder] Submit error:', err)
@@ -337,6 +352,34 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
             className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             autoFocus
           />
+        </div>
+
+        {/* Objective */}
+        <div className="px-4 py-3 border-b border-border space-y-2">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Objective <span className="font-normal text-muted-foreground/70">(optional)</span>
+            </label>
+            <textarea
+              value={objective}
+              onChange={(e) => setObjective(e.target.value)}
+              placeholder="What should this workflow accomplish?"
+              rows={2}
+              className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Success Criteria <span className="font-normal text-muted-foreground/70">(optional)</span>
+            </label>
+            <textarea
+              value={successCriteria}
+              onChange={(e) => setSuccessCriteria(e.target.value)}
+              placeholder="How will you know the workflow succeeded?"
+              rows={2}
+              className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+            />
+          </div>
         </div>
 
         {/* Plan Search */}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"sync"
@@ -276,6 +277,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string
 	hcpo.httpSessionID = httpSessionID
 }
 
+func (hcpo *StepBasedWorkflowOrchestrator) resolveWorkshopBrowserSessionID(groupID string) string {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		groupID = "default-group"
+	}
+	safeGroupID := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-").Replace(groupID)
+	workspacePath := strings.TrimSpace(hcpo.GetWorkspacePath())
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(workspacePath))
+	_, _ = hasher.Write([]byte("::"))
+	_, _ = hasher.Write([]byte(groupID))
+	return fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupID)
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessionID, browserSessionID string) {
+	toolSessionID = strings.TrimSpace(toolSessionID)
+	browserSessionID = strings.TrimSpace(browserSessionID)
+	if toolSessionID == "" || browserSessionID == "" {
+		return
+	}
+	mcpagent.RegisterBrowserSessionOverride(toolSessionID, browserSessionID)
+	common.SetSessionBrowserSessionID(toolSessionID, browserSessionID)
+	if hcpo.httpSessionID != "" {
+		mcpagent.RegisterHTTPSession(hcpo.httpSessionID, browserSessionID)
+	}
+}
+
 // switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
 // session per group_id instead of the controller's "default-group" placeholder.
 // Reusing a cached per-group session preserves browser/login state across steps
@@ -309,6 +337,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID st
 		cacheAction = "created"
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s)", cacheAction, groupID, groupSessionID, previousSessionID))
+
+	browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupID)
+	hcpo.bindWorkshopBrowserSession(groupSessionID, browserSessionID)
+	if hcpo.httpSessionID != "" {
+		hcpo.bindWorkshopBrowserSession(hcpo.httpSessionID, browserSessionID)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Bound tool sessions to shared browser session for group %s: browser=%s chat=%s run=%s",
+		groupID, browserSessionID, hcpo.httpSessionID, groupSessionID))
 
 	if strings.Contains(hcpo.GetMCPSessionID(), "default-group") {
 		return fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupID, hcpo.GetMCPSessionID())

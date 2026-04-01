@@ -1174,10 +1174,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     let hasCompletionEvent = false
     const tabViewMode = tab ? (chatStore.getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
 
-    // Check if we already have a frontend-created user message for this session
-    // (prevents duplicate user messages when backend also emits user_message)
+    // Check if we already have frontend-created user messages for this session.
+    // We only want to suppress the backend echo for the exact same submitted text.
+    // Other backend user_message events, like steer pickup notifications injected
+    // later by the server, must still be allowed through.
     const existingEvents = chatStore.getTabEvents(actualSessionId)
-    const hasFrontendUserMessage = existingEvents.some(e => e.type === 'user_message' && e.id?.startsWith('user-message-'))
+    const frontendUserMessageContents = new Set(
+      existingEvents
+        .filter(e => e.type === 'user_message' && e.id?.startsWith('user-message-'))
+        .map(e => {
+          const eventData = e.data as Record<string, unknown> | undefined
+          const nestedData = eventData?.data as Record<string, unknown> | undefined
+          const content = nestedData?.content ?? eventData?.content
+          return typeof content === 'string' ? content.trim() : ''
+        })
+        .filter(Boolean)
+    )
+    const hasFrontendUserMessage = frontendUserMessageContents.size > 0
 
     for (const event of eventsBeforeFilter) {
       const agentEvent = event.data as Record<string, unknown> | undefined
@@ -1192,7 +1205,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Exception: [AUTO-NOTIFICATION] synthetic turn messages must always pass through.
       if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
         const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
-        if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) {
+        if (
+          !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
+          frontendUserMessageContents.has(msgContent.trim())
+        ) {
           continue
         }
       }
@@ -1253,7 +1269,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // (this renders synthetic turn messages like [AUTO-NOTIFICATION] in the chat)
       if (event.type === 'user_message' && hasFrontendUserMessage) {
         const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
-        if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) continue
+        if (
+          !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
+          !frontendUserMessageContents.has(msgContent.trim())
+        ) {
+          // This is a distinct backend user_message (for example a steer message
+          // picked up mid-run), so keep it visible in the timeline.
+        } else if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) {
+          continue
+        }
       }
 
       if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {

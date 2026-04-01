@@ -384,10 +384,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	}
 
 	// FolderGuard: allow reads from anywhere in workspace, writes only to the step execution folder.
+	// Saved scripted steps also need write access to the shared execution/Downloads folder,
+	// because browser-driven downloads may be renamed/copied there after Playwright saves them.
+	executionDownloadsRelPath := filepath.Join(filepath.Dir(stepExecutionRelPath), "Downloads")
 	guard := &workspace.FolderGuardConfig{
 		Enabled:    true,
 		ReadPaths:  []string{"."},
-		WritePaths: []string{stepExecutionRelPath},
+		WritePaths: []string{stepExecutionRelPath, executionDownloadsRelPath},
 	}
 
 	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR.
@@ -529,6 +532,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	learnDirAbsPath := filepath.Dir(scriptAbsPath) // learnings/{step-id}/ — workDir for saved script
 
 	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
+
+	// Saved-script fast path bypasses execution-agent startup, so prime browser-capable
+	// MCP server configs here to preserve the same Playwright/Camofox session + override
+	// behavior as a normal workflow run.
+	// Without this, the first browser tool call can fall through to default mcpcache
+	// creation and lose run-specific settings like Downloads/output-dir.
+	hcpo.primeBrowserServerConfigsForSavedScript(ctx, getAgentConfigs(step))
 
 	// Clean previous output files before running saved script — fresh slate for this execution.
 	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath)

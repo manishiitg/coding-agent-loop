@@ -10,7 +10,7 @@ import (
 
 // MaxBrowserSessionsPerChat is the max concurrent headless browser sessions per chat/workflow session.
 // When exceeded, the tool returns an error telling the LLM to close a session first.
-const MaxBrowserSessionsPerChat = 2
+const MaxBrowserSessionsPerChat = 1
 
 // MaxBrowserSessionsGlobal is the absolute max across all sessions.
 // When exceeded, the oldest session globally is auto-evicted.

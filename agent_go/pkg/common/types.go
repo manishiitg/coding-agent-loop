@@ -55,6 +55,7 @@ type SessionShellConfig struct {
 	WritePaths         []string // Folder guard write paths for Isolator
 	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
 	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", "stealth", ""
+	BrowserSessionID   string   // Shared browser identity for browser tools when "default" session is used
 }
 
 var (
@@ -118,6 +119,21 @@ func SetSessionBrowserMode(sessionID, mode string) {
 	log.Printf("[SHELL] Set browser mode for session %s: %s", sessionID, mode)
 }
 
+// SetSessionBrowserSessionID stores the shared browser session identity for a tool/chat session.
+// Browser tools can use this to converge on a stable browser state while keeping tool routing
+// scoped to the original chat/workflow session.
+func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.BrowserSessionID = browserSessionID
+	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
+}
+
 // ClearSessionShellConfig removes all shell config for a session.
 func ClearSessionShellConfig(sessionID string) {
 	sessionShellConfigsMu.Lock()
@@ -130,6 +146,21 @@ func GetSessionShellConfig(sessionID string) *SessionShellConfig {
 	sessionShellConfigsMu.RLock()
 	defer sessionShellConfigsMu.RUnlock()
 	return sessionShellConfigs[sessionID]
+}
+
+// ResolveBrowserSessionID returns the effective browser session to use for browser tools.
+// Explicit non-default session names win. The default session can be remapped to a stable
+// shared browser identity via per-session shell config.
+func ResolveBrowserSessionID(sessionID, requested string) string {
+	requested = strings.TrimSpace(requested)
+	if requested != "" && requested != "default" {
+		return requested
+	}
+	cfg := GetSessionShellConfig(sessionID)
+	if cfg != nil && strings.TrimSpace(cfg.BrowserSessionID) != "" {
+		return strings.TrimSpace(cfg.BrowserSessionID)
+	}
+	return requested
 }
 
 // DeduplicateStrings removes duplicate strings from a slice.

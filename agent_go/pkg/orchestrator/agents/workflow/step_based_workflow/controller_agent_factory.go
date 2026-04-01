@@ -321,6 +321,69 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Browser tool: %s, Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", browserToolType, hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
 }
 
+// primeBrowserServerConfigsForSavedScript registers browser-capable MCP server configs
+// for the current tool session before running a saved main.py fast path.
+//
+// Why this is needed:
+// - Normal execution agents preload lazy-connect server configs (with runtime overrides)
+//   during agent startup, so the first Playwright/Camofox tool call uses the workflow's
+//   run-specific browser settings.
+// - Saved-script fast path skips execution-agent startup and goes straight to main.py.
+// - Without this priming, the first browser call falls through to mcpcache and creates
+//   a connection from the default MCP config (e.g. global Downloads/), bypassing the
+//   workflow's run-specific override.
+func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScript(ctx context.Context, stepConfig *AgentConfigs) {
+	sessionID := strings.TrimSpace(hcpo.GetMCPSessionID())
+	if sessionID == "" {
+		return
+	}
+
+	// Reuse the same browser/download setup logic as normal execution-agent creation.
+	config := agents.NewOrchestratorAgentConfig("saved-script-browser-prime")
+	config.MCPConfigPath = hcpo.GetMCPConfigPath()
+	config.MCPSessionID = sessionID
+	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
+		config.ServerNames = filterServersByWorkflow(stepConfig.SelectedServers, hcpo.GetSelectedServers())
+	} else {
+		config.ServerNames = hcpo.GetSelectedServers()
+	}
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
+
+	registry := mcpclient.GetSessionRegistry()
+	mergedConfig, err := mcpclient.LoadMergedConfig(config.MCPConfigPath, hcpo.GetLogger())
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load MCP config for saved-script browser priming: %v", err))
+		return
+	}
+
+	var primed []string
+	for _, serverName := range config.ServerNames {
+		if serverName != "playwright" && serverName != "camofox" {
+			continue
+		}
+		serverConfig, err := mergedConfig.GetServer(serverName)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get %s config for saved-script browser priming: %v", serverName, err))
+			continue
+		}
+		if override, ok := config.RuntimeOverrides[serverName]; ok {
+			serverConfig = serverConfig.ApplyOverride(override)
+		}
+		// Store the config on the logical tool session. The executor will later resolve
+		// browser-capable servers onto the shared browser session before connecting.
+		registry.StoreServerConfig(sessionID, serverName, serverConfig)
+		primed = append(primed, fmt.Sprintf("%s->%s", serverName, registry.ResolveConnectionSessionID(sessionID, serverName)))
+	}
+
+	if len(primed) > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf(
+			"🌐 Primed saved-script browser server configs for session %s: %s",
+			sessionID,
+			strings.Join(primed, ", "),
+		))
+	}
+}
+
 // setupExecutionFolderGuard sets up folder guard paths for execution agents
 // Returns readPaths and writePaths for folder guard configuration
 // stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)

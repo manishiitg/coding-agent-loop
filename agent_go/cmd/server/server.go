@@ -5732,6 +5732,10 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	delete(api.sessionAgents, sessionID)
 	api.sessionAgentsMux.Unlock()
 
+	api.completionLoopStartedMu.Lock()
+	delete(api.completionLoopStarted, sessionID)
+	api.completionLoopStartedMu.Unlock()
+
 	api.bgAgentRegistry.Cleanup(sessionID)
 	log.Printf("[SESSION DEBUG] Cleared synthetic-turn state for stopped session %s", sessionID)
 
@@ -8717,6 +8721,12 @@ func (api *StreamingAPI) drainPendingCompletions(sessionID string) []string {
 func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	ch := api.bgAgentRegistry.GetNotificationChannel(sessionID)
 	log.Printf("[BG AGENT] Started completion loop for session %s", sessionID)
+	defer func() {
+		api.completionLoopStartedMu.Lock()
+		delete(api.completionLoopStarted, sessionID)
+		api.completionLoopStartedMu.Unlock()
+		log.Printf("[BG AGENT] Completion loop ended for session %s", sessionID)
+	}()
 
 	for agentID := range ch {
 		if api.isSessionStoppedOrInactive(sessionID) {
@@ -8731,8 +8741,6 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 			api.processBackgroundAgentCompletion(sessionID, agentID)
 		}
 	}
-
-	log.Printf("[BG AGENT] Completion loop ended for session %s", sessionID)
 }
 
 // processBatchedBackgroundAgentCompletions builds a single [AUTO-NOTIFICATION] message for one or more

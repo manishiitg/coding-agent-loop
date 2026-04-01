@@ -773,7 +773,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Workshop execution tools
 	execution := []string{
-		"execute_step", "run_saved_main_py", "query_step", "stop_step", "stop_all_executions",
+		"execute_step", "query_step", "stop_step", "stop_all_executions",
 		"list_executions", "run_in_background",
 	}
 
@@ -830,6 +830,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "builder":
 		// BUILD: design workflow, create/modify steps, test execution, configure
 		tools = append(tools, execution...)
+		tools = append(tools, "run_saved_main_py")
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
 		tools = append(tools, schedule...)
@@ -840,6 +841,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "optimizer":
 		// OPTIMIZE: same as builder plus optimization tools (optimize_step, generate_learnings, debug_step, run_full_workflow)
 		tools = append(tools, execution...)
+		tools = append(tools, "run_saved_main_py")
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
@@ -1214,7 +1216,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
 **When creating or configuring each step, choose its execution mode (preference order):**
-1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first. To test only the currently saved script with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
+1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
 2. **Tool search mode**: use when discovery is intrinsic to the task — the exact tools, resources, or paths genuinely are not known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
 3. **Simple mode** (default): single tool call, no config needed
 
@@ -1802,7 +1804,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
-- **run_saved_main_py(step_id, group_id?)** — Run the saved `+"`learnings/{step-id}/main.py`"+` fast path only, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM. Use this when you want to test the current saved script directly.
+{{if ne .WorkshopMode "runner"}}- **run_saved_main_py(step_id, group_id?)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
+{{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
 {{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
@@ -2648,7 +2651,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1b: run_saved_main_py — run the saved scripted-code fast path only
 	if err := mcpAgent.RegisterCustomTool(
 		"run_saved_main_py",
-		"Run the saved learnings/{step-id}/main.py fast path for a scripted code step. Uses the same workflow env vars, context dependency args, output folder, and validation checks as a real workflow run, but never falls back to LLM. Fails if the step is not in scripted code mode or if no saved main.py exists.",
+		"Run the learned step's saved learnings/{step-id}/main.py directly for a scripted code step. Uses the same workflow env vars, context dependency args, output folder, and validation checks as a real workflow run, but never falls back to LLM. Fails if the step is not in scripted code mode or if no saved main.py exists.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

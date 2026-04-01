@@ -68,6 +68,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok {
 		chatSessionID = sid
 	}
+	resolvedSession := common.ResolveBrowserSessionID(chatSessionID, session)
+	if resolvedSession != "" && resolvedSession != session {
+		log.Printf("[BROWSER] remapped session %q -> %q for chat/session %q", session, resolvedSession, chatSessionID)
+		session = resolvedSession
+	}
 
 	// Track headless browser sessions to prevent unbounded growth.
 	// CDP mode connects to user's real browser — no tracking needed.

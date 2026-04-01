@@ -10,7 +10,7 @@ import (
 )
 
 // MaxBrowserSessionsPerChat is the max concurrent headless browser sessions per chat/workflow session.
-const MaxBrowserSessionsPerChat = 2
+const MaxBrowserSessionsPerChat = 1
 
 // MaxBrowserSessionsGlobal is the absolute max across all sessions.
 const MaxBrowserSessionsGlobal = 8

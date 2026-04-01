@@ -163,6 +163,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
     agentApi.getAllStepLearnings(workspacePath)
       .then((response) => {
         if (response.success) {
+          console.log('[LEARNINGS_POPUP_DEBUG] fetched', {
+            workspacePath,
+            learningStepIds: Object.keys(response.learnings || {}),
+          })
           setLearnings(parseLearningsResponse(response.learnings || {}))
         } else {
           setError('Failed to load learnings')
@@ -530,6 +534,15 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       return title.includes(lowerTerm) || id.includes(lowerTerm)
     })
   }
+
+  console.log('[LEARNINGS_POPUP_DEBUG] visible', {
+    workspacePath,
+    allPlanStepIds: allStepsInOrder.map(step => step.stepId),
+    fetchedLearningStepIds: Object.keys(learnings),
+    visibleLearningStepIds: stepsWithLearnings.map(step => step.stepId),
+    showOnlyUnlocked,
+    searchTerm,
+  })
 
   const handleExpandAll = () => {
     const newExpanded = new Set<string>()

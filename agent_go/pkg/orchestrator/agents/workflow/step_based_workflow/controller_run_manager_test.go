@@ -89,11 +89,18 @@ func TestCreateRunFolderStructureDoesNotCreateGitignore(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(createdFolders) != 1 {
-		t.Fatalf("expected exactly one folder creation request, got %d (%v)", len(createdFolders), createdFolders)
+	expectedFolders := []string{
+		runPath,
+		runPath + "/execution",
+		runPath + "/execution/Downloads",
 	}
-	if createdFolders[0] != runPath {
-		t.Fatalf("expected run folder %q to be created, got %q", runPath, createdFolders[0])
+	if len(createdFolders) != len(expectedFolders) {
+		t.Fatalf("expected %d folder creation requests, got %d (%v)", len(expectedFolders), len(createdFolders), createdFolders)
+	}
+	for i, expected := range expectedFolders {
+		if createdFolders[i] != expected {
+			t.Fatalf("expected folder %q at index %d, got %q", expected, i, createdFolders[i])
+		}
 	}
 	if len(writtenFiles) != 0 {
 		t.Fatalf("expected no file writes while creating run folder, got %v", writtenFiles)

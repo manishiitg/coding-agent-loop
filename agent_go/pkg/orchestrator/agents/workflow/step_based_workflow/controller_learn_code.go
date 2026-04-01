@@ -383,14 +383,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 		sb.WriteString(shellQuotePath(arg))
 	}
 
-	// FolderGuard: allow reads from anywhere in workspace, writes only to the step execution folder.
+	// FolderGuard: allow broad workspace reads for dependencies, but explicitly block the
+	// root workspace Downloads/ area. Workflow runs should only touch their run-scoped
+	// execution/Downloads folder, not the shared per-user Downloads namespace.
 	// Saved scripted steps also need write access to the shared execution/Downloads folder,
 	// because browser-driven downloads may be renamed/copied there after Playwright saves them.
 	executionDownloadsRelPath := filepath.Join(filepath.Dir(stepExecutionRelPath), "Downloads")
 	guard := &workspace.FolderGuardConfig{
-		Enabled:    true,
-		ReadPaths:  []string{"."},
-		WritePaths: []string{stepExecutionRelPath, executionDownloadsRelPath},
+		Enabled:      true,
+		ReadPaths:    []string{"."},
+		WritePaths:   []string{stepExecutionRelPath, executionDownloadsRelPath},
+		BlockedPaths: []string{"Downloads"},
 	}
 
 	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR.

@@ -392,6 +392,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   })
   const isWorkflowPhaseChat = !!workflowPhaseId
   const isWorkflowMode = selectedModeCategory === 'workflow'
+  const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
   // Multi-agent now runs in spawn mode by default (can still plan via tools when needed)
@@ -616,8 +617,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
-  const isCLIProvider = useMemo(() => tabConfig?.llmConfig?.provider === 'claude-code' || tabConfig?.llmConfig?.provider === 'gemini-cli' || tabConfig?.llmConfig?.provider === 'codex-cli', [tabConfig?.llmConfig?.provider])
-  const isClaudeCode = useMemo(() => tabConfig?.llmConfig?.provider === 'claude-code', [tabConfig?.llmConfig?.provider])
+  const effectiveProviderForSteer = useMemo(() => {
+    if (isWorkflowPhaseChat) {
+      return workflowPhasePreset?.llmConfig?.phase_llm?.provider
+        || workflowPhasePreset?.llmConfig?.provider
+        || tabConfig?.llmConfig?.provider
+        || null
+    }
+    return tabConfig?.llmConfig?.provider ?? null
+  }, [
+    isWorkflowPhaseChat,
+    tabConfig?.llmConfig?.provider,
+    workflowPhasePreset?.llmConfig?.phase_llm?.provider,
+    workflowPhasePreset?.llmConfig?.provider,
+  ])
+  const isCLIProvider = useMemo(
+    () => effectiveProviderForSteer === 'claude-code' || effectiveProviderForSteer === 'gemini-cli' || effectiveProviderForSteer === 'codex-cli',
+    [effectiveProviderForSteer]
+  )
+  const isClaudeCode = useMemo(() => effectiveProviderForSteer === 'claude-code', [effectiveProviderForSteer])
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode
   const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
@@ -925,6 +943,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
+
+  useEffect(() => {
+    if (!tabSessionId) return
+    if (!isCLIProvider && !canSteer && queuedMessages.length === 0) return
+
+    console.log('[STEER_UI_DEBUG]', {
+      tabId: activeTabId,
+      sessionId: tabSessionId,
+      configuredProvider: tabConfig?.llmConfig?.provider ?? null,
+      effectiveProvider: effectiveProviderForSteer,
+      canSteer,
+      isCLIProvider,
+      canShowSteer,
+      queuedMessageCount: queuedMessages.length,
+    })
+  }, [
+    activeTabId,
+    canShowSteer,
+    canSteer,
+    effectiveProviderForSteer,
+    isCLIProvider,
+    queuedMessages.length,
+    tabConfig?.llmConfig?.provider,
+    tabSessionId,
+  ])
   
   // State for summarization
   const [isSummarizing, setIsSummarizing] = useState(false)

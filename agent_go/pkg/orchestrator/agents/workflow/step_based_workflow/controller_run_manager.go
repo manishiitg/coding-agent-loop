@@ -281,6 +281,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		return fmt.Errorf("failed to create run folder: %w", err)
 	}
 
+	// Builder-triggered single-step runs expect the same baseline execution tree as full
+	// workflow runs. Create execution/ and execution/Downloads/ eagerly so browser-based
+	// steps can inspect or move downloads before any step-specific folder is created.
+	executionPath := filepath.Join(runPath, "execution")
+	if err := createFolderViaAPI(ctx, executionPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create execution folder via API: %v (continuing)", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created execution folder: %s", executionPath))
+	}
+
+	downloadsPath := filepath.Join(executionPath, "Downloads")
+	if err := createFolderViaAPI(ctx, downloadsPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create execution Downloads folder via API: %v (continuing)", err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created execution Downloads folder: %s", downloadsPath))
+	}
+
 	// Create knowledgebase folder at workspace root (shared across all runs) - only if enabled
 	if hcpo.UseKnowledgebase() {
 		workspacePath := hcpo.GetWorkspacePath()

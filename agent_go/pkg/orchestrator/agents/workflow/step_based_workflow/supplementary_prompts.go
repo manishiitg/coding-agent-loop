@@ -62,6 +62,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 			browserCfg.HasPlaywright, browserCfg.HasCamofox, browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
 	}
 
+	// 4b. Workflow-specific browser downloads guidance.
+	// Generic browser instructions mention logical Downloads/ for normal chat uploads, but
+	// workflow runs must stay inside their run-scoped execution/Downloads folder.
+	if browserDownloadsPath := hcpo.GetBrowserDownloadsPath(); browserDownloadsPath != "" {
+		mcpAgent.AppendSystemPrompt(fmt.Sprintf(
+			"## Workflow Browser Downloads\nFor this workflow run, only use the run-scoped downloads folder %q for browser downloads and file cleanup. Do not read from, write to, or delete files under the root workspace Downloads/ folder.",
+			browserDownloadsPath,
+		))
+		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added workflow browser downloads guidance to agent: %s", browserDownloadsPath))
+	}
+
 	// 5. GWS instructions (if gws server is enabled)
 	for _, s := range config.ServerNames {
 		if s == "gws" {

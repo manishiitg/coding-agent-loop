@@ -8977,8 +8977,18 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			// Clear synthetic turn flag
 			api.setSyntheticTurn(sessionID, false)
 
-			// Clear session busy and drain pending completions (batched to avoid concurrent StreamWithEvents)
+			// Clear session busy first so any later work sees the session as idle.
 			api.setSessionBusy(sessionID, false)
+
+			// If the session was explicitly stopped while this synthetic turn was running,
+			// do not chain any queued completions. That would re-enter the stopped session.
+			if api.isSessionStoppedOrInactive(sessionID) {
+				log.Printf("[BG AGENT] Session %s stopped/inactive after synthetic turn, skipping pending completion drain", sessionID)
+				return
+			}
+
+			// Drain queued completions only for still-active sessions (batched to avoid
+			// concurrent StreamWithEvents calls).
 			pending := api.drainPendingCompletions(sessionID)
 			if len(pending) > 0 {
 				go api.processBatchedBackgroundAgentCompletions(sessionID, pending)
@@ -8999,6 +9009,14 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			api.conversationMux.Lock()
 			api.conversationHistory[sessionID] = llmAgent.GetHistory()
 			api.conversationMux.Unlock()
+		}
+
+		// A stopped/canceled synthetic turn must not "complete" afterward, otherwise
+		// it can resurrect the stored agent and reopen Playwright after Esc/stop.
+		if agentCtx.Err() != nil || api.isSessionStoppedOrInactive(sessionID) {
+			log.Printf("[BG AGENT] Synthetic turn aborted for session %s after stream end (ctx_err=%v stopped=%v)",
+				sessionID, agentCtx.Err(), api.isSessionStoppedOrInactive(sessionID))
+			return
 		}
 
 		// Final save of conversation history

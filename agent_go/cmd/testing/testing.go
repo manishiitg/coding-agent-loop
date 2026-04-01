@@ -83,4 +83,7 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(shellOutputTestCmd)
 	TestingCmd.AddCommand(workspaceBridgeTestCmd)
 	TestingCmd.AddCommand(structuredOutputTestCmd)
+	TestingCmd.AddCommand(claudeResumeAfterCancelTestCmd)
+	TestingCmd.AddCommand(geminiResumeAfterCancelTestCmd)
+	TestingCmd.AddCommand(codexResumeAfterCancelTestCmd)
 }

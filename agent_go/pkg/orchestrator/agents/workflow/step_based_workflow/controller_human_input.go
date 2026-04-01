@@ -116,6 +116,48 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Workshop multiple_choice response: %s (index: %d)", response, selectedOptionIndex))
 		}
+	} else if hcpo.IsSkipHumanInput() {
+		// Full workflow run (start_from_beginning_no_human): use pre-loaded variable value instead of blocking.
+		// Try exact match first, then uppercase (variable groups store keys uppercase, step config uses lowercase).
+		if humanInputStep.VariableName != "" {
+			if val, ok := hcpo.variableValues[humanInputStep.VariableName]; ok && val != "" {
+				response = val
+			} else if val, ok := hcpo.variableValues[strings.ToUpper(humanInputStep.VariableName)]; ok && val != "" {
+				response = val
+			}
+		}
+		if response == "" {
+			response = "approved"
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skip human input: no pre-set value found for variable '%s', using 'approved'", humanInputStep.VariableName))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skip human input: using pre-set variable value for '%s': %s", humanInputStep.VariableName, response))
+		}
+		// Normalize for yesno
+		if responseType == "yesno" {
+			normalized := strings.ToLower(strings.TrimSpace(response))
+			if normalized == "yes" || normalized == "approve" || normalized == "approved" || normalized == "true" || normalized == "y" {
+				response = "yes"
+			} else {
+				response = "no"
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Skip-mode yesno response normalized to: %s", response))
+		}
+		// For multiple_choice, try to match the response to an option
+		if responseType == "multiple_choice" && len(humanInputStep.Options) > 0 {
+			resolvedOptions := make([]string, len(humanInputStep.Options))
+			for i, option := range humanInputStep.Options {
+				resolvedOptions[i] = ResolveVariables(option, hcpo.variableValues)
+			}
+			normalizedResponse := strings.ToLower(strings.TrimSpace(response))
+			for i, opt := range resolvedOptions {
+				if strings.ToLower(opt) == normalizedResponse || fmt.Sprintf("%d", i) == normalizedResponse {
+					selectedOptionIndex = i
+					response = opt
+					break
+				}
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Skip-mode multiple_choice response: %s (index: %d)", response, selectedOptionIndex))
+		}
 	} else {
 		// Normal mode: block and wait for user input via UI
 		requestID := fmt.Sprintf("human_input_step_%d_%d", stepIndex+1, time.Now().UnixNano())

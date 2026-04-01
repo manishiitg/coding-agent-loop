@@ -89,7 +89,19 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       refreshPresets: async () => {
         set({ loading: true, error: null })
         try {
-          const response = await agentApi.getPresetQueries()
+          const [response, manifestResponse] = await Promise.all([
+            agentApi.getPresetQueries(),
+            sessionShareApi.listWorkflowManifests().catch(error => {
+              console.warn('[PRESET] Failed to load workflow manifests for label sync:', error)
+              return { workflows: [] }
+            })
+          ])
+
+          const manifestLabelByPath = new Map(
+            (manifestResponse.workflows || [])
+              .filter(workflow => workflow.manifest?.label)
+              .map(workflow => [workflow.workspace_path, workflow.manifest.label])
+          )
           
           // Import secrets store for resolving secret names to IDs
           // useSecretsStore imported at top level
@@ -211,9 +223,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               console.error('[PRESET] Error parsing selected global secret names:', error)
             }
 
+            const effectiveLabel = (preset.agent_mode === 'workflow' && selectedFolder?.filepath)
+              ? (manifestLabelByPath.get(selectedFolder.filepath) || preset.label)
+              : preset.label
+
             return {
               id: preset.id,
-              label: preset.label,
+              label: effectiveLabel,
               query: preset.query || '',
               createdAt: new Date(preset.created_at).getTime(),
               selectedServers,
@@ -266,9 +282,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 }
               }
               
+              const effectiveLabel = (preset.agent_mode === 'workflow' && selectedFolder?.filepath)
+                ? (manifestLabelByPath.get(selectedFolder.filepath) || preset.label)
+                : preset.label
+
               return {
                 id: preset.id,
-                label: preset.label,
+                label: effectiveLabel,
                 query: preset.query || '',
                 selectedServers: [],
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection

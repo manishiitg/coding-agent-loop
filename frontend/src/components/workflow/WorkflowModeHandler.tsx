@@ -50,10 +50,25 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   // Load presets function - can be called multiple times
   const loadPresets = useCallback(async () => {
     try {
-      const response = await agentApi.getPresetQueries(50, 0)
-      const presets = response.presets.map((preset: {id: string, label: string, query?: string}) => ({
+      const [response, manifestResponse] = await Promise.all([
+        agentApi.getPresetQueries(50, 0),
+        agentApi.listWorkflowManifests().catch(error => {
+          console.warn('[WORKFLOW] Failed to load workflow manifests for label sync:', error)
+          return { workflows: [] }
+        })
+      ])
+
+      const manifestLabelByPath = new Map(
+        (manifestResponse.workflows || [])
+          .filter(workflow => workflow.manifest?.label)
+          .map(workflow => [workflow.workspace_path, workflow.manifest.label])
+      )
+
+      const presets = response.presets.map((preset: {id: string, label: string, query?: string, agent_mode?: string, selected_folder?: string}) => ({
         id: preset.id,
-        name: preset.label,
+        name: preset.agent_mode === 'workflow' && preset.selected_folder
+          ? (manifestLabelByPath.get(preset.selected_folder) || preset.label)
+          : preset.label,
         description: preset.query || preset.label
       }))
       setAvailablePresets(presets)
@@ -95,10 +110,25 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
           
           const loadPresetsAndSelect = async () => {
             try {
-              const response = await agentApi.getPresetQueries(50, 0)
-              const presets = response.presets.map((preset: {id: string, label: string, query?: string}) => ({
+              const [response, manifestResponse] = await Promise.all([
+                agentApi.getPresetQueries(50, 0),
+                agentApi.listWorkflowManifests().catch(error => {
+                  console.warn('[WORKFLOW] Failed to load workflow manifests for label sync:', error)
+                  return { workflows: [] }
+                })
+              ])
+
+              const manifestLabelByPath = new Map(
+                (manifestResponse.workflows || [])
+                  .filter(workflow => workflow.manifest?.label)
+                  .map(workflow => [workflow.workspace_path, workflow.manifest.label])
+              )
+
+              const presets = response.presets.map((preset: {id: string, label: string, query?: string, agent_mode?: string, selected_folder?: string}) => ({
                 id: preset.id,
-                name: preset.label,
+                name: preset.agent_mode === 'workflow' && preset.selected_folder
+                  ? (manifestLabelByPath.get(preset.selected_folder) || preset.label)
+                  : preset.label,
                 description: preset.query || preset.label
               }))
               setAvailablePresets(presets)

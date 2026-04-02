@@ -649,6 +649,7 @@ type InteractiveWorkshopManager struct {
 	schedulerWorkspacePath string                                      // workspace path for schedule management
 	schedulerFuncs         *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
 	skillFuncs             *SkillCallbacks                             // skill import/delete callbacks from server.go
+	llmToolsFuncs          *LLMToolsCallbacks                          // LLM management callbacks from server.go
 	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
 	executionNotifier      WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
 	workshopModeOverride   string                                      // frontend-selected workshop mode (takes priority over auto-detection)
@@ -1086,17 +1087,26 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		workflowObjective = iwm.controller.approvedPlan.Objective
 		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
 	}
-	// Read execution_mode and available groups for stateless-aware prompting.
+	// Read execution_mode, objective, and success_criteria from workflow.json.
+	// Objective/success_criteria from workflow.json are used as fallback when plan.json hasn't set them yet.
 	executionMode := ""
 	availableGroups := ""
 	if manifest, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
 		var wf struct {
-			ExecutionDefs struct {
+			Objective       string `json:"objective"`
+			SuccessCriteria string `json:"success_criteria"`
+			ExecutionDefs   struct {
 				ExecutionMode string `json:"execution_mode"`
 			} `json:"execution_defaults"`
 		}
 		if json.Unmarshal([]byte(manifest), &wf) == nil {
 			executionMode = wf.ExecutionDefs.ExecutionMode
+			if workflowObjective == "" {
+				workflowObjective = wf.Objective
+			}
+			if workflowSuccessCriteria == "" {
+				workflowSuccessCriteria = wf.SuccessCriteria
+			}
 		}
 	}
 	if iwm.controller.variablesManifest != nil && len(iwm.controller.variablesManifest.Groups) > 0 {
@@ -1460,7 +1470,8 @@ Do NOT modify execution steps or evaluation steps in output mode unless the user
 - **Run Folder**: {{.RunFolder}}
 - **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — verify the root `+"`objective`"+` in `+"`planning/plan.json`"+` first; only use `+"`infer_objective`"+` if it is truly missing{{end}}
 - **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else}}⚠️ Not defined — verify the root `+"`success_criteria`"+` in `+"`planning/plan.json`"+` first; if missing, ask the user what success looks like for this workflow, then save via `+"`set_workflow_objective`"+`{{end}}
-- **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
+{{if .AvailableGroups}}- **Available Groups**: {{.AvailableGroups}}
+{{end}}- **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
 {{if eq .WorkshopMode "output"}}
@@ -8060,6 +8071,283 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register install_skill tool: %v", err))
 	}
 
+	// ── LLM management tools (only when server callbacks are available) ──
+	if iwm.llmToolsFuncs != nil {
+		registerWorkshopLLMTools(iwm, mcpAgent, logger)
+	}
+
+}
+
+// registerWorkshopLLMTools registers list_published_llms, list_provider_models,
+// test_llm, and set_workflow_llm_config on the workshop agent.
+func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
+	cb := iwm.llmToolsFuncs
+
+	// list_published_llms
+	if err := mcpAgent.RegisterCustomTool(
+		"list_published_llms",
+		"List all published LLMs from config/published-llms.json. These are the models available for selection in the workflow tier config.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, _ map[string]interface{}) (string, error) {
+			return cb.ListPublishedLLMs(ctx)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_published_llms tool: %v", err))
+	}
+
+	// list_provider_models
+	if err := mcpAgent.RegisterCustomTool(
+		"list_provider_models",
+		"List the available models for a provider from the shared model metadata catalog.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"provider": map[string]interface{}{
+					"type":        "string",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, claude-code.",
+				},
+			},
+			"required": []string{"provider"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			provider := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", args["provider"])))
+			if provider == "" {
+				return "provider is required.", nil
+			}
+			return cb.ListProviderModels(ctx, provider)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_provider_models tool: %v", err))
+	}
+
+	// test_llm
+	if err := mcpAgent.RegisterCustomTool(
+		"test_llm",
+		"Validate an LLM provider/model configuration. Uses workspace-backed provider auth from config/provider-api-keys.json by default, but temporary overrides can be provided.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"provider": map[string]interface{}{
+					"type":        "string",
+					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, bedrock, gemini-cli, claude-code, codex-cli.",
+				},
+				"model_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional model id to validate.",
+				},
+				"api_key": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional temporary API key override. If omitted, uses workspace-backed provider auth.",
+				},
+				"temperature": map[string]interface{}{
+					"type":        "number",
+					"description": "Optional temperature for the validation request.",
+				},
+				"options": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Optional model-specific options such as reasoning_effort or thinking_level.",
+					"additionalProperties": true,
+				},
+				"endpoint": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional Azure endpoint override.",
+				},
+				"region": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional region override for Azure or Bedrock.",
+				},
+				"api_version": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional Azure API version override.",
+				},
+			},
+			"required": []string{"provider"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return cb.ValidateLLM(ctx, args)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register test_llm tool: %v", err))
+	}
+
+	// set_workflow_llm_config — saves tiered LLM config directly to workflow.json
+	if err := mcpAgent.RegisterCustomTool(
+		"set_workflow_llm_config",
+		"Save the workflow's tiered LLM configuration to workflow.json capabilities.llm_config. Use list_published_llms to see available models first. Each tier accepts provider and model_id (both required if setting a tier). Fallbacks are optional ordered lists. phase_llm is the model used for planning, eval design, and debugging phases.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tier_1": map[string]interface{}{
+					"type":        "object",
+					"description": "High-reasoning tier: first-time execution and initial learning extraction.",
+					"properties": map[string]interface{}{
+						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
+						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
+						"fallbacks": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"provider": map[string]interface{}{"type": "string"},
+									"model_id": map[string]interface{}{"type": "string"},
+								},
+							},
+							"description": "Ordered fallback models tried if the primary fails.",
+						},
+					},
+				},
+				"tier_2": map[string]interface{}{
+					"type":        "object",
+					"description": "Medium-reasoning tier: execution with learnings and learning refinement.",
+					"properties": map[string]interface{}{
+						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
+						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
+						"fallbacks": map[string]interface{}{
+							"type":        "array",
+							"description": "Ordered fallback models tried if the primary fails.",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"provider": map[string]interface{}{"type": "string"},
+									"model_id": map[string]interface{}{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"tier_3": map[string]interface{}{
+					"type":        "object",
+					"description": "Low-reasoning tier: validation (always) and mature learning refinement (2+ runs).",
+					"properties": map[string]interface{}{
+						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
+						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
+						"fallbacks": map[string]interface{}{
+							"type":        "array",
+							"description": "Ordered fallback models tried if the primary fails.",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"provider": map[string]interface{}{"type": "string"},
+									"model_id": map[string]interface{}{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"phase_llm": map[string]interface{}{
+					"type":        "object",
+					"description": "LLM for planning, eval design, debugging, and anonymization phases. Defaults to tier_1 if not set.",
+					"properties": map[string]interface{}{
+						"provider": map[string]interface{}{"type": "string", "description": "Provider id."},
+						"model_id": map[string]interface{}{"type": "string", "description": "Model id."},
+						"fallbacks": map[string]interface{}{
+							"type":        "array",
+							"description": "Ordered fallback models tried if the phase LLM fails.",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"provider": map[string]interface{}{"type": "string"},
+									"model_id": map[string]interface{}{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			wsPath := iwm.controller.GetWorkspacePath()
+			if wsPath == "" {
+				return "Cannot determine workspace path.", nil
+			}
+
+			content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+			if err != nil {
+				return fmt.Sprintf("Failed to read workflow.json: %v", err), nil
+			}
+
+			var manifest map[string]interface{}
+			if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+				return fmt.Sprintf("Failed to parse workflow.json: %v", err), nil
+			}
+
+			caps, _ := manifest["capabilities"].(map[string]interface{})
+			if caps == nil {
+				caps = make(map[string]interface{})
+			}
+			llmCfg, _ := caps["llm_config"].(map[string]interface{})
+			if llmCfg == nil {
+				llmCfg = make(map[string]interface{})
+			}
+
+			updated := []string{}
+
+			buildTierEntry := func(raw interface{}) map[string]interface{} {
+				m, ok := raw.(map[string]interface{})
+				if !ok {
+					return nil
+				}
+				provider, _ := m["provider"].(string)
+				modelID, _ := m["model_id"].(string)
+				if provider == "" || modelID == "" {
+					return nil
+				}
+				entry := map[string]interface{}{"provider": provider, "model_id": modelID}
+				if fbs, ok := m["fallbacks"].([]interface{}); ok && len(fbs) > 0 {
+					entry["fallbacks"] = fbs
+				}
+				return entry
+			}
+
+			tieredConfig := map[string]interface{}{}
+			for _, key := range []string{"tier_1", "tier_2", "tier_3"} {
+				if raw, ok := args[key]; ok {
+					if entry := buildTierEntry(raw); entry != nil {
+						tieredConfig[key] = entry
+						updated = append(updated, fmt.Sprintf("%s=%v/%v", key, entry["provider"], entry["model_id"]))
+					}
+				}
+			}
+			if len(tieredConfig) > 0 {
+				llmCfg["llm_allocation_mode"] = "tiered"
+				llmCfg["tiered_config"] = tieredConfig
+			}
+
+			if raw, ok := args["phase_llm"]; ok {
+				if entry := buildTierEntry(raw); entry != nil {
+					llmCfg["phase_llm"] = entry
+					updated = append(updated, fmt.Sprintf("phase_llm=%v/%v", entry["provider"], entry["model_id"]))
+				}
+			}
+
+			if len(updated) == 0 {
+				return "No valid tier or phase_llm values provided. Use list_published_llms to see available models.", nil
+			}
+
+			caps["llm_config"] = llmCfg
+			manifest["capabilities"] = caps
+
+			out, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
+			}
+			if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+				return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
+			}
+
+			logger.Info(fmt.Sprintf("✅ Workshop: workflow LLM config updated: %s", strings.Join(updated, ", ")))
+			return fmt.Sprintf("Saved to workflow.json capabilities.llm_config:\n%s\n\nChanges take effect on the next workflow run.", strings.Join(updated, "\n")), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register set_workflow_llm_config tool: %v", err))
+	}
 }
 
 // workshopJSONUnmarshal is a local alias to avoid import conflicts

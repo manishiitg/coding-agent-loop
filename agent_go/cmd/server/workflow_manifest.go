@@ -21,15 +21,17 @@ const WorkflowManifestSchemaVersion = 1
 
 // WorkflowManifest is the top-level workflow.json structure that lives in each workspace.
 type WorkflowManifest struct {
-	SchemaVersion int                       `json:"schema_version"`
-	ID            string                    `json:"id"`
-	Label         string                    `json:"label"`
-	Capabilities  WorkflowCapabilities      `json:"capabilities"`
-	ExecutionDefs WorkflowExecutionDefaults `json:"execution_defaults"`
-	Ownership     WorkflowOwnership         `json:"ownership"`
-	Schedules     []WorkflowSchedule        `json:"schedules"`
-	CreatedAt     string                    `json:"created_at,omitempty"`
-	UpdatedAt     string                    `json:"updated_at,omitempty"`
+	SchemaVersion   int                       `json:"schema_version"`
+	ID              string                    `json:"id"`
+	Label           string                    `json:"label"`
+	Objective       string                    `json:"objective,omitempty"`
+	SuccessCriteria string                    `json:"success_criteria,omitempty"`
+	Capabilities    WorkflowCapabilities      `json:"capabilities"`
+	ExecutionDefs   WorkflowExecutionDefaults `json:"execution_defaults"`
+	Ownership       WorkflowOwnership         `json:"ownership"`
+	Schedules       []WorkflowSchedule        `json:"schedules"`
+	CreatedAt       string                    `json:"created_at,omitempty"`
+	UpdatedAt       string                    `json:"updated_at,omitempty"`
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.

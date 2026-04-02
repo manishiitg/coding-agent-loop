@@ -9973,6 +9973,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	}
 	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
 	cfg.SkillFuncs = api.buildSkillCallbacks()
+	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()
 	cfg.ListAvailableSecrets = func(ctx context.Context) ([]string, error) {
 		nameSet := make(map[string]bool)
 		// Global secrets from env vars
@@ -10426,6 +10427,131 @@ func (api *StreamingAPI) registerMultiAgentSkillTools(underlyingAgent *mcpagent.
 	}
 
 	return nil
+}
+
+// buildLLMToolsCallbacks creates LLMToolsCallbacks that bridge the workshop tools
+// to the published LLM list, model metadata catalog, and provider validation logic.
+func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsCallbacks {
+	return &todo_creation_human.LLMToolsCallbacks{
+		ListPublishedLLMs: func(ctx context.Context) (string, error) {
+			llms, err := LoadPublishedLLMs(ctx)
+			if err != nil {
+				return "", fmt.Errorf("failed to load published LLMs: %w", err)
+			}
+			return prettyJSON(map[string]interface{}{
+				"count": len(llms),
+				"llms":  llms,
+				"note":  "These are the published models available for workflow tier configuration.",
+			}), nil
+		},
+		ListProviderModels: func(_ context.Context, provider string) (string, error) {
+			return listProviderModelsJSON(provider), nil
+		},
+		ValidateLLM: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			provider := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", args["provider"])))
+			modelID, _ := args["model_id"].(string)
+			apiKey, _ := args["api_key"].(string)
+			endpoint, _ := args["endpoint"].(string)
+			region, _ := args["region"].(string)
+			apiVersion, _ := args["api_version"].(string)
+			options, _ := args["options"].(map[string]interface{})
+
+			if provider == "" {
+				return "provider is required.", nil
+			}
+
+			validationOptions := cloneOptionsMap(options)
+			if raw, ok := args["temperature"].(float64); ok {
+				if validationOptions == nil {
+					validationOptions = map[string]interface{}{}
+				}
+				validationOptions["temperature"] = raw
+			}
+
+			// Use workspace-backed auth if no explicit key provided
+			usedWorkspaceAuth := false
+			if strings.TrimSpace(apiKey) == "" {
+				keys, err := LoadProviderKeys(ctx)
+				if err == nil && keys != nil {
+					switch provider {
+					case "openrouter":
+						if keys.OpenRouter != "" {
+							apiKey = keys.OpenRouter
+							usedWorkspaceAuth = true
+						}
+					case "openai":
+						if keys.OpenAI != "" {
+							apiKey = keys.OpenAI
+							usedWorkspaceAuth = true
+						}
+					case "anthropic":
+						if keys.Anthropic != "" {
+							apiKey = keys.Anthropic
+							usedWorkspaceAuth = true
+						}
+					case "vertex":
+						if keys.Vertex != "" {
+							apiKey = keys.Vertex
+							usedWorkspaceAuth = true
+						}
+					case "minimax":
+						if keys.MiniMax != "" {
+							apiKey = keys.MiniMax
+							usedWorkspaceAuth = true
+						}
+					case "bedrock":
+						if keys.Bedrock.Region != "" {
+							region = keys.Bedrock.Region
+							usedWorkspaceAuth = true
+						}
+					case "azure":
+						if keys.Azure.APIKey != "" {
+							apiKey = keys.Azure.APIKey
+							usedWorkspaceAuth = true
+						}
+						if endpoint == "" && keys.Azure.Endpoint != "" {
+							endpoint = keys.Azure.Endpoint
+						}
+						if apiVersion == "" && keys.Azure.APIVersion != "" {
+							apiVersion = keys.Azure.APIVersion
+						}
+					}
+				}
+			}
+
+			if endpoint != "" || region != "" || apiVersion != "" {
+				if validationOptions == nil {
+					validationOptions = map[string]interface{}{}
+				}
+				if endpoint != "" {
+					validationOptions["endpoint"] = endpoint
+				}
+				if region != "" {
+					validationOptions["region"] = region
+				}
+				if apiVersion != "" {
+					validationOptions["api_version"] = apiVersion
+				}
+			}
+			req := llm.APIKeyValidationRequest{
+				Provider: provider,
+				ModelID:  modelID,
+				APIKey:   apiKey,
+				Options:  validationOptions,
+			}
+
+			resp := validateProviderConfig(req)
+			return prettyJSON(map[string]interface{}{
+				"provider":            provider,
+				"model_id":            modelID,
+				"valid":               resp.Valid,
+				"message":             resp.Message,
+				"error":               resp.Error,
+				"corrected_options":   resp.CorrectedOptions,
+				"used_workspace_auth": usedWorkspaceAuth,
+			}), nil
+		},
+	}
 }
 
 func (api *StreamingAPI) registerMultiAgentMCPServerTools(underlyingAgent *mcpagent.Agent) error {

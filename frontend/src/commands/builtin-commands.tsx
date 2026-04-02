@@ -64,6 +64,28 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
+    command: 'tune-step',
+    description: 'Run a step, audit its mode/learnings/tools, then optimize',
+    icon: <Wrench className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
+    source: 'builtin',
+    execute: (ctx) => {
+      const stepId = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Do a full tune of step "${stepId}". Run all steps below autonomously without pausing for confirmation — only stop at the very end to give a final summary.
+
+1. **Execute**: Run execute_step(step_id="${stepId}") and wait for completion. Note what it produced and whether it succeeded.
+2. **Check mode**: Read step_config.json. Is the current execution mode (code_exec / tool_search / simple) the right choice? Stable reusable logic → code_exec. Runtime discovery or browser-heavy → tool_search. Single known tool call → simple.
+3. **Check learnings**: Read any learnings saved for this step. Are they accurate, complete, and still relevant?
+4. **Check pre-discovered tools**: Are pre_discovered_tools correct for this step's needs? Missing tools slow it down; wrong tools waste context.
+5. **Optimize**: Run optimize_step(step_id="${stepId}") passing your findings from steps 2–4 as the focus.
+
+Do not wait for my input between steps. Once all 5 steps are done, give a single summary of what changed and what the step's final state is.`)
+    }
+  },
+  {
     command: 'mark-workflow-optimized',
     description: 'Run the readiness gate and show the checklist',
     icon: <CheckCircle2 className="w-4 h-4" />,
@@ -73,20 +95,6 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       ctx.onSubmit('Run mark_workflow_optimized now and show the readiness checklist.')
-    }
-  },
-  {
-    command: 'infer-objective',
-    description: 'Infer the workflow objective only if it is truly missing',
-    icon: <FileText className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Check planning/plan.json first. If the root objective is truly missing, run infer_objective and summarize the proposed objective and draft success criteria for confirmation. If objective already exists, explain that infer_objective is not needed.${focusText}`)
     }
   },
   {

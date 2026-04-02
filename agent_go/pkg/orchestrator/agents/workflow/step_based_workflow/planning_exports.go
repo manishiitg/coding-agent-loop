@@ -142,6 +142,14 @@ type SkillCallbacks struct {
 	InstallSkill func(ctx context.Context, source string) (string, error) // Install via npx skills add (owner/repo@skill)
 }
 
+// LLMToolsCallbacks provides LLM management operations via callbacks from server.go.
+// This avoids importing the server package in the workshop package.
+type LLMToolsCallbacks struct {
+	ListPublishedLLMs  func(ctx context.Context) (string, error)
+	ListProviderModels func(ctx context.Context, provider string) (string, error)
+	ValidateLLM        func(ctx context.Context, args map[string]interface{}) (string, error)
+}
+
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
@@ -155,6 +163,7 @@ type WorkshopChatSession struct {
 	schedulerWorkspacePath string
 	schedulerFuncs         *SchedulerCallbacks
 	skillFuncs             *SkillCallbacks
+	llmToolsFuncs          *LLMToolsCallbacks
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
@@ -270,6 +279,9 @@ type WorkshopConfig struct {
 	// SkillFuncs provides callbacks for skill import/delete operations.
 	// Set by server.go which has access to the workspace API.
 	SkillFuncs *SkillCallbacks
+	// LLMToolsFuncs provides callbacks for LLM management operations.
+	// Set by server.go which has access to provider keys and model metadata.
+	LLMToolsFuncs *LLMToolsCallbacks
 	// ListAvailableSecrets returns names of all available secrets (global + user-stored).
 	// Used by get_workflow_config to show which secrets can be added.
 	ListAvailableSecrets func(ctx context.Context) ([]string, error)
@@ -448,6 +460,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		schedulerWorkspacePath: cfg.SchedulerWorkspacePath,
 		schedulerFuncs:         cfg.SchedulerFuncs,
 		skillFuncs:             cfg.SkillFuncs,
+		llmToolsFuncs:          cfg.LLMToolsFuncs,
 		listAvailableSecrets:   cfg.ListAvailableSecrets,
 		workshopNotifier:       wsn,
 	}, nil
@@ -586,6 +599,7 @@ func RegisterWorkshopChatTools(
 		mainSessionID:          session.mainSessionID,
 		schedulerWorkspacePath: session.schedulerWorkspacePath,
 		schedulerFuncs:         session.schedulerFuncs,
+		llmToolsFuncs:          session.llmToolsFuncs,
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
 		executionNotifier:      session.executionNotifier,

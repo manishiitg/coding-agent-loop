@@ -12,6 +12,27 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils"
 )
 
+// listProviderModelsJSON returns a JSON string of all models for the given provider
+// from the shared model metadata catalog. Used by both multi-agent and workshop LLM tools.
+func listProviderModelsJSON(provider string) string {
+	allModels := utils.GetAllModelMetadata()
+	filtered := make([]interface{}, 0, len(allModels))
+	for _, m := range allModels {
+		if m == nil {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(m.Provider)) != provider {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return prettyJSON(map[string]interface{}{
+		"provider": provider,
+		"count":    len(filtered),
+		"models":   filtered,
+	})
+}
+
 func prettyJSON(v interface{}) string {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {

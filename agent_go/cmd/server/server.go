@@ -4993,6 +4993,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								return len(api.pendingCompletions[sessionID]) > 0
 							},
 							func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
+							func() { api.bgAgentRegistry.CancelAll(sessionID) },
+							func() []todo_creation_human.ServerAgentInfo {
+								agents := api.bgAgentRegistry.GetAll(sessionID)
+								result := make([]todo_creation_human.ServerAgentInfo, 0, len(agents))
+								for _, a := range agents {
+									result = append(result, todo_creation_human.ServerAgentInfo{
+										ID: a.ID, Name: a.Name, Status: string(a.GetStatus()),
+									})
+								}
+								return result
+							},
 						)
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)

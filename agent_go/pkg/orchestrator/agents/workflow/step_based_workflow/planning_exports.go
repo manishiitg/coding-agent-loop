@@ -169,8 +169,10 @@ type WorkshopChatSession struct {
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier     SubAgentNotifier
 	executionNotifier     WorkshopExecutionNotifier // optional: notifies server when executions start/complete
-	hasPendingCompletions func() bool               // optional: server-level check for queued completions
-	hasRunningAgents      func() bool               // optional: server-level check for running background agents
+	hasPendingCompletions func() bool                // optional: server-level check for queued completions
+	hasRunningAgents      func() bool                // optional: server-level check for running background agents
+	cancelAllServerAgents func()                     // optional: cancel all running agents in server registry
+	listServerAgents      func() []ServerAgentInfo   // optional: list all agents from server registry
 	workshopModeOverride  string                    // frontend-selected workshop mode
 }
 
@@ -202,10 +204,12 @@ func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNo
 	s.controller.SetWorkshopExecutionNotifier(n)
 }
 
-// SetExecutionStateChecks sets server-level callbacks for querying background execution state.
-func (s *WorkshopChatSession) SetExecutionStateChecks(hasPending, hasRunning func() bool) {
+// SetExecutionStateChecks sets server-level callbacks for querying and controlling background execution state.
+func (s *WorkshopChatSession) SetExecutionStateChecks(hasPending, hasRunning func() bool, cancelAll func(), listAgents func() []ServerAgentInfo) {
 	s.hasPendingCompletions = hasPending
 	s.hasRunningAgents = hasRunning
+	s.cancelAllServerAgents = cancelAll
+	s.listServerAgents = listAgents
 }
 
 // SetWorkshopModeOverride sets the frontend-selected workshop mode.
@@ -626,6 +630,8 @@ func RegisterWorkshopChatTools(
 		executionNotifier:      session.executionNotifier,
 		hasPendingCompletions:  session.hasPendingCompletions,
 		hasRunningAgents:       session.hasRunningAgents,
+		cancelAllServerAgents:  session.cancelAllServerAgents,
+		listServerAgents:       session.listServerAgents,
 		workshopModeOverride:   session.workshopModeOverride,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)

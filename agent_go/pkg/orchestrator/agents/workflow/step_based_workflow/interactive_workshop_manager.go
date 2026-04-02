@@ -624,6 +624,13 @@ type WorkshopExecutionNotifier interface {
 	OnExecutionTerminated(execID, name string) // explicit cancellation via stop_step/stop_all
 }
 
+// ServerAgentInfo is a lightweight snapshot of a server-tracked background agent.
+type ServerAgentInfo struct {
+	ID     string
+	Name   string
+	Status string // "running", "completed", "failed", "canceled"
+}
+
 // ============================================================================
 // InteractiveWorkshopManager
 // ============================================================================
@@ -647,6 +654,8 @@ type InteractiveWorkshopManager struct {
 	executionNotifier      WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
 	hasPendingCompletions  func() bool                                 // optional: true if completions are queued for delivery
 	hasRunningAgents       func() bool                                 // optional: true if server still has running background agents
+	cancelAllServerAgents  func()                                      // optional: cancel all running agents in server's bgAgentRegistry
+	listServerAgents       func() []ServerAgentInfo                    // optional: list all agents from server's bgAgentRegistry
 	workshopModeOverride   string                                      // frontend-selected workshop mode (takes priority over auto-detection)
 }
 
@@ -3394,6 +3403,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return allExecs[i].ID < allExecs[j].ID
 			})
 
+			// Build set of registry IDs for dedup against server agents
+			registryIDs := make(map[string]struct{}, len(allExecs))
+			for _, exec := range allExecs {
+				registryIDs[exec.ID] = struct{}{}
+			}
+
 			var sb strings.Builder
 			count := 0
 			for _, exec := range allExecs {
@@ -3412,29 +3427,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				sb.WriteString("\n")
 			}
 
-			// Check server-level state that stepRegistry can't see.
-			// Only query when needed — HasRunningAgents iterates the registry.
-			hasPending := iwm.hasPendingCompletions != nil && iwm.hasPendingCompletions()
-			hasRunning := false
-
-			if count == 0 {
-				hasRunning = iwm.hasRunningAgents != nil && iwm.hasRunningAgents()
+			// Merge server-tracked agents not in stepRegistry
+			if iwm.listServerAgents != nil {
+				for _, agent := range iwm.listServerAgents() {
+					if _, exists := registryIDs[agent.ID]; exists {
+						continue
+					}
+					if statusFilter != "" && agent.Status != statusFilter {
+						continue
+					}
+					count++
+					sb.WriteString(fmt.Sprintf("- **%s** | step: %s | status: %s (server)\n", agent.ID, agent.Name, agent.Status))
+				}
 			}
 
-			if count == 0 && (hasPending || hasRunning) {
-				warning := "No executions in registry"
-				if statusFilter != "" {
-					warning += fmt.Sprintf(" with status %q", statusFilter)
-				}
-				warning += ", but **background work is still active**:"
-				if hasPending {
-					warning += "\n- Completions pending delivery (agents finished while session was busy)"
-				}
-				if hasRunning {
-					warning += "\n- Server still has running agents"
-				}
-				warning += "\n\nDo NOT report \"all clear\" — work is still in progress."
-				return warning, nil
+			hasPending := iwm.hasPendingCompletions != nil && iwm.hasPendingCompletions()
+			if hasPending {
+				sb.WriteString("\n⚠️ Completions pending delivery (agents finished while session was busy).\n")
+			}
+
+			if count == 0 && hasPending {
+				return "No running executions, but **completions are pending delivery** — results will arrive shortly.\nDo NOT report \"all clear\".", nil
 			}
 
 			if count == 0 {
@@ -3447,16 +3460,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No background executions tracked.", nil
 			}
 
-			result := fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
+			return fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
 				if statusFilter != "" {
 					return fmt.Sprintf(" (filter: %s)", statusFilter)
 				}
 				return ""
-			}(), sb.String())
-			if hasPending {
-				result += "\n⚠️ Completions pending delivery (agents finished while session was busy)."
-			}
-			return result, nil
+			}(), sb.String()), nil
 		},
 		"workflow",
 	); err != nil {
@@ -3521,16 +3530,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// Cancel in stepRegistry first
 			cancelledExecs := iwm.stepRegistry.CancelAll()
-			if len(cancelledExecs) == 0 {
-				return "No running executions found to cancel.", nil
-			}
-			// Notify server layer for each cancelled execution
 			if iwm.executionNotifier != nil {
 				for _, exec := range cancelledExecs {
 					iwm.executionNotifier.OnExecutionTerminated(exec.ID, exec.StepID)
 				}
 			}
+
+			// Also cancel through server's bgAgentRegistry (catches anything stepRegistry missed)
+			if iwm.cancelAllServerAgents != nil {
+				iwm.cancelAllServerAgents()
+			}
+
+			if len(cancelledExecs) == 0 {
+				return "No running executions found to cancel.", nil
+			}
+
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledExecs)))
 			for _, exec := range cancelledExecs {

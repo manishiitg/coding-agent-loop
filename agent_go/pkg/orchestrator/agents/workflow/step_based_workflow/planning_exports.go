@@ -168,8 +168,10 @@ type WorkshopChatSession struct {
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier     SubAgentNotifier
-	executionNotifier    WorkshopExecutionNotifier // optional: notifies server when executions start/complete
-	workshopModeOverride string                    // frontend-selected workshop mode
+	executionNotifier     WorkshopExecutionNotifier // optional: notifies server when executions start/complete
+	hasPendingCompletions func() bool               // optional: server-level check for queued completions
+	hasRunningAgents      func() bool               // optional: server-level check for running background agents
+	workshopModeOverride  string                    // frontend-selected workshop mode
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
@@ -198,6 +200,12 @@ func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
 func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	s.executionNotifier = n
 	s.controller.SetWorkshopExecutionNotifier(n)
+}
+
+// SetExecutionStateChecks sets server-level callbacks for querying background execution state.
+func (s *WorkshopChatSession) SetExecutionStateChecks(hasPending, hasRunning func() bool) {
+	s.hasPendingCompletions = hasPending
+	s.hasRunningAgents = hasRunning
 }
 
 // SetWorkshopModeOverride sets the frontend-selected workshop mode.
@@ -616,6 +624,8 @@ func RegisterWorkshopChatTools(
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
 		executionNotifier:      session.executionNotifier,
+		hasPendingCompletions:  session.hasPendingCompletions,
+		hasRunningAgents:       session.hasRunningAgents,
 		workshopModeOverride:   session.workshopModeOverride,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)

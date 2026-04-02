@@ -645,6 +645,8 @@ type InteractiveWorkshopManager struct {
 	llmToolsFuncs          *LLMToolsCallbacks                          // LLM management callbacks from server.go
 	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
 	executionNotifier      WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
+	hasPendingCompletions  func() bool                                 // optional: true if completions are queued for delivery
+	hasRunningAgents       func() bool                                 // optional: true if server still has running background agents
 	workshopModeOverride   string                                      // frontend-selected workshop mode (takes priority over auto-detection)
 }
 
@@ -3386,9 +3388,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			statusFilter, _ := args["status_filter"].(string)
 
 			allExecs := iwm.stepRegistry.ListSnapshots()
-			if len(allExecs) == 0 {
-				return "No background executions tracked in this session.", nil
-			}
 
 			// Sort by ID (contains timestamp) for chronological order
 			sort.Slice(allExecs, func(i, j int) bool {
@@ -3413,19 +3412,51 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				sb.WriteString("\n")
 			}
 
+			// Check server-level state that stepRegistry can't see.
+			// Only query when needed — HasRunningAgents iterates the registry.
+			hasPending := iwm.hasPendingCompletions != nil && iwm.hasPendingCompletions()
+			hasRunning := false
+
+			if count == 0 {
+				hasRunning = iwm.hasRunningAgents != nil && iwm.hasRunningAgents()
+			}
+
+			if count == 0 && (hasPending || hasRunning) {
+				warning := "No executions in registry"
+				if statusFilter != "" {
+					warning += fmt.Sprintf(" with status %q", statusFilter)
+				}
+				warning += ", but **background work is still active**:"
+				if hasPending {
+					warning += "\n- Completions pending delivery (agents finished while session was busy)"
+				}
+				if hasRunning {
+					warning += "\n- Server still has running agents"
+				}
+				warning += "\n\nDo NOT report \"all clear\" — work is still in progress."
+				return warning, nil
+			}
+
 			if count == 0 {
 				if statusFilter != "" {
 					return fmt.Sprintf("No executions with status %q. Total tracked: %d.", statusFilter, len(allExecs)), nil
 				}
+				if len(allExecs) == 0 {
+					return "No background executions tracked in this session.", nil
+				}
 				return "No background executions tracked.", nil
 			}
 
-			return fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
+			result := fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
 				if statusFilter != "" {
 					return fmt.Sprintf(" (filter: %s)", statusFilter)
 				}
 				return ""
-			}(), sb.String()), nil
+			}(), sb.String())
+			if hasPending {
+				result += "\n⚠️ Completions pending delivery (agents finished while session was busy)."
+			}
+			return result, nil
 		},
 		"workflow",
 	); err != nil {

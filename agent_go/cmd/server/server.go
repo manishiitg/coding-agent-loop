@@ -4986,6 +4986,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/generate_learnings
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
 						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
+						workshopSession.SetExecutionStateChecks(
+							func() bool {
+								api.pendingMu.RLock()
+								defer api.pendingMu.RUnlock()
+								return len(api.pendingCompletions[sessionID]) > 0
+							},
+							func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
+						)
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
 					}

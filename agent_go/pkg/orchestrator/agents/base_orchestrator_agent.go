@@ -676,31 +676,11 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
 	}
 
-	// Convert API keys from agent config to LLM config format
+	// Direct assignment — AgentAPIKeys is an alias for llm.ProviderAPIKeys,
+	// so no conversion needed.
 	var llmAPIKeys *llm.ProviderAPIKeys
 	if boa.config.APIKeys != nil {
-		llmAPIKeys = &llm.ProviderAPIKeys{
-			OpenRouter:        boa.config.APIKeys.OpenRouter,
-			OpenAI:            boa.config.APIKeys.OpenAI,
-			Anthropic:         boa.config.APIKeys.Anthropic,
-			Vertex:            boa.config.APIKeys.Vertex,
-			GeminiCLI:         boa.config.APIKeys.GeminiCLI,
-			MiniMax:           boa.config.APIKeys.MiniMax,
-			MiniMaxCodingPlan: boa.config.APIKeys.MiniMaxCodingPlan,
-		}
-		if boa.config.APIKeys.Bedrock != nil {
-			llmAPIKeys.Bedrock = &llm.BedrockConfig{
-				Region: boa.config.APIKeys.Bedrock.Region,
-			}
-		}
-		if boa.config.APIKeys.Azure != nil {
-			llmAPIKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   boa.config.APIKeys.Azure.Endpoint,
-				APIKey:     boa.config.APIKeys.Azure.APIKey,
-				APIVersion: boa.config.APIKeys.Azure.APIVersion,
-				Region:     boa.config.APIKeys.Azure.Region,
-			}
-		}
+		llmAPIKeys = boa.config.APIKeys
 	}
 
 	// Create a separate LLM logger that writes to llm_debug.log

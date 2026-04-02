@@ -11,7 +11,7 @@ import {
   type OnSelectionChangeParams,
   SelectionMode
 } from '@xyflow/react'
-import { Brain, Settings, X } from 'lucide-react'
+import { Brain, Settings, X, Workflow, List, ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { nodeTypes } from '../nodes'
@@ -21,6 +21,7 @@ import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
+import { PlanOutlineView } from './PlanOutlineView'
 import LLMOverrideModal from '../LLMOverrideModal'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
@@ -33,7 +34,7 @@ import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
-import type { PlanStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
@@ -98,9 +99,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
   const viewportSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Get workflow mode and layout direction
+  // Get workflow mode, layout direction, and canvas view mode
   const layoutDirection = useWorkflowStore(state => state.layoutDirection)
   const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
@@ -360,10 +363,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Force a re-layout by updating nodes (this will trigger auto-layout since no saved layout exists)
       // The existing layout restoration logic will handle this automatically
       console.log('[WorkflowCanvas] Layout reset - will use auto-layout on next render')
-    } catch (error) {
-      console.error('[WorkflowCanvas] ❌ Failed to delete layout:', error)
-      alert(`Failed to delete layout: ${error instanceof Error ? error.message : String(error)}`)
-      throw error
+    } catch (error: any) {
+      // 404 = file doesn't exist, which is fine (already reset)
+      if (error?.response?.status === 404 || error?.status === 404) {
+        console.log('[WorkflowCanvas] Layout file not found (already reset)')
+        setHasUnsavedLayoutChanges(false)
+        currentPositionsRef.current.clear()
+        currentOffsetsRef.current.clear()
+      } else {
+        console.error('[WorkflowCanvas] ❌ Failed to delete layout:', error)
+        throw error
+      }
     } finally {
       setIsDeletingLayout(false)
     }
@@ -442,6 +452,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Load workflow data for the main canvas and append eval/output artifacts to it.
   const planData = usePlanData(workspacePath)
+  // Keep last non-null plan so PlanOutlineView doesn't unmount during refresh
+  const [stablePlan, setStablePlan] = React.useState<PlanningResponse | null>(null)
+  React.useEffect(() => {
+    if (planData.plan) setStablePlan(planData.plan)
+  }, [planData.plan])
   const evalData = useEvaluationPlanData(workspacePath)
   const outputData = useOutputPlanData(workspacePath)
 
@@ -1026,7 +1041,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
     isLoadingVariables,  // Whether variables are loading
     layoutDirection,  // Layout direction: 'LR' for horizontal, 'TB' for vertical
-    disabled: toolbarOnly
+    disabled: toolbarOnly || canvasViewMode === 'plan'
   })
 
   const augmentedFlow = React.useMemo(() => {
@@ -1242,7 +1257,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // CRITICAL: Force header nodes to correct positions after nodes update
   // Ensure header nodes maintain correct positions (safety net in case something tries to override them)
   React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
     if (nodes.length === 0 || initialNodes.length === 0) return
     
     const execNode = initialNodes.find(n => n.id === 'execution-settings')
@@ -1281,7 +1296,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Rebuild node groups when nodes change
   React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
     if (nodes.length > 0) {
       buildNodeGroups(nodes)
     }
@@ -1289,8 +1304,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
-    // Skip node/edge updates when canvas is hidden (toolbarOnly) — no React Flow to update
-    if (toolbarOnly) return
+    // Skip node/edge updates when canvas is hidden (toolbarOnly or plan mode) — no React Flow to update
+    if (toolbarOnly || canvasViewMode === 'plan') return
 
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
@@ -1770,7 +1785,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Set initial view to show start node (left side) on first load, or restore saved viewport
   React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
     if (!hasInitializedView.current && nodes.length > 0) {
       // If we have a saved viewport, use it instead of positioning on start node
       if (savedViewportRef.current) {
@@ -1832,7 +1847,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update node status based on maps from events (only when stepStatusMap actually changes)
   React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
 
     // Check if stepStatusMap actually changed by comparing entries
     const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
@@ -1910,7 +1925,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Update node status based on completedStepIndices from stepProgress (loaded from API)
   // Note: step_progress_updated events no longer include progress details, but can trigger progress reload
   React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
 
     const lastCompletedStepId = stepProgress?.last_completed_step_id
 
@@ -2363,8 +2378,32 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         selectedStepIds={selectedStepIds}
       />
 
-      {/* React Flow Canvas with Sidebar — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
-      {toolbarOnly ? null : <div className="flex-1 min-h-0 relative flex">
+      {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
+      {toolbarOnly ? null : canvasViewMode === 'plan' ? (
+        <div className="flex-1 min-h-0 relative">
+          {stablePlan && <PlanOutlineView
+            plan={stablePlan}
+            stepProgress={stepProgress}
+            stepStatusMap={stepStatusMap}
+            onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
+            onFileClick={(filePath) => {
+              useWorkspaceStore.getState().highlightFile(filePath)
+            }}
+            onRefresh={handleRefresh}
+            workspacePath={workspacePath}
+            className="h-full"
+          />}
+          {/* Floating view mode toggle — bottom left */}
+          <button
+            onClick={() => setCanvasViewMode('flow')}
+            className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title="Switch to flow diagram"
+          >
+            <Workflow className="w-3 h-3" />
+            <span>Flow</span>
+          </button>
+        </div>
+      ) : <div className="flex-1 min-h-0 relative flex">
         <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
           selectedNode
             ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
@@ -2531,6 +2570,68 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             currentStepId={currentStepId}
           />
         )}
+
+        {/* Floating view mode toggle — top left */}
+        <button
+          onClick={() => setCanvasViewMode('plan')}
+          className="absolute top-3 left-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          title="Switch to plan outline"
+        >
+          <List className="w-3 h-3" />
+          <span>Plan</span>
+        </button>
+
+        {/* Floating canvas controls — top right */}
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-0.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-1 py-0.5">
+          {/* Refresh */}
+          <button
+            onClick={() => handleRefresh()}
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            title="Refresh plan & variables"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+          {/* Layout direction */}
+          <button
+            onClick={() => {
+              const next = layoutDirection === 'LR' ? 'TB' : 'LR'
+              setLayoutDirection(next)
+            }}
+            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            title={layoutDirection === 'LR' ? 'Horizontal (click for vertical)' : 'Vertical (click for horizontal)'}
+          >
+            {layoutDirection === 'LR' ? <ArrowRight className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+          </button>
+          {/* Save layout */}
+          <button
+            onClick={() => saveLayout()}
+            disabled={isSavingLayout}
+            className={`p-1 rounded transition-colors ${
+              isSavingLayout ? 'text-muted-foreground cursor-not-allowed'
+                : hasUnsavedLayoutChanges ? 'text-blue-500 hover:bg-blue-500/10 animate-pulse'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+            title={isSavingLayout ? 'Saving...' : hasUnsavedLayoutChanges ? 'Save layout (unsaved)' : 'Save layout'}
+          >
+            {isSavingLayout ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+          </button>
+          {/* Reset layout */}
+          <button
+            onClick={() => {
+              if (window.confirm('Reset layout to default? This cannot be undone.')) {
+                deleteLayout()
+              }
+            }}
+            disabled={isDeletingLayout}
+            className={`p-1 rounded transition-colors ${
+              isDeletingLayout ? 'text-muted-foreground cursor-not-allowed'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+            title={isDeletingLayout ? 'Resetting...' : 'Reset layout'}
+          >
+            {isDeletingLayout ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+          </button>
+        </div>
         </div>
 
         {/* Step Sidebar - Single step selected */}

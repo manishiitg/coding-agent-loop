@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"time"
+
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 // LLMModel represents a single LLM configuration (orchestrator level)
@@ -19,31 +21,14 @@ type LLMConfig struct {
 	APIKeys   *APIKeys   `json:"api_keys,omitempty"` // Global API keys (fallback if per-model not set)
 }
 
-// APIKeys represents API keys for different providers
-type APIKeys struct {
-	OpenRouter *string     `json:"openrouter,omitempty"`
-	OpenAI     *string     `json:"openai,omitempty"`
-	Anthropic  *string     `json:"anthropic,omitempty"`
-	Vertex     *string     `json:"vertex,omitempty"`
-	GeminiCLI  *string     `json:"gemini_cli,omitempty"`
-	MiniMax            *string     `json:"minimax,omitempty"`
-	MiniMaxCodingPlan  *string     `json:"minimax-coding-plan,omitempty"`
-	Bedrock            *BedrockKey `json:"bedrock,omitempty"`
-	Azure              *AzureKey   `json:"azure,omitempty"`
-}
+// APIKeys is an alias for llm.ProviderAPIKeys (canonical type).
+type APIKeys = llm.ProviderAPIKeys
 
-// BedrockKey represents Bedrock configuration
-type BedrockKey struct {
-	Region string `json:"region"`
-}
+// BedrockKey is an alias for llm.BedrockConfig (canonical type).
+type BedrockKey = llm.BedrockConfig
 
-// AzureKey represents Azure configuration
-type AzureKey struct {
-	Endpoint   string `json:"endpoint"`
-	APIKey     string `json:"api_key"`
-	APIVersion string `json:"api_version,omitempty"`
-	Region     string `json:"region,omitempty"`
-}
+// AzureKey is an alias for llm.AzureAPIConfig (canonical type).
+type AzureKey = llm.AzureAPIConfig
 
 // OrchestratorType represents the type of orchestrator
 type OrchestratorType string

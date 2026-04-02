@@ -136,30 +136,10 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 				Region:   fallback.Region,
 			})
 		}
-		// Convert API keys from orchestrator format to agent format
+		// Direct assignment — orchestrator.APIKeys and agents.AgentAPIKeys are
+		// both aliases for llm.ProviderAPIKeys, so no conversion needed.
 		if llmConfig.APIKeys != nil {
-			config.APIKeys = &agents.AgentAPIKeys{
-				OpenRouter: llmConfig.APIKeys.OpenRouter,
-				OpenAI:     llmConfig.APIKeys.OpenAI,
-				Anthropic:  llmConfig.APIKeys.Anthropic,
-				Vertex:     llmConfig.APIKeys.Vertex,
-				GeminiCLI:  llmConfig.APIKeys.GeminiCLI,
-				MiniMax:           llmConfig.APIKeys.MiniMax,
-				MiniMaxCodingPlan: llmConfig.APIKeys.MiniMaxCodingPlan,
-			}
-			if llmConfig.APIKeys.Bedrock != nil {
-				config.APIKeys.Bedrock = &agents.BedrockAgentConfig{
-					Region: llmConfig.APIKeys.Bedrock.Region,
-				}
-			}
-			if llmConfig.APIKeys.Azure != nil {
-				config.APIKeys.Azure = &agents.AzureAgentConfig{
-					Endpoint:   llmConfig.APIKeys.Azure.Endpoint,
-					APIKey:     llmConfig.APIKeys.Azure.APIKey,
-					APIVersion: llmConfig.APIKeys.Azure.APIVersion,
-					Region:     llmConfig.APIKeys.Azure.Region,
-				}
-			}
+			config.APIKeys = llmConfig.APIKeys
 		}
 	} else {
 		// No fallback to orchestrator defaults - llmConfig must be provided

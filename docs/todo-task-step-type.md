@@ -29,10 +29,141 @@ This design allows:
 | Routing | LLM selects route | LLM creates tasks + assigns agents |
 | Tools | Standard workspace tools | + Todo management tools |
 
+## Plan JSON Format
+
+As of 2026-04-02, `TodoTaskPlanStep` uses a **flat format** — all fields (description, success_criteria, context_dependencies, context_output, validation_schema) are directly on the step, identical to how `RegularPlanStep` works. There is only **one ID** per step.
+
+```json
+{
+  "type": "todo_task",
+  "id": "my-orchestrator",
+  "title": "My Orchestrator",
+  "description": "Orchestrate the process by delegating to sub-agents in order...",
+  "success_criteria": "All routes completed, output files created.",
+  "context_dependencies": ["previous_step_output.json"],
+  "context_output": "final_status.json",
+  "validation_schema": { "files": [{ "file_name": "final_status.json", "must_exist": true }] },
+  "has_loop": false,
+  "loop_condition": "",
+  "predefined_routes": [
+    {
+      "route_id": "fetch-data",
+      "route_name": "Fetch Data",
+      "condition": "To fetch data from API",
+      "sub_agent_step": {
+        "type": "regular",
+        "id": "fetch-data",
+        "title": "Fetch Data from API",
+        "description": "...",
+        "success_criteria": "...",
+        "context_output": "data.json"
+      }
+    }
+  ],
+  "next_step_id": "end"
+}
+```
+
+### Step Config
+
+Step config uses the **single step ID** (`my-orchestrator` in the example above). There is no inner ID.
+
+```json
+{
+  "steps": [
+    {
+      "id": "my-orchestrator",
+      "agent_configs": {
+        "execution_max_turns": 100,
+        "execution_llm": { "provider": "vertex", "model_id": "gemini-2.5-pro" }
+      }
+    }
+  ]
+}
+```
+
+### Legacy Format (Backwards Compatible)
+
+The old nested `todo_task_step` format is still supported for reading. On unmarshal, fields are automatically promoted from the inner step to the top level. On marshal, the flat format is always written.
+
+```json
+// OLD FORMAT (deprecated, still parsed)
+{
+  "type": "todo_task",
+  "id": "my-task",
+  "title": "My Task",
+  "todo_task_step": {
+    "type": "regular",
+    "id": "my-orchestrator",
+    "description": "...",
+    "success_criteria": "..."
+  },
+  "predefined_routes": [...],
+  "next_step_id": "end"
+}
+```
+
+### Migrating Old Plans
+
+**Automatic (no action needed):** If the backend loads an old-format plan.json, `UnmarshalJSON` automatically promotes `todo_task_step` fields to the top level. The next time the plan is saved (e.g. via workshop edit, plan update tool, or any write path), it will be written in the new flat format. No manual migration is required for plans that are actively used.
+
+**Manual migration** for plans stored externally (backups, other machines, shared repos), use this Python script:
+
+```python
+import json, os, sys
+
+def migrate_step(step):
+    """Flatten todo_task_step into parent step."""
+    if step.get('type') != 'todo_task':
+        return step
+    inner = step.get('todo_task_step')
+    if inner is None:
+        return step  # already flat
+    for field in ['description', 'success_criteria', 'context_dependencies',
+                  'context_output', 'validation_schema', 'has_loop', 'loop_condition']:
+        if not step.get(field) and field in inner:
+            step[field] = inner[field]
+    del step['todo_task_step']
+    step.setdefault('has_loop', False)
+    step.setdefault('loop_condition', '')
+    # Recurse into nested todo_task sub-agents in routes
+    for route in step.get('predefined_routes', []):
+        if route.get('sub_agent_step'):
+            route['sub_agent_step'] = migrate_step(route['sub_agent_step'])
+    return step
+
+# Usage: python migrate_plan.py path/to/plan.json
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+changed = False
+for i, step in enumerate(data.get('steps', [])):
+    if step.get('type') == 'todo_task' and 'todo_task_step' in step:
+        data['steps'][i] = migrate_step(step)
+        changed = True
+if changed:
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+    print(f'Migrated {path}')
+else:
+    print(f'{path} already in flat format')
+```
+
+**Step config cleanup:** After migrating plan.json, also check `step_config.json` for entries referencing the old inner step ID (e.g. `my-orchestrator` from the example above). These configs are now orphaned since the inner step no longer exists. Either remove them or merge their settings into the outer step's config entry.
+
+**Learnings folders:** If learnings were accumulated under the old inner step ID (e.g. `learnings/my-orchestrator/`), they will still be found — the orchestrator resolves learnings by the step ID used at execution time, which is now the outer ID. Old learnings under the inner ID won't be loaded automatically. To preserve them, rename the folder to match the outer step ID:
+
+```bash
+# Example: rename old inner-ID learnings folder to match the outer step ID
+mv workspace-docs/Workflow/MyWorkflow/learnings/my-orchestrator/ \
+   workspace-docs/Workflow/MyWorkflow/learnings/my-task/
+```
+
 ## Architecture
 
 ```
-TodoTaskPlanStep
+TodoTaskPlanStep (single step, single ID)
 ├── TodoTaskOrchestratorAgent (main brain - FULL CONTEXT)
 │   ├── Tools: workspace + todo management + MCP (full access)
 │   ├── Can do work directly (read files, call APIs, etc.)
@@ -90,14 +221,14 @@ TodoTaskPlanStep
 ### Files Modified
 
 1. **`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go`**
-   - Added `StepTypeTodoTask` constant
-   - Added `TodoTaskPlanStep` struct
-   - Updated `unmarshalStepFromJSON` to handle todo_task type
-   - Default to "regular" type for sub_agent_steps in routes
+   - `TodoTaskPlanStep` struct embeds `CommonStepFields` directly (same pattern as `RegularPlanStep`)
+   - `MarshalJSON` writes flat format, `UnmarshalJSON` reads both flat and legacy nested format
+   - Tool schemas (`getAddTodoTaskStepSchema`, `getUpdateTodoTaskStepSchema`) use flat fields
+   - Partial update merge handles both new flat fields and legacy `todo_task_step` map
 
 2. **`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_management.go`**
-   - Added `case *TodoTaskPlanStep:` in `populateRuntimeFields()`
-   - Handles inner step and route population
+   - `populateRuntimeFields()` matches config by the single step ID, populates `AgentConfigs` and `ValidationSchema` directly
+   - Route sub-agent steps are populated recursively
 
 3. **`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go`**
    - Added TodoTaskPlanStep and HumanInputPlanStep to type switch
@@ -377,7 +508,7 @@ The `ExecutionLogsPopup` component displays todo task logs in a similar format t
 - Purple badge with ListTodo icon
 - Shows predefined routes count
 - Shows "Generic agent enabled" indicator
-- Context inputs/outputs from todo_task_step
+- Context inputs/outputs from step fields directly
 
 ### Sub-Agent Nodes (in StepNode)
 - Bot icon instead of step number

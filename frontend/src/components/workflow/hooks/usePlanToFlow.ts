@@ -100,7 +100,7 @@ export interface LoopNodeData extends Record<string, unknown> {
 export interface TodoTaskNodeData extends Record<string, unknown> {
   id: string
   title: string
-  todo_task_step?: PlanStep
+  todo_task_step?: PlanStep  // DEPRECATED: kept for backwards compat
   predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
   enable_generic_agent?: boolean
   status: 'pending' | 'running' | 'failed' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
@@ -113,7 +113,7 @@ export interface TodoTaskNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
-  validation_schema?: ValidationSchema  // Validation schema from plan.json (from todo_task_step)
+  validation_schema?: ValidationSchema  // Validation schema from plan.json (now flat on step)
   parentOrchestratorTitle?: string  // Title of parent orchestrator node (for nested todo sub-agents)
   routeName?: string  // Route name from orchestration/todo routes
   routeCondition?: string  // Condition from orchestration/todo routes
@@ -1014,11 +1014,11 @@ function stepToNode(
       position: { x: 0, y: 0 },
       data: {
         ...baseData,
-        todo_task_step: step.todo_task_step,
+        todo_task_step: step.todo_task_step,  // backwards compat
         predefined_routes: step.predefined_routes,
         enable_generic_agent: step.enable_generic_agent,
-        // Use validation_schema from todo_task_step (inner step) if available, otherwise from wrapper
-        validation_schema: step.todo_task_step?.validation_schema || step.validation_schema
+        // Flat format: validation_schema is directly on step
+        validation_schema: step.validation_schema || step.todo_task_step?.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as TodoTaskNodeData
     }
@@ -1191,10 +1191,10 @@ function processSteps(
               stepIndex: parentStepIndex,
               step: subAgentStep,
               changeType,
-              todo_task_step: subAgentStep.todo_task_step,
+              todo_task_step: subAgentStep.todo_task_step,  // backwards compat
               predefined_routes: subAgentStep.predefined_routes,
               enable_generic_agent: subAgentStep.enable_generic_agent,
-              validation_schema: subAgentStep.todo_task_step?.validation_schema || subAgentStep.validation_schema,
+              validation_schema: subAgentStep.validation_schema || subAgentStep.todo_task_step?.validation_schema,
               workspacePath,
               selectedRunFolder,
               parentOrchestratorTitle: todoTaskTitle,

@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { X, Brain, Zap, Gauge, Cpu, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import type { AgentLLMConfig, AgentLLMFallback, PresetLLMConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
@@ -23,10 +24,17 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const activePreset = getActivePreset('workflow') as CustomPreset | null
   const existing = activePreset?.llmConfig
 
-  const [tier1, setTier1] = useState<AgentLLMConfig | null>(existing?.tiered_config?.tier_1 ?? null)
-  const [tier2, setTier2] = useState<AgentLLMConfig | null>(existing?.tiered_config?.tier_2 ?? null)
-  const [tier3, setTier3] = useState<AgentLLMConfig | null>(existing?.tiered_config?.tier_3 ?? null)
-  const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(existing?.phase_llm ?? null)
+  // Read from workflow manifest (source of truth) with preset as fallback
+  const manifestLLM = (() => {
+    const workspacePath = activePreset?.selectedFolder?.filepath
+    if (!workspacePath) return null
+    return useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config ?? null
+  })()
+
+  const [tier1, setTier1] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_1 ?? existing?.tiered_config?.tier_1 ?? null)
+  const [tier2, setTier2] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_2 ?? existing?.tiered_config?.tier_2 ?? null)
+  const [tier3, setTier3] = useState<AgentLLMConfig | null>(manifestLLM?.tiered_config?.tier_3 ?? existing?.tiered_config?.tier_3 ?? null)
+  const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(manifestLLM?.phase_llm ?? existing?.phase_llm ?? null)
 
   if (!activePreset) return null
 
@@ -66,14 +74,29 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
     })
   }
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true)
     try {
-      await loadDefaultsFromBackend()
+      // Refresh both available LLMs and workflow manifest
+      await Promise.all([
+        loadDefaultsFromBackend(),
+        useWorkflowManifestStore.getState().refreshWorkflows(),
+      ])
+      // Re-read manifest and update form state
+      const workspacePath = activePreset?.selectedFolder?.filepath
+      if (workspacePath) {
+        const refreshed = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.capabilities?.llm_config
+        if (refreshed) {
+          if (refreshed.tiered_config?.tier_1) setTier1(refreshed.tiered_config.tier_1)
+          if (refreshed.tiered_config?.tier_2) setTier2(refreshed.tiered_config.tier_2)
+          if (refreshed.tiered_config?.tier_3) setTier3(refreshed.tiered_config.tier_3)
+          if (refreshed.phase_llm) setPhaseLLM(refreshed.phase_llm)
+        }
+      }
     } finally {
       setIsRefreshing(false)
     }
-  }
+  }, [activePreset?.selectedFolder?.filepath, loadDefaultsFromBackend])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -146,7 +169,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
               onClick={handleRefresh}
               disabled={isRefreshing || isLoadingLLMs}
               className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50"
-              title="Refresh published LLMs"
+              title="Reload from workflow.json"
             >
               <RefreshCw className={`w-5 h-5 ${(isRefreshing || isLoadingLLMs) ? 'animate-spin' : ''}`} />
             </button>

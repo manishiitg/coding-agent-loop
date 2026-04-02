@@ -376,9 +376,6 @@ func collectNestedArtifactFolderNames(step PlanStepInterface, names map[string]s
 			collectNestedArtifactFolderNames(route.SubAgentStep, names)
 		}
 	case *TodoTaskPlanStep:
-		if s.TodoTaskStep != nil {
-			collectNestedArtifactFolderNames(s.TodoTaskStep, names)
-		}
 		for _, route := range s.PredefinedRoutes {
 			collectNestedArtifactFolderNames(route.SubAgentStep, names)
 		}

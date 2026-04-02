@@ -3175,6 +3175,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load merged API keys (env + workspace) while r.Context() is still valid (before goroutine)
+	mergedAPIKeys := MergedProviderAPIKeys(r.Context())
+
 	// Process the query in the background
 	go func() {
 		// Clear session busy when the agent turn completes
@@ -3439,69 +3442,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				return preDiscovered
 			}(),
-			// Convert API keys from request to LLM format (respecting locked providers)
-			APIKeys: func() *llm.ProviderAPIKeys {
-				// 1. Start with keys from request (if available)
-				llmKeys := &llm.ProviderAPIKeys{}
-				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
-					llmKeys.OpenRouter = req.LLMConfig.APIKeys.OpenRouter
-					llmKeys.OpenAI = req.LLMConfig.APIKeys.OpenAI
-					llmKeys.Anthropic = req.LLMConfig.APIKeys.Anthropic
-					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
-					llmKeys.GeminiCLI = req.LLMConfig.APIKeys.GeminiCLI
-					llmKeys.MiniMax = req.LLMConfig.APIKeys.MiniMax
-					llmKeys.MiniMaxCodingPlan = req.LLMConfig.APIKeys.MiniMaxCodingPlan
-
-					if req.LLMConfig.APIKeys.Bedrock != nil {
-						llmKeys.Bedrock = &llm.BedrockConfig{
-							Region: req.LLMConfig.APIKeys.Bedrock.Region,
-						}
-					}
-					if req.LLMConfig.APIKeys.Azure != nil {
-						llmKeys.Azure = &llm.AzureAPIConfig{
-							Endpoint:   req.LLMConfig.APIKeys.Azure.Endpoint,
-							APIKey:     req.LLMConfig.APIKeys.Azure.APIKey,
-							APIVersion: req.LLMConfig.APIKeys.Azure.APIVersion,
-							Region:     req.LLMConfig.APIKeys.Azure.Region,
-						}
-					}
-				}
-
-				// 2. Get keys from environment
-				envKeys := buildProviderAPIKeysFromEnv()
-				globalLocked := isGlobalLLMConfigLocked()
-
-				// 3. Override if provider is locked or global lock is on
-				if globalLocked || isProviderLocked("openrouter") {
-					llmKeys.OpenRouter = envKeys.OpenRouter
-				}
-				if globalLocked || isProviderLocked("openai") {
-					llmKeys.OpenAI = envKeys.OpenAI
-				}
-				if globalLocked || isProviderLocked("anthropic") {
-					llmKeys.Anthropic = envKeys.Anthropic
-				}
-				if globalLocked || isProviderLocked("vertex") {
-					llmKeys.Vertex = envKeys.Vertex
-				}
-				if globalLocked || isProviderLocked("bedrock") {
-					llmKeys.Bedrock = envKeys.Bedrock
-				}
-				if globalLocked || isProviderLocked("azure") {
-					llmKeys.Azure = envKeys.Azure
-				}
-				if globalLocked || isProviderLocked("gemini-cli") {
-					llmKeys.GeminiCLI = envKeys.GeminiCLI
-				}
-				if globalLocked || isProviderLocked("minimax") {
-					llmKeys.MiniMax = envKeys.MiniMax
-				}
-				if globalLocked || isProviderLocked("minimax-coding-plan") {
-					llmKeys.MiniMaxCodingPlan = envKeys.MiniMaxCodingPlan
-				}
-
-				return llmKeys
-			}(),
+			APIKeys: mergedAPIKeys,
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
@@ -4922,6 +4863,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						workshopSession = cached.(*todo_creation_human.WorkshopChatSession)
 						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for %s", sessionID)
 
+						// Always refresh API keys on session reuse (workspace keys may have changed)
+						// Use mergedAPIKeys loaded before goroutine (r.Context() is cancelled inside goroutine)
+						workshopSession.UpdateAPIKeys(mergedAPIKeys)
+
 						// Refresh enabled group IDs from current request (toolbar selection may have changed)
 						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
 							workshopSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
@@ -5016,7 +4961,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					} else {
 						// Build full workshop config matching normal workflow setup
-						workshopCfg, cfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						workshopCfg, cfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
 						if cfgErr != nil {
 							log.Printf("[WORKFLOW_PHASE] Error: Failed to build workshop config for %s: %v — workshop execution tools unavailable", workflowPhaseID, cfgErr)
 						} else {
@@ -5079,7 +5024,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
 						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in %s %s", workflowPhaseID, sessionID)
 					} else {
-						evalCfg, evalCfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						evalCfg, evalCfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
 						if evalCfgErr != nil {
 							log.Printf("[WORKFLOW_PHASE] Error: Failed to build eval config in %s: %v", workflowPhaseID, evalCfgErr)
 						} else {
@@ -7549,83 +7494,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Emit delegation_start event (after model and server resolution so we can include all info)
 	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList, backgroundAgentID, agentTemplateName)
 
-	// Convert API keys from parent request to LLM format (respecting locked providers)
-	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
-
-	// 1. Start with keys from parent request
-	if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
-		apiKeys.OpenRouter = parentReq.LLMConfig.APIKeys.OpenRouter
-		apiKeys.OpenAI = parentReq.LLMConfig.APIKeys.OpenAI
-		apiKeys.Anthropic = parentReq.LLMConfig.APIKeys.Anthropic
-		apiKeys.Vertex = parentReq.LLMConfig.APIKeys.Vertex
-		apiKeys.GeminiCLI = parentReq.LLMConfig.APIKeys.GeminiCLI
-		apiKeys.MiniMax = parentReq.LLMConfig.APIKeys.MiniMax
-		apiKeys.MiniMaxCodingPlan = parentReq.LLMConfig.APIKeys.MiniMaxCodingPlan
-		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
-			apiKeys.Bedrock = &llm.BedrockConfig{Region: parentReq.LLMConfig.APIKeys.Bedrock.Region}
-		}
-		if parentReq.LLMConfig.APIKeys.Azure != nil {
-			apiKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   parentReq.LLMConfig.APIKeys.Azure.Endpoint,
-				APIKey:     parentReq.LLMConfig.APIKeys.Azure.APIKey,
-				APIVersion: parentReq.LLMConfig.APIKeys.Azure.APIVersion,
-				Region:     parentReq.LLMConfig.APIKeys.Azure.Region,
-			}
-		}
-	}
-
-	// 2. Override if global lock is on OR specific provider is locked
-	envKeys := buildProviderAPIKeysFromEnv()
-	globalLocked := isGlobalLLMConfigLocked()
-
-	if globalLocked {
-		// Force single provider if global lock is on
-		provStr, modelStr := getPrimaryProviderAndModelFromDefaults()
-		supported := getSupportedProviders()
-		if len(supported) > 0 {
-			allowed := make(map[string]bool)
-			for _, p := range supported {
-				allowed[p] = true
-			}
-			if !allowed[provStr] {
-				provStr = supported[0]
-				modelStr = llm.GetDefaultModel(llm.Provider(provStr))
-			}
-		}
-		provider = llm.Provider(provStr)
-		modelID = modelStr
-		// Use all env keys for simplicity/security in global lock mode
-		apiKeys = envKeys
-	} else {
-		// Partial locking: override keys for locked providers
-		if isProviderLocked("openrouter") {
-			apiKeys.OpenRouter = envKeys.OpenRouter
-		}
-		if isProviderLocked("openai") {
-			apiKeys.OpenAI = envKeys.OpenAI
-		}
-		if isProviderLocked("anthropic") {
-			apiKeys.Anthropic = envKeys.Anthropic
-		}
-		if isProviderLocked("vertex") {
-			apiKeys.Vertex = envKeys.Vertex
-		}
-		if isProviderLocked("bedrock") {
-			apiKeys.Bedrock = envKeys.Bedrock
-		}
-		if isProviderLocked("azure") {
-			apiKeys.Azure = envKeys.Azure
-		}
-		if isProviderLocked("gemini-cli") {
-			apiKeys.GeminiCLI = envKeys.GeminiCLI
-		}
-		if isProviderLocked("minimax") {
-			apiKeys.MiniMax = envKeys.MiniMax
-		}
-		if isProviderLocked("minimax-coding-plan") {
-			apiKeys.MiniMaxCodingPlan = envKeys.MiniMaxCodingPlan
-		}
-	}
+	// Load merged API keys (env + workspace)
+	apiKeys := MergedProviderAPIKeys(ctx)
 
 	// Get user ID from context for per-user OAuth token isolation
 	subAgentUserID := ""
@@ -9723,6 +9593,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	runFolder string,
 	selectedServers []string,
 	sessionID string,
+	apiKeys ...*llm.ProviderAPIKeys, // Optional pre-loaded keys (avoids cancelled context issues)
 ) (*todo_creation_human.WorkshopConfig, error) {
 	// Extract enabled group IDs from execution options (toolbar selection)
 	var enabledGroupIDs []string
@@ -9730,12 +9601,23 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		enabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
 	}
 
+	// Always use merged API keys (env + workspace) for workshop orchestrator
+	workshopLLMConfig := req.LLMConfig
+	if workshopLLMConfig == nil {
+		workshopLLMConfig = &orchestrator.LLMConfig{}
+	}
+	if len(apiKeys) > 0 && apiKeys[0] != nil {
+		workshopLLMConfig.APIKeys = apiKeys[0]
+	} else {
+		workshopLLMConfig.APIKeys = MergedProviderAPIKeys(ctx)
+	}
+
 	cfg := &todo_creation_human.WorkshopConfig{
 		WorkspacePath:     workspacePath,
 		RunFolder:         runFolder,
 		MCPConfigPath:     api.mcpConfigPath,
 		SelectedServers:   append([]string(nil), selectedServers...), // copy to avoid mutation
-		LLMConfig:         req.LLMConfig,
+		LLMConfig:         workshopLLMConfig,
 		UseKnowledgebase:  true,
 		LLMAllocationMode: "manual",
 		Logger:            api.logger,

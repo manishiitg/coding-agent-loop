@@ -812,6 +812,7 @@ export const useChatStore = create<ChatState>()(
       },
 
       setTabEvents: (sessionId: string, events: PollingEvent[]) => {
+        console.log('[WF_DEBUG] setTabEvents CALLED', { sessionId, newCount: events.length, existingCount: get().tabEvents[sessionId]?.length ?? 0, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
         // Rebuild the persistent ID index for this session
         tabEventIdSets.set(sessionId, new Set(events.map(e => e.id).filter(Boolean) as string[]))
 
@@ -847,6 +848,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       clearTabEvents: (sessionId: string) => {
+        console.log('[WF_DEBUG] clearTabEvents CALLED', { sessionId, hadEvents: get().tabEvents[sessionId]?.length ?? 0, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
         tabEventIdSets.delete(sessionId)
         set((state) => {
           const newTabEvents = { ...state.tabEvents }
@@ -1237,6 +1239,7 @@ export const useChatStore = create<ChatState>()(
 
       // Reset a single tab's chat session without touching other tabs (used by prototype "New Chat")
       resetTabChat: (tabId: string) => {
+        console.log('[WF_DEBUG] resetTabChat CALLED', { tabId, mode: get().chatTabs[tabId]?.metadata?.mode, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
@@ -1695,6 +1698,7 @@ export const useChatStore = create<ChatState>()(
 
         // If sessionId hasn't changed, nothing to do
         if (oldSessionId === newSessionId) return
+        console.log('[WF_DEBUG] updateTabSessionId CHANGED', { tabId, old: oldSessionId, new: newSessionId, isWorkflow: tab.metadata?.mode === 'workflow', oldEventCount: state.tabEvents[oldSessionId || '']?.length ?? 0 })
 
         set((state) => {
           const updates: Partial<ChatState> = {

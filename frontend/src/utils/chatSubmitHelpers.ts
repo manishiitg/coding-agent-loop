@@ -7,7 +7,6 @@ import type { PollingEvent, ExtendedLLMConfiguration, AgentQueryRequest, Executi
 import type { ChatTab } from '../stores/useChatStore'
 import type { ModeCategory } from '../stores/useModeStore'
 import { useChatStore } from '../stores/useChatStore'
-import { useLLMStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -58,49 +57,13 @@ export function determineModeFlag(params: {
 
 export function buildLLMConfigWithApiKeys(
   effectiveLLMConfig: ExtendedLLMConfiguration,
-  providerConfigs?: Record<string, ExtendedLLMConfiguration>
+  _providerConfigs?: Record<string, ExtendedLLMConfiguration>
 ): ExtendedLLMConfiguration & { api_keys: Record<string, unknown> } {
-  const configs = providerConfigs ?? (() => {
-    const store = useLLMStore.getState()
-    return {
-      openrouter: store.openrouterConfig,
-      openai: store.openaiConfig,
-      anthropic: store.anthropicConfig,
-      vertex: store.vertexConfig,
-      bedrock: store.bedrockConfig,
-      azure: store.azureConfig,
-      minimax: store.minimaxConfig,
-      'minimax-coding-plan': store.minimaxCodingPlanConfig,
-    }
-  })()
-
-  const or = configs.openrouter as ExtendedLLMConfiguration | undefined
-  const oi = configs.openai as ExtendedLLMConfiguration | undefined
-  const an = configs.anthropic as ExtendedLLMConfiguration | undefined
-  const vx = configs.vertex as ExtendedLLMConfiguration | undefined
-  const br = configs.bedrock as ExtendedLLMConfiguration | undefined
-  const az = configs.azure as ExtendedLLMConfiguration | undefined
-  const mm = configs.minimax as ExtendedLLMConfiguration | undefined
-  const mmcp = configs['minimax-coding-plan'] as ExtendedLLMConfiguration | undefined
-
+  // API keys are now loaded server-side from workspace encrypted store.
+  // No keys are sent from the frontend.
   return {
     ...effectiveLLMConfig,
-    api_keys: {
-      ...(or?.api_key ? { openrouter: or.api_key } : {}),
-      ...(oi?.api_key ? { openai: oi.api_key } : {}),
-      ...(an?.api_key ? { anthropic: an.api_key } : {}),
-      ...(vx?.api_key ? { vertex: vx.api_key } : {}),
-      ...(br?.region ? { bedrock: { region: br.region } } : {}),
-      ...(az?.endpoint && az?.api_key
-        ? { azure: { endpoint: az.endpoint, api_key: az.api_key, api_version: (az.options?.api_version as string) || undefined, region: az.region || undefined } }
-        : {}),
-      ...(mm?.api_key ? { minimax: mm.api_key } : {}),
-      ...(mmcp?.api_key ? { 'minimax-coding-plan': mmcp.api_key } : {}),
-      ...(() => {
-        const geminiKey = useLLMStore.getState().geminiCliApiKey
-        return geminiKey ? { gemini_cli: geminiKey } : {}
-      })(),
-    }
+    api_keys: {},
   }
 }
 

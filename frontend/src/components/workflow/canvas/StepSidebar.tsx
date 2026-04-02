@@ -214,17 +214,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Get step ID from node data
-    // For todo_task steps, use todo_task_step.ID (backend uses todo_task_step.ID for learnings)
-    // For other steps, use step.ID
     const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | TodoTaskNodeData
-    let stepId: string | undefined
-
-    if ((node.type as string) === 'todo_task') {
-      const todoTaskData = stepData as TodoTaskNodeData
-      stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id
-    } else {
-      stepId = stepData.step?.id
-    }
+    const stepId = stepData.step?.id
     
     if (!stepId) {
       console.error('[StepSidebar] Cannot view learnings: step ID not available')
@@ -674,19 +665,16 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           await onEditStep(innerStepId, innerStepUpdates)
         }
 
-        // For todo_task steps, also save agent_configs to the inner todo_task_step
+        // For todo_task steps with legacy inner todo_task_step, also save agent_configs there for backwards compat
         console.log('[StepSidebar] Checking if todo_task step:', {
           stepDataForLogging: !!stepDataForLogging,
           stepType: stepDataForLogging?.type,
           isTodoTaskStepResult: stepDataForLogging ? isTodoTaskStep(stepDataForLogging) : false,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          hasTodoTaskStep: !!(stepDataForLogging as any)?.todo_task_step,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          todoTaskStepId: (stepDataForLogging as any)?.todo_task_step?.id
         })
+        // Legacy backwards compat: if old-format plan still has inner todo_task_step, sync configs there too
         if (stepDataForLogging && isTodoTaskStep(stepDataForLogging) && stepDataForLogging.todo_task_step?.id) {
           const innerStepId = stepDataForLogging.todo_task_step.id
-          console.log('[StepSidebar] Saving agent config to inner step of todo_task step:', {
+          console.log('[StepSidebar] Legacy: syncing agent config to inner todo_task_step:', {
             parentStepId: stepId,
             innerStepId: innerStepId,
             hasAgentConfigs: !!agentConfigs
@@ -1702,23 +1690,23 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   <strong>Orchestrator Step:</strong> Manages a dynamic task list with trackable todos. The orchestrator creates tasks, delegates to sub-agents, and tracks progress until the objective is achieved.
                 </p>
 
-                {/* Main Task Step Details */}
-                {step.todo_task_step && (
+                {/* Main Task Step Details - now flat on the step */}
+                {(step.description || step.success_criteria) && (
                   <div className="mt-3 p-2 bg-white dark:bg-gray-800 rounded border border-purple-100 dark:border-purple-900">
                     <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide mb-1">
                       Main Orchestrator Task:
                     </p>
                     <p className="text-xs text-gray-700 dark:text-gray-300 font-medium">
-                      {step.todo_task_step.title || 'Untitled Task'}
+                      {step.title || 'Untitled Task'}
                     </p>
-                    {step.todo_task_step.description && (
+                    {step.description && (
                       <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-line">
-                        {step.todo_task_step.description}
+                        {step.description}
                       </p>
                     )}
-                    {step.todo_task_step.success_criteria && (
+                    {step.success_criteria && (
                       <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
-                        Success: {step.todo_task_step.success_criteria}
+                        Success: {step.success_criteria}
                       </p>
                     )}
                   </div>
@@ -1858,15 +1846,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
             ? (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
-                // For todo_task steps, use todo_task_step.ID
-                // For other steps, use step.ID
-                let stepId: string
-                if ((node.type as string) === 'todo_task') {
-                  const todoTaskData = stepData as TodoTaskNodeData
-                  stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id ?? `step-${stepIndex + 1}`
-                } else {
-                  stepId = stepData.step?.id || `step-${stepIndex + 1}`
-                }
+                const stepId = stepData.step?.id || `step-${stepIndex + 1}`
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/${stepId}/\` and all its contents. This action cannot be undone.`
               })()
             : `Are you sure you want to delete all learnings for Step ${stepIndex + 1}? This will permanently delete the learnings folder and all its contents. This action cannot be undone.`

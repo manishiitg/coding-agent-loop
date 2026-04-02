@@ -82,7 +82,6 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const {
     id,
     title,
-    todo_task_step,
     predefined_routes,
     enable_generic_agent,
     status,
@@ -108,13 +107,13 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const isHorizontal = layoutDirection === 'LR'
   const outputPosition = isHorizontal ? Position.Right : Position.Bottom
 
-  // Context inputs and outputs from the MAIN STEP (todo_task_step)
-  const contextInputs = useMemo(() => todo_task_step?.context_dependencies || [], [todo_task_step?.context_dependencies])
+  // Context inputs and outputs - now flat on the step itself
+  const contextInputs = useMemo(() => step?.context_dependencies || [], [step?.context_dependencies])
   const contextOutputs = useMemo(() => {
-    const output = todo_task_step?.context_output
+    const output = step?.context_output
     if (!output) return []
     return Array.isArray(output) ? output : [output]
-  }, [todo_task_step?.context_output])
+  }, [step?.context_output])
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
   // Get preset for config badges
@@ -129,9 +128,8 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const { availableLLMs } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()
 
-  // Get step config (agent_configs) - for TodoTask, check inner todo_task_step first, then outer step
-  // The inner todo_task_step contains the actual execution configs
-  const innerStep = todo_task_step as { agent_configs?: {
+  // Get step config (agent_configs) - now flat on the step itself
+  const stepConfig = step as { agent_configs?: {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
     conditional_llm?: { provider?: string; model_id?: string }
@@ -146,9 +144,6 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
   } } | undefined
-  const outerStep = step as { agent_configs?: typeof innerStep extends { agent_configs?: infer T } ? T : never }
-  // Prefer inner step configs (where the actual execution happens), fall back to outer step
-  const stepConfig = innerStep?.agent_configs ? innerStep : outerStep
 
   // Determine code execution mode: override > step config > preset default
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
@@ -215,7 +210,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
   // Check if learnings exist in backend
   const [learningsExist, setLearningsExist] = useState<boolean | null>(null)
-  const stepIdForLearnings = todo_task_step?.id ?? step?.id
+  const stepIdForLearnings = step?.id
 
   useEffect(() => {
     if (!workspacePath || !stepIdForLearnings) {
@@ -246,8 +241,8 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   // Lock learnings: override > step config
   const isLockedInConfig = useMemo(() => {
     if (stepOverride?.lock_learnings !== undefined) return stepOverride.lock_learnings === true
-    return todo_task_step?.agent_configs?.lock_learnings ?? false
-  }, [stepOverride?.lock_learnings, todo_task_step?.agent_configs?.lock_learnings])
+    return stepConfig?.agent_configs?.lock_learnings ?? false
+  }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings])
 
   const lockLearnings = useMemo(() => {
     return isLockedInConfig && (learningsExist === true) && !learningDisabled
@@ -451,12 +446,12 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const nodeHeight = useMemo(() => {
     let height = isNestedTodoSubAgent ? 72 : 80
     if (isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) height += 24
-    if (todo_task_step) height += isNestedTodoSubAgent ? 24 : 30
+    if (step?.description) height += isNestedTodoSubAgent ? 24 : 30
     if (hasContext) height += isNestedTodoSubAgent ? 30 : 40
     if (predefined_routes && predefined_routes.length > 0) height += isNestedTodoSubAgent ? 20 : 25
     if (enable_generic_agent) height += isNestedTodoSubAgent ? 16 : 20
     return Math.max(height, isNestedTodoSubAgent ? 108 : 120)
-  }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, todo_task_step, hasContext, predefined_routes, enable_generic_agent])
+  }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, step?.description, hasContext, predefined_routes, enable_generic_agent])
 
   return (
     <div
@@ -607,11 +602,11 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
             {title || `Orchestrator ${stepIndex + 1}`}
           </h3>
 
-          {/* Main todo task step title */}
-          {todo_task_step && (
+          {/* Main todo task step description */}
+          {step?.description && (
             <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5 bg-muted border-border' : 'p-2 bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} rounded-lg border`}>
               <p className={`text-[10px] font-semibold ${isNestedTodoSubAgent ? 'text-foreground' : 'text-gray-700 dark:text-gray-300'}`}>
-                Task: {todo_task_step.title || 'Untitled Step'}
+                Task: {step.title || 'Untitled Step'}
               </p>
             </div>
           )}
@@ -632,7 +627,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
             </div>
           )}
 
-          {/* Context Files - from main step (todo_task_step) */}
+          {/* Context Files - from step */}
           {hasContext && (
             <div className={`space-y-1.5 mt-2 ${isNestedTodoSubAgent ? 'opacity-90' : ''}`}>
               {contextInputs.length > 0 && (

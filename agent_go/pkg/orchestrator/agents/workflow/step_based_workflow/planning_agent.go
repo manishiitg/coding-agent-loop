@@ -804,15 +804,15 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 // NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
 // Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
 type TodoTaskPlanStep struct {
-	Type               StepType                 `json:"type"`                           // Always "todo_task" - required for JSON marshaling/unmarshaling
-	ID                 string                   `json:"id"`                             // Stable step ID - required for identification
-	Title              string                   `json:"title"`                          // Display title for the todo task step wrapper
-	TodoTaskStep       PlanStepInterface        `json:"todo_task_step,omitempty"`       // The main orchestrator step metadata (Description, SuccessCriteria, etc.)
-	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
-	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
-	NextStepID         string                   `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
-	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
-	AgentConfigs       *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
+	Type StepType `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
+	CommonStepFields                             // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
+	HasLoop            bool                      `json:"has_loop"`                       // Not used for todo task steps (completes when all todos done), kept for interface consistency
+	LoopCondition      string                    `json:"loop_condition,omitempty"`       // Not used for todo task steps, kept for interface consistency
+	PredefinedRoutes   []PlanOrchestrationRoute  `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
+	EnableGenericAgent bool                      `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
+	NextStepID         string                    `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
+	TodoTaskResponse   *TodoTaskResponse         `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
+	AgentConfigs       *AgentConfigs             `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
 }
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
@@ -839,96 +839,44 @@ type TodoTaskResponse struct {
 }
 
 // Implement PlanStepInterface for TodoTaskPlanStep
-func (t *TodoTaskPlanStep) GetID() string    { return t.ID }
-func (t *TodoTaskPlanStep) GetTitle() string { return t.Title }
-func (t *TodoTaskPlanStep) GetDescription() string {
-	if t.TodoTaskStep != nil {
-		return t.TodoTaskStep.GetDescription()
-	}
-	return ""
-}
-func (t *TodoTaskPlanStep) GetSuccessCriteria() string {
-	if t.TodoTaskStep != nil {
-		return t.TodoTaskStep.GetSuccessCriteria()
-	}
-	return ""
-}
-func (t *TodoTaskPlanStep) GetContextDependencies() []string {
-	if t.TodoTaskStep != nil {
-		return t.TodoTaskStep.GetContextDependencies()
-	}
-	return nil
-}
-func (t *TodoTaskPlanStep) GetContextOutput() FlexibleContextOutput {
-	if t.TodoTaskStep != nil {
-		return t.TodoTaskStep.GetContextOutput()
-	}
-	return ""
-}
-func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema {
-	if t.TodoTaskStep != nil {
-		return t.TodoTaskStep.GetValidationSchema()
-	}
-	return nil
-}
-func (t *TodoTaskPlanStep) StepType() StepType { return StepTypeTodoTask }
-func (t *TodoTaskPlanStep) GetCommonFields() CommonStepFields {
-	return CommonStepFields{
-		ID:                  t.ID,
-		Title:               t.Title,
-		Description:         t.GetDescription(),
-		SuccessCriteria:     t.GetSuccessCriteria(),
-		ContextDependencies: t.GetContextDependencies(),
-		ContextOutput:       t.GetContextOutput(),
-		ValidationSchema:    t.GetValidationSchema(),
-	}
-}
+func (t *TodoTaskPlanStep) GetID() string                           { return t.ID }
+func (t *TodoTaskPlanStep) GetTitle() string                        { return t.Title }
+func (t *TodoTaskPlanStep) GetDescription() string                  { return t.Description }
+func (t *TodoTaskPlanStep) GetSuccessCriteria() string              { return t.SuccessCriteria }
+func (t *TodoTaskPlanStep) GetContextDependencies() []string        { return t.ContextDependencies }
+func (t *TodoTaskPlanStep) GetContextOutput() FlexibleContextOutput { return t.ContextOutput }
+func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema  { return t.ValidationSchema }
+func (t *TodoTaskPlanStep) StepType() StepType                      { return StepTypeTodoTask }
+func (t *TodoTaskPlanStep) GetCommonFields() CommonStepFields       { return t.CommonStepFields }
 
 // MarshalJSON ensures the type field is always set when marshaling TodoTaskPlanStep
+// Writes the flat format (no nested todo_task_step)
 func (t *TodoTaskPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	t.Type = StepTypeTodoTask
 
-	// Note: enable_generic_agent is not included in JSON output as it's always true for todo task steps
-	type todoTaskJSON struct {
-		Type             StepType                 `json:"type"`
-		ID               string                   `json:"id"`
-		Title            string                   `json:"title"`
-		TodoTaskStep     json.RawMessage          `json:"todo_task_step,omitempty"`
-		PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
-		NextStepID       string                   `json:"next_step_id,omitempty"`
-	}
-
-	result := todoTaskJSON{
-		Type:             t.Type,
-		ID:               t.ID,
-		Title:            t.Title,
-		PredefinedRoutes: t.PredefinedRoutes,
-		NextStepID:       t.NextStepID,
-	}
-
-	// Marshal TodoTaskStep if it exists
-	if t.TodoTaskStep != nil {
-		stepJSON, err := json.Marshal(t.TodoTaskStep)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal todo_task_step: %w", err)
-		}
-		result.TodoTaskStep = stepJSON
-	} else {
-		result.TodoTaskStep = []byte("null")
-	}
-
-	return json.Marshal(result)
+	// Use type alias to avoid infinite recursion
+	type Alias TodoTaskPlanStep
+	return json.Marshal((*Alias)(t))
 }
 
 // UnmarshalJSON implements custom unmarshaling for TodoTaskPlanStep
-// This is needed to properly handle nested todo_task_step and predefined_routes[].sub_agent_step
+// Supports both the new flat format and the legacy nested todo_task_step format for backwards compatibility.
 func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	// First, unmarshal into a temporary struct to extract nested steps as raw JSON
 	var temp struct {
-		Type             StepType        `json:"type"`
-		ID               string          `json:"id"`
-		Title            string          `json:"title"`
+		Type StepType `json:"type"`
+		ID   string   `json:"id"`
+		Title string  `json:"title"`
+		// Flat format fields (new)
+		Description         string                `json:"description"`
+		SuccessCriteria     string                `json:"success_criteria"`
+		ContextDependencies []string              `json:"context_dependencies"`
+		ContextOutput       FlexibleContextOutput `json:"context_output"`
+		ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"`
+		HasLoop             bool                  `json:"has_loop"`
+		LoopCondition       string                `json:"loop_condition"`
+		// Legacy nested field (backwards compatibility)
 		TodoTaskStep     json.RawMessage `json:"todo_task_step,omitempty"`
 		PredefinedRoutes []struct {
 			RouteID       string          `json:"route_id"`
@@ -951,16 +899,38 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	t.Title = temp.Title
 	t.EnableGenericAgent = true // Generic agent is always enabled for todo task steps
 	t.NextStepID = temp.NextStepID
+	t.HasLoop = temp.HasLoop
+	t.LoopCondition = temp.LoopCondition
 
-	// Unmarshal nested todo_task_step
+	// Copy flat format fields
+	t.Description = temp.Description
+	t.SuccessCriteria = temp.SuccessCriteria
+	t.ContextDependencies = temp.ContextDependencies
+	t.ContextOutput = temp.ContextOutput
+	t.ValidationSchema = temp.ValidationSchema
+
+	// BACKWARDS COMPATIBILITY: if legacy todo_task_step is present, migrate fields from it
+	// Top-level fields take precedence if both are present
 	if len(temp.TodoTaskStep) > 0 && string(temp.TodoTaskStep) != "null" {
-		step, err := unmarshalStepFromJSON(temp.TodoTaskStep)
+		innerStep, err := unmarshalStepFromJSON(temp.TodoTaskStep)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal todo_task_step: %w", err)
+			return fmt.Errorf("failed to unmarshal legacy todo_task_step: %w", err)
 		}
-		t.TodoTaskStep = step
-	} else {
-		t.TodoTaskStep = nil
+		if t.Description == "" {
+			t.Description = innerStep.GetDescription()
+		}
+		if t.SuccessCriteria == "" {
+			t.SuccessCriteria = innerStep.GetSuccessCriteria()
+		}
+		if t.ContextDependencies == nil {
+			t.ContextDependencies = innerStep.GetContextDependencies()
+		}
+		if t.ContextOutput == "" {
+			t.ContextOutput = innerStep.GetContextOutput()
+		}
+		if t.ValidationSchema == nil {
+			t.ValidationSchema = innerStep.GetValidationSchema()
+		}
 	}
 
 	// Unmarshal predefined_routes with nested sub_agent_step
@@ -1731,20 +1701,39 @@ func getAddTodoTaskStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: Short, clear title for the todo task step"
 			},
-			"todo_task_step": {
+			"description": {
+				"type": "string",
+				"description": "REQUIRED: Description of the overall objective - the orchestrator will break this into tasks"
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "REQUIRED: How to verify the overall objective is complete (all todos done)"
+			},
+			"context_dependencies": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "REQUIRED: List of context files from previous steps. Use empty array [] if no dependencies."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "REQUIRED: Context file this step will create with final summary."
+			},
+			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: The main todo task orchestrator step metadata. This provides the overall context for the todo task management.",
+				"description": "OPTIONAL: Validation schema for the step output",
 				"properties": {
-					"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for the inner orchestrator step."},
-					"id": {"type": "string", "description": "REQUIRED: Stable step ID for the todo task orchestrator step"},
-					"title": {"type": "string", "description": "REQUIRED: Title of the todo task orchestrator step"},
-					"description": {"type": "string", "description": "REQUIRED: Description of the overall objective - the orchestrator will break this into tasks"},
-					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the overall objective is complete (all todos done)"},
-					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: List of context files from previous steps. Use empty array [] if no dependencies."},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create with final summary."},
-					"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false for todo task steps."}
-				},
-				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+					"files": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"file_name": {"type": "string"},
+								"must_exist": {"type": "boolean"},
+								"json_checks": {"type": "array", "items": {"type": "object"}}
+							}
+						}
+					}
+				}
 			},
 			"predefined_routes": {
 				"type": "array",
@@ -1775,7 +1764,6 @@ func getAddTodoTaskStepSchema() string {
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
-								"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
 								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
@@ -1813,7 +1801,7 @@ func getAddTodoTaskStepSchema() string {
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
 			}
 		},
-		"required": ["id", "title", "todo_task_step", "next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "description", "context_dependencies", "context_output", "next_step_id", "insert_after_step_id"]
 	}`
 }
 
@@ -1830,19 +1818,26 @@ func getUpdateTodoTaskStepSchema() string {
 				"type": "string",
 				"description": "OPTIONAL: New title for the todo task step"
 			},
-			"todo_task_step": {
+			"description": {
+				"type": "string",
+				"description": "OPTIONAL: Updated description of the overall objective"
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "OPTIONAL: Updated success criteria"
+			},
+			"context_dependencies": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "OPTIONAL: Updated list of context files from previous steps"
+			},
+			"context_output": {
+				"type": "string",
+				"description": "OPTIONAL: Updated context file this step will create"
+			},
+			"validation_schema": {
 				"type": "object",
-				"description": "OPTIONAL: Updated main todo task orchestrator step metadata. Only include fields you want to change.",
-				"properties": {
-					"type": {"type": "string", "description": "Step type - must be 'regular' for the inner orchestrator step."},
-					"id": {"type": "string", "description": "Stable step ID for the todo task orchestrator step"},
-					"title": {"type": "string", "description": "Title of the todo task orchestrator step"},
-					"description": {"type": "string", "description": "Description of the overall objective"},
-					"success_criteria": {"type": "string", "description": "How to verify the overall objective is complete"},
-					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "List of context files from previous steps"},
-					"context_output": {"type": "string", "description": "Context file this step will create with final summary"},
-					"has_loop": {"type": "boolean", "description": "Always set to false for todo task steps"}
-				}
+				"description": "OPTIONAL: Updated validation schema"
 			},
 			"predefined_routes": {
 				"type": "array",
@@ -1873,7 +1868,6 @@ func getUpdateTodoTaskStepSchema() string {
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string"},
 								"has_loop": {"type": "boolean"},
-								"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
 								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
@@ -2618,10 +2612,7 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	case *HumanInputPlanStep:
 		s.ValidationSchema = schema
 	case *TodoTaskPlanStep:
-		// For TodoTaskPlanStep, validation schema is on the inner TodoTaskStep
-		if s.TodoTaskStep != nil {
-			updateValidationSchemaOnStep(s.TodoTaskStep, schema)
-		}
+		s.ValidationSchema = schema
 	case *RoutingPlanStep:
 		s.ValidationSchema = schema
 	}
@@ -3201,60 +3192,56 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.Title != "" {
 			updated.Title = partialUpdate.Title
 		}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.SuccessCriteria != "" {
+			updated.SuccessCriteria = partialUpdate.SuccessCriteria
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = partialUpdate.ContextOutput
+		}
+		// BACKWARDS COMPATIBILITY: if legacy todo_task_step map is present, extract fields from it
 		if partialUpdate.TodoTaskStep != nil {
-			// If we have an existing nested step, merge the partial update into it to preserve fields
-			// that weren't in the update (like context_dependencies, validation_schema, etc.)
-			if updated.TodoTaskStep != nil {
-				// Create a PartialPlanStep from the map by extracting fields directly
-				nestedPartial := PartialPlanStep{}
-				// Extract common fields from the map
-				if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok {
-					nestedPartial.Description = desc
-				}
-				if title, ok := partialUpdate.TodoTaskStep["title"].(string); ok {
-					nestedPartial.Title = title
-				}
-				if successCriteria, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok {
-					nestedPartial.SuccessCriteria = successCriteria
-				}
-				if contextDeps, ok := partialUpdate.TodoTaskStep["context_dependencies"].([]interface{}); ok {
-					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
-					for _, dep := range contextDeps {
-						if depStr, ok := dep.(string); ok {
-							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
-						}
+			if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok && desc != "" {
+				updated.Description = desc
+			}
+			if title, ok := partialUpdate.TodoTaskStep["title"].(string); ok && title != "" {
+				updated.Title = title
+			}
+			if successCriteria, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok && successCriteria != "" {
+				updated.SuccessCriteria = successCriteria
+			}
+			if contextDeps, ok := partialUpdate.TodoTaskStep["context_dependencies"].([]interface{}); ok {
+				updated.ContextDependencies = make([]string, 0, len(contextDeps))
+				for _, dep := range contextDeps {
+					if depStr, ok := dep.(string); ok {
+						updated.ContextDependencies = append(updated.ContextDependencies, depStr)
 					}
 				}
-				if contextOutput, ok := partialUpdate.TodoTaskStep["context_output"]; ok {
-					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
-						contextOutputJSON, _ := json.Marshal(contextOutputMap)
-						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
-					} else if contextOutputStr, ok := contextOutput.(string); ok {
-						nestedPartial.ContextOutput = FlexibleContextOutput(contextOutputStr)
+			}
+			if contextOutput, ok := partialUpdate.TodoTaskStep["context_output"]; ok {
+				if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
+					contextOutputJSON, _ := json.Marshal(contextOutputMap)
+					json.Unmarshal(contextOutputJSON, &updated.ContextOutput)
+				} else if contextOutputStr, ok := contextOutput.(string); ok {
+					updated.ContextOutput = FlexibleContextOutput(contextOutputStr)
+				}
+			}
+			if validationSchema, ok := partialUpdate.TodoTaskStep["validation_schema"]; ok {
+				if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
+					validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
+					var vs ValidationSchema
+					if json.Unmarshal(validationSchemaJSON, &vs) == nil {
+						updated.ValidationSchema = &vs
 					}
 				}
-				if validationSchema, ok := partialUpdate.TodoTaskStep["validation_schema"]; ok {
-					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
-						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
-						var vs ValidationSchema
-						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
-							nestedPartial.ValidationSchema = &vs
-						}
-					}
-				}
-				// Merge the nested partial update into the existing nested step
-				updated.TodoTaskStep = mergePartialStepUpdate(updated.TodoTaskStep, nestedPartial)
-			} else {
-				// No existing nested step - convert and assign directly
-				converted, err := convertMapToStep(partialUpdate.TodoTaskStep)
-				if err != nil {
-					return existingStep
-				}
-				updated.TodoTaskStep = converted
 			}
 		}
 		if partialUpdate.PredefinedRoutes != nil {
-			// Convert routes - SubAgentStep needs conversion
 			updated.PredefinedRoutes = make([]PlanOrchestrationRoute, len(partialUpdate.PredefinedRoutes))
 			for i, route := range partialUpdate.PredefinedRoutes {
 				updated.PredefinedRoutes[i] = route
@@ -3263,9 +3250,8 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.NextStepID != "" {
 			updated.NextStepID = partialUpdate.NextStepID
 		}
-		if partialUpdate.ValidationSchema != nil && updated.TodoTaskStep != nil {
-			// Update validation schema on the inner TodoTaskStep
-			updateValidationSchemaOnStep(updated.TodoTaskStep, partialUpdate.ValidationSchema)
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
 		}
 		return &updated
 
@@ -3339,10 +3325,6 @@ func findStepByID(steps []PlanStepInterface, id string) (PlanStepInterface, int,
 				}
 			}
 		case *TodoTaskPlanStep:
-			if s.TodoTaskStep != nil && s.TodoTaskStep.GetID() == id {
-				// Special case: the internal todo_task_step matches
-				return s.TodoTaskStep, -1, nil
-			}
 			for _, route := range s.PredefinedRoutes {
 				if route.SubAgentStep != nil {
 					if foundStep, idx, slice := findStepByID([]PlanStepInterface{route.SubAgentStep}, id); foundStep != nil {
@@ -3389,10 +3371,6 @@ func updateStepRecursively(steps []PlanStepInterface, partialUpdate PartialPlanS
 				}
 			}
 		case *TodoTaskPlanStep:
-			if s.TodoTaskStep != nil && s.TodoTaskStep.GetID() == partialUpdate.ExistingStepID {
-				s.TodoTaskStep = mergePartialStepUpdate(s.TodoTaskStep, partialUpdate)
-				return true, i
-			}
 			for j := range s.PredefinedRoutes {
 				if s.PredefinedRoutes[j].SubAgentStep != nil {
 					tmpSlice := []PlanStepInterface{s.PredefinedRoutes[j].SubAgentStep}
@@ -3825,35 +3803,29 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			}
 		}
 	}
-	// Todo task step fields
+	// Legacy todo_task_step field — extract fields and track them as top-level changes
 	if partialUpdate.TodoTaskStep != nil {
-		changedFields = append(changedFields, "todo_task_step")
-		// Convert new todo task step from map to PlanStepInterface
-		newTodoTaskStep, err := convertMapToStep(partialUpdate.TodoTaskStep)
-		if err == nil {
-			// Get old todo task step
-			var oldTodoTaskStep PlanStepInterface
+		if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok && desc != "" {
+			changedFields = append(changedFields, "description (via todo_task_step)")
 			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
-				oldTodoTaskStep = todoTaskStep.TodoTaskStep
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   partialUpdate.ExistingStepID,
+					Field:    "description",
+					OldValue: todoTaskStep.Description,
+					NewValue: desc,
+				})
 			}
-			// Compare nested step fields in detail
-			compareNestedStepFields(oldTodoTaskStep, newTodoTaskStep, partialUpdate.ExistingStepID, "todo_task_step", fieldChanges)
-		} else {
-			// Fallback to ID-only tracking if conversion fails
-			oldTodoTaskStep := "nil"
-			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok && todoTaskStep.TodoTaskStep != nil {
-				oldTodoTaskStep = todoTaskStep.TodoTaskStep.GetID()
+		}
+		if sc, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok && sc != "" {
+			changedFields = append(changedFields, "success_criteria (via todo_task_step)")
+			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   partialUpdate.ExistingStepID,
+					Field:    "success_criteria",
+					OldValue: todoTaskStep.SuccessCriteria,
+					NewValue: sc,
+				})
 			}
-			newTodoTaskStepID := ""
-			if id, ok := partialUpdate.TodoTaskStep["id"].(string); ok {
-				newTodoTaskStepID = id
-			}
-			*fieldChanges = append(*fieldChanges, PlanFieldChange{
-				StepID:   partialUpdate.ExistingStepID,
-				Field:    "todo_task_step",
-				OldValue: oldTodoTaskStep,
-				NewValue: newTodoTaskStepID,
-			})
 		}
 	}
 	if partialUpdate.PredefinedRoutes != nil {
@@ -4672,14 +4644,11 @@ func validateOrchestrationStepFieldsTyped(step *OrchestrationPlanStep) error {
 // validateTodoTaskStepFieldsTyped validates that a TodoTaskPlanStep has all required fields
 // Returns an error message suitable for returning as a tool response if validation fails
 func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
-	if step.TodoTaskStep == nil {
-		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required todo_task_step field. Please provide the todo_task_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
+	if step.ID == "" {
+		return fmt.Errorf("step (title: %q) has todo_task step type but is missing required id field", step.Title)
 	}
-	if step.TodoTaskStep.GetID() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required ID field. Please provide an ID for the todo_task_step", step.Title, step.ID)
-	}
-	if step.TodoTaskStep.GetDescription() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required description field. Please provide a description for the todo_task_step", step.Title, step.ID)
+	if step.Description == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required description field. Please provide a description", step.Title, step.ID)
 	}
 	if step.NextStepID == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required next_step_id field. Please provide the ID of the step to connect to after all todos are complete, or 'end' to terminate the workflow", step.Title, step.ID)
@@ -4794,11 +4763,6 @@ func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, 
 						NewTitle:     route.SubAgentStep.GetTitle(),
 					})
 				}
-			}
-		}
-		if s.TodoTaskStep != nil {
-			if err := migrateTodoRouteIDsInStep(s.TodoTaskStep, parentStepFilter, changes); err != nil {
-				return err
 			}
 		}
 		for _, route := range s.PredefinedRoutes {
@@ -4990,11 +4954,6 @@ func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) er
 				s.GetTitle(),
 				s.GetID(),
 			)
-		}
-		if s.TodoTaskStep != nil {
-			if err := validateTodoTaskNestingDepth(s.TodoTaskStep, todoRouteDepth); err != nil {
-				return err
-			}
 		}
 		for i, route := range s.PredefinedRoutes {
 			if route.SubAgentStep == nil {

@@ -504,6 +504,19 @@ func (s *WorkshopChatSession) UpdateTieredConfig(tieredConfig *TieredLLMConfig) 
 	}
 }
 
+// UpdateAPIKeys refreshes the orchestrator's API keys.
+// Called on session reuse to ensure workspace-stored keys are always current.
+func (s *WorkshopChatSession) UpdateAPIKeys(apiKeys *orchestrator.APIKeys) {
+	llmCfg := s.controller.GetLLMConfig()
+	if llmCfg != nil {
+		llmCfg.APIKeys = apiKeys
+	}
+	// Also refresh tier resolver's API keys if active
+	if s.controller.tierResolver != nil && s.config != nil && s.config.TieredConfig != nil {
+		s.controller.tierResolver = NewTierResolver(s.config.TieredConfig, apiKeys)
+	}
+}
+
 // UpdatePresetSettings refreshes non-LLM controller settings from the preset.
 // Called when reusing a cached workshop session to pick up any config changes
 // the user made in the workflow editor (MCP servers, tools, knowledgebase, etc.).

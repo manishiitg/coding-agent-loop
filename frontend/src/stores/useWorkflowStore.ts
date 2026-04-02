@@ -14,6 +14,7 @@ export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
+export type CanvasViewMode = 'flow' | 'plan'
 
 // Global localStorage key for temporary LLM overrides (persists across page refreshes)
 const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
@@ -27,6 +28,7 @@ const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
+const CANVAS_VIEW_MODE_KEY = 'workflow_canvas_view_mode'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -209,6 +211,7 @@ interface WorkflowStore {
   workflowWorkspaceView: WorkflowWorkspaceView
   workflowWorkspaceSelectionTouched: boolean
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
+  canvasViewMode: CanvasViewMode // 'flow' = React Flow diagram, 'plan' = readable outline
 
   // Multi-tab chat state
   workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
@@ -301,6 +304,7 @@ interface WorkflowStore {
   setChatAreaExpanded: (expanded: boolean) => void
   setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => void
   setLayoutDirection: (direction: LayoutDirection) => void
+  setCanvasViewMode: (mode: CanvasViewMode) => void
 
   // Workflow chat tabs
   createWorkflowTab: (phaseId: string, phaseName: string) => Promise<string>  // Returns tabId
@@ -563,6 +567,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         return 'LR' // Default to horizontal layout
       })() as LayoutDirection,
+      // Canvas view mode (persists across page refreshes via localStorage)
+      canvasViewMode: (() => {
+        try {
+          const saved = localStorage.getItem(CANVAS_VIEW_MODE_KEY)
+          if (saved === 'flow' || saved === 'plan') {
+            return saved
+          }
+        } catch {
+          // ignore
+        }
+        return 'flow' as CanvasViewMode
+      })(),
 
       // Multi-tab chat state
       workflowChatTabs: {},
@@ -570,7 +586,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // === Workflow Mode State ===
       workflowMode: 'plan',
-      workshopMode: 'builder' as const,
+      workshopMode: 'optimizer' as const,
       workshopModeByPreset: {},
       setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -1746,6 +1762,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.error('[WorkflowStore] Failed to save layout direction to localStorage:', error)
         }
         set({ layoutDirection: direction })
+      },
+
+      setCanvasViewMode: (mode: CanvasViewMode) => {
+        try {
+          localStorage.setItem(CANVAS_VIEW_MODE_KEY, mode)
+        } catch {
+          // ignore
+        }
+        set({ canvasViewMode: mode })
       },
 
       // Workflow chat tabs

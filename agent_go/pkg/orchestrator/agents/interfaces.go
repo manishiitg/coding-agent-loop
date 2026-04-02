@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -155,31 +156,14 @@ type CrossProviderFallback struct {
 	Models   []string `json:"models"`
 }
 
-// AgentAPIKeys represents API keys for different providers (for agent config)
-type AgentAPIKeys struct {
-	OpenRouter        *string
-	OpenAI            *string
-	Anthropic         *string
-	Vertex            *string
-	GeminiCLI         *string
-	MiniMax           *string
-	MiniMaxCodingPlan *string
-	Bedrock           *BedrockAgentConfig
-	Azure             *AzureAgentConfig
-}
+// AgentAPIKeys is an alias for llm.ProviderAPIKeys (canonical type).
+type AgentAPIKeys = llm.ProviderAPIKeys
 
-// BedrockAgentConfig represents Bedrock-specific configuration (for agent config)
-type BedrockAgentConfig struct {
-	Region string
-}
+// BedrockAgentConfig is an alias for llm.BedrockConfig (canonical type).
+type BedrockAgentConfig = llm.BedrockConfig
 
-// AzureAgentConfig represents Azure-specific configuration (for agent config)
-type AzureAgentConfig struct {
-	Endpoint   string
-	APIKey     string
-	APIVersion string
-	Region     string
-}
+// AzureAgentConfig is an alias for llm.AzureAPIConfig (canonical type).
+type AzureAgentConfig = llm.AzureAPIConfig
 
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults
 func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {

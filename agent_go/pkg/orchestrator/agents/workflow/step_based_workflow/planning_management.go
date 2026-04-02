@@ -229,11 +229,6 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 		if err := validateTodoTaskStepFieldsTyped(step); err != nil {
 			return err
 		}
-		if step.TodoTaskStep != nil {
-			if err := validateLoadedPlanStep(step.TodoTaskStep, 0); err != nil {
-				return fmt.Errorf("todo_task_step: %w", err)
-			}
-		}
 		for i, route := range step.PredefinedRoutes {
 			if route.SubAgentStep != nil {
 				if err := validateLoadedPlanStep(route.SubAgentStep, i); err != nil {
@@ -401,13 +396,6 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		return nil
 
 	case *TodoTaskPlanStep:
-		// Todo task step: populate inner TodoTaskStep recursively
-		if step.TodoTaskStep != nil {
-			if err := populateRuntimeFields(step.TodoTaskStep, stepConfigs); err != nil {
-				return fmt.Errorf("failed to populate todo task inner step: %w", err)
-			}
-		}
-
 		// Populate sub-agent steps in predefined routes recursively
 		for i := range step.PredefinedRoutes {
 			route := &step.PredefinedRoutes[i]
@@ -420,8 +408,9 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
-		// TodoTaskPlanStep delegates ValidationSchema to its inner TodoTaskStep,
-		// which gets populated via recursive populateRuntimeFields above
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	default:

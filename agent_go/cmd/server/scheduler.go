@@ -779,29 +779,10 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 					"model_id": llmCfg.ModelID,
 				},
 			}
-			apiKeys := buildSchedulerAPIKeys()
-			if len(apiKeys) > 0 {
-				llmConfig["api_keys"] = apiKeys
-			}
 			reqMap["llm_config"] = llmConfig
 		}
 	}
-
-	storedKeys, keyErr := LoadProviderKeys(ctx)
-	if keyErr != nil {
-		scheduleLogf("[SCHEDULER] Warning: failed to load provider keys: %v", keyErr)
-	} else if storedKeys != nil {
-		apiKeysMap := ProviderKeysToAPIKeysMap(storedKeys)
-		if len(apiKeysMap) > 0 {
-			if llmCfg, ok := reqMap["llm_config"].(map[string]interface{}); ok {
-				llmCfg["api_keys"] = apiKeysMap
-			} else {
-				reqMap["llm_config"] = map[string]interface{}{
-					"api_keys": apiKeysMap,
-				}
-			}
-		}
-	}
+	// API keys are now handled by MergedProviderAPIKeys in buildWorkshopConfig
 
 	if len(sctx.Schedule.TriggerPayload) > 0 {
 		var overrides map[string]interface{}
@@ -1084,37 +1065,4 @@ func ValidateCronExpression(expr string) error {
 		return fmt.Errorf("invalid cron expression: %w", err)
 	}
 	return nil
-}
-
-// buildSchedulerAPIKeys builds API keys map from environment variables.
-func buildSchedulerAPIKeys() map[string]interface{} {
-	envKeys := buildProviderAPIKeysFromEnv()
-	keys := map[string]interface{}{}
-	if envKeys.OpenRouter != nil {
-		keys["openrouter"] = *envKeys.OpenRouter
-	}
-	if envKeys.OpenAI != nil {
-		keys["openai"] = *envKeys.OpenAI
-	}
-	if envKeys.Anthropic != nil {
-		keys["anthropic"] = *envKeys.Anthropic
-	}
-	if envKeys.Vertex != nil {
-		keys["vertex"] = *envKeys.Vertex
-	}
-	if envKeys.GeminiCLI != nil {
-		keys["gemini_cli"] = *envKeys.GeminiCLI
-	}
-	if envKeys.Bedrock != nil {
-		keys["bedrock"] = map[string]interface{}{"region": envKeys.Bedrock.Region}
-	}
-	if envKeys.Azure != nil {
-		keys["azure"] = map[string]interface{}{
-			"endpoint":    envKeys.Azure.Endpoint,
-			"api_key":     envKeys.Azure.APIKey,
-			"api_version": envKeys.Azure.APIVersion,
-			"region":      envKeys.Azure.Region,
-		}
-	}
-	return keys
 }

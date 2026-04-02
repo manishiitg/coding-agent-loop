@@ -140,13 +140,6 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 			}
 		}
 	case *TodoTaskPlanStep:
-		if s.TodoTaskStep != nil {
-			result = append(result, WorkshopStepInfo{
-				Step: s.TodoTaskStep, ParentID: parentID, ParentType: parentType,
-				BranchName: "todo_task_step", TopIndex: -1,
-			})
-			result = append(result, collectInnerSteps(s.TodoTaskStep)...)
-		}
 		for _, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {
 				result = append(result, WorkshopStepInfo{
@@ -10693,20 +10686,14 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 	stepID := fmt.Sprintf("bg-todo-%s-%d", strings.ToLower(strings.ReplaceAll(name, " ", "-")), time.Now().UnixNano()%100000)
 
 	// Build a minimal TodoTaskPlanStep from the instruction
-	innerStep := &RegularPlanStep{
-		Type: StepTypeRegular,
+	todoStep := &TodoTaskPlanStep{
+		Type: StepTypeTodoTask,
 		CommonStepFields: CommonStepFields{
-			ID:              stepID + "-inner",
+			ID:              stepID,
 			Title:           name,
 			Description:     instruction,
 			SuccessCriteria: fmt.Sprintf("Complete all tasks described in the instruction for: %s", name),
 		},
-	}
-	todoStep := &TodoTaskPlanStep{
-		Type:               StepTypeTodoTask,
-		ID:                 stepID,
-		Title:              name,
-		TodoTaskStep:       innerStep,
 		PredefinedRoutes:   nil, // generic agent only
 		EnableGenericAgent: true,
 		NextStepID:         "end",

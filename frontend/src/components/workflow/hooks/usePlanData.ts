@@ -130,11 +130,10 @@ function mergeStepConfigs(
       } as PlanStep
     }
     
-    // Handle todo task step
+    // Handle todo task step - configs are now flat on the step itself
     if (isTodoTaskStep(step)) {
       mergedStep = {
         ...mergedStep,
-        todo_task_step: step.todo_task_step ? mergeIntoStep(step.todo_task_step) : undefined,
         predefined_routes: step.predefined_routes ? step.predefined_routes.map(route => ({
           ...route,
           sub_agent_step: route.sub_agent_step ? mergeIntoStep(route.sub_agent_step) : undefined

@@ -20,6 +20,7 @@ import (
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
@@ -29,103 +30,6 @@ func normalizeWorkspacePathForPresetMatch(path string) string {
 		return ""
 	}
 	return filepath.ToSlash(filepath.Clean(cleaned))
-}
-
-func convertProviderAPIKeysToOrchestratorAPIKeys(keys interface {
-	GetOpenRouter() *string
-	GetOpenAI() *string
-	GetAnthropic() *string
-	GetVertex() *string
-	GetGeminiCLI() *string
-	GetMiniMax() *string
-	GetMiniMaxCodingPlan() *string
-	GetBedrockRegion() string
-	GetAzureEndpoint() string
-	GetAzureAPIKey() string
-	GetAzureAPIVersion() string
-	GetAzureRegion() string
-}) *orchestrator.APIKeys {
-	if keys == nil {
-		return nil
-	}
-
-	result := &orchestrator.APIKeys{
-		OpenRouter:        keys.GetOpenRouter(),
-		OpenAI:            keys.GetOpenAI(),
-		Anthropic:         keys.GetAnthropic(),
-		Vertex:            keys.GetVertex(),
-		GeminiCLI:         keys.GetGeminiCLI(),
-		MiniMax:           keys.GetMiniMax(),
-		MiniMaxCodingPlan: keys.GetMiniMaxCodingPlan(),
-	}
-
-	if region := keys.GetBedrockRegion(); region != "" {
-		result.Bedrock = &orchestrator.BedrockKey{Region: region}
-	}
-	if endpoint := keys.GetAzureEndpoint(); endpoint != "" {
-		result.Azure = &orchestrator.AzureKey{
-			Endpoint:   endpoint,
-			APIKey:     keys.GetAzureAPIKey(),
-			APIVersion: keys.GetAzureAPIVersion(),
-			Region:     keys.GetAzureRegion(),
-		}
-	}
-
-	return result
-}
-
-type providerAPIKeysAdapter struct {
-	openRouter        *string
-	openAI            *string
-	anthropic         *string
-	vertex            *string
-	geminiCLI         *string
-	miniMax           *string
-	miniMaxCodingPlan *string
-	bedrockRegion     string
-	azureEndpoint     string
-	azureAPIKey       string
-	azureAPIVersion   string
-	azureRegion       string
-}
-
-func (p providerAPIKeysAdapter) GetOpenRouter() *string        { return p.openRouter }
-func (p providerAPIKeysAdapter) GetOpenAI() *string            { return p.openAI }
-func (p providerAPIKeysAdapter) GetAnthropic() *string         { return p.anthropic }
-func (p providerAPIKeysAdapter) GetVertex() *string            { return p.vertex }
-func (p providerAPIKeysAdapter) GetGeminiCLI() *string         { return p.geminiCLI }
-func (p providerAPIKeysAdapter) GetMiniMax() *string           { return p.miniMax }
-func (p providerAPIKeysAdapter) GetMiniMaxCodingPlan() *string { return p.miniMaxCodingPlan }
-func (p providerAPIKeysAdapter) GetBedrockRegion() string      { return p.bedrockRegion }
-func (p providerAPIKeysAdapter) GetAzureEndpoint() string      { return p.azureEndpoint }
-func (p providerAPIKeysAdapter) GetAzureAPIKey() string        { return p.azureAPIKey }
-func (p providerAPIKeysAdapter) GetAzureAPIVersion() string    { return p.azureAPIVersion }
-func (p providerAPIKeysAdapter) GetAzureRegion() string        { return p.azureRegion }
-
-func providerAPIKeysFromEnvAsOrchestratorKeys() *orchestrator.APIKeys {
-	envKeys := buildProviderAPIKeysFromEnv()
-	if envKeys == nil {
-		return nil
-	}
-	adapter := providerAPIKeysAdapter{
-		openRouter:        envKeys.OpenRouter,
-		openAI:            envKeys.OpenAI,
-		anthropic:         envKeys.Anthropic,
-		vertex:            envKeys.Vertex,
-		geminiCLI:         envKeys.GeminiCLI,
-		miniMax:           envKeys.MiniMax,
-		miniMaxCodingPlan: envKeys.MiniMaxCodingPlan,
-	}
-	if envKeys.Bedrock != nil {
-		adapter.bedrockRegion = envKeys.Bedrock.Region
-	}
-	if envKeys.Azure != nil {
-		adapter.azureEndpoint = envKeys.Azure.Endpoint
-		adapter.azureAPIKey = envKeys.Azure.APIKey
-		adapter.azureAPIVersion = envKeys.Azure.APIVersion
-		adapter.azureRegion = envKeys.Azure.Region
-	}
-	return convertProviderAPIKeysToOrchestratorAPIKeys(adapter)
 }
 
 func (api *StreamingAPI) findPresetForWorkspace(ctx context.Context, workspacePath, userID string) (*database.PresetQuery, error) {
@@ -3903,7 +3807,7 @@ func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *htt
 			Provider: api.provider,
 			ModelID:  api.model,
 		},
-		APIKeys: providerAPIKeysFromEnvAsOrchestratorKeys(),
+		APIKeys: MergedProviderAPIKeys(r.Context()),
 	}
 
 	customTools, customToolExecutors, toolCategories := createCustomTools(true)

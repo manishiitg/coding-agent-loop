@@ -19,6 +19,13 @@ const TOOL_CALL_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_
 // Including them in the scan prevents them from breaking consecutive tool call groups.
 const DELEGATION_BRIDGE_TYPES = new Set(['delegation_start', 'delegation_end']);
 
+// Event types that should be parented under an in-progress (still running) agent session.
+// Only agent-internal events — NOT user_message, delegation_start, etc.
+const IN_PROGRESS_CHILD_TYPES = new Set([
+  'tool_call_start', 'tool_call_end', 'tool_call_error',
+  'token_usage', 'llm_generation_end', 'llm_generation_start',
+]);
+
 interface EventHierarchyProps {
   events: PollingEvent[];
   onApproveWorkflow?: (requestId: string) => void
@@ -433,11 +440,37 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const sessionEvents = new Map<string, Set<string>>()
     startEvents.forEach((startInfo, sessionKey) => {
       const endInfo = endEvents.get(sessionKey)
-      if (!endInfo) return
       const eventIds = new Set<string>()
       eventIds.add(startInfo.event.id)
-      for (let j = startInfo.index + 1; j < endInfo.index; j++) eventIds.add(displayEvents[j].id)
-      eventIds.add(endInfo.event.id)
+
+      if (endInfo) {
+        // Completed session: include all events between start and end by index
+        for (let j = startInfo.index + 1; j < endInfo.index; j++) eventIds.add(displayEvents[j].id)
+        eventIds.add(endInfo.event.id)
+      } else {
+        // In-progress session (no end event yet): include tool-call events after start
+        // that share the same correlation_id. Without this, tool calls from a still-running
+        // agent become root events and appear at the bottom of the timeline instead of being
+        // grouped under their agent card.
+        // Only include agent-internal event types — NOT user_message, delegation_start, etc.
+        const parts = sessionKey.split(':')
+        const sessionCorrelationId: string | undefined = parts[1] // agent_session:{correlationId}:{agentType}
+        if (sessionCorrelationId) {
+          for (let j = startInfo.index + 1; j < displayEvents.length; j++) {
+            const evt = displayEvents[j]
+            if (!evt.type || !IN_PROGRESS_CHILD_TYPES.has(evt.type)) continue
+            const evtData = evt.data as Record<string, unknown> | undefined
+            const innerData = (evtData?.data && typeof evtData.data === 'object') ? evtData.data as Record<string, unknown> : undefined
+            const evtCid = (evt as unknown as Record<string, unknown>).correlation_id
+              ?? innerData?.correlation_id
+              ?? evtData?.correlation_id
+            if (evtCid === sessionCorrelationId) {
+              eventIds.add(evt.id)
+            }
+          }
+        }
+      }
+
       sessionEvents.set(sessionKey, eventIds)
     })
 

@@ -22,6 +22,7 @@ import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 
 function WorkshopModeToggle() {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -35,7 +36,7 @@ function WorkshopModeToggle() {
   const builderModes = [
     { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design and refine the workflow structure and step instructions.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Improve reliability, learnings, validation, and step efficiency.' },
-    { id: 'debugger' as const, label: 'Debug', title: 'Debug', description: 'Inspect prior runs and failures without re-executing the workflow.' },
+    { id: 'debugger' as const, label: 'Ask', title: 'Ask', description: 'Inspect prior runs and failures without re-executing the workflow.' },
     { id: 'runner' as const, label: 'Run', title: 'Run', description: 'Use the finished workflow and focus on execution results.' },
   ]
 
@@ -393,6 +394,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isWorkflowPhaseChat = !!workflowPhaseId
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
+  // Read phase LLM from workflow manifest (source of truth), not the global preset
+  const manifestPhaseLLM = useMemo(() => {
+    if (!isWorkflowPhaseChat) return null
+    const workspacePath = workflowPhasePreset?.selectedFolder?.filepath
+    if (!workspacePath) return null
+    const wf = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)
+    return wf?.manifest?.capabilities?.llm_config?.phase_llm ?? null
+  }, [isWorkflowPhaseChat, workflowPhasePreset?.selectedFolder?.filepath])
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
   // Multi-agent now runs in spawn mode by default (can still plan via tools when needed)
@@ -619,7 +628,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Only default to false if the value is undefined/null (not explicitly set)
   const effectiveProviderForSteer = useMemo(() => {
     if (isWorkflowPhaseChat) {
-      return workflowPhasePreset?.llmConfig?.phase_llm?.provider
+      return manifestPhaseLLM?.provider
+        || workflowPhasePreset?.llmConfig?.phase_llm?.provider
         || workflowPhasePreset?.llmConfig?.provider
         || tabConfig?.llmConfig?.provider
         || null
@@ -627,6 +637,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return tabConfig?.llmConfig?.provider ?? null
   }, [
     isWorkflowPhaseChat,
+    manifestPhaseLLM?.provider,
     tabConfig?.llmConfig?.provider,
     workflowPhasePreset?.llmConfig?.phase_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider,
@@ -948,16 +959,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!tabSessionId) return
     if (!isCLIProvider && !canSteer && queuedMessages.length === 0) return
 
-    console.log('[STEER_UI_DEBUG]', {
-      tabId: activeTabId,
-      sessionId: tabSessionId,
-      configuredProvider: tabConfig?.llmConfig?.provider ?? null,
-      effectiveProvider: effectiveProviderForSteer,
-      canSteer,
-      isCLIProvider,
-      canShowSteer,
-      queuedMessageCount: queuedMessages.length,
-    })
   }, [
     activeTabId,
     canShowSteer,
@@ -1254,9 +1255,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Computed values - get LLM option from tab config
   const primaryLLM = useMemo(() => {
     if (isWorkflowPhaseChat) {
-      // Show the phase_llm from preset (what the backend actually uses)
-      const preset = getActivePreset('workflow')
-      const phaseLLM = preset?.llmConfig?.phase_llm
+      // Show the phase_llm from workflow manifest (source of truth for backend)
+      const phaseLLM = manifestPhaseLLM
       if (phaseLLM?.provider && phaseLLM?.model_id) {
         const found = availableLLMs.find(llm =>
           llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
@@ -1266,6 +1266,21 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           provider: phaseLLM.provider,
           model: phaseLLM.model_id,
           label: `${phaseLLM.provider} - ${phaseLLM.model_id}`,
+          description: 'Phase LLM'
+        }
+      }
+      // Fallback to preset
+      const preset = getActivePreset('workflow')
+      const presetPhaseLLM = preset?.llmConfig?.phase_llm
+      if (presetPhaseLLM?.provider && presetPhaseLLM?.model_id) {
+        const found = availableLLMs.find(llm =>
+          llm.provider === presetPhaseLLM.provider && llm.model === presetPhaseLLM.model_id
+        )
+        if (found) return found
+        return {
+          provider: presetPhaseLLM.provider,
+          model: presetPhaseLLM.model_id,
+          label: `${presetPhaseLLM.provider} - ${presetPhaseLLM.model_id}`,
           description: 'Phase LLM'
         }
       }

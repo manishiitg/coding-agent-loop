@@ -23,8 +23,10 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 		return "", fmt.Errorf("diff is required")
 	}
 
-	// Validate path against folder guard (write operation)
-	if err := c.ValidatePath(params.Filepath, true); err != nil {
+	// Validate path against folder guard (write operation).
+	// Use ValidatePathWithContext to enforce session-scoped restrictions
+	// (e.g., planning/ read-only in workflow builder mode).
+	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
 		return "", err
 	}
 

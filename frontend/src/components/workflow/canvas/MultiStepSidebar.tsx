@@ -88,10 +88,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
           steps.push({ step: step.decision_step as PlanStep, stepId: step.decision_step.id })
         }
         if (isTodoTaskStep(step)) {
-          // Add the inner todo_task_step
-          if (step.todo_task_step) {
-            steps.push({ step: step.todo_task_step as PlanStep, stepId: step.todo_task_step.id })
-          }
+          // Flat format: no inner todo_task_step to add; the step itself has the metadata
           // Add sub-agent steps from predefined_routes (use actual step ID)
           if (step.predefined_routes) {
             step.predefined_routes.forEach((route) => {

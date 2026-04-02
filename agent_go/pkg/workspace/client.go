@@ -89,18 +89,97 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 	return c
 }
 
-// ValidatePath checks if a path is allowed based on folder guard configuration
-// isWrite indicates if this is a write operation (more restrictive)
+// resolveEffectiveFolderGuard returns the effective folder guard for the current request.
+// Priority: session config (SetSessionFolderGuard) > context keys > client-level fallback.
+// This mirrors the resolution logic in ExecuteShellCommand so that all tools (diff_patch,
+// update, delete, move) enforce the same session-scoped restrictions as shell commands.
+func (c *Client) resolveEffectiveFolderGuard(ctx context.Context) *FolderGuardConfig {
+	// 1. Session config: set by SetSessionFolderGuard() — highest priority.
+	//    Covers CLI/Gemini providers that bypass the Go folder guard context wrappers.
+	sessionID := ""
+	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
+		sessionID = sid
+	}
+	if sessionID != "" {
+		sessionCfg := GetSessionShellConfig(sessionID)
+		if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+			readPaths := sessionCfg.WritePaths
+			if len(sessionCfg.ReadPaths) > 0 {
+				readPaths = deduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
+			}
+			log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig for file op: session=%s WritePaths=%v ReadPaths=%v", sessionID, sessionCfg.WritePaths, readPaths)
+			return &FolderGuardConfig{
+				Enabled:    true,
+				WritePaths: sessionCfg.WritePaths,
+				ReadPaths:  readPaths,
+			}
+		}
+	}
+
+	// 2. Context System 1: chat/plan/prototype mode
+	if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := allowedWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
+		}
+		return &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: allowedWrites,
+			ReadPaths:  readPaths,
+		}
+	}
+
+	// 3. Context System 2: workflow orchestrator
+	if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := ctxWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
+		}
+		return &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: ctxWrites,
+			ReadPaths:  readPaths,
+		}
+	}
+
+	// 4. Client-level fallback
+	if c.FolderGuard != nil && c.FolderGuard.Enabled {
+		return c.FolderGuard
+	}
+
+	return nil // No folder guard at all
+}
+
+// ValidatePathWithContext checks if a path is allowed based on the effective folder guard
+// (session > context > client-level). Use this for all file operations from HTTP handlers
+// where session-scoped restrictions must be enforced.
+func (c *Client) ValidatePathWithContext(ctx context.Context, inputPath string, isWrite bool) error {
+	guard := c.resolveEffectiveFolderGuard(ctx)
+	if guard == nil || !guard.Enabled {
+		return nil
+	}
+	return validatePathAgainstGuard(guard, inputPath, isWrite)
+}
+
+// ValidatePath checks if a path is allowed based on client-level folder guard configuration.
+// For HTTP handler contexts where session-scoped guards must be enforced, use ValidatePathWithContext instead.
 func (c *Client) ValidatePath(inputPath string, isWrite bool) error {
 	if c.FolderGuard == nil || !c.FolderGuard.Enabled {
 		return nil // No folder guard configured, allow all
 	}
+	return validatePathAgainstGuard(c.FolderGuard, inputPath, isWrite)
+}
 
+// validatePathAgainstGuard is the core path validation logic used by both
+// ValidatePath (client-level) and ValidatePathWithContext (session-resolved).
+func validatePathAgainstGuard(guard *FolderGuardConfig, inputPath string, isWrite bool) error {
 	// Normalize input path
 	inputPath = filepath.Clean(inputPath)
 
 	// Check blocked paths first
-	for _, blocked := range c.FolderGuard.BlockedPaths {
+	for _, blocked := range guard.BlockedPaths {
 		blocked = filepath.Clean(blocked)
 		if isPathUnder(inputPath, blocked) {
 			return fmt.Errorf("path %q is blocked", inputPath)
@@ -110,10 +189,10 @@ func (c *Client) ValidatePath(inputPath string, isWrite bool) error {
 	// Determine allowed paths
 	var allowedPaths []string
 	if isWrite {
-		allowedPaths = c.FolderGuard.WritePaths
+		allowedPaths = guard.WritePaths
 	} else {
 		// Read operations can use both read and write paths
-		allowedPaths = append(c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths...)
+		allowedPaths = append(guard.ReadPaths, guard.WritePaths...)
 	}
 
 	// Empty allowed paths means allow all (when folder guard is enabled but no paths specified)
@@ -129,11 +208,22 @@ func (c *Client) ValidatePath(inputPath string, isWrite bool) error {
 		}
 	}
 
-	opType := "read"
+	opType := "read from"
 	if isWrite {
-		opType = "write"
+		opType = "write to"
 	}
-	return fmt.Errorf("path %q is outside allowed %s boundaries (allowed: %v)", inputPath, opType, allowedPaths)
+	quotedPaths := make([]string, len(allowedPaths))
+	for i, p := range allowedPaths {
+		quotedPaths[i] = fmt.Sprintf("%q", p)
+	}
+
+	// Provide contextual guidance for known read-only folders
+	hint := ""
+	if isWrite && strings.Contains(inputPath, "planning") {
+		hint = " The planning/ folder is READ-ONLY — plan.json and related config are managed by the system and must not be modified by agents. Write your output to the appropriate execution or output folder instead."
+	}
+
+	return fmt.Errorf("ACCESS DENIED: Cannot %s %q.%s Writable folders: %s", opType, inputPath, hint, strings.Join(quotedPaths, ", "))
 }
 
 // isPathUnder checks if inputPath is equal to or under basePath

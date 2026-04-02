@@ -690,10 +690,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 
 	// ── 3. STEP CONFIG ExecutionLLM ──────────────────────────────────────────
-	// Explicit per-step model override — beats tiered mode when tempLLM is
-	// off (disabled, no learnings, or all attempts exhausted).
-	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step ExecutionLLM for step %s: %s/%s",
+	// Skipped when tiered mode is active — tiered resolver handles model selection.
+	// Only used as fallback when no tier resolver is configured (legacy/manual mode).
+	if hcpo.tierResolver == nil && stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step ExecutionLLM for step %s: %s/%s (no tier resolver)",
 			stepPath, stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
@@ -703,6 +703,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
+	} else if hcpo.tierResolver != nil && stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] step ExecutionLLM (%s/%s) skipped for step %s — tiered mode is active",
+			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID, stepPath))
 	}
 
 	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
@@ -1116,9 +1119,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	}
 
 	// ── 3. STEP CONFIG LearningLLM ───────────────────────────────────────────
-	// Explicit per-step override beats tiered mode when tempLLM is unavailable.
-	if stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step LearningLLM for step %s: %s/%s",
+	// Skipped when tiered mode is active — tiered resolver handles model selection.
+	// Only used as fallback when no tier resolver is configured (legacy/manual mode).
+	if hcpo.tierResolver == nil && stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step LearningLLM for step %s: %s/%s (no tier resolver)",
 			stepPath, stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
@@ -1128,6 +1132,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 			Fallbacks: convertAgentFallbacks(stepConfig.LearningLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
+	} else if hcpo.tierResolver != nil && stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] step LearningLLM (%s/%s) skipped for step %s — tiered mode is active",
+			stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID, stepPath))
 	}
 
 	// ── 4. TIERED MODE ───────────────────────────────────────────────────────

@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 const providerKeysFilePath = "config/provider-api-keys.json"
@@ -126,6 +129,113 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 		}
 	}
 	return m
+}
+
+// LoadProviderKeysAsLLMKeys loads workspace-encrypted keys and converts to *llm.ProviderAPIKeys.
+// Returns an empty (non-nil) struct if keys don't exist or decryption fails.
+func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
+	keys, err := LoadProviderKeys(ctx)
+	if err != nil {
+		log.Printf("[PROVIDER_KEYS] Failed to load workspace provider keys: %v", err)
+		return &llm.ProviderAPIKeys{}
+	}
+	if keys == nil {
+		log.Printf("[PROVIDER_KEYS] No workspace provider keys file found")
+		return &llm.ProviderAPIKeys{}
+	}
+	result := &llm.ProviderAPIKeys{}
+	if keys.OpenRouter != "" {
+		result.OpenRouter = &keys.OpenRouter
+	}
+	if keys.OpenAI != "" {
+		result.OpenAI = &keys.OpenAI
+	}
+	if keys.Anthropic != "" {
+		result.Anthropic = &keys.Anthropic
+	}
+	if keys.Vertex != "" {
+		result.Vertex = &keys.Vertex
+	}
+	if keys.GeminiCLI != "" {
+		result.GeminiCLI = &keys.GeminiCLI
+	}
+	if keys.MiniMax != "" {
+		result.MiniMax = &keys.MiniMax
+	}
+	if keys.MiniMaxCodingPlan != "" {
+		result.MiniMaxCodingPlan = &keys.MiniMaxCodingPlan
+	}
+	if keys.Bedrock != nil {
+		result.Bedrock = &llm.BedrockConfig{Region: keys.Bedrock.Region}
+	}
+	if keys.Azure != nil {
+		result.Azure = &llm.AzureAPIConfig{
+			Endpoint:   keys.Azure.Endpoint,
+			APIKey:     keys.Azure.APIKey,
+			APIVersion: keys.Azure.APIVersion,
+			Region:     keys.Azure.Region,
+		}
+	}
+	// Log which providers have keys loaded
+	var loaded []string
+	if result.GeminiCLI != nil { loaded = append(loaded, "gemini-cli") }
+	if result.OpenRouter != nil { loaded = append(loaded, "openrouter") }
+	if result.OpenAI != nil { loaded = append(loaded, "openai") }
+	if result.Anthropic != nil { loaded = append(loaded, "anthropic") }
+	if result.Vertex != nil { loaded = append(loaded, "vertex") }
+	if result.MiniMax != nil { loaded = append(loaded, "minimax") }
+	if result.Bedrock != nil { loaded = append(loaded, "bedrock") }
+	if result.Azure != nil { loaded = append(loaded, "azure") }
+	log.Printf("[PROVIDER_KEYS] Loaded workspace keys for providers: %v", loaded)
+
+	return result
+}
+
+// MergedProviderAPIKeys returns a single *llm.ProviderAPIKeys that merges
+// env-var keys (.env) and workspace-encrypted keys. Base layer is .env,
+// workspace keys override when present. This is the single source of truth
+// for "give me all available API keys".
+func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
+	envKeys := buildProviderAPIKeysFromEnv()
+	wsKeys := LoadProviderKeysAsLLMKeys(ctx)
+
+	if envKeys == nil && wsKeys == nil {
+		return &llm.ProviderAPIKeys{}
+	}
+	if envKeys == nil {
+		return wsKeys
+	}
+	if wsKeys == nil {
+		return envKeys
+	}
+
+	// Start from env, workspace overrides when set
+	pick := func(env, ws *string) *string {
+		if ws != nil { return ws }
+		return env
+	}
+	result := &llm.ProviderAPIKeys{
+		OpenRouter:        pick(envKeys.OpenRouter, wsKeys.OpenRouter),
+		OpenAI:            pick(envKeys.OpenAI, wsKeys.OpenAI),
+		Anthropic:         pick(envKeys.Anthropic, wsKeys.Anthropic),
+		Vertex:            pick(envKeys.Vertex, wsKeys.Vertex),
+		GeminiCLI:         pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
+		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),
+		MiniMax:           pick(envKeys.MiniMax, wsKeys.MiniMax),
+		MiniMaxCodingPlan: pick(envKeys.MiniMaxCodingPlan, wsKeys.MiniMaxCodingPlan),
+	}
+	// Bedrock / Azure: workspace wins if present, else env
+	if wsKeys.Bedrock != nil {
+		result.Bedrock = wsKeys.Bedrock
+	} else if envKeys.Bedrock != nil {
+		result.Bedrock = envKeys.Bedrock
+	}
+	if wsKeys.Azure != nil {
+		result.Azure = wsKeys.Azure
+	} else if envKeys.Azure != nil {
+		result.Azure = envKeys.Azure
+	}
+	return result
 }
 
 // encryptProviderKeys encrypts data using AES-256-GCM with the derived secrets key.

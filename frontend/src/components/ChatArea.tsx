@@ -2483,18 +2483,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Set session ID and submit
       chatStore.setSessionId(tabSessionId)
+      console.log('[WF_DEBUG] 1. Submitting', { tabId: currentTab.tabId, tabSessionId, eventCount: chatStore.getTabEvents(tabSessionId).length, mode: currentTab.metadata?.mode })
       const response = await agentApi.startQuery(requestPayload, tabSessionId)
+      console.log('[WF_DEBUG] 2. Response', { status: response.status, responseSessionId: response.session_id || response.query_id, tabSessionId, match: (response.session_id || response.query_id) === tabSessionId })
 
       if (response.status === 'started' || response.status === 'workflow_started') {
         const responseSessionId = response.session_id || response.query_id
         if (!responseSessionId) {
+          console.log('[WF_DEBUG] ERROR: No sessionId in response')
           logger.error('ChatArea', 'No sessionId in response')
           resetStreamingState(currentTab.tabId)
           return
         }
 
+        console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
+        console.log('[WF_DEBUG] 4. After updateTabSessionId', { events: chatStore.getTabEvents(responseSessionId).length, activeTabSession: useChatStore.getState().chatTabs[currentTab.tabId]?.sessionId })
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
 
@@ -2508,6 +2513,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const connectAfterRefresh = () => {
           const store = useChatStore.getState()
           const sid = responseSessionId
+          console.log('[WF_DEBUG] 5. connectAfterRefresh', { sid, hasSSE: !!store.sseConnections[sid], events: store.tabEvents[sid]?.length ?? 0, sinceIndex: store.tabEventIndices[sid] })
           // Connect SSE for the new session immediately
           if (!store.sseConnections[sid]) {
             connectSSE(
@@ -2525,10 +2531,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             connectAfterRefresh()
           })
       } else {
+        console.log('[WF_DEBUG] ERROR: Backend non-started response', { status: response.status, message: response.message, response })
         logger.error('ChatArea', 'Backend error:', response)
         resetStreamingState(currentTab.tabId)
       }
     } catch (error) {
+      console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
       resetStreamingState(currentTab.tabId)
     }

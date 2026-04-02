@@ -76,6 +76,7 @@ const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
  * This ensures the UI shows the correct state immediately after page refresh
  */
 async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> {
+  console.log('[WF_DEBUG] restoreWorkflowStateFromEvents CALLED', { sessionId, stack: new Error().stack?.split('\n').slice(1, 4).map(s => s.trim()) })
   try {
     const { addTabEvents, setTabEvents, setTabLastEventIndex, getTabLastEventIndex, getTabEvents } = useChatStore.getState()
     const workflowStore = useWorkflowStore.getState()
@@ -112,6 +113,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
     // Use setTabEvents (replace) when tab is empty (restoration), addTabEvents (append) when live
     const existingEvents = getTabEvents(sessionId)
+    console.log('[WF_DEBUG] restoreWorkflowStateFromEvents', { sessionId, existingCount: existingEvents.length, newCount: events.length, action: existingEvents.length === 0 ? 'REPLACE' : 'APPEND' })
     if (existingEvents.length === 0) {
       setTabEvents(sessionId, events)
     } else {

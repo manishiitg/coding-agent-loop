@@ -202,9 +202,12 @@ export interface DecisionPlanStep extends CommonStepFields {
 }
 
 // Todo task step (orchestrator with todo list management + predefined routes + generic agent)
+// Fields from the former inner todo_task_step are now flattened onto this level:
+//   description, success_criteria, context_dependencies, context_output, validation_schema
+// These are inherited from CommonStepFields already.
 export interface TodoTaskPlanStep extends CommonStepFields {
   type: 'todo_task';
-  todo_task_step?: PlanStep;                // The main orchestrator step metadata
+  todo_task_step?: PlanStep;                // DEPRECATED: kept for backwards compat with old plan.json
   predefined_routes?: PlanRoutingRoute[];   // Predefined sub-agents with learning/prevalidation
   enable_generic_agent?: boolean;           // Allow generic execution agent (no learning/prevalidation)
   next_step_id?: string;                    // ID of step after todo task completes (or "end")

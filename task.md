@@ -45,3 +45,6 @@
 
 65. make the global tired auto fallback for workspace
 
+66. look a multi user and locked providers
+
+67. main.py can have, chat/compeltion or generate_text ?

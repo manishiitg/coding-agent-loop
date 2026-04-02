@@ -897,13 +897,7 @@ func cloneStepWithDelegationOverrides(
 		return &stepCopy, nil
 	case *TodoTaskPlanStep:
 		stepCopy := *s
-		if s.TodoTaskStep != nil {
-			innerStepCopy, err := cloneStepWithDelegationOverrides(s.TodoTaskStep, instructions)
-			if err != nil {
-				return nil, err
-			}
-			stepCopy.TodoTaskStep = innerStepCopy
-		}
+		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
 		return &stepCopy, nil
 	case *OrchestrationPlanStep:
 		stepCopy := *s

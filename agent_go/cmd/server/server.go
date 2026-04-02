@@ -2558,6 +2558,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
 		}
 
+		// Inject merged API keys (env + workspace) into LLM config for workflow execution.
+		// Without this, workflow agents (todo task orchestrators, sub-agents) won't have
+		// provider API keys and CLI providers like gemini-cli will fail.
+		workflowLLMConfig := req.LLMConfig
+		if workflowLLMConfig == nil {
+			workflowLLMConfig = &orchestrator.LLMConfig{}
+		}
+		workflowLLMConfig.APIKeys = MergedProviderAPIKeys(r.Context())
+
 		// Create workflow orchestrator for this request
 		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
 		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
@@ -2575,7 +2584,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			preDiscoveredTools,   // NEW: pre-discovered tools
 			allTools,             // customTools
 			allExecutors,         // customToolExecutors
-			req.LLMConfig,        // llmConfig
+			workflowLLMConfig,    // llmConfig (with merged API keys)
 			req.MaxTurns,         // maxTurns (defaults to 100 if not provided)
 			toolCategories,       // NEW: toolCategories
 			presetLLMConfig,      // preset LLM config for agent defaults

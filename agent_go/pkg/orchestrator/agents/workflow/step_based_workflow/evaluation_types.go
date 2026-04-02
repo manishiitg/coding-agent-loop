@@ -56,17 +56,25 @@ type EvaluationPlan struct {
 }
 
 // UnmarshalJSON implements custom unmarshaling for EvaluationPlan
-// Handles both formats:
+// Handles multiple formats:
 // 1. {"steps": [...]} - expected format
-// 2. [...] - legacy format (array at top level)
+// 2. {"eval_steps": [...]} - alternate key format
+// 3. [...] - legacy format (array at top level)
 func (ep *EvaluationPlan) UnmarshalJSON(data []byte) error {
-	// First, try to unmarshal as object with "steps" field
+	// First, try to unmarshal as object with "steps" or "eval_steps" field
 	var temp struct {
-		Steps []*EvaluationStep `json:"steps"`
+		Steps     []*EvaluationStep `json:"steps"`
+		EvalSteps []*EvaluationStep `json:"eval_steps"`
 	}
-	if err := json.Unmarshal(data, &temp); err == nil && temp.Steps != nil {
-		ep.Steps = temp.Steps
-		return nil
+	if err := json.Unmarshal(data, &temp); err == nil {
+		if temp.Steps != nil {
+			ep.Steps = temp.Steps
+			return nil
+		}
+		if temp.EvalSteps != nil {
+			ep.Steps = temp.EvalSteps
+			return nil
+		}
 	}
 
 	// If that fails, try to unmarshal as a top-level array (legacy format)

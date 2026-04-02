@@ -2037,23 +2037,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		ctx = context.WithValue(ctx, virtualtools.GetSubAgentConversationKey, getConvFunc)
 
 		// Only emit task status updates for tools that change state (call_sub_agent, call_generic_agent),
-		// not for read-only tools (get_route_description, get_sub_agent_conversation).
-		// call_sub_agent and call_generic_agent both require "instructions" parameter.
-		_, isStateChangingTool := args["instructions"]
-
-		if isStateChangingTool {
-			// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
-			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx, "before_delegation")
-			hcpo.flushTodoTaskStatusDebouncer()
-		}
-
 		// Call original executor with enriched context
 		result, err := originalExecutor(ctx, args)
-
-		if isStateChangingTool {
-			// After sub-agent completes, emit tasks.md state (debounced to coalesce parallel completions)
-			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx, "after_delegation")
-		}
 
 		return result, err
 	}

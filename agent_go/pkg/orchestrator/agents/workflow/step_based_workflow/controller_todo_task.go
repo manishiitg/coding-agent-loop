@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -69,9 +68,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing todo task step %d: %s", stepIndex+1, step.GetTitle()))
-
-	// Ensure any pending debounced status update is flushed when the step completes
-	defer hcpo.flushTodoTaskStatusDebouncer()
 
 	// Use provided stepPath or generate from stepIndex
 	todoTaskStepPath := stepPath
@@ -140,178 +136,109 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 	}()
 
-	// Determine max iterations
-	maxIterations := hcpo.GetMaxTurns()
 	stepConfig := getAgentConfigs(todoTaskStep)
-	if stepConfig != nil && stepConfig.OrchestrationMaxIterations != nil {
-		maxIterations = *stepConfig.OrchestrationMaxIterations
-	}
 
-	// Learning config - determine once, reload each iteration
+	// Learning config
 	isLearningDisabledStep := stepConfig != nil && stepConfig.DisableLearning != nil && *stepConfig.DisableLearning
 	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
 	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
 	learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
-	// Track sub-agent results for context
-	var lastSubAgentResult string
-	var lastSubAgentName string
-	var lastTodoID string
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
+	default:
+	}
 
-	// Main todo task orchestration loop
-	for taskIteration := 0; taskIteration < maxIterations; taskIteration++ {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Todo task iteration %d/%d", taskIteration+1, maxIterations))
-
-		// Start each orchestration loop from fresh conversational context.
-		// Previous iterations may contain speculative diagnoses that are no longer true.
-		conversationHistory = nil
-
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
-		default:
-		}
-
-		// Reload orchestrator learnings each iteration — provide file path reference instead of full content
-		// Check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
-		var orchestratorLearningHistory string
-		if isLearningDisabled {
-			orchestratorLearningHistory = ""
-		} else {
-			docsRoot := GetPromptDocsRoot()
-			orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
-			_, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
-			if err != nil {
-				// Fall back to legacy format
-				orchestratorLearningFilePath = fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-				_, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
-			}
-			if err == nil {
-				absLearningPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), orchestratorLearningFilePath)
-				orchestratorLearningHistory = fmt.Sprintf("📚 **Orchestrator learnings available** at `%s`. Read this file with execute_shell_command before delegating sub-agents — it contains error recovery patterns, system behaviors, and validated sequences from previous runs.", absLearningPath)
-			}
-		}
-
-		// Read tasks.md to build dynamic user message
-		var tasksFileContent string
-		{
-			tasksFilePath := hcpo.getTodoTaskTasksFilePath(stepID, todoTaskStepPath)
-			content, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
-			if err == nil && strings.TrimSpace(content) != "" {
-				tasksFileContent = content
-			}
-		}
-
-		// Build template variables for orchestrator
-		templateVars := hcpo.buildTodoTaskOrchestratorTemplateVars(
-			ctx,
-			todoTaskStep,
-			stepIndex,
-			todoTaskStepPath,
-			previousContextFiles,
-			previousExecutionResults,
-			allSteps,
-			lastSubAgentResult,
-			lastSubAgentName,
-			lastTodoID,
-			decisionContext,
-			orchestratorLearningHistory,
-			tasksFileContent,
-		)
-
-		// Execute TodoTaskOrchestratorAgent
-		response, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
-			ctx,
-			todoTaskStep,
-			stepIndex,
-			todoTaskStepPath,
-			templateVars,
-			conversationHistory,
-			allSteps,
-			progress,
-		)
+	// Load orchestrator learnings — provide file path reference instead of full content
+	// Check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
+	var orchestratorLearningHistory string
+	if isLearningDisabled {
+		orchestratorLearningHistory = ""
+	} else {
+		docsRoot := GetPromptDocsRoot()
+		orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
+		_, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
 		if err != nil {
-			return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
+			// Fall back to legacy format
+			orchestratorLearningFilePath = fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
+			_, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
 		}
-		conversationHistory = updatedHistory
-
-		// Store response in step
-		todoTaskStep.TodoTaskResponse = response
-
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Todo task response: action=%s, all_complete=%v, progress=%s",
-			response.NextAction, response.AllTasksComplete, response.ProgressSummary))
-
-		// Log routing decision to file (similar to orchestration step)
-		hcpo.logTodoTaskRoutingDecision(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
-
-		// Save execution log for this iteration (so UI can show full execution history)
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, taskIteration, executionLLM, updatedHistory)
-
-		// Emit route selected event
-		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
-
-		// Check completion after agent execution
-		if response.NextAction == "complete" && response.AllTasksComplete {
-			// All tasks [x] in tasks.md — run pre-validation if schema exists, else done
-			validationSchema := step.GetValidationSchema()
-			if validationSchema != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after all tasks completed (iteration %d)", taskIteration+1))
-				preValidationPassed, preValidationReason := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
-
-				if preValidationPassed {
-					completionReason := fmt.Sprintf("Pre-validation passed after iteration %d. %s", taskIteration+1, response.ProgressSummary)
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (pre-validation passed): %s", completionReason))
-					hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, completionReason, todoTaskStep.NextStepID)
-					hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-					return true, todoTaskStep.NextStepID, nil
-				}
-
-				// Pre-validation failed — feed back to orchestrator so it can fix
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed (iteration %d): continuing with feedback", taskIteration+1))
-				lastSubAgentResult = fmt.Sprintf("\n\n---\nPRE-VALIDATION FAILED (all tasks are [x] but output validation did not pass):\n%s\n\nFix the failing checks — the step will re-run.", preValidationReason)
-			} else {
-				// No validation schema — tasks.md all [x] is the completion signal
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (all tasks done): %s", response.CompletionReason))
-				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
-				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-				return true, todoTaskStep.NextStepID, nil
-			}
-		} else {
-			// Tasks still pending/in-progress — agent needs more iterations
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Tasks not all complete (%s), continuing...", response.ProgressSummary))
+		if err == nil {
+			absLearningPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), orchestratorLearningFilePath)
+			orchestratorLearningHistory = fmt.Sprintf("📚 **Orchestrator learnings available** at `%s`. Read this file with execute_shell_command before delegating sub-agents — it contains error recovery patterns, system behaviors, and validated sequences from previous runs.", absLearningPath)
 		}
 	}
 
-	// Max iterations reached
-	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo task step reached max iterations (%d)", maxIterations))
-	return false, todoTaskStep.NextStepID, nil
-}
+	// Build template variables for orchestrator
+	templateVars := hcpo.buildTodoTaskOrchestratorTemplateVars(
+		ctx,
+		todoTaskStep,
+		stepIndex,
+		todoTaskStepPath,
+		previousContextFiles,
+		previousExecutionResults,
+		allSteps,
+		decisionContext,
+		orchestratorLearningHistory,
+	)
 
-// buildCurrentTodosDisplay returns a display string for the CurrentTodos template var
-func buildCurrentTodosDisplay(tasksFileContent string) string {
-	if tasksFileContent == "" {
-		return "(tasks.md does not exist yet — create it)"
+	// Start capturing tool calls from the event bridge
+	var capturedToolCalls []orchestrator.ToolCallEntry
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.StartToolCallCapture()
 	}
-	return tasksFileContent
-}
 
-// buildProgressSummaryDisplay returns a brief summary of task progress from tasks.md content
-func buildProgressSummaryDisplay(tasksFileContent string) string {
-	if tasksFileContent == "" {
-		return "(No tasks.md yet)"
+	// Execute TodoTaskOrchestratorAgent — single-shot, no retry loop.
+	// The LLM is expected to complete all tasks in one execution.
+	_, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
+		ctx,
+		todoTaskStep,
+		stepIndex,
+		todoTaskStepPath,
+		templateVars,
+		conversationHistory,
+		allSteps,
+		progress,
+	)
+
+	// Drain captured tool calls regardless of error
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		capturedToolCalls = cab.DrainToolCalls()
 	}
-	pending := strings.Count(tasksFileContent, "- [ ]")
-	inProgress := strings.Count(tasksFileContent, "- [~]")
-	completed := strings.Count(tasksFileContent, "- [x]")
-	total := pending + inProgress + completed
-	if total == 0 {
-		return "(tasks.md exists but no tasks found)"
+
+	if err != nil {
+		return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
 	}
-	return fmt.Sprintf("%d/%d completed, %d pending, %d in-progress", completed, total, pending, inProgress)
+
+	// Log execution
+	hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, 0, executionLLM, updatedHistory, capturedToolCalls)
+
+	// Run pre-validation if schema exists
+	validationSchema := step.GetValidationSchema()
+	if validationSchema != nil {
+		hcpo.GetLogger().Info("🔍 Running pre-validation after execution")
+		preValidationPassed, _ := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
+
+		if preValidationPassed {
+			hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
+			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
+			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+			return true, todoTaskStep.NextStepID, nil
+		}
+
+		hcpo.GetLogger().Warn("⚠️ Pre-validation failed after execution")
+		return false, todoTaskStep.NextStepID, nil
+	}
+
+	// No validation schema — execution completion is the signal
+	hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
+	hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
+	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+	return true, todoTaskStep.NextStepID, nil
 }
 
 // buildTodoTaskOrchestratorTemplateVars builds template variables for the orchestrator agent
-// Note: Task management is handled via shell commands with tasks.md - the LLM reads it directly
 func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars(
 	ctx context.Context,
 	step *TodoTaskPlanStep,
@@ -320,12 +247,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	previousContextFiles []string,
 	previousExecutionResults []string,
 	allSteps []PlanStepInterface,
-	lastSubAgentResult string,
-	lastSubAgentName string,
-	lastTodoID string,
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step
 	orchestratorLearningHistory string, // Persisted learnings from previous runs
-	tasksFileContent string, // Content of tasks.md (empty if file doesn't exist)
 ) map[string]string {
 	// Build predefined routes list (title + ID only — use get_route_description tool for details)
 	var routesBuilder strings.Builder
@@ -395,12 +318,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"ShellWorkingDirectory": shellWorkingDirectory,
 		"PredefinedRoutes":      routesBuilder.String(),
 		"EnableGenericAgent":    fmt.Sprintf("%t", step.EnableGenericAgent),
-		"CurrentTodos":          buildCurrentTodosDisplay(tasksFileContent),
-		"ProgressSummary":       buildProgressSummaryDisplay(tasksFileContent),
-		"TasksFileContent":      tasksFileContent,
-		"SubAgentResult":        lastSubAgentResult,
-		"LastSubAgentName":      lastSubAgentName,
-		"LastTodoID":            lastTodoID,
 		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.GetBrowserMode() != "" && hcpo.GetBrowserMode() != "none"),
 		// Add code execution mode and knowledgebase flags
 		"IsCodeExecutionMode":  fmt.Sprintf("%v", isCodeExecutionMode),
@@ -638,42 +555,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "todo_task_orchestrator", preSystemPrompt, preUserMessage, executionLLM, "todo-task-prompts.json")
 	}
 
-	// Execute with tool-based approach (no structured output)
-	// The agent manages tasks via shell (tasks.md) and delegates via call_sub_agent/call_generic_agent
-	// Completion is detected by checking tasks.md — when all tasks are [x] done, the step is complete.
+	// Execute — single-shot, the agent delegates to sub-agents and runs to completion
 	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, nil, "", subAgentExecCtx, fmt.Errorf("todo task orchestrator execution failed: %w", err)
 	}
 
-	// Detect completion by checking tasks.md — when all tasks are [x], the step is done.
-	// No need for mark_step_complete tool or completed.txt file.
-	tasksFilePath := hcpo.getTodoTaskTasksFilePath(step.GetID(), stepPath)
-
-	response := &TodoTaskResponse{}
-	tasksContent, tasksErr := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
-	if tasksErr == nil && tasksContent != "" {
-		pending := strings.Count(tasksContent, "- [ ]")
-		inProgress := strings.Count(tasksContent, "- [~]")
-		completed := strings.Count(tasksContent, "- [x]")
-		total := pending + inProgress + completed
-		if total > 0 && pending == 0 && inProgress == 0 {
-			response.NextAction = "complete"
-			response.AllTasksComplete = true
-			response.CompletionReason = fmt.Sprintf("All %d/%d tasks completed in tasks.md", completed, total)
-			response.ProgressSummary = fmt.Sprintf("%d/%d completed", completed, total)
-		} else {
-			response.NextAction = "continue"
-			response.AllTasksComplete = false
-			response.ProgressSummary = fmt.Sprintf("%d/%d completed, %d pending, %d in-progress", completed, total, pending, inProgress)
-		}
-	} else {
-		response.NextAction = "continue"
-		response.AllTasksComplete = false
-		response.ProgressSummary = "tasks.md not found"
-	}
-
-	return response, updatedHistory, executionLLM, subAgentExecCtx, nil
+	return nil, updatedHistory, executionLLM, subAgentExecCtx, nil
 }
 
 // executeGenericAgent executes a generic task using the standard execution agent
@@ -1291,296 +1179,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 	}
 }
 
-// todoTaskStatusDebouncer coalesces rapid-fire todo task status update events
-// from parallel sub-agent completions into a single debounced emission.
-type todoTaskStatusDebouncer struct {
-	mu    sync.Mutex
-	timer *time.Timer
-	delay time.Duration
-	// Latest context to use when the debounce fires
-	latestCtx     context.Context
-	latestArgs    map[string]interface{}
-	latestExecCtx *SubAgentExecutionContext
-	latestPhase   string
-}
-
-func newTodoTaskStatusDebouncer(delay time.Duration) *todoTaskStatusDebouncer {
-	return &todoTaskStatusDebouncer{delay: delay}
-}
-
-// emitTodoTaskStatusUpdate schedules a debounced status update event.
-// If called multiple times within the debounce window, only the last call's
-// context is used and a single event is emitted after the window expires.
-func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStatusUpdate(
-	ctx context.Context,
-	args map[string]interface{},
-	execCtx *SubAgentExecutionContext,
-	phase string,
-) {
-	if hcpo.todoStatusDebouncer == nil {
-		hcpo.todoStatusDebouncer = newTodoTaskStatusDebouncer(1 * time.Second)
-	}
-
-	d := hcpo.todoStatusDebouncer
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	// Store latest call context
-	d.latestCtx = ctx
-	d.latestArgs = args
-	d.latestExecCtx = execCtx
-	d.latestPhase = phase
-
-	// Reset or start the debounce timer
-	if d.timer != nil {
-		d.timer.Stop()
-	}
-	d.timer = time.AfterFunc(d.delay, func() {
-		hcpo.doEmitTodoTaskStatusUpdate()
-	})
-}
-
-// doEmitTodoTaskStatusUpdate performs the actual tasks.md read and event emission.
-// Called by the debounce timer after the window expires.
-func (hcpo *StepBasedWorkflowOrchestrator) doEmitTodoTaskStatusUpdate() {
-	d := hcpo.todoStatusDebouncer
-	d.mu.Lock()
-	ctx := d.latestCtx
-	args := d.latestArgs
-	execCtx := d.latestExecCtx
-	phase := d.latestPhase
-	d.mu.Unlock()
-
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		hcpo.GetLogger().Warn("📋 emitTodoTaskStatusUpdate: bridge is nil, skipping")
-		return
-	}
-
-	stepPath := ""
-	stepIndex := 0
-	var stepID, stepTitle string
-	if execCtx != nil {
-		stepPath = execCtx.StepPath
-		stepIndex = execCtx.StepIndex
-		if execCtx.TodoTaskStep != nil {
-			stepID = execCtx.TodoTaskStep.GetID()
-			stepTitle = execCtx.TodoTaskStep.GetTitle()
-		}
-	}
-
-	// Build tasks.md path (use relative path so ReadWorkspaceFile prepends workspacePath correctly)
-	tasksFilePath := hcpo.getTodoTaskTasksFilePath(stepID, stepPath)
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): reading tasks.md at '%s'", tasksFilePath))
-
-	tasksContent, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
-	if err != nil || tasksContent == "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): tasks.md not found or empty at '%s' (err=%v), skipping", tasksFilePath, err))
-		return
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): found tasks.md (%d chars), emitting event", len(tasksContent)))
-
-	routeID, _ := args["route_id"].(string)
-	todoID, _ := args["todo_id"].(string)
-
-	event := &TodoTaskStatusUpdateEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-			Component: "orchestrator",
-		},
-		StepIndex:    stepIndex,
-		StepPath:     stepPath,
-		StepID:       stepID,
-		StepTitle:    stepTitle,
-		TasksContent: tasksContent,
-		RouteID:      routeID,
-		TodoID:       todoID,
-		StatusPhase:  phase,
-	}
-
-	agentEvent := &baseevents.AgentEvent{
-		Type:      events.TodoTaskStatusUpdate,
-		Timestamp: time.Now(),
-		Data:      event,
-	}
-
-	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo task status update event: %v", err))
-	} else {
-		hcpo.GetLogger().Info("✅ emitTodoTaskStatusUpdate(debounced): event emitted successfully")
-	}
-}
-
-// flushTodoTaskStatusDebouncer forces immediate emission of any pending debounced event.
-// Call this before the step completes to ensure the final state is emitted.
-func (hcpo *StepBasedWorkflowOrchestrator) flushTodoTaskStatusDebouncer() {
-	if hcpo.todoStatusDebouncer == nil {
-		return
-	}
-	d := hcpo.todoStatusDebouncer
-	d.mu.Lock()
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
-	}
-	hasLatest := d.latestCtx != nil
-	d.mu.Unlock()
-
-	if hasLatest {
-		hcpo.doEmitTodoTaskStatusUpdate()
-	}
-}
-
-// logTodoTaskRoutingDecision logs the routing decision to a JSON file (similar to orchestration step)
-func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
-	ctx context.Context,
-	step PlanStepInterface,
-	stepIndex int,
-	stepPath string,
-	iteration int,
-	response *TodoTaskResponse,
-	todoFile *virtualtools.TodoFile,
-	executionLLM string,
-) {
-	// Get workspace path for validation folder
-	var validationWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-	} else {
-		validationWorkspacePath = hcpo.GetWorkspacePath()
-	}
-
-	validationFolderPath := getValidationFolderPath(validationWorkspacePath, step.GetID(), stepPath)
-	todoTaskLogFilePath := fmt.Sprintf("%s/todo-task-execution.json", validationFolderPath)
-
-	// Get todo title if a todo is being executed
-	var todoTitle string
-	if response.TodoIDToExecute != "" && todoFile != nil {
-		for _, todo := range todoFile.Todos {
-			if todo.ID == response.TodoIDToExecute {
-				todoTitle = todo.Title
-				break
-			}
-		}
-	}
-
-	// Get route name if predefined route selected
-	var selectedRouteName string
-	if response.SelectedRouteID != "" {
-		todoTaskStep, ok := step.(*TodoTaskPlanStep)
-		if ok {
-			for _, route := range todoTaskStep.PredefinedRoutes {
-				if route.RouteID == response.SelectedRouteID {
-					selectedRouteName = route.RouteName
-					break
-				}
-			}
-		}
-	}
-
-	// Build todo summary (handle nil todoFile - tasks now managed via tasks.md)
-	todoSummary := map[string]interface{}{
-		"total":       0,
-		"completed":   0,
-		"in_progress": 0,
-		"open":        0,
-		"blocked":     0,
-	}
-	if todoFile != nil {
-		todoSummary["total"] = todoFile.Summary.Total
-		todoSummary["completed"] = todoFile.Summary.Completed
-		todoSummary["in_progress"] = todoFile.Summary.InProgress
-		todoSummary["open"] = todoFile.Summary.Open
-		todoSummary["blocked"] = todoFile.Summary.Blocked
-	}
-
-	// Determine selected sub-agent path for logging (so UI can link to it)
-	var selectedSubAgentPath string
-	if response.NextAction == "delegate" {
-		if response.UseGenericAgent {
-			selectedSubAgentPath = fmt.Sprintf("%s-generic-%s", stepPath, response.TodoIDToExecute)
-		} else if response.SelectedRouteID != "" {
-			selectedSubAgentPath = fmt.Sprintf("%s-sub-%s", stepPath, response.SelectedRouteID)
-		}
-	}
-
-	// Extract preferred tier from context (set by call_sub_agent/call_generic_agent tools)
-	var preferredTier int
-	var preferredTierLabel string
-	if tier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && tier >= 1 && tier <= 3 {
-		preferredTier = tier
-		preferredTierLabel = TierLevelLabel(TierLevel(tier))
-	}
-
-	// Build log entry
-	routingEntry := map[string]interface{}{
-		"type":       "routing",
-		"step_index": stepIndex + 1,
-		"step_path":  stepPath,
-		"step_id":    step.GetID(),
-		"step_title": step.GetTitle(),
-		"iteration":  iteration + 1,
-		"model":      executionLLM,
-		"todo_task_response": map[string]interface{}{
-			"next_action":                    response.NextAction,
-			"selected_route_id":              response.SelectedRouteID,
-			"selected_route_name":            selectedRouteName,
-			"use_generic_agent":              response.UseGenericAgent,
-			"selected_sub_agent_path":        selectedSubAgentPath,
-			"todo_id_to_execute":             response.TodoIDToExecute,
-			"todo_title":                     todoTitle,
-			"instructions_to_sub_agent":      response.InstructionsToSubAgent,
-			"success_criteria_for_sub_agent": response.SuccessCriteriaForSubAgent,
-			"all_tasks_complete":             response.AllTasksComplete,
-			"progress_summary":               response.ProgressSummary,
-			"completion_reason":              response.CompletionReason,
-			"preferred_tier":                 preferredTier,
-			"preferred_tier_label":           preferredTierLabel,
-		},
-		"todo_summary": todoSummary,
-		"timestamp":    time.Now().Format(time.RFC3339),
-	}
-
-	// Append to log file using the same pattern as orchestration step
-	if err := hcpo.appendTodoTaskLogEntry(ctx, todoTaskLogFilePath, routingEntry); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append todo task routing entry to log: %v", err))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("💾 Todo task routing entry appended to: %s", todoTaskLogFilePath))
-	}
-}
-
-// appendTodoTaskLogEntry appends a JSON entry to the todo task execution log file (JSONL format)
-func (hcpo *StepBasedWorkflowOrchestrator) appendTodoTaskLogEntry(ctx context.Context, filePath string, entry map[string]interface{}) error {
-	// Marshal the entry to a single JSON line (no indentation for JSONL format)
-	entryJSON, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("failed to marshal todo task log entry to JSON: %w", err)
-	}
-
-	// Read existing file content if it exists
-	existingContent := ""
-	existingContent, err = hcpo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil {
-		// File doesn't exist yet - this is expected for the first entry
-		existingContent = ""
-	}
-
-	// Append new entry (JSONL format: each entry on its own line)
-	newContent := existingContent
-	if newContent != "" && !strings.HasSuffix(newContent, "\n") {
-		newContent += "\n"
-	}
-	newContent += string(entryJSON)
-
-	// Write the updated content back
-	if err := hcpo.WriteWorkspaceFile(ctx, filePath, newContent); err != nil {
-		return fmt.Errorf("failed to append todo task log entry to %s: %w", filePath, err)
-	}
-
-	return nil
-}
 
 // saveTodoTaskExecutionLog saves the execution log for a todo task iteration
 // This allows the UI to show the full execution history (conversation, tool calls) for each iteration
@@ -1591,6 +1189,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	iteration int,
 	executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
+	toolCalls []orchestrator.ToolCallEntry,
 ) {
 	// Use background context so logs are persisted even if execution was canceled.
 	saveCtx := context.Background()
@@ -1652,13 +1251,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 		hcpo.GetLogger().Info(fmt.Sprintf("💾 Todo task execution log saved to: %s", filePath))
 	}
 
-	// Save the full conversation history in the same format regular execution logs use,
+	// Save the full conversation history and tool calls,
 	// so the execution popup can open it via the inferred conversation_path.
 	conversationLog := map[string]interface{}{
 		"step_path":            stepPath,
 		"retry_attempt":        1,
 		"loop_iteration":       iteration,
 		"conversation_history": conversationHistory,
+		"tool_calls":           toolCalls,
+		"tool_call_count":      len(toolCalls),
 		"timestamp":            time.Now().Format(time.RFC3339),
 	}
 	conversationJSON, err := json.MarshalIndent(conversationLog, "", "  ")

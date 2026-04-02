@@ -1133,7 +1133,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         
         const options: ExecutionOptions = {
           run_mode: shouldUseSameRun ? 'use_same_run' : 'create_new_runs_always',
-          selected_run_folder: 'iteration-0',
+          selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
           workshop_mode: (() => {
             const presetId = useGlobalPresetStore.getState().activePresetIds.workflow

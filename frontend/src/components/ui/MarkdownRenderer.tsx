@@ -88,7 +88,23 @@ const ChartBlock: React.FC<{ content: string }> = ({ content }) => {
         }
       }
 
-      const rawData = Array.isArray(raw.data) ? raw.data : []
+      // Normalize Chart.js format { labels: [...], datasets: [{ data: [...] }] } into flat array
+      let rawData: unknown[] = []
+      if (Array.isArray(raw.data)) {
+        rawData = raw.data
+      } else if (raw.data && typeof raw.data === 'object') {
+        const chartJsData = raw.data as Record<string, unknown>
+        const labels = Array.isArray(chartJsData.labels) ? chartJsData.labels : []
+        const datasets = Array.isArray(chartJsData.datasets) ? chartJsData.datasets : []
+        if (datasets.length > 0 && labels.length > 0) {
+          const firstDataset = datasets[0] as Record<string, unknown>
+          const values = Array.isArray(firstDataset.data) ? firstDataset.data : []
+          rawData = labels.map((lbl, i) => ({
+            label: String(lbl),
+            value: values[i] ?? 0,
+          }))
+        }
+      }
       const data: ChartDatum[] = []
 
       rawData.forEach((item, index) => {

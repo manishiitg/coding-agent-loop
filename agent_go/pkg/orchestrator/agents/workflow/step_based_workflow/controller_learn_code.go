@@ -689,13 +689,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runLearnCodeMainPyFromExecution(
 		} else {
 			errMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
 		}
-		// Even with non-zero exit, check if the script produced valid output.
-		// Some scripts print diagnostics and exit non-zero but still write all required files.
-		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
-		if preValResults != nil && preValResults.OverallPass {
-			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
-			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output}
-		}
+		// Script failed — skip pre-validation and send the error directly to the LLM for fixing.
+		// Pre-validation will run after the fix loop succeeds, so no need to run it on every failure.
 		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg}
 	}
 	return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: 0, Output: output}

@@ -128,9 +128,6 @@ type StepBasedWorkflowOrchestrator struct {
 	// Tiered LLM allocation mode
 	tierResolver *TierResolver // nil when no tiered config
 
-	// Debouncer for todo task status update events (coalesces parallel sub-agent completions)
-	todoStatusDebouncer *todoTaskStatusDebouncer
-
 	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
 	enabledGroupIDs []string
 
@@ -1349,7 +1346,7 @@ func isCliProviderForPrompt(provider string) bool {
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.
 // filename: e.g. "todo-task-prompts.json", "conditional-prompts.json", etc.
-func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, model, filename string) {
+func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, _ string, filename string) {
 	go func() {
 		var vwp string
 		if hcpo.selectedRunFolder != "" {
@@ -1365,7 +1362,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, ste
 			"agent_type":    agentType,
 			"system_prompt": systemPrompt,
 			"user_message":  userMessage,
-			"model":         model,
 			"saved_at":      "pre_execution",
 			"timestamp":     time.Now().Format(time.RFC3339),
 		}

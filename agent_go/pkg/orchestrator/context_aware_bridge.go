@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"sync"
 )
 
 // TokenPersister defines the interface for persisting token usage to file
@@ -36,6 +37,18 @@ type orchestratorContext struct {
 	agentName string
 }
 
+// ToolCallEntry represents a captured tool call for logging purposes.
+type ToolCallEntry struct {
+	ToolCallID string        `json:"tool_call_id"`
+	ToolName   string        `json:"tool_name"`
+	Args       string        `json:"args,omitempty"`
+	Result     string        `json:"result,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Duration   time.Duration `json:"duration,omitempty"`
+	StepID     string        `json:"step_id,omitempty"`
+	Timestamp  time.Time     `json:"timestamp"`
+}
+
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
 type ContextAwareEventBridge struct {
 	underlyingBridge mcpagent.AgentEventListener
@@ -51,8 +64,12 @@ type ContextAwareEventBridge struct {
 	totalGroups     int    // Total number of groups in batch
 	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
 	contextStack []orchestratorContext
-	mu           sync.RWMutex
-	logger       loggerv2.Logger
+	// Tool call collector — captures tool_call_start/end events for workspace logging
+	toolCalls       map[string]*ToolCallEntry // keyed by ToolCallID
+	toolCallOrder   []string                  // insertion order
+	toolCallCapture bool                      // whether to capture tool calls
+	mu              sync.RWMutex
+	logger          loggerv2.Logger
 }
 
 // Name implements the EventBridge interface
@@ -414,6 +431,14 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		}
 	}
 
+	// Capture tool call events when capture is enabled
+	c.mu.RLock()
+	capture := c.toolCallCapture
+	c.mu.RUnlock()
+	if capture && event.Data != nil {
+		c.captureToolCallEvent(event)
+	}
+
 	if c.underlyingBridge == nil {
 		c.logger.Error(fmt.Sprintf("❌ ContextAwareBridge: Underlying bridge is nil, cannot forward event %s", event.Type), nil)
 		return fmt.Errorf("underlying bridge is nil")
@@ -423,4 +448,81 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: Error forwarding event %s: %v", event.Type, err))
 	}
 	return err
+}
+
+// StartToolCallCapture enables tool call capture. Call DrainToolCalls to retrieve and reset.
+func (c *ContextAwareEventBridge) StartToolCallCapture() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.toolCallCapture = true
+	c.toolCalls = make(map[string]*ToolCallEntry)
+	c.toolCallOrder = nil
+}
+
+// DrainToolCalls returns all captured tool calls in order and resets the collector.
+func (c *ContextAwareEventBridge) DrainToolCalls() []ToolCallEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.toolCallCapture = false
+	result := make([]ToolCallEntry, 0, len(c.toolCallOrder))
+	for _, id := range c.toolCallOrder {
+		if tc, ok := c.toolCalls[id]; ok {
+			result = append(result, *tc)
+		}
+	}
+	c.toolCalls = nil
+	c.toolCallOrder = nil
+	return result
+}
+
+func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.toolCalls == nil {
+		return
+	}
+
+	switch d := event.Data.(type) {
+	case *events.ToolCallStartEvent:
+		if _, exists := c.toolCalls[d.ToolCallID]; !exists {
+			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
+		}
+		c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+			ToolCallID: d.ToolCallID,
+			ToolName:   d.ToolName,
+			Args:       d.ToolParams.Arguments,
+			StepID:     c.currentStepID,
+			Timestamp:  time.Now(),
+		}
+	case *events.ToolCallEndEvent:
+		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
+			tc.Result = d.Result
+			tc.Duration = d.Duration
+		} else {
+			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
+			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+				ToolCallID: d.ToolCallID,
+				ToolName:   d.ToolName,
+				Result:     d.Result,
+				Duration:   d.Duration,
+				StepID:     c.currentStepID,
+				Timestamp:  time.Now(),
+			}
+		}
+	case *events.ToolCallErrorEvent:
+		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
+			tc.Error = d.Error
+			tc.Duration = d.Duration
+		} else {
+			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
+			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
+				ToolCallID: d.ToolCallID,
+				ToolName:   d.ToolName,
+				Error:      d.Error,
+				Duration:   d.Duration,
+				StepID:     c.currentStepID,
+				Timestamp:  time.Now(),
+			}
+		}
+	}
 }

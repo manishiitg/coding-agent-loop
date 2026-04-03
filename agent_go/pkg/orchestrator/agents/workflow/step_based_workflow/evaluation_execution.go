@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // ExecuteEvaluationOnly runs only the evaluation execution phase
@@ -57,9 +59,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 
 	// Inject TARGET_RUN_PATH so evaluation steps can find the artifacts they need to check
-	// targetRunFolder is e.g. "iteration-1"
-	// artifacts are in workspace/runs/iteration-1/execution
-	targetRunPath := filepath.Join(hcpo.GetWorkspacePath(), "runs", targetRunFolder, "execution")
+	// targetRunFolder is e.g. "iteration-1" or "iteration-26/atul"
+	// Absolute path so eval steps can use it directly in shell commands
+	docsRoot := GetPromptDocsRoot()
+	targetRunPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), "runs", targetRunFolder, "execution")
 	hcpo.variableValues["TARGET_RUN_PATH"] = targetRunPath
 
 	// Convert evaluation steps to PlanStepInterface
@@ -155,7 +158,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 
 	// Run single scoring agent with all steps
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Running scoring agent for all %d evaluation steps", len(stepInputs)))
-	report, err := hcpo.scoreAllSteps(ctx, evaluationPlan, stepInputs, targetRunFolder)
+
+	// Inject correlation ID so scoring agent events are tagged for frontend auto-notifications
+	scoringSessionID := fmt.Sprintf("workshop-eval-scoring-%s-%d", targetRunFolder, time.Now().UnixNano())
+	scoringCtx := context.WithValue(ctx, orchevents.AgentSessionIDKey, scoringSessionID)
+	scoringCtx = context.WithValue(scoringCtx, orchevents.ForceCorrelationIDKey, scoringSessionID)
+	scoringCtx = context.WithValue(scoringCtx, orchevents.IsSubAgentContextKey, true)
+
+	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder)
 	if err != nil {
 		return nil, fmt.Errorf("scoring agent failed: %w", err)
 	}
@@ -188,7 +198,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 // It looks in multiple locations since execution outputs are stored in logs folders
 func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.Context, evalExecutionPath string, stepID string, legacyStepPath string) (string, error) {
 	var outputs []string
-	evalRunFolder := filepath.Dir(evalExecutionPath)
 	folderCandidates := []string{getArtifactFolderName(stepID, legacyStepPath)}
 	if legacyStepPath != "" && legacyStepPath != folderCandidates[0] {
 		folderCandidates = append(folderCandidates, legacyStepPath)
@@ -208,35 +217,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.C
 	}
 
 	for _, stepFolder := range folderCandidates {
-		logsExecutionPath := filepath.Join(evalRunFolder, "logs", stepFolder, "execution")
-		logsValidationPath := filepath.Join(evalRunFolder, "logs", stepFolder, "validation")
 		executionStepPath := filepath.Join(evalExecutionPath, stepFolder)
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for execution outputs in: logs=%s, execution=%s", logsExecutionPath, executionStepPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for step output files in: %s", executionStepPath))
 
-		// 1. Try to read execution result files from logs folder (execution-attempt-{N}-iteration-{N}.json)
-		for attempt := 1; attempt <= 5; attempt++ {
-			for iteration := 0; iteration <= 5; iteration++ {
-				executionFile := fmt.Sprintf("execution-attempt-%d-iteration-%d.json", attempt, iteration)
-				filePath := filepath.Join(logsExecutionPath, executionFile)
-				content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-				if err == nil && content != "" {
-					appendOutput(executionFile, content)
-				}
-			}
-		}
-
-		// 2. Try to read validation files from logs folder (if validation was enabled)
-		validationFiles := []string{"validation.json", "validation-1.json", "validation-2.json"}
-		for _, filename := range validationFiles {
-			filePath := filepath.Join(logsValidationPath, filename)
-			content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
-			if err == nil && content != "" {
-				appendOutput(filename, content)
-			}
-		}
-
-		// 3. Try to read step output files from execution folder (verification reports, etc.)
+		// Read step output files from execution folder (the actual results to score)
 		execFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionStepPath)
 		if listErr == nil && len(execFiles) > 0 {
 			for _, filename := range execFiles {

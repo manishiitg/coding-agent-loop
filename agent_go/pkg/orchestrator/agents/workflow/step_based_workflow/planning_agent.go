@@ -208,7 +208,7 @@ type AgentConfigs struct {
 	OrchestrationMaxIterations          *int            `json:"orchestration_max_iterations,omitempty"`           // default: orchestrator max turns (typically 100)
 	DisableLearning                     *bool           `json:"disable_learning,omitempty"`                       // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningAfterLoopIteration          bool            `json:"learning_after_loop_iteration,omitempty"`          // run learning after each loop iteration
+	LearningAfterLoopIteration          bool            `json:"learning_after_loop_iteration,omitempty"`          // DEPRECATED: loop feature removed
 	LearningDetailLevel                 string          `json:"learning_detail_level,omitempty"`                  // "exact" or "none" (default: "exact")
 	LearningMode                        string          `json:"learning_mode,omitempty"`                          // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
 	SelectedServers                     []string        `json:"selected_servers,omitempty"`                       // step-level MCP server selection (subset of preset servers)
@@ -231,11 +231,9 @@ type AgentConfigs struct {
 	DisableTierOptimization             *bool           `json:"disable_tier_optimization,omitempty"`              // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
 	Optimized                           *bool           `json:"optimized,omitempty"`                              // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
 	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
-	UseLearnCodeMode                    *bool           `json:"use_learn_code_mode,omitempty"`                    // Learn code mode: LLM writes main.py once, saved and reused without LLM on future runs (nil = disabled)
 	LearnCodeMaxFixIter                 *int            `json:"learn_code_max_fix_iterations,omitempty"`          // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode               string          `json:"declared_execution_mode,omitempty"`                // Required mode decision for the step: "learn_code", "code_exec", "tool_search", or "simple"
 	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Why this mode is the best fit for the step
-	LearnCodeRejectionReason            string          `json:"learn_code_rejection_reason,omitempty"`            // Required when declared_execution_mode is not "learn_code"
 	CodeExecRejectionReason             string          `json:"code_exec_rejection_reason,omitempty"`             // Required when declared_execution_mode is "tool_search" or "simple"
 	ToolSearchRejectionReason           string          `json:"tool_search_rejection_reason,omitempty"`           // Required when declared_execution_mode is "simple"
 	DescriptionHash                     string          `json:"description_hash,omitempty"`                       // SHA256 of the current step description. If it changes, optimization review is stale.
@@ -259,8 +257,7 @@ const (
 	StepTypeRegular       StepType = "regular"
 	StepTypeConditional   StepType = "conditional"
 	StepTypeDecision      StepType = "decision"
-	StepTypeOrchestration StepType = "orchestration"
-	StepTypeHumanInput    StepType = "human_input"
+	StepTypeHumanInput StepType = "human_input"
 	StepTypeTodoTask      StepType = "todo_task"
 	StepTypeRouting       StepType = "routing"
 )
@@ -291,14 +288,14 @@ type PlanStepInterface interface {
 	GetCommonFields() CommonStepFields
 }
 
-// RegularPlanStep represents a regular step (may have loops)
+// RegularPlanStep represents a regular step
 type RegularPlanStep struct {
 	Type StepType `json:"type"` // Always "regular" - required for JSON marshaling/unmarshaling
 	CommonStepFields
-	HasLoop         bool          `json:"has_loop"`                   // true if step needs to loop
-	LoopCondition   string        `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations   int           `json:"max_iterations,omitempty"`   // max iterations (default: 10)
-	LoopDescription string        `json:"loop_description,omitempty"` // human-readable explanation
+	HasLoop         bool          `json:"has_loop"`                   // DEPRECATED: loop feature removed, kept for JSON backward compatibility
+	LoopCondition   string        `json:"loop_condition,omitempty"`   // DEPRECATED: loop feature removed
+	MaxIterations   int           `json:"max_iterations,omitempty"`   // DEPRECATED: loop feature removed
+	LoopDescription string        `json:"loop_description,omitempty"` // DEPRECATED: loop feature removed
 	AgentConfigs    *AgentConfigs `json:"-"`                          // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
 }
 
@@ -684,85 +681,6 @@ func (r *RoutingPlanStep) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// OrchestrationPlanStep represents an orchestration step (orchestrator with multiple sub-agents)
-// NOTE: Orchestration steps are wrappers that coordinate multiple sub-agents.
-// The wrapper only needs ID and Title for identification/display.
-// Description, SuccessCriteria, ContextDependencies, and ContextOutput come from the inner OrchestrationStep.
-// Loops are NOT supported on orchestration wrappers - if looping is needed, it should be on the inner OrchestrationStep.
-type OrchestrationPlanStep struct {
-	Type                  StepType                 `json:"type"`                           // Always "orchestration" - required for JSON marshaling/unmarshaling
-	ID                    string                   `json:"id"`                             // Stable step ID - required for identification
-	Title                 string                   `json:"title"`                          // Display title for the orchestration step wrapper
-	OrchestrationStep     PlanStepInterface        `json:"orchestration_step,omitempty"`   // The main orchestrator step to execute (has its own Description, SuccessCriteria, etc.)
-	OrchestrationRoutes   []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Array of possible routes with conditions
-	NextStepID            string                   `json:"next_step_id,omitempty"`         // ID of step after orchestration completes (or "end")
-	OrchestrationResponse *OrchestrationResponse   `json:"-"`                              // runtime: stores selected route and success evaluation - not stored in plan.json
-	AgentConfigs          *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
-}
-
-// Implement PlanStepInterface for OrchestrationPlanStep
-func (o *OrchestrationPlanStep) GetID() string                           { return o.ID }
-func (o *OrchestrationPlanStep) GetTitle() string                        { return o.Title }
-func (o *OrchestrationPlanStep) GetDescription() string                  { return "" }  // Not used - inner OrchestrationStep has description
-func (o *OrchestrationPlanStep) GetSuccessCriteria() string              { return "" }  // Not used - inner OrchestrationStep has success criteria
-func (o *OrchestrationPlanStep) GetContextDependencies() []string        { return nil } // Not used - inner OrchestrationStep has context dependencies
-func (o *OrchestrationPlanStep) GetContextOutput() FlexibleContextOutput { return "" }  // Not used - inner OrchestrationStep produces context output
-func (o *OrchestrationPlanStep) GetValidationSchema() *ValidationSchema {
-	// Return validation schema from inner OrchestrationStep if it exists
-	if o.OrchestrationStep != nil {
-		return o.OrchestrationStep.GetValidationSchema()
-	}
-	return nil
-}
-func (o *OrchestrationPlanStep) StepType() StepType { return StepTypeOrchestration }
-func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
-	return CommonStepFields{
-		ID:                  o.ID,
-		Title:               o.Title,
-		Description:         "",  // Not used for orchestration wrapper
-		SuccessCriteria:     "",  // Not used for orchestration wrapper
-		ContextDependencies: nil, // Not used for orchestration wrapper
-		ContextOutput:       "",  // Not used for orchestration wrapper
-		ValidationSchema:    o.GetValidationSchema(),
-	}
-}
-
-// MarshalJSON ensures the type field is always set when marshaling
-func (o *OrchestrationPlanStep) MarshalJSON() ([]byte, error) {
-	// Ensure type is set
-	o.Type = StepTypeOrchestration
-
-	type orchestrationJSON struct {
-		Type                StepType                 `json:"type"`
-		ID                  string                   `json:"id"`
-		Title               string                   `json:"title"`
-		OrchestrationStep   json.RawMessage          `json:"orchestration_step,omitempty"`
-		OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`
-		NextStepID          string                   `json:"next_step_id,omitempty"`
-	}
-
-	result := orchestrationJSON{
-		Type:                o.Type,
-		ID:                  o.ID,
-		Title:               o.Title,
-		OrchestrationRoutes: o.OrchestrationRoutes, // Go will call MarshalJSON on each PlanOrchestrationRoute
-		NextStepID:          o.NextStepID,
-	}
-
-	// Marshal OrchestrationStep if it exists
-	if o.OrchestrationStep != nil {
-		stepJSON, err := json.Marshal(o.OrchestrationStep)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal orchestration_step: %w", err)
-		}
-		result.OrchestrationStep = stepJSON
-	} else {
-		result.OrchestrationStep = []byte("null")
-	}
-
-	return json.Marshal(result)
-}
-
 // HumanInputPlanStep represents a step that asks a question to a human and blocks for input
 // This step type has no LLM, no execution, no validation, and no learning - just human input
 type HumanInputPlanStep struct {
@@ -808,8 +726,8 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 type TodoTaskPlanStep struct {
 	Type StepType `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
 	CommonStepFields                             // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
-	HasLoop            bool                      `json:"has_loop"`                       // Not used for todo task steps (completes when all todos done), kept for interface consistency
-	LoopCondition      string                    `json:"loop_condition,omitempty"`       // Not used for todo task steps, kept for interface consistency
+	HasLoop            bool                      `json:"has_loop"`                       // DEPRECATED: loop feature removed, kept for JSON backward compatibility
+	LoopCondition      string                    `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
 	PredefinedRoutes   []PlanOrchestrationRoute  `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
 	EnableGenericAgent bool                      `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
 	NextStepID         string                    `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
@@ -962,75 +880,6 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements custom unmarshaling for OrchestrationPlanStep
-// This is needed to properly handle nested orchestration_step and orchestration_routes[].sub_agent_step
-func (o *OrchestrationPlanStep) UnmarshalJSON(data []byte) error {
-	// First, unmarshal into a temporary struct to extract nested steps as raw JSON
-	var temp struct {
-		Type                StepType        `json:"type"`
-		ID                  string          `json:"id"`
-		Title               string          `json:"title"`
-		OrchestrationStep   json.RawMessage `json:"orchestration_step,omitempty"`
-		OrchestrationRoutes []struct {
-			RouteID       string          `json:"route_id"`
-			RouteName     string          `json:"route_name"`
-			Condition     string          `json:"condition"`
-			SubAgentStep  json.RawMessage `json:"sub_agent_step"`
-			ContextToPass string          `json:"context_to_pass,omitempty"`
-		} `json:"orchestration_routes,omitempty"`
-		NextStepID string `json:"next_step_id,omitempty"`
-		// Runtime fields (OrchestrationResponse, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
-	}
-
-	if err := json.Unmarshal(data, &temp); err != nil {
-		return fmt.Errorf("failed to unmarshal orchestration step: %w", err)
-	}
-
-	// Copy basic fields
-	o.Type = temp.Type
-	o.ID = temp.ID
-	o.Title = temp.Title
-	o.NextStepID = temp.NextStepID
-	// Runtime fields (OrchestrationResponse, AgentConfigs) are not unmarshaled - they use json:"-"
-
-	// Unmarshal nested orchestration_step
-	if len(temp.OrchestrationStep) > 0 {
-		step, err := unmarshalStepFromJSON(temp.OrchestrationStep)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal orchestration_step: %w", err)
-		}
-		o.OrchestrationStep = step
-	} else {
-		o.OrchestrationStep = nil
-	}
-
-	// Unmarshal orchestration_routes with nested sub_agent_step
-	if len(temp.OrchestrationRoutes) > 0 {
-		o.OrchestrationRoutes = make([]PlanOrchestrationRoute, len(temp.OrchestrationRoutes))
-		for i, route := range temp.OrchestrationRoutes {
-			o.OrchestrationRoutes[i].RouteID = route.RouteID
-			o.OrchestrationRoutes[i].RouteName = route.RouteName
-			o.OrchestrationRoutes[i].Condition = route.Condition
-			o.OrchestrationRoutes[i].ContextToPass = route.ContextToPass
-
-			// Unmarshal nested sub_agent_step
-			if len(route.SubAgentStep) > 0 {
-				step, err := unmarshalStepFromJSON(route.SubAgentStep)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal sub_agent_step in route %d: %w", i, err)
-				}
-				o.OrchestrationRoutes[i].SubAgentStep = step
-			} else {
-				o.OrchestrationRoutes[i].SubAgentStep = nil
-			}
-		}
-	} else {
-		o.OrchestrationRoutes = nil
-	}
-
-	return nil
-}
-
 // PlanStep is now an alias for PlanStepInterface for convenience
 // All code should use PlanStepInterface directly
 type PlanStep = PlanStepInterface
@@ -1055,7 +904,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 	}
 
 	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", label, index)
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, decision, human_input, todo_task, or routing)", label, index)
 	}
 
 	switch stepWithType.Type {
@@ -1077,12 +926,6 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 			return nil, fmt.Errorf("failed to parse decision %s %d: %w", label, index, err)
 		}
 		return &step, nil
-	case "orchestration":
-		var step OrchestrationPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse orchestration %s %d: %w", label, index, err)
-		}
-		return &step, nil
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
@@ -1102,7 +945,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		}
 		return &step, nil
 	default:
-		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepWithType.Type, label, index)
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, decision, human_input, todo_task, or routing)", stepWithType.Type, label, index)
 	}
 }
 
@@ -1196,10 +1039,10 @@ type PartialPlanStep struct {
 	SuccessCriteria     string                `json:"success_criteria,omitempty"`     // Optional: Updated success criteria
 	ContextDependencies []string              `json:"context_dependencies,omitempty"` // Optional: Updated context dependencies
 	ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`       // Optional: Updated context output
-	HasLoop             *bool                 `json:"has_loop,omitempty"`             // Optional: Updated has_loop (use pointer to distinguish unset from false)
-	LoopCondition       string                `json:"loop_condition,omitempty"`       // Optional: Updated loop condition
-	MaxIterations       *int                  `json:"max_iterations,omitempty"`       // Optional: Updated max iterations (use pointer to distinguish unset from 0)
-	LoopDescription     string                `json:"loop_description,omitempty"`     // Optional: Updated loop description
+	HasLoop             *bool                 `json:"has_loop,omitempty"`             // DEPRECATED: loop feature removed, kept for JSON backward compatibility
+	LoopCondition       string                `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
+	MaxIterations       *int                  `json:"max_iterations,omitempty"`       // DEPRECATED: loop feature removed
+	LoopDescription     string                `json:"loop_description,omitempty"`     // DEPRECATED: loop feature removed
 	// Conditional step fields
 	HasCondition      *bool                    `json:"has_condition,omitempty"`      // Optional: Updated has_condition (use pointer to distinguish unset from false)
 	ConditionQuestion string                   `json:"condition_question,omitempty"` // Optional: Updated condition question
@@ -1209,9 +1052,6 @@ type PartialPlanStep struct {
 	// Decision step fields
 	DecisionStep               map[string]interface{} `json:"decision_step,omitempty"`                // Optional: Updated decision step - will be converted to PlanStepInterface
 	DecisionEvaluationQuestion string                 `json:"decision_evaluation_question,omitempty"` // Optional: Updated decision evaluation question
-	// Orchestration step fields
-	OrchestrationStep   map[string]interface{}   `json:"orchestration_step,omitempty"`   // Optional: Updated orchestration step - will be converted to PlanStepInterface
-	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Optional: Updated orchestration routes
 	// Todo task step fields
 	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
@@ -1275,22 +1115,6 @@ func getUpdateRegularStepSchema() string {
 							"type": "string",
 							"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
 						},
-						"has_loop": {
-							"type": "boolean",
-							"description": "OPTIONAL: Updated has_loop flag. Only include if you want to change it. If omitted, the existing has_loop value is preserved."
-						},
-						"loop_condition": {
-							"type": "string",
-							"description": "OPTIONAL: Updated loop condition. Only include if you want to change it. If omitted, the existing loop condition is preserved."
-						},
-						"max_iterations": {
-							"type": "integer",
-							"description": "OPTIONAL: Updated max iterations. Only include if you want to change it. If omitted, the existing max iterations is preserved."
-						},
-						"loop_description": {
-							"type": "string",
-							"description": "OPTIONAL: Updated loop description. Only include if you want to change it. If omitted, the existing loop description is preserved."
-						}
 					},
 					"required": ["existing_step_id"]
 	}`
@@ -1340,22 +1164,6 @@ func getAddRegularStepSchema() string {
 			"context_output": {
 				"type": "string",
 				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content (descriptions, logs, content > 1KB), store it in a separate markdown file (e.g., 'step_1_details.md') and reference it from JSON (e.g., {\"details_file\": \"step_1_details.md\"}). JSON should contain only structured data: counts, IDs, status, file references, brief summaries. Large text content belongs in markdown files."
-			},
-			"has_loop": {
-				"type": "boolean",
-				"description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."
-			},
-			"loop_condition": {
-				"type": "string",
-				"description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."
-			},
-			"max_iterations": {
-				"type": "integer",
-				"description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."
-			},
-			"loop_description": {
-				"type": "string",
-				"description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -2277,12 +2085,6 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse decision step: %w", err)
 		}
 		typedStep = &step
-	case "orchestration":
-		var step OrchestrationPlanStep
-		if err := json.Unmarshal(stepJSON, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse orchestration step: %w", err)
-		}
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepJSON, &step); err != nil {
@@ -2350,13 +2152,6 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		}
 		step.Type = StepTypeDecision
 		typedStep = &step
-	case "orchestration":
-		var step OrchestrationPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse orchestration step: %w", err)
-		}
-		step.Type = StepTypeOrchestration
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
@@ -2379,7 +2174,7 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		step.Type = StepTypeRouting
 		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepType)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, human_input, todo_task, or routing)", stepType)
 	}
 
 	return typedStep, nil
@@ -2596,6 +2391,8 @@ func validateArrayLengthConsistencyChecks(schema *ValidationSchema) error {
 	return nil
 }
 
+var _ = updateValidationSchemaOnStep
+
 // updateValidationSchemaOnStep updates validation schema on any step type
 func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSchema) {
 	switch s := step.(type) {
@@ -2606,11 +2403,6 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	case *DecisionPlanStep:
 		// DecisionPlanStep has validation schema directly via CommonStepFields
 		s.ValidationSchema = schema
-	case *OrchestrationPlanStep:
-		// For OrchestrationPlanStep, validation schema is on the inner OrchestrationStep
-		if s.OrchestrationStep != nil {
-			updateValidationSchemaOnStep(s.OrchestrationStep, schema)
-		}
 	case *HumanInputPlanStep:
 		s.ValidationSchema = schema
 	case *TodoTaskPlanStep:
@@ -2727,42 +2519,7 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 	// Compare type-specific fields
 	switch oldS := oldStep.(type) {
 	case *RegularPlanStep:
-		if newS, ok := newStep.(*RegularPlanStep); ok {
-			if oldS.HasLoop != newS.HasLoop {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".has_loop",
-					OldValue: oldS.HasLoop,
-					NewValue: newS.HasLoop,
-				})
-			}
-			// Note: LoopCondition, MaxIterations, LoopDescription are already compared above in common fields
-			// But we track them here for type-specific clarity
-			if oldS.LoopCondition != newS.LoopCondition {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".loop_condition",
-					OldValue: oldS.LoopCondition,
-					NewValue: newS.LoopCondition,
-				})
-			}
-			if oldS.MaxIterations != newS.MaxIterations {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".max_iterations",
-					OldValue: oldS.MaxIterations,
-					NewValue: newS.MaxIterations,
-				})
-			}
-			if oldS.LoopDescription != newS.LoopDescription {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".loop_description",
-					OldValue: oldS.LoopDescription,
-					NewValue: newS.LoopDescription,
-				})
-			}
-		}
+		// No type-specific fields to diff (loop fields removed)
 
 	case *ConditionalPlanStep:
 		if newS, ok := newStep.(*ConditionalPlanStep); ok {
@@ -2863,57 +2620,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 			}
 		}
 
-	case *OrchestrationPlanStep:
-		if newS, ok := newStep.(*OrchestrationPlanStep); ok {
-			// Compare wrapper's title (already compared in common fields, but ensure it's here for clarity)
-			// Title is already compared in common fields section above, but we include it here for wrapper-specific tracking
-			if oldS.Title != newS.Title {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".title",
-					OldValue: oldS.Title,
-					NewValue: newS.Title,
-				})
-			}
-			if oldS.NextStepID != newS.NextStepID {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".next_step_id",
-					OldValue: oldS.NextStepID,
-					NewValue: newS.NextStepID,
-				})
-			}
-			// Compare nested orchestration step
-			if oldS.OrchestrationStep != nil && newS.OrchestrationStep != nil {
-				compareNestedStepFields(oldS.OrchestrationStep, newS.OrchestrationStep, stepID, prefix+".orchestration_step", fieldChanges)
-			} else if oldS.OrchestrationStep != nil || newS.OrchestrationStep != nil {
-				oldID := "nil"
-				if oldS.OrchestrationStep != nil {
-					oldID = oldS.OrchestrationStep.GetID()
-				}
-				newID := "nil"
-				if newS.OrchestrationStep != nil {
-					newID = newS.OrchestrationStep.GetID()
-				}
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".orchestration_step",
-					OldValue: oldID,
-					NewValue: newID,
-				})
-			}
-			// Compare orchestration routes
-			if !equalOrchestrationRoutes(oldS.OrchestrationRoutes, newS.OrchestrationRoutes) {
-				oldRoutesJSON, _ := json.Marshal(oldS.OrchestrationRoutes)
-				newRoutesJSON, _ := json.Marshal(newS.OrchestrationRoutes)
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".orchestration_routes",
-					OldValue: string(oldRoutesJSON),
-					NewValue: string(newRoutesJSON),
-				})
-			}
-		}
 	}
 }
 
@@ -2974,18 +2680,7 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.ContextOutput != "" {
 			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
 		}
-		if partialUpdate.HasLoop != nil {
-			updated.HasLoop = *partialUpdate.HasLoop
-		}
-		if partialUpdate.LoopCondition != "" {
-			updated.LoopCondition = partialUpdate.LoopCondition
-		}
-		if partialUpdate.MaxIterations != nil {
-			updated.MaxIterations = *partialUpdate.MaxIterations
-		}
-		if partialUpdate.LoopDescription != "" {
-			updated.LoopDescription = partialUpdate.LoopDescription
-		}
+		// Loop fields ignored (feature removed)
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
 		}
@@ -3065,81 +2760,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.IfFalseNextStepID != "" {
 			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
-		}
-		return &updated
-
-	case *OrchestrationPlanStep:
-		updated := *step
-		if partialUpdate.Title != "" {
-			updated.Title = partialUpdate.Title
-		}
-		if partialUpdate.OrchestrationStep != nil {
-			// If we have an existing nested step, merge the partial update into it to preserve fields
-			// that weren't in the update (like context_dependencies, validation_schema, etc.)
-			if updated.OrchestrationStep != nil {
-				// Create a PartialPlanStep from the map by extracting fields directly
-				nestedPartial := PartialPlanStep{}
-				// Extract common fields from the map
-				if desc, ok := partialUpdate.OrchestrationStep["description"].(string); ok {
-					nestedPartial.Description = desc
-				}
-				if title, ok := partialUpdate.OrchestrationStep["title"].(string); ok {
-					nestedPartial.Title = title
-				}
-				if successCriteria, ok := partialUpdate.OrchestrationStep["success_criteria"].(string); ok {
-					nestedPartial.SuccessCriteria = successCriteria
-				}
-				if contextDeps, ok := partialUpdate.OrchestrationStep["context_dependencies"].([]interface{}); ok {
-					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
-					for _, dep := range contextDeps {
-						if depStr, ok := dep.(string); ok {
-							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
-						}
-					}
-				}
-				if contextOutput, ok := partialUpdate.OrchestrationStep["context_output"]; ok {
-					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
-						contextOutputJSON, _ := json.Marshal(contextOutputMap)
-						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
-					}
-				}
-				if validationSchema, ok := partialUpdate.OrchestrationStep["validation_schema"]; ok {
-					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
-						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
-						var vs ValidationSchema
-						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
-							nestedPartial.ValidationSchema = &vs
-						}
-					}
-				}
-				if nextStepID, ok := partialUpdate.OrchestrationStep["next_step_id"].(string); ok {
-					nestedPartial.NextStepID = nextStepID
-				}
-				// Merge the nested partial update into the existing nested step
-				updated.OrchestrationStep = mergePartialStepUpdate(updated.OrchestrationStep, nestedPartial)
-			} else {
-				// No existing nested step - convert and assign directly
-				converted, err := convertMapToStep(partialUpdate.OrchestrationStep)
-				if err != nil {
-					return existingStep
-				}
-				updated.OrchestrationStep = converted
-			}
-		}
-		if partialUpdate.OrchestrationRoutes != nil {
-			// Convert routes - SubAgentStep needs conversion
-			updated.OrchestrationRoutes = make([]PlanOrchestrationRoute, len(partialUpdate.OrchestrationRoutes))
-			for i, route := range partialUpdate.OrchestrationRoutes {
-				updated.OrchestrationRoutes[i] = route
-				// Note: PlanOrchestrationRoute.SubAgentStep is PlanStepInterface, and PartialPlanStep uses map[string]interface{} for nested steps
-			}
-		}
-		if partialUpdate.NextStepID != "" {
-			updated.NextStepID = partialUpdate.NextStepID
-		}
-		if partialUpdate.ValidationSchema != nil && updated.OrchestrationStep != nil {
-			// Update validation schema on the inner OrchestrationStep (can be any step type)
-			updateValidationSchemaOnStep(updated.OrchestrationStep, partialUpdate.ValidationSchema)
 		}
 		return &updated
 
@@ -3313,19 +2933,6 @@ func findStepByID(steps []PlanStepInterface, id string) (PlanStepInterface, int,
 			if foundStep, idx, slice := findStepByID(s.IfFalseSteps, id); foundStep != nil {
 				return foundStep, idx, slice
 			}
-		case *OrchestrationPlanStep:
-			if s.OrchestrationStep != nil && s.OrchestrationStep.GetID() == id {
-				// Special case: the internal orchestration_step matches
-				// We return it but we need to handle its update specifically since it's not in a slice
-				return s.OrchestrationStep, -1, nil
-			}
-			for _, route := range s.OrchestrationRoutes {
-				if route.SubAgentStep != nil {
-					if foundStep, idx, slice := findStepByID([]PlanStepInterface{route.SubAgentStep}, id); foundStep != nil {
-						return foundStep, idx, slice
-					}
-				}
-			}
 		case *TodoTaskPlanStep:
 			for _, route := range s.PredefinedRoutes {
 				if route.SubAgentStep != nil {
@@ -3356,21 +2963,6 @@ func updateStepRecursively(steps []PlanStepInterface, partialUpdate PartialPlanS
 			}
 			if updated, _ := updateStepRecursively(s.IfFalseSteps, partialUpdate, fieldChanges); updated {
 				return true, i
-			}
-		case *OrchestrationPlanStep:
-			if s.OrchestrationStep != nil && s.OrchestrationStep.GetID() == partialUpdate.ExistingStepID {
-				s.OrchestrationStep = mergePartialStepUpdate(s.OrchestrationStep, partialUpdate)
-				return true, i
-			}
-			for j := range s.OrchestrationRoutes {
-				if s.OrchestrationRoutes[j].SubAgentStep != nil {
-					// We need to wrap the sub_agent_step in a temporary slice for the recursive call
-					tmpSlice := []PlanStepInterface{s.OrchestrationRoutes[j].SubAgentStep}
-					if updated, _ := updateStepRecursively(tmpSlice, partialUpdate, fieldChanges); updated {
-						s.OrchestrationRoutes[j].SubAgentStep = tmpSlice[0]
-						return true, i
-					}
-				}
 			}
 		case *TodoTaskPlanStep:
 			for j := range s.PredefinedRoutes {
@@ -3460,59 +3052,7 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			NewValue: partialUpdate.ContextOutput,
 		})
 	}
-	// HasLoop is only for RegularPlanStep
-	if partialUpdate.HasLoop != nil {
-		changedFields = append(changedFields, "has_loop")
-		oldHasLoop := false
-		if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-			oldHasLoop = regularStep.HasLoop
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "has_loop",
-			OldValue: oldHasLoop,
-			NewValue: *partialUpdate.HasLoop,
-		})
-	}
-	if partialUpdate.LoopCondition != "" {
-		changedFields = append(changedFields, "loop_condition")
-		oldLoopCondition := ""
-		if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-			oldLoopCondition = regularStep.LoopCondition
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "loop_condition",
-			OldValue: oldLoopCondition,
-			NewValue: partialUpdate.LoopCondition,
-		})
-	}
-	if partialUpdate.MaxIterations != nil {
-		changedFields = append(changedFields, "max_iterations")
-		oldMaxIterations := 0
-		if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-			oldMaxIterations = regularStep.MaxIterations
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "max_iterations",
-			OldValue: oldMaxIterations,
-			NewValue: *partialUpdate.MaxIterations,
-		})
-	}
-	if partialUpdate.LoopDescription != "" {
-		changedFields = append(changedFields, "loop_description")
-		oldLoopDescription := ""
-		if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-			oldLoopDescription = regularStep.LoopDescription
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "loop_description",
-			OldValue: oldLoopDescription,
-			NewValue: partialUpdate.LoopDescription,
-		})
-	}
+	// Loop fields ignored (feature removed)
 	// Conditional step fields
 	if partialUpdate.ConditionQuestion != "" {
 		changedFields = append(changedFields, "condition_question")
@@ -3681,130 +3221,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			NewValue: partialUpdate.DecisionEvaluationQuestion,
 		})
 	}
-	// Orchestration step fields
-	if partialUpdate.OrchestrationStep != nil {
-		changedFields = append(changedFields, "orchestration_step")
-		// Convert new orchestration step from map to PlanStepInterface
-		newOrchestrationStep, err := convertMapToStep(partialUpdate.OrchestrationStep)
-		if err == nil {
-			// Get old orchestration step
-			var oldOrchestrationStep PlanStepInterface
-			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
-				oldOrchestrationStep = orchestrationStep.OrchestrationStep
-			}
-			// Compare nested step fields in detail
-			compareNestedStepFields(oldOrchestrationStep, newOrchestrationStep, partialUpdate.ExistingStepID, "orchestration_step", fieldChanges)
-		} else {
-			// Fallback to ID-only tracking if conversion fails
-			oldOrchestrationStep := "nil"
-			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
-				oldOrchestrationStep = orchestrationStep.OrchestrationStep.GetID()
-			}
-			newOrchestrationStepID := ""
-			if id, ok := partialUpdate.OrchestrationStep["id"].(string); ok {
-				newOrchestrationStepID = id
-			}
-			*fieldChanges = append(*fieldChanges, PlanFieldChange{
-				StepID:   partialUpdate.ExistingStepID,
-				Field:    "orchestration_step",
-				OldValue: oldOrchestrationStep,
-				NewValue: newOrchestrationStepID,
-			})
-		}
-	}
-	if partialUpdate.OrchestrationRoutes != nil {
-		changedFields = append(changedFields, "orchestration_routes")
-		// Get old routes
-		var oldRoutes []PlanOrchestrationRoute
-		if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
-			oldRoutes = orchestrationStep.OrchestrationRoutes
-		}
-		// Compare routes in detail
-		if !equalOrchestrationRoutes(oldRoutes, partialUpdate.OrchestrationRoutes) {
-			// Track detailed changes for each route
-			maxLen := len(oldRoutes)
-			if len(partialUpdate.OrchestrationRoutes) > maxLen {
-				maxLen = len(partialUpdate.OrchestrationRoutes)
-			}
-			for i := 0; i < maxLen; i++ {
-				routePrefix := fmt.Sprintf("orchestration_routes[%d]", i)
-				if i >= len(oldRoutes) {
-					// New route added
-					newRouteJSON, _ := json.Marshal(partialUpdate.OrchestrationRoutes[i])
-					*fieldChanges = append(*fieldChanges, PlanFieldChange{
-						StepID:   partialUpdate.ExistingStepID,
-						Field:    routePrefix,
-						OldValue: nil,
-						NewValue: string(newRouteJSON),
-					})
-				} else if i >= len(partialUpdate.OrchestrationRoutes) {
-					// Route removed
-					oldRouteJSON, _ := json.Marshal(oldRoutes[i])
-					*fieldChanges = append(*fieldChanges, PlanFieldChange{
-						StepID:   partialUpdate.ExistingStepID,
-						Field:    routePrefix,
-						OldValue: string(oldRouteJSON),
-						NewValue: nil,
-					})
-				} else {
-					// Route modified - compare fields
-					oldRoute := oldRoutes[i]
-					newRoute := partialUpdate.OrchestrationRoutes[i]
-					if oldRoute.RouteID != newRoute.RouteID {
-						*fieldChanges = append(*fieldChanges, PlanFieldChange{
-							StepID:   partialUpdate.ExistingStepID,
-							Field:    routePrefix + ".route_id",
-							OldValue: oldRoute.RouteID,
-							NewValue: newRoute.RouteID,
-						})
-					}
-					if oldRoute.RouteName != newRoute.RouteName {
-						*fieldChanges = append(*fieldChanges, PlanFieldChange{
-							StepID:   partialUpdate.ExistingStepID,
-							Field:    routePrefix + ".route_name",
-							OldValue: oldRoute.RouteName,
-							NewValue: newRoute.RouteName,
-						})
-					}
-					if oldRoute.Condition != newRoute.Condition {
-						*fieldChanges = append(*fieldChanges, PlanFieldChange{
-							StepID:   partialUpdate.ExistingStepID,
-							Field:    routePrefix + ".condition",
-							OldValue: oldRoute.Condition,
-							NewValue: newRoute.Condition,
-						})
-					}
-					if oldRoute.ContextToPass != newRoute.ContextToPass {
-						*fieldChanges = append(*fieldChanges, PlanFieldChange{
-							StepID:   partialUpdate.ExistingStepID,
-							Field:    routePrefix + ".context_to_pass",
-							OldValue: oldRoute.ContextToPass,
-							NewValue: newRoute.ContextToPass,
-						})
-					}
-					// Compare nested sub-agent step
-					if oldRoute.SubAgentStep != nil && newRoute.SubAgentStep != nil {
-						compareNestedStepFields(oldRoute.SubAgentStep, newRoute.SubAgentStep, partialUpdate.ExistingStepID, routePrefix+".sub_agent_step", fieldChanges)
-					} else if oldRoute.SubAgentStep != nil || newRoute.SubAgentStep != nil {
-						oldID := "nil"
-						if oldRoute.SubAgentStep != nil {
-							oldID = oldRoute.SubAgentStep.GetID()
-						}
-						newID := "nil"
-						if newRoute.SubAgentStep != nil {
-							newID = newRoute.SubAgentStep.GetID()
-						}
-						*fieldChanges = append(*fieldChanges, PlanFieldChange{
-							StepID:   partialUpdate.ExistingStepID,
-							Field:    routePrefix + ".sub_agent_step",
-							OldValue: oldID,
-							NewValue: newID,
-						})
-					}
-				}
-			}
-		}
-	}
 	// Legacy todo_task_step field — extract fields and track them as top-level changes
 	if partialUpdate.TodoTaskStep != nil {
 		if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok && desc != "" {
@@ -3926,9 +3342,7 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	if partialUpdate.NextStepID != "" {
 		changedFields = append(changedFields, "next_step_id")
 		oldNextStepID := ""
-		if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
-			oldNextStepID = orchestrationStep.NextStepID
-		} else if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+		if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
 			oldNextStepID = todoTaskStep.NextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
@@ -4622,27 +4036,6 @@ func validateDecisionStepFieldsTyped(step *DecisionPlanStep) error {
 	return nil
 }
 
-// validateOrchestrationStepFieldsTyped validates that an OrchestrationPlanStep has all required fields
-// Returns an error message suitable for returning as a tool response if validation fails
-func validateOrchestrationStepFieldsTyped(step *OrchestrationPlanStep) error {
-	if step.OrchestrationStep == nil {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration step type but is missing required orchestration_step field. Please provide the orchestration_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
-	}
-	if step.OrchestrationStep.GetID() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required ID field. Please provide an ID for the orchestration_step", step.Title, step.ID)
-	}
-	if step.OrchestrationStep.GetDescription() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required description field. Please provide a description for the orchestration_step", step.Title, step.ID)
-	}
-	if len(step.OrchestrationRoutes) == 0 {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration step type but has no orchestration_routes defined. Please provide at least one orchestration route with conditions and sub-agent steps", step.Title, step.ID)
-	}
-	if step.NextStepID == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has orchestration step type but is missing required next_step_id field. Please provide the ID of the step to connect to after orchestration completes, or 'end' to terminate the workflow", step.Title, step.ID)
-	}
-	return nil
-}
-
 // validateTodoTaskStepFieldsTyped validates that a TodoTaskPlanStep has all required fields
 // Returns an error message suitable for returning as a tool response if validation fails
 func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
@@ -4696,11 +4089,6 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 			s.Title = title
 		}
 	case *DecisionPlanStep:
-		s.ID = id
-		if strings.TrimSpace(s.Title) == "" {
-			s.Title = title
-		}
-	case *OrchestrationPlanStep:
 		s.ID = id
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
@@ -4787,19 +4175,6 @@ func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, 
 		}
 	case *DecisionPlanStep:
 		// DecisionPlanStep is flattened in the current plan model; there is no nested decision sub-step to recurse into.
-	case *OrchestrationPlanStep:
-		if s.OrchestrationStep != nil {
-			if err := migrateTodoRouteIDsInStep(s.OrchestrationStep, parentStepFilter, changes); err != nil {
-				return err
-			}
-		}
-		for _, route := range s.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				if err := migrateTodoRouteIDsInStep(route.SubAgentStep, parentStepFilter, changes); err != nil {
-					return err
-				}
-			}
-		}
 	}
 	return nil
 }
@@ -4976,20 +4351,6 @@ func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) er
 				return fmt.Errorf("conditional if_false_steps[%d]: %w", i, err)
 			}
 		}
-	case *OrchestrationPlanStep:
-		if s.OrchestrationStep != nil {
-			if err := validateTodoTaskNestingDepth(s.OrchestrationStep, todoRouteDepth); err != nil {
-				return err
-			}
-		}
-		for i, route := range s.OrchestrationRoutes {
-			if route.SubAgentStep == nil {
-				continue
-			}
-			if err := validateTodoTaskNestingDepth(route.SubAgentStep, todoRouteDepth); err != nil {
-				return fmt.Errorf("orchestration_route[%d] (route_id: %s): %w", i, route.RouteID, err)
-			}
-		}
 	}
 	return nil
 }
@@ -5038,12 +4399,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		case "decision":
 			if decisionStep, ok := typedStep.(*DecisionPlanStep); ok {
 				if err := validateDecisionStepFieldsTyped(decisionStep); err != nil {
-					return "", fmt.Errorf("validation failed: %w", err)
-				}
-			}
-		case "orchestration":
-			if orchestrationStep, ok := typedStep.(*OrchestrationPlanStep); ok {
-				if err := validateOrchestrationStepFieldsTyped(orchestrationStep); err != nil {
 					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}

@@ -270,15 +270,68 @@ func formatShellResponse(respBody []byte) (string, bool) {
 		hasError = true
 	}
 
+	// Command failed if exit code is non-zero or API returned an error
+	commandFailed := exitCode != 0 || hasError
+
+	// Unwrap MCP API response from stdout to reduce JSON nesting for the LLM.
+	// When the shell command calls an MCP/virtual tool via HTTP (e.g. call_sub_agent),
+	// stdout contains: {"success":true,"result":"{...actual JSON...}"}
+	// This unwraps it so the LLM sees the actual result directly instead of
+	// triple-nested escaped JSON.
+	if exitCode == 0 && !hasError {
+		if stdoutRaw, ok := out["stdout"]; ok {
+			var stdout string
+			if json.Unmarshal(stdoutRaw, &stdout) == nil {
+				stdout = strings.TrimSpace(stdout)
+				if unwrapped := tryUnwrapMCPAPIResponse(stdout); unwrapped != "" {
+					out["stdout"] = json.RawMessage(fmt.Sprintf("%q", unwrapped))
+				}
+			}
+		}
+	}
+
 	result, err := json.Marshal(out)
 	if err != nil {
 		return string(respBody), false
 	}
 
-	// Command failed if exit code is non-zero or API returned an error
-	commandFailed := exitCode != 0 || hasError
-
 	return string(result), commandFailed
+}
+
+// tryUnwrapMCPAPIResponse attempts to unwrap a nested MCP API response.
+// Input format: {"success":true,"result":"{...escaped JSON...}"}
+// Returns the inner result string (which may itself be JSON) or "" if not applicable.
+func tryUnwrapMCPAPIResponse(stdout string) string {
+	if !strings.HasPrefix(stdout, "{") {
+		return ""
+	}
+
+	var apiResp struct {
+		Success bool   `json:"success"`
+		Result  string `json:"result"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &apiResp); err != nil {
+		return ""
+	}
+
+	// Only unwrap if it matches the MCP API response shape (has success + result/error)
+	if !apiResp.Success && apiResp.Error != "" {
+		return fmt.Sprintf("ERROR: %s", apiResp.Error)
+	}
+
+	if apiResp.Result == "" {
+		return ""
+	}
+
+	// If the result is itself valid JSON, return it as-is (pretty for the LLM)
+	var jsonCheck json.RawMessage
+	if json.Unmarshal([]byte(apiResp.Result), &jsonCheck) == nil {
+		return apiResp.Result
+	}
+
+	// Plain text result
+	return apiResp.Result
 }
 
 // deduplicateStrings removes duplicate entries from a string slice while preserving order.

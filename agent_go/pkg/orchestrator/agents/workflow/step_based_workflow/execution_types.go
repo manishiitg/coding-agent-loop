@@ -16,11 +16,6 @@ const (
 	// ExecutionModeSingleStep runs only one specific step - cleans only that step
 	ExecutionModeSingleStep ExecutionMode = "single_step"
 
-	// ExecutionModeFastExecute fast re-executes all steps - delete all and run without human input
-	ExecutionModeFastExecute ExecutionMode = "fast_execute"
-
-	// ExecutionModeFastExecuteRange fast executes steps 0 to N - delete those steps
-	ExecutionModeFastExecuteRange ExecutionMode = "fast_execute_range"
 )
 
 // CleanupScope defines WHAT should be cleaned (decided upfront, executed later)
@@ -63,7 +58,7 @@ type ExecutionSetup struct {
 	// Mode is the resolved execution mode
 	Mode ExecutionMode
 
-	// Context contains immutable execution flags (skipHumanInput, fastExecuteMode, etc.)
+	// Context contains immutable execution flags (skipHumanInput, etc.)
 	Context *ExecutionContext
 
 	// Cleanup defines what should be cleaned before execution
@@ -119,12 +114,10 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 	// Deep copy Context
 	if es.Context != nil {
 		clone.Context = &ExecutionContext{
-			SkipHumanInput:     es.Context.SkipHumanInput,
-			FastExecuteMode:    es.Context.FastExecuteMode,
-			FastExecuteEndStep: es.Context.FastExecuteEndStep,
-			RunSingleStepOnly:  es.Context.RunSingleStepOnly,
-			SingleStepTarget:   es.Context.SingleStepTarget,
-			IsEvaluationMode:   es.Context.IsEvaluationMode,
+			SkipHumanInput:    es.Context.SkipHumanInput,
+			RunSingleStepOnly: es.Context.RunSingleStepOnly,
+			SingleStepTarget:  es.Context.SingleStepTarget,
+			IsEvaluationMode:  es.Context.IsEvaluationMode,
 		}
 	}
 

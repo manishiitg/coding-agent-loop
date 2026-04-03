@@ -77,10 +77,6 @@ type StepBasedWorkflowOrchestrator struct {
 	variableValues    map[string]string  // Runtime variable values
 	variableManager   *VariableManager   // Variable manager for variable extraction operations (independent from controller)
 
-	// Fast execute mode tracking
-	fastExecuteMode    bool // Whether we're in fast execute mode
-	fastExecuteEndStep int  // Last step index to fast execute (0-based)
-
 	// Single step execution mode
 	runSingleStepOnly bool // Whether to run only a single step and stop
 	singleStepTarget  int  // Target step index to run (0-based)
@@ -127,9 +123,6 @@ type StepBasedWorkflowOrchestrator struct {
 
 	// Tiered LLM allocation mode
 	tierResolver *TierResolver // nil when no tiered config
-
-	// Debouncer for todo task status update events (coalesces parallel sub-agent completions)
-	todoStatusDebouncer *todoTaskStatusDebouncer
 
 	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
 	enabledGroupIDs []string
@@ -763,7 +756,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	}
 
 	// Process execution strategy early to set controller state
-	// This ensures skipHumanInput and fastExecuteMode are set regardless of code path
+	// This ensures skipHumanInput is set regardless of code path
 	// All execution strategies now skip human input
 	if execOpts != nil && execOpts.ExecutionStrategy != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Processing execution strategy early: %s", execOpts.ExecutionStrategy))
@@ -1062,25 +1055,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 // executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
 // depth: current nesting depth (0 = main plan, 1 = first level conditional, 2 = second level conditional)
 
-// requestHumanFeedback requests human feedback after validation and blocks until user responds
-// Returns: (approved bool, feedback string, error)
-func (hcpo *StepBasedWorkflowOrchestrator) requestHumanFeedback(ctx context.Context, currentStep, totalSteps int, validationResult string) (bool, string, error) {
-	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Requesting human feedback for step %d/%d", currentStep, totalSteps))
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("step_feedback_%d_%d_%d", currentStep, totalSteps, time.Now().UnixNano())
-
-	// Use common human feedback function
-	return hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		fmt.Sprintf("Step %d/%d validation completed. Should we continue with execution of the next step?", currentStep, totalSteps),
-		validationResult, // Show validation results as context
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-}
-
 func (hcpo *StepBasedWorkflowOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
 	// Validate that no options are provided since this orchestrator doesn't use them
 	if len(options) > 0 {
@@ -1127,12 +1101,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getWorkflowID() string {
 	return hcpo.workflowID
 }
 
-// SetFastExecuteMode sets the fast execute mode and end step
-func (hcpo *StepBasedWorkflowOrchestrator) SetFastExecuteMode(enabled bool, endStep int) {
-	hcpo.fastExecuteMode = enabled
-	hcpo.fastExecuteEndStep = endStep
-}
-
 // SetRunSingleStepMode sets the single step execution mode
 func (hcpo *StepBasedWorkflowOrchestrator) SetRunSingleStepMode(enabled bool, stepIndex int) {
 	hcpo.runSingleStepOnly = enabled
@@ -1155,11 +1123,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetLearningDetailLevel() string {
 // SetLearningDetailLevel sets the learning detail level preference
 func (hcpo *StepBasedWorkflowOrchestrator) SetLearningDetailLevel(level string) {
 	hcpo.learningDetailLevel = level
-}
-
-// IsFastExecuteStep checks if a step should be executed in fast mode
-func (hcpo *StepBasedWorkflowOrchestrator) IsFastExecuteStep(stepIndex int) bool {
-	return hcpo.fastExecuteMode && stepIndex <= hcpo.fastExecuteEndStep
 }
 
 // SetSkipHumanInput sets the skip human input mode (runs learning but skips human feedback)
@@ -1225,15 +1188,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetExecutionOptions() *ExecutionOptio
 // This should be called once at execution start to create an immutable context
 func (hcpo *StepBasedWorkflowOrchestrator) buildExecutionContext() *ExecutionContext {
 	execCtx := &ExecutionContext{
-		SkipHumanInput:     hcpo.skipHumanInput,
-		FastExecuteMode:    hcpo.fastExecuteMode,
-		FastExecuteEndStep: hcpo.fastExecuteEndStep,
-		RunSingleStepOnly:  hcpo.runSingleStepOnly,
-		SingleStepTarget:   hcpo.singleStepTarget,
-		IsEvaluationMode:   hcpo.isEvaluationMode,
+		SkipHumanInput:    hcpo.skipHumanInput,
+		RunSingleStepOnly: hcpo.runSingleStepOnly,
+		SingleStepTarget:  hcpo.singleStepTarget,
+		IsEvaluationMode:  hcpo.isEvaluationMode,
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, fastExecuteMode=%v, fastExecuteEndStep=%d, runSingleStepOnly=%v, singleStepTarget=%d, isEvaluationMode=%v", execCtx.SkipHumanInput, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget, execCtx.IsEvaluationMode))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, runSingleStepOnly=%v, singleStepTarget=%d, isEvaluationMode=%v", execCtx.SkipHumanInput, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget, execCtx.IsEvaluationMode))
 
 	return execCtx
 }
@@ -1260,12 +1221,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatValidationResponseForTemplate(v
 	// Add reasoning
 	if validationResponse.Reasoning != "" {
 		parts = append(parts, fmt.Sprintf("**Reasoning**: %s", validationResponse.Reasoning))
-	}
-
-	// Add loop-specific information if present
-	if validationResponse.LoopReasoning != "" {
-		parts = append(parts, fmt.Sprintf("**Loop Condition Status**: %v", validationResponse.LoopConditionMet))
-		parts = append(parts, fmt.Sprintf("**Loop Reasoning**: %s", validationResponse.LoopReasoning))
 	}
 
 	// Add execution status
@@ -1349,7 +1304,7 @@ func isCliProviderForPrompt(provider string) bool {
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.
 // filename: e.g. "todo-task-prompts.json", "conditional-prompts.json", etc.
-func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, model, filename string) {
+func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepID, stepPath, agentType, systemPrompt, userMessage, _ string, filename string) {
 	go func() {
 		var vwp string
 		if hcpo.selectedRunFolder != "" {
@@ -1365,7 +1320,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, ste
 			"agent_type":    agentType,
 			"system_prompt": systemPrompt,
 			"user_message":  userMessage,
-			"model":         model,
 			"saved_at":      "pre_execution",
 			"timestamp":     time.Now().Format(time.RFC3339),
 		}

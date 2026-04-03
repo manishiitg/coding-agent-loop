@@ -336,9 +336,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.DeclaredExecutionModeReason != "" {
 		target.DeclaredExecutionModeReason = source.DeclaredExecutionModeReason
 	}
-	if source.LearnCodeRejectionReason != "" {
-		target.LearnCodeRejectionReason = source.LearnCodeRejectionReason
-	}
 	if source.CodeExecRejectionReason != "" {
 		target.CodeExecRejectionReason = source.CodeExecRejectionReason
 	}
@@ -405,8 +402,6 @@ func ApplyStepConfigFromFile(
 			s.AgentConfigs = matchedConfig
 		case *DecisionPlanStep:
 			s.AgentConfigs = matchedConfig
-		case *OrchestrationPlanStep:
-			s.AgentConfigs = matchedConfig
 		case *TodoTaskPlanStep:
 			s.AgentConfigs = matchedConfig
 		case *HumanInputPlanStep:
@@ -424,6 +419,12 @@ func ApplyStepConfigFromFile(
 		MergeAgentConfigFields(agentConfigs, matchedConfig, step.GetID(), orchestrator.GetLogger())
 	}
 
+	// Sync declared_execution_mode to boolean flags (use_code_execution_mode, etc.)
+	// This ensures configs written manually or by older tools still set the right flags.
+	if finalConfigs := getAgentConfigs(step); finalConfigs != nil {
+		syncDeclaredExecutionModeConfig(finalConfigs)
+	}
+
 	// Apply global overrides from step_override.json (highest priority)
 	overrides, err := orchestrator.ReadStepOverrides(ctx)
 	if err != nil {
@@ -438,8 +439,6 @@ func ApplyStepConfigFromFile(
 			case *ConditionalPlanStep:
 				s.AgentConfigs = overrides
 			case *DecisionPlanStep:
-				s.AgentConfigs = overrides
-			case *OrchestrationPlanStep:
 				s.AgentConfigs = overrides
 			case *TodoTaskPlanStep:
 				s.AgentConfigs = overrides

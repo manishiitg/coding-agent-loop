@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -488,8 +489,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 	execCtx.SkipHumanInput = true
 	execCtx.RunSingleStepOnly = true
 
+	// Inject correlation ID so report agent events are tagged for frontend auto-notifications
+	reportSessionID := fmt.Sprintf("workshop-report-%s-%d", runFolder, time.Now().UnixNano())
+	reportCtx := context.WithValue(ctx, orchevents.AgentSessionIDKey, reportSessionID)
+	reportCtx = context.WithValue(reportCtx, orchevents.ForceCorrelationIDKey, reportSessionID)
+	reportCtx = context.WithValue(reportCtx, orchevents.IsSubAgentContextKey, true)
+
 	_, _, err = hcpo.executeSingleStep(
-		ctx,
+		reportCtx,
 		reportStep,
 		0,
 		internalOutputStepID,

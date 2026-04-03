@@ -122,23 +122,6 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 			})
 			result = append(result, collectInnerSteps(inner)...)
 		}
-	case *OrchestrationPlanStep:
-		if s.OrchestrationStep != nil {
-			result = append(result, WorkshopStepInfo{
-				Step: s.OrchestrationStep, ParentID: parentID, ParentType: parentType,
-				BranchName: "orchestration_step", TopIndex: -1,
-			})
-			result = append(result, collectInnerSteps(s.OrchestrationStep)...)
-		}
-		for _, route := range s.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				result = append(result, WorkshopStepInfo{
-					Step: route.SubAgentStep, ParentID: parentID, ParentType: parentType,
-					BranchName: fmt.Sprintf("route:%s", route.RouteID), TopIndex: -1,
-				})
-				result = append(result, collectInnerSteps(route.SubAgentStep)...)
-			}
-		}
 	case *TodoTaskPlanStep:
 		for _, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {
@@ -174,8 +157,7 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
 		return false
 	}
-	return (cfg.UseLearnCodeMode != nil && *cfg.UseLearnCodeMode) ||
-		(cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode)
+	return cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode
 }
 
 func deriveExecutionModeFromConfig(cfg *AgentConfigs) string {
@@ -201,20 +183,17 @@ func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 		trueVal := true
 		falseVal := false
 		cfg.DeclaredExecutionMode = "code_exec"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &trueVal
 		cfg.UseToolSearchMode = &falseVal
 	case "tool_search":
 		trueVal := true
 		falseVal := false
 		cfg.DeclaredExecutionMode = "tool_search"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &falseVal
 		cfg.UseToolSearchMode = &trueVal
 	case "simple":
 		falseVal := false
 		cfg.DeclaredExecutionMode = "simple"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &falseVal
 		cfg.UseToolSearchMode = &falseVal
 	}
@@ -927,13 +906,15 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "eval":
 		// EVAL: build and run evaluations — no execution plan changes, but evaluation step configs are allowed
 		tools = append(tools, eval...)
-		tools = append(tools, "update_step_config", "analyze_step", "optimize_eval_step")
-		tools = append(tools, "query_step", "list_executions")
+		tools = append(tools, "update_step_config", "analyze_step", "optimize_eval_step", "run_saved_main_py")
+		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	case "output":
 		// OUTPUT/REPORT: design and run the final report artifact
 		tools = append(tools, report...)
 		tools = append(tools, "optimize_report_step")
+		tools = append(tools, "update_step_config", "analyze_step", "run_saved_main_py")
+		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1316,7 +1297,7 @@ When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? 
 
 **Optimization workflow depends on the step's execution mode:**
 
-**For scripted code steps** (`+"`use_code_execution_mode=true`"+` or legacy `+"`use_learn_code_mode=true`"+`):
+**For scripted code steps** (`+"`use_code_execution_mode=true`"+`):
 1. **Check mode** — Read step_config.json. If step isn't in scripted code mode yet, set it: update_step_config(step_id, use_code_execution_mode=true)
 2. **Run the step** — execute_step(step_id). The controller first tries saved main.py from learnings/{step-id}/. If needed, the LLM writes/repairs main.py and the controller saves it back on success.
 3. **Run optimize_step(step_id)** — uses the observed run plus the saved main.py to decide whether `+"`code_exec`"+` is still the best fit for this step, whether the script is correct, and what cleanup would make it stable across groups/runs.
@@ -1415,20 +1396,22 @@ If structural changes are needed (add/remove/reorder steps based on optimize_wor
 **Evaluation workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
 2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
-3. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-4. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
-5. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
+3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files (step_1_credentials.json, step_3_login_status.json, etc.). Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
+4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
+5. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
+6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
    - `+"`declared_execution_mode`"+` + `+"`declared_execution_mode_reason`"+`
    - rejection reasons for other plausible modes not chosen
    - `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`, `+"`description_learnings_alignment_reason`"+`
    - `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
    The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
-6. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-7. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
-8. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
-9. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
-10. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
-11. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
+7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g., `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run. The eval agent reads from {{"{{TARGET_RUN_PATH}}"}}, performs its analysis, and writes results to its own folder. Pre-validation then verifies those results were produced.
+9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
+   **IMPORTANT — {{"{{TARGET_RUN_PATH}}"}}**: At runtime, the variable {{"{{TARGET_RUN_PATH}}"}} is injected and resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers. The eval step's own folder is empty — all output files live in the original execution run.
+10. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
+11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+12. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
 
 **Evaluation files:**
 - Plan: evaluation/evaluation_plan.json
@@ -1589,7 +1572,6 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning). Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
-- **Loop** (type: "loop"): Repeat until criteria met (polled progress).
 - **Orphan** (is_orphan: true): Not part of the main execution flow — only triggered manually via execute_step in the workshop. Use orphan steps as **reusable utility agents** for the builder: data checks, environment validation, one-off investigations, or any task you want to run on-demand without adding it to the main workflow sequence.
 
 ### Inner Steps
@@ -1779,7 +1761,7 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 ### 7. Execution Modes: Simple vs Code Exec vs Tool Search
 
-Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode, use_learn_code_mode)**:
+Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
 
 - **Simple mode** (all false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
 - **Code Execution mode** (use_code_execution_mode=true): Agent writes reusable Python code that calls MCP tools programmatically via mcpbridge. The saved main.py is tried first on future runs, and if it fails the LLM repairs it. **Use this when**:
@@ -1791,8 +1773,6 @@ Steps have three execution modes — set via **update_step_config(step_id, use_c
   - The user explicitly asks for code execution mode
 - **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools, resources, or paths genuinely are not known upfront and discovery is part of the task itself.
 - Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection, unless the full browser flow can clearly be stabilized into one reusable script.
-
-`+"`use_learn_code_mode`"+` remains as a deprecated alias for older plans, but the canonical scripted mode is now `+"`code_exec`"+`.
 
 Choose the mode that best matches the work. `+"`code_exec`"+` is not automatically better than `+"`tool_search`"+` — if discovery is intrinsic, `+"`tool_search`"+` is the correct answer. Likewise, `+"`simple`"+` is often best for tiny direct tasks where scripting or discovery would add overhead.
 
@@ -3629,10 +3609,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, enable tool search mode — the agent dynamically discovers available tools at runtime using search_tools before calling them. Useful when the exact tools needed are not known upfront. If false, tools are provided directly without search. Omit to inherit the preset default.",
 				},
-				"use_learn_code_mode": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Deprecated alias for persistent scripted code execution. Prefer use_code_execution_mode=true instead. When enabled, the controller tries learnings/{step-id}/main.py first and falls back to the LLM only when the script is missing or fails.",
-				},
 				"declared_execution_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []interface{}{"code_exec", "tool_search", "simple"},
@@ -3641,10 +3617,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"declared_execution_mode_reason": map[string]interface{}{
 					"type":        "string",
 					"description": "Required explanation for why the chosen execution mode is the best fit for this step.",
-				},
-				"learn_code_rejection_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Legacy compatibility field. Prefer code_exec_rejection_reason instead.",
 				},
 				"code_exec_rejection_reason": map[string]interface{}{
 					"type":        "string",
@@ -3949,11 +3921,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.UseToolSearchMode = &b
 				}
 			}
-			if val, ok := args["use_learn_code_mode"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					targetConfig.AgentConfigs.UseLearnCodeMode = &b
-				}
-			}
 			if val, ok := args["declared_execution_mode"]; ok && val != nil {
 				if s, ok := val.(string); ok && s != "" {
 					targetConfig.AgentConfigs.DeclaredExecutionMode = s
@@ -3962,11 +3929,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["declared_execution_mode_reason"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					targetConfig.AgentConfigs.DeclaredExecutionModeReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["learn_code_rejection_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.LearnCodeRejectionReason = strings.TrimSpace(s)
 				}
 			}
 			if val, ok := args["code_exec_rejection_reason"]; ok && val != nil {
@@ -4013,7 +3975,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			for _, key := range []string{
 				"declared_execution_mode",
 				"declared_execution_mode_reason",
-				"learn_code_rejection_reason",
 				"code_exec_rejection_reason",
 				"tool_search_rejection_reason",
 				"description_optimized",
@@ -8665,6 +8626,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 {{end}}{{if .TargetRunFolder}}
 - Eval report: `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+`
 {{end}}- Eval learnings: `+"`evaluation/learnings/{{.StepID}}/`"+`
+- **Original execution artifacts**: At runtime, {{"{{TARGET_RUN_PATH}}"}} resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution output files — never hardcode iteration numbers or use the eval sandbox path.
 
 ## ANALYSIS PROCEDURE
 1. Check whether this eval step could be mostly or fully deterministic through `+"`pre_validation`"+` and saved Python.
@@ -8673,6 +8635,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 4. Check whether the step is redundant with common checks like file existence, shape validation, or another eval step.
 5. Decide whether this concern should remain a single eval step or be split into multiple steps. Default to staying single-step unless there is strong evidence for separation.
 6. Decide the best-fit execution mode for the eval step itself based on the actual work required. Prefer saved deterministic Python when it truly fits, but choose `+"`tool_search`"+` when runtime discovery is intrinsic and `+"`simple`"+` when the check is tiny and direct.
+7. **Prefer outcome-based evaluation over intermediate file checks.** Ideally, eval steps should verify that the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Checking intermediate execution artifacts (step_1_credentials.json, step_3_login_status.json, etc.) is fragile and redundant with the workflow's own pre-validation. Focus on what the workflow was supposed to *achieve*, not what files it produced along the way.
 
 ## REPORT FORMAT
 
@@ -10386,7 +10349,7 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 
 	// Step types that require agent execution (optimization + learnings apply)
 	needsOptimization := func(t StepType) bool {
-		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeDecision || t == StepTypeTodoTask || t == StepTypeRouting || t == StepTypeOrchestration
+		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeDecision || t == StepTypeTodoTask || t == StepTypeRouting
 	}
 
 	var issues []string
@@ -10754,10 +10717,8 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 	}
 
 	execCtx := &ExecutionContext{
-		SkipHumanInput:     true,
-		FastExecuteMode:    false,
-		FastExecuteEndStep: -1,
-		RunSingleStepOnly:  false,
+		SkipHumanInput:    true,
+		RunSingleStepOnly: false,
 		SingleStepTarget:   -1,
 		IsEvaluationMode:   false,
 	}

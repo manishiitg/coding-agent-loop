@@ -207,24 +207,6 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 		}
 		return nil
 
-	case *OrchestrationPlanStep:
-		if err := validateOrchestrationStepFieldsTyped(step); err != nil {
-			return err
-		}
-		if step.OrchestrationStep != nil {
-			if err := validateLoadedPlanStep(step.OrchestrationStep, 0); err != nil {
-				return fmt.Errorf("orchestration_step: %w", err)
-			}
-		}
-		for i, route := range step.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				if err := validateLoadedPlanStep(route.SubAgentStep, i); err != nil {
-					return fmt.Errorf("orchestration_route[%d] (route_id: %s): %w", i, route.RouteID, err)
-				}
-			}
-		}
-		return nil
-
 	case *TodoTaskPlanStep:
 		if err := validateTodoTaskStepFieldsTyped(step); err != nil {
 			return err
@@ -328,30 +310,6 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		}
 		return nil
 
-	case *OrchestrationPlanStep:
-		// Orchestration step: populate inner OrchestrationStep recursively
-		if step.OrchestrationStep != nil {
-			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
-				return fmt.Errorf("failed to populate orchestration inner step: %w", err)
-			}
-		}
-
-		// Populate sub-agent steps in routes recursively
-		for i := range step.OrchestrationRoutes {
-			route := &step.OrchestrationRoutes[i]
-			if route.SubAgentStep != nil {
-				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
-					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
-				}
-			}
-		}
-
-		// Populate runtime field directly on plan step
-		step.AgentConfigs = agentConfigs
-		// OrchestrationPlanStep delegates ValidationSchema to its inner OrchestrationStep,
-		// which gets populated via recursive populateRuntimeFields above
-		return nil
-
 	case *HumanInputPlanStep:
 		// Human input step: no execution, validation, or learning - just asks question and blocks
 
@@ -449,22 +407,6 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 	case *DecisionPlanStep:
 		// Decision step is now flattened - no nested step to populate
 
-	case *OrchestrationPlanStep:
-		// Populate inner OrchestrationStep
-		if step.OrchestrationStep != nil {
-			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
-				return nil, fmt.Errorf("failed to populate orchestration inner step: %w", err)
-			}
-		}
-		// Populate sub-agent steps in routes
-		for _, route := range step.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf("failed to populate sub-agent step: %w", err)
-				}
-			}
-		}
-
 	case *EvaluationStep:
 		// No nested steps for evaluation steps currently
 
@@ -542,10 +484,9 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_orchestration_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_orchestration_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
+	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
 		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" ||
-		name == "add_orchestration_route" || name == "update_orchestration_route" || name == "delete_orchestration_route" ||
 		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
 		name == "migrate_todo_route_ids"
 }
@@ -614,7 +555,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 				}
 
 				switch toolName {
-				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step", "update_orchestration_step":
+				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step":
 					// Extract existing_step_id from updated step
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)
@@ -630,7 +571,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_orchestration_step", "add_loop_step":
+				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_loop_step":
 					// Extract id from new step
 					if stepID, ok := argsMap["id"].(string); ok && stepID != "" {
 						changed.Added = append(changed.Added, stepID)
@@ -708,44 +649,6 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						changed.Updated = append(changed.Updated, stepID)
 					}
 
-				case "add_orchestration_route":
-					// Extract parent_step_id (the orchestration step that contains the route)
-					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
-						changed.Updated = append(changed.Updated, stepID)
-					}
-					// Extract sub_agent_step.id from new_route (sub-agents have their own step IDs)
-					// When a new route is added, the sub-agent step is effectively "added" to the plan
-					if newRouteRaw, ok := argsMap["new_route"].(map[string]interface{}); ok {
-						if subAgentStepRaw, ok := newRouteRaw["sub_agent_step"].(map[string]interface{}); ok {
-							if subAgentStepID, ok := subAgentStepRaw["id"].(string); ok && subAgentStepID != "" {
-								changed.Added = append(changed.Added, subAgentStepID)
-							}
-						}
-					}
-
-				case "update_orchestration_route":
-					// Extract parent_step_id (the orchestration step that contains the route)
-					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
-						changed.Updated = append(changed.Updated, stepID)
-					}
-					// Extract sub_agent_step.id from sub_agent_step parameter (if provided)
-					// When a route's sub-agent is updated, the sub-agent step is effectively "updated"
-					if subAgentStepRaw, ok := argsMap["sub_agent_step"].(map[string]interface{}); ok {
-						if subAgentStepID, ok := subAgentStepRaw["id"].(string); ok && subAgentStepID != "" {
-							changed.Updated = append(changed.Updated, subAgentStepID)
-						}
-					}
-
-				case "delete_orchestration_route":
-					// Extract parent_step_id (the orchestration step that contains the route)
-					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
-						changed.Updated = append(changed.Updated, stepID)
-					}
-					// Note: We can't extract the deleted sub-agent step ID from the tool call arguments alone
-					// because delete_orchestration_route only provides parent_step_id and deleted_route_id
-					// The sub-agent step ID would need to be read from the plan.json file, which is complex
-					// For now, we track the parent step as updated, which will refresh the frontend
-					// The frontend will see the deleted route (and its sub-agent node) when it refreshes the plan
 				}
 			}
 		}
@@ -831,20 +734,8 @@ func CheckAndEmitPlanUpdateEvent(
 
 	// Use plan steps directly for the event (no conversion needed)
 	// The frontend will merge step_config.json when it receives the event and refreshes
-	// Convert orchestration routes to use PlanStepInterface directly
 	planSteps := make([]PlanStepInterface, len(plan.Steps))
-	for i, step := range plan.Steps {
-		// For orchestration steps, we need to convert routes to use PlanStepInterface
-		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
-			// Create a copy with updated routes
-			orchestrationRoutes := make([]PlanOrchestrationRoute, len(orchestrationStep.OrchestrationRoutes))
-			copy(orchestrationRoutes, orchestrationStep.OrchestrationRoutes)
-			// Routes already use PlanStepInterface, so no conversion needed
-			planSteps[i] = step
-		} else {
-			planSteps[i] = step
-		}
-	}
+	copy(planSteps, plan.Steps)
 
 	// Prepare metadata with changed step IDs for granular event handling
 	// Combine added and updated into a single "changed_step_ids" array (frontend treats both as "changed")

@@ -19,7 +19,6 @@ import type {
   StepNodeData,
   ConditionalNodeData,
   DecisionNodeData,
-  LoopNodeData,
   TodoTaskNodeData,
   ValidationNodeData,
   LearningNodeData,
@@ -177,7 +176,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     // Get step ID
     let stepId: string | undefined
     if (node?.data) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
       stepId = stepData.step?.id
     }
 
@@ -214,7 +213,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Get step ID from node data
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | TodoTaskNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData
     const stepId = stepData.step?.id
     
     if (!stepId) {
@@ -459,7 +458,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Check if step exists (for step/conditional/loop/decision nodes)
     // Sub-agents are type 'step', so they should be handled here
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
     if (!stepData || !stepData.step) {
       return null
     }
@@ -472,38 +471,28 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
-        // Initialize max_iterations for loop steps (always initialize for loop nodes)
-        if ((isRegularStep(step) && step.has_loop) || (node.type as string) === 'loop') {
-          setEditedMaxIterations((isRegularStep(step) ? step.max_iterations : undefined)?.toString() || '10')
-        } else {
-          setEditedMaxIterations('')
-        }
+        setEditedMaxIterations('')
       }
     }
   }, [node, isEditing])
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
-        // Initialize max_iterations for loop steps
-        if (isRegularStep(step) && step.has_loop) {
-          setEditedMaxIterations(step.max_iterations?.toString() || '10')
-        } else {
-          setEditedMaxIterations('')
-        }
+        setEditedMaxIterations('')
         setIsEditing(true)
       }
     }
@@ -521,20 +510,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         success_criteria: editedSuccessCriteria
       }
       
-      // Include max_iterations for loop steps
-      if ((node.type as string) === 'loop') {
-        const stepData = node.data as LoopNodeData
-        if (stepData.step && isRegularStep(stepData.step) && stepData.step.has_loop) {
-          const maxIterations = parseInt(editedMaxIterations, 10)
-          if (!isNaN(maxIterations) && maxIterations > 0) {
-            (updates as Partial<import('../../../utils/stepConfigMatching').RegularPlanStep>).max_iterations = maxIterations
-          } else if (editedMaxIterations.trim() === '') {
-            // If empty, use default of 10
-            (updates as Partial<import('../../../utils/stepConfigMatching').RegularPlanStep>).max_iterations = 10
-          }
-        }
-      }
-      
       await onEditStep(node.id, updates)
       setIsEditing(false)
       onClose()
@@ -549,19 +524,14 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
-        // Reset max_iterations for loop steps
-        if (isRegularStep(step) && step.has_loop) {
-          setEditedMaxIterations(step.max_iterations?.toString() || '10')
-        } else {
-          setEditedMaxIterations('')
-        }
+        setEditedMaxIterations('')
       }
     }
   }
@@ -573,7 +543,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     setIsSaving(true)
     try {
       // Get the actual step ID from step data (not node.id which is React Flow node ID)
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
       const stepId = stepData.step?.id
       
       if (!stepId) {
@@ -966,7 +936,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }
 
   // At this point, node must be step/conditional/loop/decision (validation/learning handled above)
-  const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+  const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
   const step = stepData.step
 
   // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
@@ -1061,7 +1031,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               
               {/* View Learnings Button - Hide for evaluation steps */}
               {!isEvaluationStep && workspacePath && node && (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
                 return stepData.step?.id ? (
                   <button
                     onClick={handleViewLearnings}
@@ -1368,50 +1338,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                         )}
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              {((isRegularStep(step) && step.has_loop) || (node.type as string) === 'loop') && isRegularStep(step) && (
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
-                    Loop:
-                  </span>
-                  {step.loop_condition && (
-                    <div className="mt-2">
-                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Until: </span>
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">
-                        {step.loop_condition}
-                      </p>
-                    </div>
-                  )}
-                  <div className="mt-2">
-                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1">
-                      Max iterations:
-                    </label>
-                    <select
-                      value={editedMaxIterations || step.max_iterations?.toString() || '10'}
-                      onChange={(e) => {
-                        setEditedMaxIterations(e.target.value)
-                        // Auto-save on change
-                        const maxIterations = parseInt(e.target.value, 10)
-                        if (!isNaN(maxIterations) && maxIterations > 0 && node) {
-                          onEditStep(node.id, { max_iterations: maxIterations }).catch((err) => {
-                            console.error('[StepSidebar] Error saving max_iterations:', err)
-                          })
-                        }
-                      }}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      {[5, 10, 15, 20, 25, 30, 40, 50, 75, 100].map((value) => (
-                        <option key={value} value={value.toString()}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Maximum number of loop iterations allowed (default: 10)
-                    </p>
                   </div>
                 </div>
               )}
@@ -1822,9 +1748,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
               })()
@@ -1842,9 +1768,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 const stepId = stepData.step?.id || `step-${stepIndex + 1}`
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/${stepId}/\` and all its contents. This action cannot be undone.`

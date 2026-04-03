@@ -29,17 +29,6 @@ type OrchestrationRoute struct {
 	ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
 }
 
-// OrchestrationResponse represents the structured output from orchestration evaluation
-type OrchestrationResponse struct {
-	SelectedRouteID                string `json:"selected_route_id"`                            // Which route was selected (can be "end" to terminate workflow, empty to continue working, or a route ID)
-	SuccessCriteriaMet             bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
-	SuccessReasoning               string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
-	InstructionsToSubAgent         string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
-	SuccessCriteriaForSubAgent     string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
-	ContextDependenciesForSubAgent string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
-	ContextOutputForSubAgent       string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
-}
-
 // StepProgress tracks which steps have been completed
 type StepProgress struct {
 	CompletedStepIndices     []int                      `json:"completed_step_indices"` // 0-based indices
@@ -66,9 +55,7 @@ type ExecutionOptions struct {
 	ExecutionStrategy       string                  `json:"execution_strategy"`                   // Execution strategy (see constants below)
 	ResumeFromStep          int                     `json:"resume_from_step,omitempty"`           // 1-based step number to resume from (for top-level steps)
 	ResumeFromBranchStep    *BranchStepResumeTarget `json:"resume_from_branch_step,omitempty"`    // For resuming from branch steps
-	FastExecuteEndStep      int                     `json:"fast_execute_end_step,omitempty"`      // 0-based last step for fast execute range
-	PlanChangeAction        string                  `json:"plan_change_action,omitempty"`         // "keep_old_progress" or "delete_old_progress"
-	AllStepsCompletedAction string                  `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
+	PlanChangeAction string `json:"plan_change_action,omitempty"` // "keep_old_progress" or "delete_old_progress"
 
 	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
 	// Only applies to execution agents (not validation or learning agents)
@@ -111,8 +98,6 @@ type BatchExecutionProgress struct {
 // Created once at execution start and passed through the call chain
 type ExecutionContext struct {
 	SkipHumanInput     bool                    // Whether to skip human feedback requests (auto-approve steps)
-	FastExecuteMode    bool                    // Whether we're in fast execute mode
-	FastExecuteEndStep int                     // Last step index to fast execute (0-based, -1 means not set)
 	RunSingleStepOnly  bool                    // Whether to run only a single step and stop
 	SingleStepTarget   int                     // Target step index to run (0-based)
 	SavedScriptOnly    bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
@@ -149,19 +134,11 @@ const (
 	// Single step execution
 	ExecutionStrategyRunSingleStep = "run_single_step" // Run only the specified step and stop
 
-	// Deprecated aliases — mapped to the kept strategies for backward compatibility
-	ExecutionStrategyStartFromBeginning = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
-	ExecutionStrategyFastExecuteAll     = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
-	ExecutionStrategyResumeFromStep     = ExecutionStrategyResumeFromStepNoHuman     // Deprecated: use ResumeFromStepNoHuman
-	ExecutionStrategyFastResumeFromStep = ExecutionStrategyResumeFromStepNoHuman     // Deprecated: use ResumeFromStepNoHuman
-	ExecutionStrategyFastExecuteRange   = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
 
 	// Plan change actions
 	PlanChangeActionKeepOldProgress   = "keep_old_progress"
 	PlanChangeActionDeleteOldProgress = "delete_old_progress"
 
-	// All steps completed actions
-	AllStepsCompletedActionSkipExecution = "skip_execution"
 )
 
 // TodoStep has been removed - use PlanStepInterface instead

@@ -78,25 +78,6 @@ export interface DecisionNodeData extends Record<string, unknown> {
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
-export interface LoopNodeData extends Record<string, unknown> {
-  id: string
-  title: string
-  loop_condition?: string
-  max_iterations?: number
-  current_iteration?: number
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  stepIndex: number
-  step: PlanStep
-  changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
-  workspacePath?: string | null  // Workspace path for file opening
-  selectedRunFolder?: string  // Selected iteration folder for file opening
-  validation_schema?: ValidationSchema  // Validation schema from plan.json
-  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
-}
-
 export interface TodoTaskNodeData extends Record<string, unknown> {
   id: string
   title: string
@@ -211,7 +192,7 @@ export interface WorkflowArtifactNodeData extends Record<string, unknown> {
   detail?: string
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -276,7 +257,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
   let estimatedHeight = baseDimensions.height
 
   // Get node data
-  const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | Record<string, unknown>
+  const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | Record<string, unknown>
 
   // Base height components (header, padding, footer) - simplified
   const headerHeight = 60 // Header with buttons
@@ -299,14 +280,6 @@ function estimateNodeHeight(node: WorkflowNode): number {
     if (contextInputs.length > 0 || contextOutputs.length > 0) {
       const totalFiles = contextInputs.length + contextOutputs.length
       contentHeight += 20 + (totalFiles * 20) + 8 // Base + per file + spacing
-    }
-  }
-
-  // For loop nodes, add height for loop condition
-  if (node.type === 'loop') {
-    contentHeight += 30 // Loop iteration badge
-    if ('loop_condition' in data && typeof data.loop_condition === 'string' && data.loop_condition) {
-      contentHeight += 40 // Loop condition box
     }
   }
 
@@ -1036,20 +1009,6 @@ function stepToNode(
         options: step.options
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as HumanInputNodeData
-    }
-  }
-
-  if (isRegularStep(step) && step.has_loop) {
-    return {
-      id: nodeId,
-      type: 'loop',
-      position: { x: 0, y: 0 },
-      data: {
-        ...baseData,
-        loop_condition: step.loop_condition,
-        max_iterations: step.max_iterations
-        // Note: status is inherited from baseData (computed based on completedStepIndices)
-      } as LoopNodeData
     }
   }
 
@@ -2012,8 +1971,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'todo_task' || node.type === 'human_input'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData | HumanInputNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'todo_task' || node.type === 'human_input'
 }
 
 /**
@@ -2990,7 +2949,7 @@ export function usePlanToFlow(
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'human_input' || node.type === 'todo_task') {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'human_input' || node.type === 'todo_task') {
         const canRun = canStepRun()
         // Sub-agents cannot be run independently (they are part of routing steps)
         // We pass onRunFromStep even for sub-agents so the UI shows a disabled button instead of a warning icon

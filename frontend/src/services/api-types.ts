@@ -1008,10 +1008,8 @@ export interface ExecutionOptions {
     branch_type: 'if_true' | 'if_false';  // Which branch
     branch_step_index: number;  // 0-based index within the branch
   };
-  fast_execute_end_step?: number;  // 0-based last step for fast execute range
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
-  all_steps_completed_action?: 'fast_execute_again' | 'skip_execution';
-  
+
   // Temporary LLM overrides (optional, overrides step-level configs for this execution only)
   // Only applies to execution agents (not validation or learning agents)
   // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)

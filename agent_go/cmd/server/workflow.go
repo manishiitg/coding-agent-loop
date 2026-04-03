@@ -785,11 +785,9 @@ type BranchStepProgress struct {
 type ExecutionOptions struct {
 	RunMode                 string `json:"run_mode"`                             // "use_same_run" or "create_new_runs_always"
 	SelectedRunFolder       string `json:"selected_run_folder,omitempty"`        // If use_same_run and user selected specific folder
-	ExecutionStrategy       string `json:"execution_strategy"`                   // "start_from_beginning", "fast_execute_all", etc.
+	ExecutionStrategy       string `json:"execution_strategy"`                   // "start_from_beginning", etc.
 	ResumeFromStep          int    `json:"resume_from_step,omitempty"`           // 1-based step number to resume from
-	FastExecuteEndStep      int    `json:"fast_execute_end_step,omitempty"`      // 0-based last step for fast execute range
-	PlanChangeAction        string `json:"plan_change_action,omitempty"`         // "keep_old_progress" or "delete_old_progress"
-	AllStepsCompletedAction string `json:"all_steps_completed_action,omitempty"` // "fast_execute_again" or "skip_execution"
+	PlanChangeAction string `json:"plan_change_action,omitempty"` // "keep_old_progress" or "delete_old_progress"
 
 	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
 	// Only applies to execution agents (not validation or learning agents)
@@ -2064,23 +2062,6 @@ func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 		// Handle decision steps - DecisionPlanStep is now flattened, ID already collected above
 		// No nested step to collect
 
-		// Handle orchestration steps - collect orchestration step ID and sub-agent IDs
-		if orchestrationStep, ok := step.(*todo_creation_human.OrchestrationPlanStep); ok {
-			if orchestrationStep.OrchestrationStep != nil {
-				if orchestrationStepID := orchestrationStep.OrchestrationStep.GetID(); orchestrationStepID != "" {
-					stepIDs = append(stepIDs, orchestrationStepID)
-				}
-			}
-			// Collect sub-agent step IDs from routes
-			for _, route := range orchestrationStep.OrchestrationRoutes {
-				if route.SubAgentStep != nil {
-					if subAgentStepID := route.SubAgentStep.GetID(); subAgentStepID != "" {
-						stepIDs = append(stepIDs, subAgentStepID)
-					}
-				}
-			}
-		}
-
 		// Handle todo_task steps - collect sub-agent step IDs from predefined_routes
 		if todoTaskStep, ok := step.(*todo_creation_human.TodoTaskPlanStep); ok {
 			// Collect sub-agent step IDs from predefined routes
@@ -2251,10 +2232,8 @@ type PlanStepUpdate struct {
 	DecisionStep               json.RawMessage `json:"decision_step,omitempty"` // Will be converted to PlanStepInterface
 	DecisionEvaluationQuestion *string         `json:"decision_evaluation_question,omitempty"`
 
-	// Orchestration step fields
-	OrchestrationStep   json.RawMessage                               `json:"orchestration_step,omitempty"` // Will be converted to PlanStepInterface
-	OrchestrationRoutes *[]todo_creation_human.PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`
-	NextStepID          *string                                       `json:"next_step_id,omitempty"`
+	// Routing/TodoTask step fields
+	NextStepID *string `json:"next_step_id,omitempty"`
 
 	// TodoTask step fields
 	PredefinedRoutes   *[]todo_creation_human.PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
@@ -2705,25 +2684,6 @@ func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID 
 	case *todo_creation_human.DecisionPlanStep:
 		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
 		// The step itself contains all fields - no nested steps to search
-	case *todo_creation_human.OrchestrationPlanStep:
-		if s.OrchestrationStep != nil {
-			if s.OrchestrationStep.GetID() == targetID {
-				return s.OrchestrationStep, append(basePath, -2)
-			}
-			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, targetID, basePath); found != nil {
-				return found, foundPath
-			}
-		}
-		for routeIdx, route := range s.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				if route.SubAgentStep.GetID() == targetID {
-					return route.SubAgentStep, append(basePath, -3, routeIdx)
-				}
-				if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, basePath); found != nil {
-					return found, foundPath
-				}
-			}
-		}
 	case *todo_creation_human.TodoTaskPlanStep:
 		for routeIdx, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {
@@ -2776,29 +2736,6 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 			case *todo_creation_human.DecisionPlanStep:
 				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
 				// The step itself contains all fields - no nested steps to search
-			case *todo_creation_human.OrchestrationPlanStep:
-				// Check orchestration_step
-				if s.OrchestrationStep != nil {
-					if s.OrchestrationStep.GetID() == targetID {
-						return s.OrchestrationStep, append(currentPath, -2) // -2 indicates orchestration_step
-					}
-					// Recursively check nested steps in orchestration_step
-					if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, targetID, currentPath); found != nil {
-						return found, foundPath
-					}
-				}
-				// Check orchestration_routes
-				for j, route := range s.OrchestrationRoutes {
-					if route.SubAgentStep != nil {
-						if route.SubAgentStep.GetID() == targetID {
-							return route.SubAgentStep, append(currentPath, -3, j) // -3 indicates orchestration_routes
-						}
-						// Recursively check nested steps in sub_agent_step
-						if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, currentPath); found != nil {
-							return found, foundPath
-						}
-					}
-				}
 			case *todo_creation_human.TodoTaskPlanStep:
 				// Check predefined_routes
 				for j, route := range s.PredefinedRoutes {
@@ -2920,28 +2857,6 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 		}
 		updatedStep = &updated
 
-	case *todo_creation_human.OrchestrationPlanStep:
-		updated := *s // Copy the step
-		// Orchestration steps only have ID and Title in common fields
-		if updates.Title != nil {
-			updated.Title = *updates.Title
-		}
-		if updates.NextStepID != nil {
-			updated.NextStepID = *updates.NextStepID
-		}
-		if updates.OrchestrationRoutes != nil {
-			updated.OrchestrationRoutes = *updates.OrchestrationRoutes
-		}
-		// Handle nested orchestration_step
-		if len(updates.OrchestrationStep) > 0 {
-			step, err := unmarshalStepFromJSON(updates.OrchestrationStep)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal orchestration_step: %w", err)
-			}
-			updated.OrchestrationStep = step
-		}
-		updatedStep = &updated
-
 	case *todo_creation_human.TodoTaskPlanStep:
 		updated := *s // Copy the step
 		// TodoTaskPlanStep only has ID and Title (no embedded CommonStepFields)
@@ -3023,12 +2938,6 @@ func unmarshalStepFromJSON(data json.RawMessage) (todo_creation_human.PlanStepIn
 			return nil, fmt.Errorf("failed to unmarshal decision step: %w", err)
 		}
 		return &s, nil
-	case "orchestration":
-		var s todo_creation_human.OrchestrationPlanStep
-		if err := json.Unmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal orchestration step: %w", err)
-		}
-		return &s, nil
 	case "todo_task":
 		var s todo_creation_human.TodoTaskPlanStep
 		if err := json.Unmarshal(data, &s); err != nil {
@@ -3087,24 +2996,6 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
 		// The step itself is updated directly at the parent level, no nested updates needed
 		return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
-	case *todo_creation_human.OrchestrationPlanStep:
-		if len(path) == 2 && path[1] == -2 {
-			// orchestration_step
-			s.OrchestrationStep = updatedStep
-			return nil
-		}
-		if len(path) >= 3 && path[1] == -3 {
-			// orchestration_routes[path[2]].sub_agent_step
-			routeIndex := path[2]
-			if routeIndex >= 0 && routeIndex < len(s.OrchestrationRoutes) {
-				if len(path) == 3 {
-					s.OrchestrationRoutes[routeIndex].SubAgentStep = updatedStep
-					return nil
-				}
-				// Deeper nesting in sub_agent_step
-				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationRoutes[routeIndex].SubAgentStep}, nil, path[2:], updatedStep)
-			}
-		}
 	case *todo_creation_human.TodoTaskPlanStep:
 		if len(path) >= 3 && path[1] == -4 {
 			// predefined_routes[path[2]].sub_agent_step
@@ -3145,10 +3036,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 		case *todo_creation_human.DecisionPlanStep:
 			// DecisionPlanStep now has flattened structure (no nested DecisionStep)
 			return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
-		case *todo_creation_human.OrchestrationPlanStep:
-			if s.OrchestrationStep != nil {
-				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)
-			}
 		case *todo_creation_human.TodoTaskPlanStep:
 			if len(path) >= 3 && path[1] == -4 {
 				routeIndex := path[2]
@@ -3179,10 +3066,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 			case *todo_creation_human.DecisionPlanStep:
 				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
 				return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
-			case *todo_creation_human.OrchestrationPlanStep:
-				if s.OrchestrationStep != nil {
-					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)
-				}
 			case *todo_creation_human.TodoTaskPlanStep:
 				if len(path) >= 3 && path[1] == -4 {
 					routeIndex := path[2]
@@ -4042,13 +3925,6 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 		var s todo_creation_human.DecisionPlanStep
 		if err := json.Unmarshal(stepJSON, &s); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to parse decision step: %v", err), http.StatusBadRequest)
-			return
-		}
-		newStep = &s
-	case "orchestration":
-		var s todo_creation_human.OrchestrationPlanStep
-		if err := json.Unmarshal(stepJSON, &s); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to parse orchestration step: %v", err), http.StatusBadRequest)
 			return
 		}
 		newStep = &s

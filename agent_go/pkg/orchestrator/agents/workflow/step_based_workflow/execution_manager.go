@@ -42,9 +42,7 @@ func (em *ExecutionManager) PrepareExecution(
 
 	setup := &ExecutionSetup{
 		RunFolder: runFolder,
-		Context: &ExecutionContext{
-			FastExecuteEndStep: -1, // Default: not set
-		},
+		Context:   &ExecutionContext{},
 		Cleanup: CleanupScope{
 			NewTotalSteps: totalSteps,
 		},
@@ -72,7 +70,7 @@ func (em *ExecutionManager) PrepareExecution(
 
 	// === Fresh Start ===
 	// All fresh start strategies (including deprecated aliases) map here
-	case "start_from_beginning", "start_from_beginning_no_human", "fast_execute_all", "fast_execute_range":
+	case "start_from_beginning", "start_from_beginning_no_human":
 		setup.Mode = ExecutionModeFresh
 		setup.Cleanup = CleanupScope{
 			DeleteProgress:    true,
@@ -257,16 +255,12 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 	var execCtx *ExecutionContext
 	if baseExecCtx != nil {
 		execCtx = &ExecutionContext{
-			SkipHumanInput:     baseExecCtx.SkipHumanInput,
-			FastExecuteMode:    baseExecCtx.FastExecuteMode,
-			FastExecuteEndStep: baseExecCtx.FastExecuteEndStep,
-			RunSingleStepOnly:  baseExecCtx.RunSingleStepOnly,
-			SingleStepTarget:   baseExecCtx.SingleStepTarget,
+			SkipHumanInput:    baseExecCtx.SkipHumanInput,
+			RunSingleStepOnly: baseExecCtx.RunSingleStepOnly,
+			SingleStepTarget:  baseExecCtx.SingleStepTarget,
 		}
 	} else {
-		execCtx = &ExecutionContext{
-			FastExecuteEndStep: -1,
-		}
+		execCtx = &ExecutionContext{}
 	}
 
 	// Check execution strategy and resume step
@@ -633,7 +627,7 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 
 	// Apply context flags to orchestrator
 	orch.SetSkipHumanInput(setup.Context.SkipHumanInput)
-	orch.SetFastExecuteMode(setup.Context.FastExecuteMode, setup.Context.FastExecuteEndStep)
+
 	orch.SetRunSingleStepMode(setup.Context.RunSingleStepOnly, setup.Context.SingleStepTarget)
 
 	// Set run folder
@@ -656,8 +650,8 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 		SyncVariablesToWorkspaceEnv(orch.BaseOrchestrator, setup.VariableValues)
 	}
 
-	orch.GetLogger().Info(fmt.Sprintf("🔧 Applied execution context: skipHuman=%v, fastMode=%v, singleStep=%v",
-		setup.Context.SkipHumanInput, setup.Context.FastExecuteMode, setup.Context.RunSingleStepOnly))
+	orch.GetLogger().Info(fmt.Sprintf("🔧 Applied execution context: skipHuman=%v, singleStep=%v",
+		setup.Context.SkipHumanInput, setup.Context.RunSingleStepOnly))
 }
 
 // ============================================================================
@@ -722,9 +716,7 @@ func findNextIncompleteStep(progress *StepProgress) int {
 // Useful when you need the context without applying to orchestrator
 func (em *ExecutionManager) BuildExecutionContextFromSetup(setup *ExecutionSetup) *ExecutionContext {
 	if setup == nil || setup.Context == nil {
-		return &ExecutionContext{
-			FastExecuteEndStep: -1,
-		}
+		return &ExecutionContext{}
 	}
 	return setup.Context
 }

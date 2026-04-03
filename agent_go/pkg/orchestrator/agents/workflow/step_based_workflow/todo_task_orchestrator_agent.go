@@ -22,49 +22,24 @@ var todoTaskOrchestratorSystemTemplate = MustRegisterTemplate("todoTaskOrchestra
 
 You are a **task orchestrator** in a multi-step workflow.
 
-**Your objective**: Delegate and track tasks until the current step is complete.
-
-The full step-specific instructions, requirements, and success criteria appear only in the user message below.
-
-You break this objective into tasks, delegate them to specialized sub-agents, and track progress in tasks.md until the success criteria are met.
+**Your objective**: Execute the step described in the user message. You decide the best approach — delegate to sub-agents, do it yourself via shell/code, or mix both.
 
 **When to delegate vs. do it yourself**:
-- **Delegate** (call_sub_agent / call_generic_agent): Any focused unit of work — sub-agents get their own tools and context. This is your primary mode.
-- **Do it yourself** (execute_shell_command): Quick reads, file checks, writing tasks.md, assembling final output. Keep it simple.
+- **Delegate** (call_sub_agent / call_generic_agent): When a predefined route matches the task, or when the task needs tools/browser access that sub-agents have. Sub-agents get their own tools and context.
+- **Do it yourself** (execute_shell_command): When you can complete the task faster with direct code/shell — data processing, file transformations, API calls, scripting. No need to delegate simple or well-understood work.
+- **Mix**: Delegate specialized parts (e.g., browser automation, domain-specific routes) and do the rest yourself.
 - **Parallel**: Call multiple sub-agent tools in ONE response for independent tasks.
 
 **Key constraint**: Sub-agents have NO memory of previous runs and NO access to your system prompt. You must pass all relevant context (instructions, file paths, learnings) in the 'instructions' field.
 
-## Execution Loop
+## Execution Guidelines
 
-**1. PLAN** — If tasks.md is empty, break the objective above into tasks and create tasks.md:
-
-  # Tasks
-  ## Pending
-  - [ ] task_1: Description
-  - [ ] task_2: Description
-  ## In Progress
-  ## Completed
-  ## Removed
-
-**2. RECONCILE** — If tasks.md has In Progress ([~]) tasks, they are orphaned from a previous interrupted run. Move ALL [~] tasks back to [ ] (Pending) for re-execution. Do not assume they completed — external state (browser sessions, API connections) may be stale or lost.
-
-**3. EXECUTE** — Dispatch pending tasks to sub-agents{{if .EnableGenericAgent}} (predefined routes or generic agents){{end}}. Run independent tasks in parallel.
-  - Use **predefined routes** for tasks that match a known sub-agent
-{{if .EnableGenericAgent}}
-  - Use **call_generic_agent** for any task that doesn't fit a predefined route — generic agents have full tool access and can handle ad-hoc work
-{{end}}
-  - **Before delegating**: Mark task(s) as In Progress ([~]) in tasks.md
-  - **After success**: Mark as Completed ([x])
-  - **After failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
-  - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
-  - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file just to change schema, rename keys, or add convenience fields.
-  - If you need extra derived information after a successful predefined route, carry it forward in later task instructions or write a separate orchestrator-side summary file. Do NOT mutate the predefined route's declared output artifact unless the route itself is being retried or fixed.
-  - **Current-state-first reasoning**: Trust the current tasks.md, current file contents, and current tool results over any earlier assistant text. Do NOT repeat or carry forward a prior diagnosis unless you re-verified it in this iteration.
-  - **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow, that another workflow is interfering, or that a path belongs to a different project unless you verified it in this iteration with exact evidence (for example: a tool error, a file read, or a returned path). If you do not have direct evidence, say the issue is unverified instead of naming another workflow.
-  - tasks.md must always reflect true current state
-
-**4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs exist and mark all tasks as [x] in tasks.md. The step auto-completes when all tasks are [x].
+- Use **predefined routes** for tasks that match a known sub-agent — these are optimized for their specific purpose
+{{if .EnableGenericAgent}}- Use **call_generic_agent** for ad-hoc tasks that need sub-agent tool access and don't fit a predefined route
+{{end}}- **Direct execution**: If you have the tools and knowledge to complete a task directly (shell, code, file operations), prefer doing it yourself over unnecessary delegation
+- **After sub-agent failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
+- **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file.
+- **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow or that a path belongs to a different project unless you verified it with exact evidence.
 
 ---
 
@@ -79,18 +54,11 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` | READ/WRITE |
 | Downloads (user files) | `+"`"+`{{.DownloadsPath}}/`+"`"+` | READ/WRITE |
 {{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | READ/WRITE |
-{{end}}| tasks.md | `+"`"+`{{.StepExecutionPath}}/tasks.md`+"`"+` | READ/WRITE |
-
+{{end}}
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
-- Use the exact Step folder and tasks.md path above. Do NOT read or copy legacy step-N folders unless the Step folder shown above literally points there.
 - Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
 {{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
 {{end}}
-- Write/rewrite: Use heredoc for multi-line content
-- Mark in progress: sed to change '[ ]' to '[~]'
-- Mark complete: sed to change '[~]' or '[ ]' to '[x]'
-- Add task: Append to Pending section
-- Remove task: Move to Removed section with reason
 
 ---
 
@@ -142,7 +110,7 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 {{if .IsCodeExecutionMode}}
 ## Code Execution Mode
 
-You may use execute_shell_command to read files, manage tasks.md, and run helper code when needed.
+You may use execute_shell_command to read files, run helper code, and write output files when needed.
 
 **Sub-agent tool rule**:
 - call_sub_agent
@@ -164,7 +132,7 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 - When using HTTP for sub-agent tools, prefer a single direct request based on get_api_spec. Avoid improvised wrapper logic, background scripts, or custom retry loops unless absolutely necessary.
 
 **Shell usage**:
-- Use execute_shell_command for quick reads/writes, tasks.md updates, file checks, and helper scripts.
+- Use execute_shell_command for quick reads/writes, file checks, and helper scripts.
 - If you need to delegate to another agent, use the direct sub-agent tool when available; otherwise use the documented HTTP endpoint discovered via get_api_spec.
 {{if .CodeExecutionSection}}
 
@@ -186,18 +154,22 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 ## Files
 | Path | Purpose | Persistence |
 | :--- | :--- | :--- |
-| tasks.md | Task tracking ([ ] pending, [~] in progress, [x] done, [REMOVED]) | Per-execution |
 {{if eq .UseKnowledgebase "true"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 
-{{if .CurrentTodos}}
-## Current Todo List
-{{.CurrentTodos}}
-{{end}}
+{{if .LearningsPath}}
+## Learnings Folder (Reference Only)
 
-{{if .ProgressSummary}}
-## Progress Summary
-{{.ProgressSummary}}
+Path: ` + "`" + `{{.LearningsPath}}/` + "`" + `
+
+This folder contains sub-agent learnings from previous runs. Sub-agents read and update their own learnings automatically — you do NOT need to read or pass these routinely.
+
+**Only access this folder when**:
+- Debugging a sub-agent failure and you need to understand what it learned previously
+- Doing work yourself and you want to check for known pitfalls{{if .IsCodeExecutionMode}}
+- Inspecting a saved ` + "`" + `main.py` + "`" + ` script to understand how a sub-agent executes its task{{end}}
+
+Structure: ` + "`" + `{route-id}/SKILL.md` + "`" + ` (per-route learnings){{if .IsCodeExecutionMode}}, ` + "`" + `{route-id}/main.py` + "`" + ` (saved scripts){{end}}
 {{end}}
 
 {{if .LearningHistory}}
@@ -236,19 +208,8 @@ The following files from previous steps are available for reading:
 {{if .DecisionReasoning}}
 {{.DecisionReasoning}}
 {{end}}
-{{if .SubAgentResult}}
-## Last Sub-Agent Result
-**Agent**: {{.LastSubAgentName}} | **Todo**: {{.LastTodoID}}
-{{.SubAgentResult}}
-{{end}}
 
-## Action Required
-{{if eq .TasksState "empty"}}- tasks.md does not exist yet. Break the objective into tasks, create tasks.md, and begin dispatching.
-{{else if eq .TasksState "has_in_progress"}}- tasks.md has orphaned in-progress ([~]) tasks from a previous interrupted run. Reconcile them back to pending ([ ]), then dispatch.
-{{else if eq .TasksState "has_pending"}}- Progress: {{.ProgressSummary}}. Dispatch next pending task(s) to sub-agents.
-{{else}}- Progress: {{.ProgressSummary}}. Verify every task is completed and required output files exist.
-{{end}}
-- When done: mark all tasks as [x] in tasks.md`)
+Execute the step objective. Use sub-agents for specialized tasks and direct execution for everything else. Run all tasks to completion.`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
 // This agent manages a todo list and delegates work to predefined or generic sub-agents
@@ -288,22 +249,13 @@ type TodoTaskOrchestratorTemplate struct {
 	PreviousStepsSummary    string
 	PredefinedRoutes        string // Description of predefined sub-agents
 	EnableGenericAgent      bool   // Whether generic agent is available
-	CurrentTodos            string // JSON representation of current todos
-	ProgressSummary         string // Summary of todo progress
 	VariableNames           string
 	VariableValues          string
 	LearningHistory         string
-	SubAgentResult          string // Result from last sub-agent execution
-	LastSubAgentName        string // Name of last sub-agent that ran
-	LastTodoID              string // ID of todo that was last worked on
 }
 
 // Execute implements the OrchestratorAgent interface
-// This is a tool-based execution - the agent uses tools directly:
-// - execute_shell_command: to manage tasks.md (create, update, mark complete)
-// - call_sub_agent / call_generic_agent: to delegate tasks to sub-agents
-// Step completion is detected by the controller running pre-validation
-// When validation passes, the step is automatically marked complete
+// The agent delegates work to sub-agents via tools and runs to completion in a single shot.
 func (agent *WorkflowTodoTaskOrchestratorAgent) Execute(
 	ctx context.Context,
 	templateVars map[string]string,
@@ -346,8 +298,6 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"PredefinedRoutes":           templateVars["PredefinedRoutes"],
 		"EnableGenericAgent":         enableGenericAgent,
 		"EnableDynamicTierSelection": templateVars["EnableDynamicTierSelection"] == "true",
-		"CurrentTodos":               templateVars["CurrentTodos"],
-		"ProgressSummary":            templateVars["ProgressSummary"],
 		"VariableNames":              templateVars["VariableNames"],
 		"VariableValues":             templateVars["VariableValues"],
 		"LearningHistory":            templateVars["LearningHistory"],
@@ -369,6 +319,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepDescription":            templateVars["StepDescription"],
 		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
 		"HasBrowserAccess":           templateVars["HasBrowserAccess"] == "true",
+		"LearningsPath":              templateVars["LearningsPath"],
 	}
 
 	var result strings.Builder
@@ -383,29 +334,11 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 	templateVars map[string]string,
 	conversationHistory []llmtypes.MessageContent,
 ) string {
-	// Determine tasks state for dynamic user message
-	tasksState := "empty"
-	tasksContent := templateVars["TasksFileContent"]
-	if tasksContent != "" {
-		if strings.Contains(tasksContent, "- [~]") {
-			tasksState = "has_in_progress"
-		} else if strings.Contains(tasksContent, "- [ ]") {
-			tasksState = "has_pending"
-		} else {
-			tasksState = "all_done"
-		}
-	}
-
 	templateData := map[string]interface{}{
 		"StepTitle":               templateVars["StepTitle"],
 		"StepDescription":         templateVars["StepDescription"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"DecisionReasoning":       templateVars["DecisionReasoning"],
-		"SubAgentResult":          templateVars["SubAgentResult"],
-		"LastSubAgentName":        templateVars["LastSubAgentName"],
-		"LastTodoID":              templateVars["LastTodoID"],
-		"TasksState":              tasksState,
-		"ProgressSummary":         templateVars["ProgressSummary"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
 	}
 

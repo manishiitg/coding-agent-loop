@@ -14,6 +14,4 @@ type ValidationResponse struct {
 	ExecutionStatus      string               `json:"execution_status"` // COMPLETED/PARTIAL/FAILED/INCOMPLETE
 	Reasoning            string               `json:"reasoning"`
 	Feedback             []ValidationFeedback `json:"feedback"`
-	LoopConditionMet     bool                 `json:"loop_condition_met,omitempty"` // For loop steps: whether loop condition is met
-	LoopReasoning        string               `json:"loop_reasoning,omitempty"`     // For loop steps: reasoning for loop condition check
 }

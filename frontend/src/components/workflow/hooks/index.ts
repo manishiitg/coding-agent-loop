@@ -5,7 +5,6 @@ export { usePlanToFlow } from './usePlanToFlow'
 export type { 
   StepNodeData, 
   ConditionalNodeData, 
-  LoopNodeData,
   ValidationNodeData,
   LearningNodeData,
   WorkflowNodeData,

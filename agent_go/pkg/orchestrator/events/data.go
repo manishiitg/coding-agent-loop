@@ -65,7 +65,6 @@ type OrchestratorAgentStartEvent struct {
 	Iteration            int               `json:"iteration,omitempty"`              // which iteration of the loop
 	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
 	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
-	UseLearnCodeMode     bool              `json:"use_learn_code_mode,omitempty"`     // learn code mode enabled
 	SystemPrompt         string            `json:"system_prompt,omitempty"`           // full system prompt sent to LLM
 	UserMessage          string            `json:"user_message,omitempty"`            // user message sent to LLM
 }

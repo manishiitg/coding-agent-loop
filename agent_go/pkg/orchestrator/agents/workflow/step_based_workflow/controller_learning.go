@@ -388,6 +388,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	return nil
 }
 
+var _ = (*StepBasedWorkflowOrchestrator).runFailureLearningPhase
+
 // startTrackedSuccessLearningPhase launches success learning as a background workshop execution
 // when workshop tracking is available. Returns true when tracking was set up and the launch
 // was handled here; callers should fall back to the legacy fire-and-forget path when it returns false.

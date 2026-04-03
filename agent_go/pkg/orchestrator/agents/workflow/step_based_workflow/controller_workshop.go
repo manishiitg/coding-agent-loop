@@ -569,8 +569,6 @@ func resolveInnerStepPath(topLevelSteps []PlanStepInterface, info *WorkshopStepI
 		return fmt.Sprintf("step-%d-if-false-0", parentNum)
 	case branch == "todo_task_step":
 		return fmt.Sprintf("step-%d-todo-task", parentNum)
-	case branch == "orchestration_step":
-		return fmt.Sprintf("step-%d-orchestration", parentNum)
 	case strings.HasPrefix(branch, "route:"):
 		routeID := strings.TrimPrefix(branch, "route:")
 		return fmt.Sprintf("step-%d-sub-%s", parentNum, routeID)

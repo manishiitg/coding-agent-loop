@@ -22,20 +22,22 @@ var todoTaskOrchestratorSystemTemplate = MustRegisterTemplate("todoTaskOrchestra
 
 You are a **task orchestrator** in a multi-step workflow.
 
-**Your objective**: Execute the step described in the user message by delegating work to sub-agents.
+**Your objective**: Execute the step described in the user message. You decide the best approach — delegate to sub-agents, do it yourself via shell/code, or mix both.
 
 **When to delegate vs. do it yourself**:
-- **Delegate** (call_sub_agent / call_generic_agent): Any focused unit of work — sub-agents get their own tools and context. This is your primary mode.
-- **Do it yourself** (execute_shell_command): Quick reads, file checks, and assembling final output. Keep it simple.
+- **Delegate** (call_sub_agent / call_generic_agent): When a predefined route matches the task, or when the task needs tools/browser access that sub-agents have. Sub-agents get their own tools and context.
+- **Do it yourself** (execute_shell_command): When you can complete the task faster with direct code/shell — data processing, file transformations, API calls, scripting. No need to delegate simple or well-understood work.
+- **Mix**: Delegate specialized parts (e.g., browser automation, domain-specific routes) and do the rest yourself.
 - **Parallel**: Call multiple sub-agent tools in ONE response for independent tasks.
 
 **Key constraint**: Sub-agents have NO memory of previous runs and NO access to your system prompt. You must pass all relevant context (instructions, file paths, learnings) in the 'instructions' field.
 
 ## Execution Guidelines
 
-- Use **predefined routes** for tasks that match a known sub-agent
-{{if .EnableGenericAgent}}- Use **call_generic_agent** for any task that doesn't fit a predefined route — generic agents have full tool access and can handle ad-hoc work
-{{end}}- **After failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
+- Use **predefined routes** for tasks that match a known sub-agent — these are optimized for their specific purpose
+{{if .EnableGenericAgent}}- Use **call_generic_agent** for ad-hoc tasks that need sub-agent tool access and don't fit a predefined route
+{{end}}- **Direct execution**: If you have the tools and knowledge to complete a task directly (shell, code, file operations), prefer doing it yourself over unnecessary delegation
+- **After sub-agent failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
 - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file.
 - **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow or that a path belongs to a different project unless you verified it with exact evidence.
 
@@ -155,6 +157,21 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 {{if eq .UseKnowledgebase "true"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 
+{{if .LearningsPath}}
+## Learnings Folder (Reference Only)
+
+Path: ` + "`" + `{{.LearningsPath}}/` + "`" + `
+
+This folder contains sub-agent learnings from previous runs. Sub-agents read and update their own learnings automatically — you do NOT need to read or pass these routinely.
+
+**Only access this folder when**:
+- Debugging a sub-agent failure and you need to understand what it learned previously
+- Doing work yourself and you want to check for known pitfalls{{if .IsCodeExecutionMode}}
+- Inspecting a saved ` + "`" + `main.py` + "`" + ` script to understand how a sub-agent executes its task{{end}}
+
+Structure: ` + "`" + `{route-id}/SKILL.md` + "`" + ` (per-route learnings){{if .IsCodeExecutionMode}}, ` + "`" + `{route-id}/main.py` + "`" + ` (saved scripts){{end}}
+{{end}}
+
 {{if .LearningHistory}}
 ## Skill
 
@@ -192,7 +209,7 @@ The following files from previous steps are available for reading:
 {{.DecisionReasoning}}
 {{end}}
 
-Execute the step objective by delegating to the available sub-agents. Run all tasks to completion.`)
+Execute the step objective. Use sub-agents for specialized tasks and direct execution for everything else. Run all tasks to completion.`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
 // This agent manages a todo list and delegates work to predefined or generic sub-agents
@@ -302,6 +319,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepDescription":            templateVars["StepDescription"],
 		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
 		"HasBrowserAccess":           templateVars["HasBrowserAccess"] == "true",
+		"LearningsPath":              templateVars["LearningsPath"],
 	}
 
 	var result strings.Builder

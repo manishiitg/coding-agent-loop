@@ -880,7 +880,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 	// Scripted code mode — determined once per step invocation (persists across outer-loop iterations).
 	// Check embedded plan AgentConfigs first; fall back to step_configs.json so that workshop-saved
-	// configs (use_code_execution_mode/use_learn_code_mode) also take effect for sub-agent steps whose embedded plan
+	// configs (use_code_execution_mode) also take effect for sub-agent steps whose embedded plan
 	// config may not have the flag.
 	isLearnCodeMode := false
 	{
@@ -942,7 +942,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in applyStepConfigToAgentConfig.
 		var isCodeExecutionMode bool
 		agentConfigs := getAgentConfigs(step)
-		if (agentConfigs == nil || (agentConfigs.UseCodeExecutionMode == nil && agentConfigs.UseToolSearchMode == nil && agentConfigs.UseLearnCodeMode == nil)) && step.GetID() != "" {
+		if (agentConfigs == nil || (agentConfigs.UseCodeExecutionMode == nil && agentConfigs.UseToolSearchMode == nil)) && step.GetID() != "" {
 			if stepConfigs, err := hcpo.ReadStepConfigs(ctx); err == nil {
 				for _, sc := range stepConfigs {
 					if sc.ID == step.GetID() && sc.AgentConfigs != nil {
@@ -1086,6 +1086,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
 			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.GetWorkspaceEnvRef()),
 			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
+		}
+
+		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent
+		// knows where the original execution artifacts are located.
+		if hcpo.isEvaluationMode {
+			if targetRunPath, ok := hcpo.variableValues["TARGET_RUN_PATH"]; ok && targetRunPath != "" {
+				varMapping := templateVars["LearnCodeVarMapping"]
+				targetLine := fmt.Sprintf("{{TARGET_RUN_PATH}} → os.environ['VAR_TARGET_RUN_PATH']  (= %s)", targetRunPath)
+				if varMapping != "" {
+					templateVars["LearnCodeVarMapping"] = varMapping + "\n" + targetLine
+				} else {
+					templateVars["LearnCodeVarMapping"] = targetLine
+				}
+			}
 		}
 
 		// Inject workflow variables as VAR_* env vars and workspace path as VAR_WORKSPACE_PATH.

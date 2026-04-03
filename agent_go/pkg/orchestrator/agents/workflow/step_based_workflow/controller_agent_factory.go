@@ -478,10 +478,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLogicalToolSearchMode(stepConfig *
 		return isToolSearchMode
 	}
 	if stepConfig != nil {
-		if stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
-			hcpo.GetLogger().Info("🔧 Step-specific learn_code/code_exec semantics disable logical tool search mode")
-			return false
-		}
 		if stepConfig.UseCodeExecutionMode != nil && *stepConfig.UseCodeExecutionMode {
 			hcpo.GetLogger().Info("🔧 Step-specific code execution semantics disable logical tool search mode")
 			return false
@@ -835,11 +831,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		config.LogicalUseToolSearchMode = logicalToolSearchMode
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Provider '%s': code execution mode disabled (not CLI provider), tool search mode: %v", actualProvider, config.UseToolSearchMode))
-	}
-
-	// Learn code mode: propagate to agent config so prompt filename gets _learn-code suffix
-	if stepConfig != nil && stepConfig.UseLearnCodeMode != nil && *stepConfig.UseLearnCodeMode {
-		config.UseLearnCodeMode = true
 	}
 
 	// Set EnableContextOffloading if specified
@@ -2425,28 +2416,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		"structured_output",
 	)
 
-	// submit_summary — called once after all scores
-	mcpAgent.RegisterCustomTool(
-		"submit_summary",
-		"Submit the overall evaluation summary after scoring all steps. Call this ONCE after all submit_score calls.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"summary": map[string]interface{}{
-					"type":        "string",
-					"description": "Holistic evaluation summary: overall assessment, cross-step patterns, strengths, weaknesses, and recommendations.",
-				},
-			},
-			"required": []string{"summary"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			summary, _ := args["summary"].(string)
-			capturedSummary = summary
-			hcpo.GetLogger().Info("📝 Evaluation summary captured")
-			return "Summary submitted. Evaluation scoring complete.", nil
-		},
-		"structured_output",
-	)
+	// Rebuild code execution registry so submit_score appears in the TOOL_STRUCTURE JSON
+	if config.UseCodeExecutionMode {
+		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for scoring agent: %v", err))
+		}
+	}
 
 	// Set up user prompt with all steps
 	scoringAgent, ok := agent.(*WorkflowEvaluationScoringAgent)
@@ -2459,14 +2434,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		return userPrompt
 	})
 
-	// Execute
-	_, _, err = scoringAgent.Execute(ctx, nil, nil)
+	// Execute — agent's final text output becomes the summary
+	agentOutput, _, err := scoringAgent.Execute(ctx, nil, nil)
 	if err != nil {
 		// If we got some scores before the error, use them
 		if len(capturedScores) == 0 {
 			return nil, fmt.Errorf("scoring agent failed with no scores captured: %w", err)
 		}
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent ended with error but captured %d/%d scores: %v", len(capturedScores), expectedScores, err))
+	}
+
+	// Use agent's final text output as the evaluation summary
+	if agentOutput != "" {
+		capturedSummary = agentOutput
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring complete: %d/%d steps scored", len(capturedScores), expectedScores))

@@ -231,11 +231,9 @@ type AgentConfigs struct {
 	DisableTierOptimization             *bool           `json:"disable_tier_optimization,omitempty"`              // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
 	Optimized                           *bool           `json:"optimized,omitempty"`                              // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
 	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
-	UseLearnCodeMode                    *bool           `json:"use_learn_code_mode,omitempty"`                    // Learn code mode: LLM writes main.py once, saved and reused without LLM on future runs (nil = disabled)
 	LearnCodeMaxFixIter                 *int            `json:"learn_code_max_fix_iterations,omitempty"`          // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode               string          `json:"declared_execution_mode,omitempty"`                // Required mode decision for the step: "learn_code", "code_exec", "tool_search", or "simple"
 	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Why this mode is the best fit for the step
-	LearnCodeRejectionReason            string          `json:"learn_code_rejection_reason,omitempty"`            // Required when declared_execution_mode is not "learn_code"
 	CodeExecRejectionReason             string          `json:"code_exec_rejection_reason,omitempty"`             // Required when declared_execution_mode is "tool_search" or "simple"
 	ToolSearchRejectionReason           string          `json:"tool_search_rejection_reason,omitempty"`           // Required when declared_execution_mode is "simple"
 	DescriptionHash                     string          `json:"description_hash,omitempty"`                       // SHA256 of the current step description. If it changes, optimization review is stale.

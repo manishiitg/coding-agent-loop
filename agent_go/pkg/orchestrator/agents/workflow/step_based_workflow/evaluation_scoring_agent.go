@@ -60,15 +60,16 @@ You must analyze ALL steps and submit a score for EACH one.
 - Consider cross-step patterns: if multiple steps fail for similar reasons, note this in your reasoning
 - Look at the overall picture: do the combined results tell a coherent story?
 
-## Output Format
-You MUST call the submit_score tool ONCE for each evaluation step. Call it multiple times — once per step.
-Each call requires:
-- step_id: The ID of the evaluation step being scored
-- score: Integer score (0-10 based on success criteria)
-- reasoning: Brief explanation of why this score was assigned
-- evidence: Key evidence from the execution output supporting this score
+## Available Tools
+- **submit_score**: Submit score for one eval step. Call ONCE per step.
+  - step_id (string): The ID of the evaluation step
+  - score (integer): Score 0-10
+  - reasoning (string): Why this score was assigned
+  - evidence (string): Key evidence from execution output
 
-After scoring all steps, call submit_summary with an overall analysis.
+## Instructions
+1. Call submit_score for EACH evaluation step
+2. After all scores submitted, write your overall evaluation summary as your final response
 `
 }
 

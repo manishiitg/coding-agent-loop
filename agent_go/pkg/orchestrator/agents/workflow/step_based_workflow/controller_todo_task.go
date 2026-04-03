@@ -96,10 +96,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder
-	// WRITE: step execution path + knowledgebase folder
+	// WRITE: full execution folder (so orchestrator can do work directly) + knowledgebase + learnings
 
 	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
-	writePaths := []string{stepExecutionPath, knowledgebasePath, stepLearningsPath}
+	writePaths := []string{executionWorkspacePath, knowledgebasePath, stepLearningsPath}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	skillStepConfig := getAgentConfigs(step)
@@ -294,11 +294,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
 	docsRoot := GetPromptDocsRoot()
 	fgExecPath := hcpo.getTodoTaskExecutionWorkspacePath()
-	fgStepExecPath := executionPath
 	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgKnowledgebasePath}
-	fgWritePaths := []string{fgStepExecPath, fgKnowledgebasePath, fgLearningsPath}
+	fgWritePaths := []string{fgExecPath, fgKnowledgebasePath, fgLearningsPath}
 
 	templateVars := map[string]string{
 		// Resolve variables in step metadata
@@ -328,6 +327,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),
 		"KnowledgebasePath":     filepath.Join(docsRoot, fgKnowledgebasePath),
 		"WorkflowRoot":          filepath.Join(docsRoot, baseWorkspacePath),
+		"LearningsPath":         filepath.Join(docsRoot, fgLearningsPath),
 	}
 
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)

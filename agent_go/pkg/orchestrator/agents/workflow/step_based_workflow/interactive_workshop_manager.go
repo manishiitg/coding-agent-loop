@@ -157,8 +157,7 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
 		return false
 	}
-	return (cfg.UseLearnCodeMode != nil && *cfg.UseLearnCodeMode) ||
-		(cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode)
+	return cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode
 }
 
 func deriveExecutionModeFromConfig(cfg *AgentConfigs) string {
@@ -184,20 +183,17 @@ func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 		trueVal := true
 		falseVal := false
 		cfg.DeclaredExecutionMode = "code_exec"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &trueVal
 		cfg.UseToolSearchMode = &falseVal
 	case "tool_search":
 		trueVal := true
 		falseVal := false
 		cfg.DeclaredExecutionMode = "tool_search"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &falseVal
 		cfg.UseToolSearchMode = &trueVal
 	case "simple":
 		falseVal := false
 		cfg.DeclaredExecutionMode = "simple"
-		cfg.UseLearnCodeMode = &falseVal
 		cfg.UseCodeExecutionMode = &falseVal
 		cfg.UseToolSearchMode = &falseVal
 	}
@@ -1301,7 +1297,7 @@ When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? 
 
 **Optimization workflow depends on the step's execution mode:**
 
-**For scripted code steps** (`+"`use_code_execution_mode=true`"+` or legacy `+"`use_learn_code_mode=true`"+`):
+**For scripted code steps** (`+"`use_code_execution_mode=true`"+`):
 1. **Check mode** — Read step_config.json. If step isn't in scripted code mode yet, set it: update_step_config(step_id, use_code_execution_mode=true)
 2. **Run the step** — execute_step(step_id). The controller first tries saved main.py from learnings/{step-id}/. If needed, the LLM writes/repairs main.py and the controller saves it back on success.
 3. **Run optimize_step(step_id)** — uses the observed run plus the saved main.py to decide whether `+"`code_exec`"+` is still the best fit for this step, whether the script is correct, and what cleanup would make it stable across groups/runs.
@@ -1410,7 +1406,7 @@ If structural changes are needed (add/remove/reorder steps based on optimize_wor
    - `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
    The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
 7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-8. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
+8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g., `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run. The eval agent reads from {{"{{TARGET_RUN_PATH}}"}}, performs its analysis, and writes results to its own folder. Pre-validation then verifies those results were produced.
 9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
    **IMPORTANT — {{"{{TARGET_RUN_PATH}}"}}**: At runtime, the variable {{"{{TARGET_RUN_PATH}}"}} is injected and resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers. The eval step's own folder is empty — all output files live in the original execution run.
 10. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
@@ -1758,7 +1754,7 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 ### 7. Execution Modes: Simple vs Code Exec vs Tool Search
 
-Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode, use_learn_code_mode)**:
+Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
 
 - **Simple mode** (all false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
 - **Code Execution mode** (use_code_execution_mode=true): Agent writes reusable Python code that calls MCP tools programmatically via mcpbridge. The saved main.py is tried first on future runs, and if it fails the LLM repairs it. **Use this when**:
@@ -1770,8 +1766,6 @@ Steps have three execution modes — set via **update_step_config(step_id, use_c
   - The user explicitly asks for code execution mode
 - **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools, resources, or paths genuinely are not known upfront and discovery is part of the task itself.
 - Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection, unless the full browser flow can clearly be stabilized into one reusable script.
-
-`+"`use_learn_code_mode`"+` remains as a deprecated alias for older plans, but the canonical scripted mode is now `+"`code_exec`"+`.
 
 Choose the mode that best matches the work. `+"`code_exec`"+` is not automatically better than `+"`tool_search`"+` — if discovery is intrinsic, `+"`tool_search`"+` is the correct answer. Likewise, `+"`simple`"+` is often best for tiny direct tasks where scripting or discovery would add overhead.
 
@@ -3608,10 +3602,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, enable tool search mode — the agent dynamically discovers available tools at runtime using search_tools before calling them. Useful when the exact tools needed are not known upfront. If false, tools are provided directly without search. Omit to inherit the preset default.",
 				},
-				"use_learn_code_mode": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Deprecated alias for persistent scripted code execution. Prefer use_code_execution_mode=true instead. When enabled, the controller tries learnings/{step-id}/main.py first and falls back to the LLM only when the script is missing or fails.",
-				},
 				"declared_execution_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []interface{}{"code_exec", "tool_search", "simple"},
@@ -3620,10 +3610,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"declared_execution_mode_reason": map[string]interface{}{
 					"type":        "string",
 					"description": "Required explanation for why the chosen execution mode is the best fit for this step.",
-				},
-				"learn_code_rejection_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Legacy compatibility field. Prefer code_exec_rejection_reason instead.",
 				},
 				"code_exec_rejection_reason": map[string]interface{}{
 					"type":        "string",
@@ -3928,11 +3914,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.UseToolSearchMode = &b
 				}
 			}
-			if val, ok := args["use_learn_code_mode"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					targetConfig.AgentConfigs.UseLearnCodeMode = &b
-				}
-			}
 			if val, ok := args["declared_execution_mode"]; ok && val != nil {
 				if s, ok := val.(string); ok && s != "" {
 					targetConfig.AgentConfigs.DeclaredExecutionMode = s
@@ -3941,11 +3922,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["declared_execution_mode_reason"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					targetConfig.AgentConfigs.DeclaredExecutionModeReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["learn_code_rejection_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.LearnCodeRejectionReason = strings.TrimSpace(s)
 				}
 			}
 			if val, ok := args["code_exec_rejection_reason"]; ok && val != nil {
@@ -3992,7 +3968,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			for _, key := range []string{
 				"declared_execution_mode",
 				"declared_execution_mode_reason",
-				"learn_code_rejection_reason",
 				"code_exec_rejection_reason",
 				"tool_search_rejection_reason",
 				"description_optimized",

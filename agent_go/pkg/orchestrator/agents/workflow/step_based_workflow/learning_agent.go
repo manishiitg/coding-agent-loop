@@ -19,13 +19,18 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 ## Role & Identity
 - **Role**: Skill Generation Agent
 - **Trigger**: {{.LearningTrigger}}
-- **Focus**: Extract WORKFLOW-CENTRIC execution sequence with dependencies and data flow.
+- **Focus**: Extract WORKFLOW-CENTRIC execution sequence with dependencies and data flow for step "{{.StepTitle}}".
 
 ## CRITICAL PRINCIPLES
 1. **Task-Specific ONLY**: Only save patterns that help a future agent perform *this specific task* better. Exclude general knowledge (syntax rules, generic tool mechanics).
 2. **Keep it lean**: Remove patterns that aren't pulling their weight. A shorter, high-signal skill is better than a long one with noise.
 3. **Scripts**: Save successful scripts (Python, bash) to '{{.ScriptsPath}}' and reference them from SKILL.md.
-4. **For scripted code steps**: `+"`main.py`"+` and helper scripts are the executable source of truth. Use SKILL.md only for secondary notes: edge cases, selector drift, recovery strategies, and debugging guidance for future repair runs.
+4. **For scripted code steps**: ` + "`main.py`" + ` and helper scripts are the executable source of truth. Use SKILL.md only for secondary notes: edge cases, selector drift, recovery strategies, and debugging guidance for future repair runs.
+{{if .SkillCreatorPath}}
+## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
+Before writing or updating anything, read the skill creator guide at '{{.SkillCreatorPath}}'.
+It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + assets/), progressive disclosure, file organization, and writing patterns. **Follow that guide** for how to structure the skill folder.
+{{end}}
 
 ## FILE MANAGEMENT ALGORITHM (MANDATORY)
 **Available tools**: execute_shell_command (for listing, reading, deleting, and **creating new files** via shell — e.g. using cat heredoc or tee) and diff_patch_workspace_file (for patching/updating **existing** files only — will fail if the file does not exist yet).
@@ -33,21 +38,20 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 **Existing skill pre-loaded (skip discovery/retrieval):**
 {{.ExistingLearningsContent}}
 {{else}}
-1. **Discover**: Use execute_shell_command with 'ls' on '{{.WritePath}}'. Identify existing 'SKILL.md' or any '*_learning.md' files (legacy format).
-2. **Retrieve**: Use execute_shell_command with 'cat' to read ALL identified skill files.
+1. **Discover**: Use execute_shell_command with 'ls -R' on '{{.WritePath}}'. Identify existing skill files.
+2. **Retrieve**: Use execute_shell_command with 'cat' to read existing skill files.
 {{end}}
 3. **Read Execution Logs**: The execution logs at '{{.ExecutionLogsPath}}' are your primary source for extracting patterns. Read them efficiently:
-   - First, list files: `+"`"+`ls '{{.ExecutionLogsPath}}'`+"`"+`
-   - **File naming**: `+"`"+`execution-attempt-{N}-iteration-{M}-conversation.json`+"`"+` (full conversation with tool calls), `+"`"+`execution-attempt-{N}-iteration-{M}.json`+"`"+` (result summary)
+   - First, list files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
+   - **File naming**: ` + "`" + `execution-attempt-{N}-iteration-{M}-conversation.json` + "`" + ` (full conversation with tool calls), ` + "`" + `execution-attempt-{N}-iteration-{M}.json` + "`" + ` (result summary)
    - **Start with the result summary** (small file) to understand what happened — it has execution_result, retry_attempt, and status.
-   - **Read conversation JSON only if needed** for detailed tool call sequences. These can be large (50K+). Use `+"`"+`tail -c 30000`+"`"+` to read from the bottom first — the most important patterns (final tool calls, success/failure outcome) are at the end.
+   - **Read conversation JSON only if needed** for detailed tool call sequences. These can be large (50K+). Use ` + "`" + `tail -c 30000` + "`" + ` to read from the bottom first — the most important patterns (final tool calls, success/failure outcome) are at the end.
    - **Multiple attempts**: Higher attempt numbers are retries. Focus on the latest successful attempt, or the latest failed attempt for failure analysis.
-   - The conversation JSON has `+"`"+`{"conversation_history": [{"Role": "system/human/ai", "Parts": [...]}]}`+"`"+` — look for tool calls in ai messages (FunctionCall entries) and their results in subsequent human messages.
-{{if .SkillCreatorPath}}4. **Skill Writing Guide**: Read the skill creator guide at '{{.SkillCreatorPath}}' for best practices on writing effective skills.
-{{end}}5. **Legacy Migration**: If you find '*_learning.md' files (legacy format) but no 'SKILL.md':
-   - Read the legacy content and incorporate it into the new SKILL.md format with proper YAML frontmatter.
+   - The conversation JSON has ` + "`" + `{"conversation_history": [{"Role": "system/human/ai", "Parts": [...]}]}` + "`" + ` — look for tool calls in ai messages (FunctionCall entries) and their results in subsequent human messages.
+4. **Legacy Migration**: If you find '*_learning.md' files (legacy format) but no 'SKILL.md':
+   - Read the legacy content and incorporate it into the new skill format with proper YAML frontmatter.
    - Derive the 'description' field from the legacy content (summarize the key patterns/approaches).
-   - Delete the legacy files after writing SKILL.md.
+   - Delete the legacy files after writing the new skill.
 5. **Consolidate**:
 {{if .IsSuccess}}
    - Merge current execution findings with existing skill. Prioritize latest successful patterns.
@@ -59,68 +63,34 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
    - Add the failure pattern with specific details on what went wrong and how to avoid it.
    - If the failure reveals a better approach, document it as an alternative path.
 {{end}}
-5. **Persist**: Use diff_patch_workspace_file to write ONE final consolidated file to '{{.WritePath}}/SKILL.md'.
-   The file MUST use YAML frontmatter in the following format:
+6. **Persist**: Write the skill to '{{.WritePath}}/'.
+   - SKILL.md MUST exist with YAML frontmatter:
    `+"`"+``+"`"+``+"`"+`
    ---
    name: {{.StepTitle}}
-   description: "<YOU MUST WRITE THIS: 1-2 sentence summary of what this skill teaches — what the optimal approach is and key pitfalls to avoid>"
+   description: "<1-2 sentence summary of what this skill teaches — optimal approach and key pitfalls>"
    disable-model-invocation: true
    user-invocable: false{{if .AllowedTools}}
    allowed-tools:{{range .AllowedToolsList}}
      - {{.}}{{end}}{{end}}
    ---
-
-   (skill content here)
    `+"`"+``+"`"+``+"`"+`
-   **IMPORTANT**: The 'description' field is critical — it determines when this skill gets loaded. Write a specific, actionable summary that covers WHAT the optimal approach is AND common pitfalls. Be concrete with tool names and parameters. Example: "Use server.create_record with batch mode for CSV imports; avoid single-record inserts which timeout on files >1000 rows due to API rate limits."
-6. **Clean Up**:
+   **IMPORTANT**: The 'description' field is critical — write a specific, actionable summary. Be concrete with tool names and parameters.
+   - Organize supporting files following the skill creator guide (references/, scripts/, etc.).
+   - Use diff_patch_workspace_file for existing files, execute_shell_command with cat heredoc for new files.
+7. **Clean Up**:
 {{if .IsScriptedCodeMode}}
-   - Use execute_shell_command with 'rm' to remove legacy '*_learning.md' files and obsolete temporary markdown files only.
-   - **Do NOT delete** `+"`main.py`"+`, helper `+"`*.py`"+` / `+"`*.sh`"+` files, or `+"`script_metadata.json`"+`.
-   - After cleanup, the folder may contain `+"`SKILL.md`"+` plus executable script files.
+   - Remove only legacy '*_learning.md' files and obsolete temporary markdown files.
+   - **Do NOT delete** ` + "`main.py`" + `, helper ` + "`*.py`" + ` / ` + "`*.sh`" + ` files, or ` + "`script_metadata.json`" + `.
 {{else}}
-   - Use execute_shell_command with 'rm' to remove all other '*_learning.md' files and any old files in that folder. Only 'SKILL.md' should remain.
+   - Remove legacy '*_learning.md' files. Do NOT remove reference files, scripts, or supporting skill files.
 {{end}}
 
 **Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
 
-## OUTPUT FORMAT
-The skill content (after the YAML frontmatter) should follow this structure:
-
-{{if .IsSuccess}}
-### EXECUTION WORKFLOW
-**OPTIMAL PATH**
-1. **server.tool**:
-   - arguments: {COMPLETE JSON - replace hardcode paths with {{ "{{" }}WORKSPACE_PATH{{ "}}" }} }
-   - prerequisites: [Condition]
-   - outputs: [Description]
-   - on_error: [Specific recovery]
-
-### DATA FLOW
-Step 1 Output -> Step 2 Input. Trace the flow accurately.
-{{else}}
-### FAILURE ANALYSIS
-- **What failed**: Describe the exact point of failure — which tool call, which step, what error.
-- **Root cause**: Why it failed (e.g., missing tool, wrong arguments, timeout, auth issue, missing dependency).
-- **What worked before failure**: Document the steps that succeeded before the failure point — these are still valid patterns.
-- **How to avoid**: Specific guidance for future agents to prevent this failure.
-
-### EXECUTION WORKFLOW
-Preserve any existing OPTIMAL PATH from previous successful runs. Add the failure pattern below it.
-{{end}}
-
-### OUTPUT FILE FORMATS
-- **File**: filename.json
-- **Structure**: { "field": "type" } - Provide exact structure for consistency.
-
-### FAILURES TO AVOID
-- server.tool - [Task-specific reason]. Use [Correct Approach] instead.
-
 ## FINAL ACTION
-After cleanup, output ONLY the file path:
-'Updated: {{.WritePath}}/SKILL.md'
-Do not add summaries or talkative reports.`)
+After writing, list what was updated:
+'Updated: {{.WritePath}}/ (files: <list of files changed>)'`)
 
 var learningUserMessageTemplate = MustRegisterTemplate("learningUserMessage", `# Skill Generation Task
 
@@ -139,6 +109,88 @@ var learningUserMessageTemplate = MustRegisterTemplate("learningUserMessage", `#
 ## Variable Handling
 - Replace hardcoded IDs/paths with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders: {{.Variables}}
 - **Workspace Paths**: Always replace with {{ "{{" }}WORKSPACE_PATH{{ "}}" }} or relative paths.
+
+---
+## VALIDATION RESULTS
+{{.ValidationResult}}`)
+
+// Global learning system prompt template — focuses on domain-level accumulated knowledge
+var globalLearningSystemPromptTemplate = MustRegisterTemplate("globalLearningSystemPrompt", `# Global Workflow Skill Generation Agent
+
+## Role & Identity
+- **Role**: Global Workflow Skill Generation Agent
+- **Trigger**: {{.LearningTrigger}} (from step: {{.ContributingStepTitle}})
+- **Focus**: Accumulate domain-level knowledge across ALL workflow steps into a shared skill at '{{.WritePath}}/'.
+
+## CRITICAL PRINCIPLES
+1. **Domain Knowledge Only**: Capture knowledge about the TARGET SYSTEM (website structure, API patterns, auth flows, data schemas, selectors, common patterns) — NOT step-specific tool sequences.
+2. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
+3. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
+{{if .SkillCreatorPath}}
+## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
+Before writing or updating anything, read the skill creator guide at '{{.SkillCreatorPath}}'.
+It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + assets/), progressive disclosure, file organization, and writing patterns. **Follow that guide** for how to structure the skill folder — do not invent your own format.
+{{end}}
+
+## FILE MANAGEMENT ALGORITHM (MANDATORY)
+**Available tools**: execute_shell_command (for listing, reading, deleting, and **creating new files** via shell — e.g. using cat heredoc or tee) and diff_patch_workspace_file (for patching/updating **existing** files only).
+{{if .ExistingLearningsContent}}
+**Existing global skill pre-loaded (skip discovery/retrieval):**
+{{.ExistingLearningsContent}}
+{{else}}
+1. **Discover**: Use execute_shell_command with 'ls -R' on '{{.WritePath}}' to see the full folder structure.
+2. **Retrieve**: Read existing files to understand current knowledge state.
+{{end}}
+3. **Read Execution Logs**: The execution logs at '{{.ExecutionLogsPath}}' show what step "{{.ContributingStepTitle}}" just did.
+   - List files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
+   - Start with result summary (small file) to understand what happened.
+   - Read conversation JSON if needed for domain details (use ` + "`" + `tail -c 30000` + "`" + ` for large files).
+4. **Merge & Consolidate**:
+{{if .IsSuccess}}
+   - Extract domain knowledge discovered by step "{{.ContributingStepTitle}}".
+   - Decide which file(s) to update or create based on the skill structure.
+   - Update SKILL.md if you added new reference files.
+   - Update any patterns that were refined or corrected by this execution.
+{{else}}
+   - Document what went wrong and any domain knowledge revealed by the failure.
+   - Preserve all existing successful patterns.
+   - Add failure avoidance guidance to the relevant file.
+{{end}}
+5. **Persist**:
+   - SKILL.md MUST exist with YAML frontmatter:
+   ` + "```" + `
+   ---
+   name: {{.WorkflowName}}
+   description: "<Summary of accumulated domain knowledge for this workflow>"
+   disable-model-invocation: true
+   user-invocable: false
+   ---
+   ` + "```" + `
+   - Organize supporting files following the skill creator guide (references/, scripts/, etc.).
+   - Use diff_patch_workspace_file for existing files, execute_shell_command with cat heredoc for new files.
+6. **Clean Up**: Remove only legacy '*_learning.md' files. Do NOT remove reference files, scripts, or topic files.
+
+## FINAL ACTION
+After writing, list what was updated:
+'Updated: {{.WritePath}}/ (files: <list of files changed>)'`)
+
+// Global learning user message template
+var globalLearningUserMessageTemplate = MustRegisterTemplate("globalLearningUserMessage", `# Global Workflow Skill Update
+
+## Contributing Step
+- **Step**: {{.ContributingStepTitle}} (ID: {{.ContributingStepID}})
+- **Goal**: {{.StepDescription}}
+
+## What Happened
+{{if .IsSuccess}}- Step executed successfully. Extract domain knowledge discovered during execution.
+{{else}}- Step failed. Document domain knowledge revealed by the failure and how to prevent it.
+{{end}}
+
+## Instructions
+- Merge findings into the global skill, organized by category
+- Do NOT include step-specific tool sequences — only domain knowledge
+- Keep the skill focused on the TARGET SYSTEM, not on workflow mechanics
+- Replace hardcoded values with {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders: {{.Variables}}
 
 ---
 ## VALIDATION RESULTS
@@ -217,7 +269,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	}
 
 	// Forward additional template vars from caller
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode"} {
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -253,13 +305,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
-	stepTitle := templateVars["StepTitle"]
 	docsRoot := GetPromptDocsRoot()
-	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
-	scriptsPath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber + "/scripts"
-
-	executionLogsPath := templateVars["ExecutionLogsPath"]
-	existingLearningsContent := templateVars["ExistingLearningsContent"]
 
 	// Determine learning trigger (success or failure)
 	learningTrigger := templateVars["LearningTrigger"]
@@ -267,6 +313,33 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 		learningTrigger = "success"
 	}
 	isSuccess := learningTrigger == "success"
+
+	executionLogsPath := templateVars["ExecutionLogsPath"]
+	existingLearningsContent := templateVars["ExistingLearningsContent"]
+
+	// Global learning mode: use the global template
+	if templateVars["UseGlobalLearning"] == "true" {
+		writePath := docsRoot + "/" + workspacePath + "/learnings/" + GlobalLearningID
+		var result strings.Builder
+		if err := globalLearningSystemPromptTemplate.Execute(&result, map[string]interface{}{
+			"IsSuccess":                isSuccess,
+			"LearningTrigger":          strings.ToUpper(learningTrigger),
+			"WritePath":                writePath,
+			"ContributingStepTitle":    templateVars["ContributingStepTitle"],
+			"WorkflowName":             "Workflow Knowledge",
+			"ExecutionLogsPath":        executionLogsPath,
+			"ExistingLearningsContent": existingLearningsContent,
+			"SkillCreatorPath":         templateVars["SkillCreatorPath"],
+		}); err != nil {
+			panic(fmt.Sprintf("global learning system prompt template execution failed: %v", err))
+		}
+		return result.String()
+	}
+
+	// Per-step learning mode: use the existing template
+	stepTitle := templateVars["StepTitle"]
+	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
+	scriptsPath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber + "/scripts"
 
 	// Build allowed tools list from template vars
 	allowedToolsStr := templateVars["AllowedTools"]
@@ -303,16 +376,34 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 // learningUserMessageProcessor creates the user message for skill generation
 func (agent *WorkflowLearningAgent) learningUserMessageProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
-	stepNumber := templateVars["StepNumber"]
-	stepTitle := templateVars["StepTitle"]
 	docsRoot := GetPromptDocsRoot()
-	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
 
 	learningTrigger := templateVars["LearningTrigger"]
 	if learningTrigger == "" {
 		learningTrigger = "success"
 	}
 	isSuccess := learningTrigger == "success"
+
+	// Global learning mode: use the global user message template
+	if templateVars["UseGlobalLearning"] == "true" {
+		var result strings.Builder
+		if err := globalLearningUserMessageTemplate.Execute(&result, map[string]interface{}{
+			"IsSuccess":              isSuccess,
+			"ContributingStepTitle":  templateVars["ContributingStepTitle"],
+			"ContributingStepID":     templateVars["ContributingStepID"],
+			"StepDescription":        templateVars["StepDescription"],
+			"Variables":              templateVars["VariableNames"],
+			"ValidationResult":       templateVars["ValidationResult"],
+		}); err != nil {
+			panic(fmt.Sprintf("global learning user message template execution failed: %v", err))
+		}
+		return result.String()
+	}
+
+	// Per-step learning mode
+	stepNumber := templateVars["StepNumber"]
+	stepTitle := templateVars["StepTitle"]
+	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
 
 	var result strings.Builder
 	if err := learningUserMessageTemplate.Execute(&result, map[string]interface{}{

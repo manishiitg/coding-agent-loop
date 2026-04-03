@@ -244,6 +244,7 @@ type AgentConfigs struct {
 	DescriptionLearningsAlignmentReason string          `json:"description_learnings_alignment_reason,omitempty"` // How the description reflects the learnings gathered so far.
 	DescriptionNoSecrets                *bool           `json:"description_no_secrets,omitempty"`                 // True when the description has been reviewed for secrets/hardcoded values and cleared.
 	DescriptionSecretsReviewReason      string          `json:"description_secrets_review_reason,omitempty"`      // Why the description is considered free of secrets/hardcoded values.
+	UseGlobalLearning                   *bool           `json:"use_global_learning,omitempty"`                    // If true, use workflow-level global learning instead of per-step learning (nil = not set/per-step, true = global)
 }
 
 // ============================================================================

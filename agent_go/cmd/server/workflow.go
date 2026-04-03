@@ -2197,6 +2197,18 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 		learningsMap[stepID] = metadata
 	}
 
+	// Check for global workflow-level learning metadata
+	globalMetadata, err := readLearningMetadataForStep(r.Context(), workspacePath, "_global")
+	if err == nil && globalMetadata != nil {
+		// Merge global lock status from step config (stored under "_global" key)
+		if agentConfigs, found := stepConfigMap["_global"]; found && agentConfigs != nil {
+			if agentConfigs.LockLearnings != nil {
+				globalMetadata["lock_learnings"] = *agentConfigs.LockLearnings
+			}
+		}
+		learningsMap["_global"] = globalMetadata
+	}
+
 	response := map[string]interface{}{
 		"success":   true,
 		"learnings": learningsMap,

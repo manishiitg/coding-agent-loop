@@ -108,18 +108,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// LIMIT SUCCESS LEARNING: Check if we already have sufficient successful learnings (>= 3)
 	// If so, skip success learning but keep unlocked to allow failure learning
+	// Global learning: no auto-limit — human decides when to lock
 	metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-	if err == nil && metadata != nil {
-		if metadata.SuccessfulRuns >= 3 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRuns, learningPathIdentifier))
-			// Skip learning but record turnCount (without incrementing counters)
-			// This effectively "locks" success learning but keeps the step unlocked for failure learning
-			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRuns))
-			return nil
+	if learningPathIdentifier != GlobalLearningID {
+		if err == nil && metadata != nil {
+			if metadata.SuccessfulRuns >= 3 {
+				hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRuns, learningPathIdentifier))
+				// Skip learning but record turnCount (without incrementing counters)
+				// This effectively "locks" success learning but keeps the step unlocked for failure learning
+				_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRuns))
+				return nil
+			}
+		} else if err != nil {
+			// Log warning but continue if metadata read fails (assume 0 learnings)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning metadata for limit check: %v (continuing)", err))
 		}
-	} else if err != nil {
-		// Log warning but continue if metadata read fails (assume 0 learnings)
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning metadata for limit check: %v (continuing)", err))
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -217,6 +220,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
 	}
+
+	// Global learning mode: pass flag and contributing step info to learning agent
+	if learningPathIdentifier == GlobalLearningID {
+		successLearningTemplateVars["UseGlobalLearning"] = "true"
+		successLearningTemplateVars["ContributingStepID"] = step.GetID()
+		successLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
+	}
+
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
 
 	// Add step-specific paths (always enabled)
@@ -634,6 +645,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		"LearningTrigger":     "failure",
 		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveToolsFailure, ", "),
+	}
+
+	// Global learning mode: pass flag and contributing step info to learning agent
+	if learningPathIdentifier == GlobalLearningID {
+		failureLearningTemplateVars["UseGlobalLearning"] = "true"
+		failureLearningTemplateVars["ContributingStepID"] = step.GetID()
+		failureLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
 	}
 
 	// Add step-specific paths (always enabled)

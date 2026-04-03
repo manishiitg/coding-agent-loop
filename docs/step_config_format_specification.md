@@ -205,6 +205,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 | `learning_after_loop_iteration` | `boolean` | `false` | Run learning after each loop iteration (for loop steps) |
 | `learning_detail_level` | `"exact"\|"general"\|"none"` | `"exact"` | Level of detail in learnings (`"exact"` = full content, `"general"` = summary, `"none"` = disabled) |
 | `keep_learning_full` | `boolean` | `false` | Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (can be overridden by `KEEP_LEARNING_FULL` env var) |
+| `use_global_learning` | `boolean` | `false` (nil = per-step) | Workflow-level: all steps contribute to and read from a single shared skill at `learnings/_global/SKILL.md` instead of per-step skills. Each step contributes max 2 times. Set in `workflow.json` `execution_defaults`. |
 
 ### Execution Mode Configuration
 

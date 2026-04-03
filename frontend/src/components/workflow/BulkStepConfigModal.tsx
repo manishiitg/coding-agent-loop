@@ -104,11 +104,13 @@ export default function BulkStepConfigModal({
       execution_mode: currentDefaults?.execution_mode,
       ...(newOverrides ? {
         disable_learning: newOverrides.disable_learning ?? undefined,
+        use_global_learning: newOverrides.use_global_learning ?? undefined,
         disable_parallel_tool_execution: newOverrides.disable_parallel_tool_execution ?? undefined,
         execution_max_turns: newOverrides.execution_max_turns ?? undefined,
         enabled_custom_tools: newOverrides.enabled_custom_tools,
       } : {
         disable_learning: undefined,
+        use_global_learning: undefined,
         disable_parallel_tool_execution: undefined,
         execution_max_turns: undefined,
         enabled_custom_tools: undefined,
@@ -126,6 +128,8 @@ export default function BulkStepConfigModal({
   const overrideStatus = {
     learningDisabled: ov.disable_learning === true,
     hasLearningOverride: ov.disable_learning !== undefined,
+    globalLearningEnabled: ov.use_global_learning === true,
+    hasGlobalLearningOverride: ov.use_global_learning !== undefined,
     parallelToolExecDisabled: ov.disable_parallel_tool_execution === true,
     hasParallelToolExecOverride: ov.disable_parallel_tool_execution !== undefined,
     maxTurns: ov.execution_max_turns,
@@ -135,6 +139,7 @@ export default function BulkStepConfigModal({
   };
 
   const learningEnabled = overrideStatus.hasLearningOverride ? !overrideStatus.learningDisabled : true;
+  const globalLearningEnabled = overrideStatus.globalLearningEnabled;
   const parallelToolExecEnabled = !overrideStatus.parallelToolExecDisabled;
 
   const toolAccessSummary = (() => {
@@ -156,6 +161,7 @@ export default function BulkStepConfigModal({
   const handleAction = async (
     action:
       | "disable_learning" | "enable_learning"
+      | "enable_global_learning" | "disable_global_learning"
       | "disable_read_image_access" | "disable_read_pdf_access" | "disable_human_tools"
       | "set_execution_max_turns"
       | "enable_parallel_tool_exec" | "disable_parallel_tool_exec",
@@ -174,6 +180,12 @@ export default function BulkStepConfigModal({
           break;
         case "enable_learning":
           newOverrides.disable_learning = false;
+          break;
+        case "enable_global_learning":
+          newOverrides.use_global_learning = true;
+          break;
+        case "disable_global_learning":
+          newOverrides.use_global_learning = false;
           break;
         case "disable_read_image_access": {
           const cur = newOverrides.enabled_custom_tools || [];
@@ -302,6 +314,13 @@ export default function BulkStepConfigModal({
               hasOverride={overrideStatus.hasLearningOverride}
               disabled={isBusy}
               onToggle={() => handleAction(learningEnabled ? "disable_learning" : "enable_learning")}
+            />
+            <ToggleRow
+              label="Global Learning"
+              enabled={globalLearningEnabled}
+              hasOverride={overrideStatus.hasGlobalLearningOverride}
+              disabled={isBusy}
+              onToggle={() => handleAction(globalLearningEnabled ? "disable_global_learning" : "enable_global_learning")}
             />
             <ToggleRow
               label="Parallel Tool Execution"

@@ -55,6 +55,7 @@ type WorkflowExecutionDefaults struct {
 	ExecutionMode               string   `json:"execution_mode,omitempty"` // "stateless" | "stateful"
 	// Global step overrides (replaces step_override.json)
 	DisableLearning              *bool    `json:"disable_learning,omitempty"`
+	UseGlobalLearning            *bool    `json:"use_global_learning,omitempty"`
 	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
 	EnabledCustomTools           []string `json:"enabled_custom_tools,omitempty"`

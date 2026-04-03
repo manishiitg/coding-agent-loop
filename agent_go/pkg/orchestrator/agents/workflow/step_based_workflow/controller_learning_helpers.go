@@ -149,6 +149,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadStepLearningHistory(
 	return formattedLearnings, nil
 }
 
+// isGlobalLearningEnabled checks if global (workflow-level) learning is enabled for the given agent configs.
+func isGlobalLearningEnabled(agentConfigs *AgentConfigs) bool {
+	return agentConfigs != nil && agentConfigs.UseGlobalLearning != nil && *agentConfigs.UseGlobalLearning
+}
+
+// LoadGlobalLearningHistory loads and formats the global workflow-level learning history.
+// Returns empty string if no global learnings found or on error.
+func (hcpo *StepBasedWorkflowOrchestrator) LoadGlobalLearningHistory(
+	ctx context.Context,
+) (string, error) {
+	globalLearningsPath := hcpo.getLearningsBasePath() + "/" + GlobalLearningID
+
+	// Read learning files from global folder
+	learningFiles, err := hcpo.readStepLearningFiles(ctx, globalLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read global learning files from %s: %v - proceeding without global learnings", globalLearningsPath, err))
+		return "", nil
+	}
+
+	if len(learningFiles) == 0 {
+		return "", nil
+	}
+
+	// Format learnings for system prompt
+	formattedLearnings, _ := hcpo.formatStepLearningFilesAsHistory(learningFiles)
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded %d global learning file(s) for execution agent system prompt", len(learningFiles)))
+
+	return formattedLearnings, nil
+}
+
 // ShouldSkipLearningDueToLock checks if learning should be skipped due to locked learnings.
 // Returns true if learnings are locked AND learnings folder has content (existing learnings to use).
 // Returns false if learnings are locked BUT folder is empty (need to create initial learnings).

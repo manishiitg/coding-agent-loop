@@ -554,6 +554,15 @@ func getLearningPathIdentifier(stepID string, stepPath string) string {
 	return stepID
 }
 
+// getEffectiveLearningPathIdentifier returns the learning path identifier,
+// routing to the global learning folder when global learning is enabled.
+func getEffectiveLearningPathIdentifier(stepID string, stepPath string, agentConfigs *AgentConfigs) string {
+	if isGlobalLearningEnabled(agentConfigs) {
+		return GlobalLearningID
+	}
+	return getLearningPathIdentifier(stepID, stepPath)
+}
+
 // executeConditionalStep is now in controller_conditional.go
 
 // executeDecisionStep is now in controller_decision.go
@@ -1456,13 +1465,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				learningFilePaths = ""
 				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for step %d - skipping learning history reading (no learnings will be passed to execution agent)", stepIndex+1))
 			} else {
-				// Learning is enabled - read learning history as normal
-				formattedLearningHistory, err = hcpo.readLearningHistory(
-					ctx,
-					stepIndex,
-					step.GetID(),
-					stepPath,
-				)
+				// Learning is enabled - read learning history
+				if isGlobalLearningEnabled(agentConfigs) {
+					// Global learning mode: read ONLY from shared workflow-level skill
+					formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
+				} else {
+					// Per-step learning mode: read from step-specific folder
+					formattedLearningHistory, err = hcpo.readLearningHistory(
+						ctx,
+						stepIndex,
+						step.GetID(),
+						stepPath,
+					)
+				}
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
 				}
@@ -1964,7 +1979,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToTempOverride {
 							// Success Learning Agent - analyze what worked well and update plan.json
 							// Loop condition met means step completed successfully
-							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+							learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s (loop completed)", stepPath))
 							// Populate runtime fields for runSuccessLearningPhase
 							stepConfigs, err := hcpo.ReadStepConfigs(ctx)
@@ -2018,7 +2033,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 								// IMPORTANT: Update metadata even when skipping learning due to tempLLM
 								// We still want to count this success toward the auto-lock threshold (3 successes)
-								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+								learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 								agentConfigs := getAgentConfigs(step)
 								learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
 								if learningLLMConfig == nil {
@@ -2239,7 +2254,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 
 							if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToLock && !shouldSkipLearningDueToTempOverride {
-								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+								learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running learning analysis after loop iteration %d for %s", loopIterationCount, stepPath))
 								// Run appropriate learning phase based on validation result
 								// Previously this always called runSuccessLearningPhase, which mislabeled
@@ -2276,7 +2291,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							} else if shouldSkipLearningDueToTempOverride {
 								// IMPORTANT: Update metadata even when skipping learning due to tempLLM
 								// We still want to count this success toward the auto-lock threshold (3 successes)
-								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+								learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 								agentConfigs := getAgentConfigs(step)
 								learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
 								if learningLLMConfig == nil {
@@ -2437,7 +2452,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// IMPORTANT: Update metadata even when skipping learning due to tempLLM
 						// We still want to count this success toward the auto-lock threshold (3 successes)
 						// This ensures the step can progress and eventually lock/optimize
-						learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+						learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 						agentConfigs := getAgentConfigs(step)
 						learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
 						learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
@@ -2513,7 +2528,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Pre-validation failure sets IsSuccessCriteriaMet=false, triggering failure learning.
 					if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
 						// Success Learning Agent - analyze what worked well and update plan.json
-						learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+						learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
 						// Populate runtime fields for runSuccessLearningPhase
 						stepConfigs, err := hcpo.ReadStepConfigs(ctx)
@@ -2567,7 +2582,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step %s is a loop step - skipping failure learning (loop steps only run success learning when condition is met)", stepPath))
 						} else {
 							// Check persisted failure learning count from metadata
-							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+							learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 							metadata, _ := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
 							if metadata != nil && metadata.FailureLearningRuns >= 1 {
 								skipReason = fmt.Sprintf("Failure learning already ran (%d >= 1, persisted)", metadata.FailureLearningRuns)
@@ -2580,7 +2595,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if skipReason == "" {
 							failureLearningAttempts++
 							var refinedTaskDescription string
-							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+							learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s", stepPath))
 							// Populate runtime fields for runFailureLearningPhase
 							stepConfigs, err := hcpo.ReadStepConfigs(ctx)
@@ -2651,12 +2666,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										// For loop steps, respect the LearningAfterLoopIteration setting
 										if !hasLoop(step) {
 											// For regular steps, always re-read after failure learning
-											updatedLearningHistory, readErr := hcpo.readLearningHistory(
-												ctx,
-												stepIndex,
-												step.GetID(),
-												stepPath,
-											)
+											var updatedLearningHistory string
+											var readErr error
+											if isGlobalLearningEnabled(agentConfigs) {
+												updatedLearningHistory, readErr = hcpo.readGlobalLearningHistory(ctx)
+											} else {
+												updatedLearningHistory, readErr = hcpo.readLearningHistory(ctx, stepIndex, step.GetID(), stepPath)
+											}
 											if readErr != nil {
 												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
 											} else {
@@ -2670,12 +2686,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 											// Default to true for loop steps
 											learningAfterLoopIteration := hasLoop(step) // Always true for loop steps
 											if learningAfterLoopIteration {
-												updatedLearningHistory, readErr := hcpo.readLearningHistory(
-													ctx,
-													stepIndex,
-													step.GetID(),
-													stepPath,
-												)
+												var updatedLearningHistory string
+												var readErr error
+												if isGlobalLearningEnabled(agentConfigs) {
+													updatedLearningHistory, readErr = hcpo.readGlobalLearningHistory(ctx)
+												} else {
+													updatedLearningHistory, readErr = hcpo.readLearningHistory(ctx, stepIndex, step.GetID(), stepPath)
+												}
 												if readErr != nil {
 													hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
 												} else {
@@ -4021,6 +4038,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 	} else {
 		// No learning files found
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No learning files found for %s - learnings folder is empty: %s", stepPath, stepLearningsPath))
+		formattedLearningHistory = ""
+	}
+
+	return formattedLearningHistory, nil
+}
+
+// readGlobalLearningHistory reads the global workflow-level learning history.
+// Returns a file-path reference string (not full content) and any error.
+func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
+	ctx context.Context,
+) (formattedLearningHistory string, err error) {
+	hcpo.GetLogger().Info("🔀 Reading global learning history")
+
+	globalLearningsPath := hcpo.getLearningsBasePath() + "/" + GlobalLearningID
+
+	learningFiles, err := hcpo.readStepLearningFiles(ctx, globalLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read global learning files from %s: %v - will proceed without learning history", globalLearningsPath, err))
+		return "", nil
+	}
+	if len(learningFiles) > 0 {
+		docsRoot := GetPromptDocsRoot()
+		absLearningsPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), globalLearningsPath)
+
+		var fileList []string
+		for filename := range learningFiles {
+			fileList = append(fileList, filename)
+		}
+		sort.Strings(fileList)
+
+		formattedLearningHistory = fmt.Sprintf(
+			"📚 **Global workflow skill files available** at `%s/` (%d files: %s). Read these files with execute_shell_command before starting — they contain accumulated domain knowledge from previous workflow runs.",
+			absLearningsPath, len(learningFiles), strings.Join(fileList, ", "))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d global learning file(s) (path reference only)", len(learningFiles)))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No global learning files found: %s", globalLearningsPath))
 		formattedLearningHistory = ""
 	}
 

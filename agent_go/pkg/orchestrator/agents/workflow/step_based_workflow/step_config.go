@@ -175,6 +175,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 			DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution"`
 			ExecutionMaxTurns            *int     `json:"execution_max_turns"`
 			EnabledCustomTools           []string `json:"enabled_custom_tools"`
+			UseGlobalLearning            *bool    `json:"use_global_learning"`
 		} `json:"execution_defaults"`
 	}
 	if err := json.Unmarshal([]byte(manifestContent), &manifest); err != nil {
@@ -182,7 +183,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 	}
 
 	ed := manifest.ExecutionDefaults
-	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 {
+	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 && ed.UseGlobalLearning == nil {
 		return nil, nil
 	}
 
@@ -192,6 +193,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 		DisableParallelToolExecution: ed.DisableParallelToolExecution,
 		ExecutionMaxTurns:            ed.ExecutionMaxTurns,
 		EnabledCustomTools:           ed.EnabledCustomTools,
+		UseGlobalLearning:            ed.UseGlobalLearning,
 	}, nil
 }
 
@@ -358,6 +360,9 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	}
 	if source.DescriptionSecretsReviewReason != "" {
 		target.DescriptionSecretsReviewReason = source.DescriptionSecretsReviewReason
+	}
+	if source.UseGlobalLearning != nil {
+		target.UseGlobalLearning = source.UseGlobalLearning
 	}
 }
 

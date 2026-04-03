@@ -35,6 +35,7 @@ export interface AgentConfigs {
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
   disable_tier_optimization?: boolean;        // If true, always use Tier 1 (high reasoning) regardless of learning maturity
+  use_global_learning?: boolean;              // If true, use workflow-level global learning instead of per-step learning
 }
 
 // Extended TodoStep with agent_configs

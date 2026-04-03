@@ -17,6 +17,9 @@ type DetectionHistoryEntry struct {
 	Confidence     float64 `json:"confidence"`
 }
 
+// GlobalLearningID is the identifier used for the workflow-level global learning folder
+const GlobalLearningID = "_global"
+
 // LearningMetadata represents the learning metadata stored per step
 type LearningMetadata struct {
 	StepID              string `json:"step_id"`
@@ -41,6 +44,9 @@ type LearningMetadata struct {
 	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`
 	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`
 	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"`
+	// Global learning: per-step contribution tracking (only used when StepID == "_global")
+	// Maps step ID -> number of times that step has contributed to the global skill
+	StepContributions map[string]int `json:"step_contributions,omitempty"`
 }
 
 // getLearningsBasePath returns the correct learnings base path based on evaluation mode
@@ -138,6 +144,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 		metadata.SuccessfulRuns++
 		// Reset failure learning counter on success — future failures can learn again
 		metadata.FailureLearningRuns = 0
+		// Track per-step contributions for global learning (max 2 per step)
+		if learningPathIdentifier == GlobalLearningID && step != nil {
+			if metadata.StepContributions == nil {
+				metadata.StepContributions = make(map[string]int)
+			}
+			metadata.StepContributions[step.GetID()]++
+		}
 		// Sync successful run count to step_config.json so it's visible alongside optimized flag
 		if step != nil {
 			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRuns)
@@ -160,22 +173,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	}
 
 	// Check if auto-lock should be triggered
-	// Lock after 3 successful runs
+	// Global learning: never auto-lock — human decides when to lock
+	// Per-step learning: lock after 3 successful runs
 	shouldAutoLock := false
 	var autoLockReason string
 
-	totalSuccessfulRuns := metadata.SuccessfulRuns
-	threshold := 3
+	if learningPathIdentifier != GlobalLearningID {
+		totalSuccessfulRuns := metadata.SuccessfulRuns
+		threshold := 3
 
-	if totalSuccessfulRuns >= threshold {
-		shouldAutoLock = true
-		autoLockReason = fmt.Sprintf("threshold_reached (%d successful runs)", totalSuccessfulRuns)
-	}
+		if totalSuccessfulRuns >= threshold {
+			shouldAutoLock = true
+			autoLockReason = fmt.Sprintf("threshold_reached (%d successful runs)", totalSuccessfulRuns)
+		}
 
-	// Fallback to max iterations (safety)
-	if !shouldAutoLock && metadata.TotalIterations >= 15 {
-		shouldAutoLock = true
-		autoLockReason = "maximum_learnings_reached"
+		// Fallback to max iterations (safety)
+		if !shouldAutoLock && metadata.TotalIterations >= 15 {
+			shouldAutoLock = true
+			autoLockReason = "maximum_learnings_reached"
+		}
 	}
 
 	if shouldAutoLock {

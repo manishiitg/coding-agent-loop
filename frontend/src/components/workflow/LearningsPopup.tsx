@@ -27,6 +27,8 @@ interface LearningMetadata {
   use_tool_search_mode?: boolean
   learning_detail_level?: string
   lock_learnings?: boolean
+  // Global learning: per-step contribution counts
+  step_contributions?: Record<string, number>
 }
 
 function getSuccessfulRuns(metadata: LearningMetadata | null): number {
@@ -84,6 +86,7 @@ function parseLearningsResponse(learningsData: Record<string, unknown>): Record<
 
 // Get step title from plan
 function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
+  if (stepId === '_global') return 'Workflow Knowledge (Global)'
   if (!plan?.steps) return stepId
 
   const findStep = (steps: PlanStep[], id: string): PlanStep | null => {
@@ -512,6 +515,11 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
   // Get steps in execution order and filter to only those with learnings
   const allStepsInOrder = getStepsInExecutionOrder()
+  // Prepend global learning entry if it exists
+  const hasGlobalLearning = '_global' in learnings && learnings['_global'] !== null
+  if (hasGlobalLearning) {
+    allStepsInOrder.unshift({ stepId: '_global', stepNumber: 0, stepType: 'global', branchType: undefined })
+  }
   let stepsWithLearnings = allStepsInOrder.filter(step => step.stepId in learnings)
   
   // Apply unlocked filter if enabled
@@ -677,6 +685,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
                 // Determine step type label and badge color
                 const getStepTypeLabel = () => {
+                  if (stepType === 'global') return 'Global'
                   if (branchType === 'true') return 'If True'
                   if (branchType === 'false') return 'If False'
                   // Use same "Sub-Agent" label for both orchestration and todo_task sub-agents
@@ -687,6 +696,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 }
 
                 const getStepTypeBadgeColor = () => {
+                  if (stepType === 'global') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
                   if (branchType === 'true') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
                   if (branchType === 'false') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
                   // Use same orange color for both orchestration and todo_task sub-agents

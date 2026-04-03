@@ -100,12 +100,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Condition context length: %d characters (only last execution output)", len(conditionContext)))
 
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
-	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
+	agentConfigs := getAgentConfigs(step)
+	var learningHistory string
+	if isGlobalLearningEnabled(agentConfigs) {
+		learningHistory, _ = hcpo.LoadGlobalLearningHistory(ctx)
+	} else {
+		learningHistory, _ = hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
+	}
 
 	// Determine code execution mode: step config > workflow/preset default
 	// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in createConditionalAgent.
 	var isCodeExecutionMode bool
-	agentConfigs := getAgentConfigs(step)
 	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
 		isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional evaluation: %v", isCodeExecutionMode))

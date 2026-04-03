@@ -1815,6 +1815,7 @@ export interface WorkflowExecutionDefaults {
   execution_mode?: 'stateless' | 'stateful'
   // Global step overrides (replaces step_override.json)
   disable_learning?: boolean
+  use_global_learning?: boolean
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number
   enabled_custom_tools?: string[]

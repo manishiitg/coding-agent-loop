@@ -83,13 +83,6 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 {{.LearningHistory}}
 {{end}}
 
-{{if .HasLoop}}
-## Loop Execution
-- **Condition**: {{.LoopCondition}}
-- **Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
-- **Action**: Update/Append to '{{.StepContextOutput}}' after EVERY iteration to preserve progress.
-{{end}}
-
 {{if .ValidationSchema}}
 ## Validation Schema (Output Requirement)
 Your '{{.StepContextOutput}}' MUST match this structure:
@@ -142,13 +135,6 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 {{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
-{{if eq .HasLoop "true"}}
-### Loop: Iteration {{.CurrentIteration}} / {{.MaxIterations}}
-**Stop Condition**: {{.LoopCondition}}
-{{if .LoopDescription}}**Context**: {{.LoopDescription}}{{end}}
-*Update/Append to {{.StepContextOutput}} after this iteration.*
-{{end}}
-
 {{if .PreviousIterationOutput}}
 ### Previous Attempt Results
 {{.PreviousIterationOutput}}
@@ -159,12 +145,6 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 ### Validation Issues
 {{.ValidationFeedback}}
 *Fix these errors in your next execution.*
-{{end}}
-
-{{if .HumanFeedback}}
-### HUMAN GUIDANCE (MAX PRIORITY)
-{{.HumanFeedback}}
-**CRITICAL**: Strictly follow this guidance over all other instructions.
 {{end}}
 
 {{if .DecisionReasoning}}
@@ -193,15 +173,9 @@ type WorkflowExecutionOnlyTemplate struct {
 	WorkspacePath              string
 	IsCodeExecutionMode        string // "true" or "false" - indicates if code execution mode is enabled
 	ValidationFeedback         string
-	HumanFeedback              string // Human guidance provided after validation failure (highest priority)
-	PreviousIterationOutput    string // Previous loop iteration execution output (for loop steps)
+	PreviousIterationOutput    string // Previous iteration execution output
 	VariableNames              string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues             string // Variable names with actual values ({{VAR_NAME}} = value)
-	HasLoop                    string // "true" or "false" as string
-	LoopCondition              string // Loop condition description (required when HasLoop="true")
-	LoopDescription            string // Human-readable explanation of the loop (optional)
-	CurrentIteration           string // Current iteration number
-	MaxIterations              string // Max iterations allowed
 	LearningHistory            string // Formatted learning conversation history (REQUIRED for execution-only mode)
 	LearningFilePaths          string // Learning file paths (when KeepLearningFull is false)
 	StepNumber                 string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
@@ -311,7 +285,6 @@ This step is logically in **tool_search** mode, but this provider session reache
 // executionOnlySystemPromptProcessor generates the system prompt for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
-	hasLoop := templateVars["HasLoop"] == "true"
 	stepContextOutput := templateVars["StepContextOutput"]
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 	learningHistory := templateVars["LearningHistory"]
@@ -380,10 +353,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"WorkspacePath":              workspacePath,
 		"IsCodeExecutionMode":        isCodeExecutionMode,
 		"CodeExecutionSection":       codeExecutionSection,
-		"HasLoop":                    hasLoop,
-		"LoopCondition":              templateVars["LoopCondition"],
-		"CurrentIteration":           templateVars["CurrentIteration"],
-		"MaxIterations":              templateVars["MaxIterations"],
 		"StepContextOutput":          stepContextOutput,
 		"CurrentDate":                currentDate,
 		"CurrentTime":                currentTime,
@@ -441,15 +410,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		WorkspacePath:            templateVars["WorkspacePath"],
 		IsCodeExecutionMode:      templateVars["IsCodeExecutionMode"],
 		ValidationFeedback:       templateVars["ValidationFeedback"],
-		HumanFeedback:            templateVars["HumanFeedback"],
 		PreviousIterationOutput:  templateVars["PreviousIterationOutput"],
 		VariableNames:            templateVars["VariableNames"],
 		VariableValues:           templateVars["VariableValues"],
-		HasLoop:                  templateVars["HasLoop"],
-		LoopCondition:            templateVars["LoopCondition"],
-		LoopDescription:          templateVars["LoopDescription"],
-		CurrentIteration:         templateVars["CurrentIteration"],
-		MaxIterations:            templateVars["MaxIterations"],
 		LearningHistory:          templateVars["LearningHistory"],
 		LearningFilePaths:        templateVars["LearningFilePaths"],
 		StepNumber:               templateVars["StepNumber"],

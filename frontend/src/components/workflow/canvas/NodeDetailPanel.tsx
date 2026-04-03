@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import type { WorkflowNode } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isRegularStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep } from '../../../utils/stepConfigMatching'
 
 interface NodeDetailPanelProps {
   node: WorkflowNode | null
@@ -47,7 +47,6 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
 
   const step = node.data.step as PlanStep
   const isConditional = isConditionalStep(step)
-  const isLoop = isRegularStep(step) && step.has_loop
 
   const handleStartEdit = () => {
     setEditedTitle(step.title || '')
@@ -160,24 +159,6 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
                 <p className="text-sm text-gray-700 dark:text-gray-300">
                   {step.condition_question}
                 </p>
-              </div>
-            )}
-
-            {isLoop && (
-              <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded">
-                <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">
-                  Loop:
-                </span>
-                {step.loop_condition && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    Until: {step.loop_condition}
-                  </p>
-                )}
-                {step.max_iterations && (
-                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Max iterations: {step.max_iterations}
-                  </p>
-                )}
               </div>
             )}
 

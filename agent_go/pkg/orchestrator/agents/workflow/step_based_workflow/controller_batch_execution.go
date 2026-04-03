@@ -655,14 +655,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executionOptionsToMap() map[string]in
 			"branch_step_index": opts.ResumeFromBranchStep.BranchStepIndex,
 		}
 	}
-	if opts.FastExecuteEndStep > 0 {
-		result["fast_execute_end_step"] = opts.FastExecuteEndStep
-	}
 	if opts.PlanChangeAction != "" {
 		result["plan_change_action"] = opts.PlanChangeAction
-	}
-	if opts.AllStepsCompletedAction != "" {
-		result["all_steps_completed_action"] = opts.AllStepsCompletedAction
 	}
 	if opts.TempOverrideLLM != nil {
 		result["temp_override_llm"] = map[string]interface{}{

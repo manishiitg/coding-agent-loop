@@ -122,23 +122,6 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 			})
 			result = append(result, collectInnerSteps(inner)...)
 		}
-	case *OrchestrationPlanStep:
-		if s.OrchestrationStep != nil {
-			result = append(result, WorkshopStepInfo{
-				Step: s.OrchestrationStep, ParentID: parentID, ParentType: parentType,
-				BranchName: "orchestration_step", TopIndex: -1,
-			})
-			result = append(result, collectInnerSteps(s.OrchestrationStep)...)
-		}
-		for _, route := range s.OrchestrationRoutes {
-			if route.SubAgentStep != nil {
-				result = append(result, WorkshopStepInfo{
-					Step: route.SubAgentStep, ParentID: parentID, ParentType: parentType,
-					BranchName: fmt.Sprintf("route:%s", route.RouteID), TopIndex: -1,
-				})
-				result = append(result, collectInnerSteps(route.SubAgentStep)...)
-			}
-		}
 	case *TodoTaskPlanStep:
 		for _, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {
@@ -927,13 +910,15 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "eval":
 		// EVAL: build and run evaluations — no execution plan changes, but evaluation step configs are allowed
 		tools = append(tools, eval...)
-		tools = append(tools, "update_step_config", "analyze_step", "optimize_eval_step")
-		tools = append(tools, "query_step", "list_executions")
+		tools = append(tools, "update_step_config", "analyze_step", "optimize_eval_step", "run_saved_main_py")
+		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	case "output":
 		// OUTPUT/REPORT: design and run the final report artifact
 		tools = append(tools, report...)
 		tools = append(tools, "optimize_report_step")
+		tools = append(tools, "update_step_config", "analyze_step", "run_saved_main_py")
+		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1415,20 +1400,22 @@ If structural changes are needed (add/remove/reorder steps based on optimize_wor
 **Evaluation workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
 2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
-3. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-4. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
-5. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
+3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files (step_1_credentials.json, step_3_login_status.json, etc.). Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
+4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
+5. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
+6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
    - `+"`declared_execution_mode`"+` + `+"`declared_execution_mode_reason`"+`
    - rejection reasons for other plausible modes not chosen
    - `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`, `+"`description_learnings_alignment_reason`"+`
    - `+"`description_no_secrets`"+` + `+"`description_secrets_review_reason`"+`
    The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
-6. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-7. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
-8. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
-9. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
-10. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
-11. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
+7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+8. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
+9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run. Eval steps execute internally in the workshop-style `+"`evaluation/runs/iteration-0/...`"+` sandbox while reading artifacts from the requested target run.
+   **IMPORTANT — {{"{{TARGET_RUN_PATH}}"}}**: At runtime, the variable {{"{{TARGET_RUN_PATH}}"}} is injected and resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers. The eval step's own folder is empty — all output files live in the original execution run.
+10. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
+11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+12. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
 
 **Evaluation files:**
 - Plan: evaluation/evaluation_plan.json
@@ -1589,7 +1576,6 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning). Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
-- **Loop** (type: "loop"): Repeat until criteria met (polled progress).
 - **Orphan** (is_orphan: true): Not part of the main execution flow — only triggered manually via execute_step in the workshop. Use orphan steps as **reusable utility agents** for the builder: data checks, environment validation, one-off investigations, or any task you want to run on-demand without adding it to the main workflow sequence.
 
 ### Inner Steps
@@ -8658,6 +8644,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 {{end}}{{if .TargetRunFolder}}
 - Eval report: `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+`
 {{end}}- Eval learnings: `+"`evaluation/learnings/{{.StepID}}/`"+`
+- **Original execution artifacts**: At runtime, {{"{{TARGET_RUN_PATH}}"}} resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution output files — never hardcode iteration numbers or use the eval sandbox path.
 
 ## ANALYSIS PROCEDURE
 1. Check whether this eval step could be mostly or fully deterministic through `+"`pre_validation`"+` and saved Python.
@@ -8666,6 +8653,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 4. Check whether the step is redundant with common checks like file existence, shape validation, or another eval step.
 5. Decide whether this concern should remain a single eval step or be split into multiple steps. Default to staying single-step unless there is strong evidence for separation.
 6. Decide the best-fit execution mode for the eval step itself based on the actual work required. Prefer saved deterministic Python when it truly fits, but choose `+"`tool_search`"+` when runtime discovery is intrinsic and `+"`simple`"+` when the check is tiny and direct.
+7. **Prefer outcome-based evaluation over intermediate file checks.** Ideally, eval steps should verify that the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Checking intermediate execution artifacts (step_1_credentials.json, step_3_login_status.json, etc.) is fragile and redundant with the workflow's own pre-validation. Focus on what the workflow was supposed to *achieve*, not what files it produced along the way.
 
 ## REPORT FORMAT
 
@@ -10379,7 +10367,7 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 
 	// Step types that require agent execution (optimization + learnings apply)
 	needsOptimization := func(t StepType) bool {
-		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeDecision || t == StepTypeTodoTask || t == StepTypeRouting || t == StepTypeOrchestration
+		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeDecision || t == StepTypeTodoTask || t == StepTypeRouting
 	}
 
 	var issues []string
@@ -10747,10 +10735,8 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 	}
 
 	execCtx := &ExecutionContext{
-		SkipHumanInput:     true,
-		FastExecuteMode:    false,
-		FastExecuteEndStep: -1,
-		RunSingleStepOnly:  false,
+		SkipHumanInput:    true,
+		RunSingleStepOnly: false,
 		SingleStepTarget:   -1,
 		IsEvaluationMode:   false,
 	}

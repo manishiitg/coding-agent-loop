@@ -57,9 +57,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 
 	// Inject TARGET_RUN_PATH so evaluation steps can find the artifacts they need to check
-	// targetRunFolder is e.g. "iteration-1"
-	// artifacts are in workspace/runs/iteration-1/execution
-	targetRunPath := filepath.Join(hcpo.GetWorkspacePath(), "runs", targetRunFolder, "execution")
+	// targetRunFolder is e.g. "iteration-1" or "iteration-26/atul"
+	// Absolute path so eval steps can use it directly in shell commands
+	docsRoot := GetPromptDocsRoot()
+	targetRunPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), "runs", targetRunFolder, "execution")
 	hcpo.variableValues["TARGET_RUN_PATH"] = targetRunPath
 
 	// Convert evaluation steps to PlanStepInterface

@@ -666,8 +666,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	var capturedHistory []llmtypes.MessageContent
 	execCtx := &ExecutionContext{
 		SkipHumanInput:             true, // Generic agents don't request human feedback
-		FastExecuteMode:            false,
-		FastExecuteEndStep:         -1,
 		RunSingleStepOnly:          false,
 		SingleStepTarget:           -1,
 		ResumeBranchStep:           nil,
@@ -786,16 +784,6 @@ func cloneStepWithDelegationOverrides(
 	case *TodoTaskPlanStep:
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
-		return &stepCopy, nil
-	case *OrchestrationPlanStep:
-		stepCopy := *s
-		if s.OrchestrationStep != nil {
-			innerStepCopy, err := cloneStepWithDelegationOverrides(s.OrchestrationStep, instructions)
-			if err != nil {
-				return nil, err
-			}
-			stepCopy.OrchestrationStep = innerStepCopy
-		}
 		return &stepCopy, nil
 	default:
 		return step, nil
@@ -978,8 +966,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	var capturedHistory []llmtypes.MessageContent
 	execCtx := &ExecutionContext{
 		SkipHumanInput:             true, // Sub-agents don't request human feedback
-		FastExecuteMode:            false,
-		FastExecuteEndStep:         -1,
 		RunSingleStepOnly:          false,
 		SingleStepTarget:           -1,
 		ResumeBranchStep:           nil,

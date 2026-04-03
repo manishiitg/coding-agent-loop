@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, Search, Route } from 'lucide-react'
-import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Zap, Lock, Search, Route } from 'lucide-react'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, DecisionNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -52,10 +52,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Type guard to check if node has step data
-  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingStepNodeData } => {
-    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'routing') &&
+  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | RoutingStepNodeData } => {
+    return (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'routing') &&
            'step' in node.data &&
-           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingStepNodeData).step === 'object'
+           typeof (node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | RoutingStepNodeData).step === 'object'
   }
 
   // Build a flat list of all steps including branch steps
@@ -268,7 +268,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
       if (step.id === currentStepId) return true
       // Match by node.data.step.id
       if (node && hasStepData(node)) {
-        const nodeStepId = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).step?.id
+        const nodeStepId = (node.data as StepNodeData | ConditionalNodeData | DecisionNodeData).step?.id
         if (nodeStepId === currentStepId) return true
       }
       return false
@@ -439,12 +439,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                           ? 'font-semibold text-foreground' 
                           : 'font-medium text-foreground/90'
                       }`}>
-                        {/* Conditional, Loop, Decision, or Routing Icon */}
+                        {/* Conditional, Decision, or Routing Icon */}
                         {nodeType === 'conditional' && (
                           <GitBranch className="w-3 h-3 text-purple-500 flex-shrink-0" />
-                        )}
-                        {nodeType === 'loop' && (
-                          <Repeat className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
                         {nodeType === 'decision' && (
                           <Zap className="w-3 h-3 text-indigo-500 flex-shrink-0" />

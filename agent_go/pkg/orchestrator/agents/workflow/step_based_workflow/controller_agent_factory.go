@@ -1475,6 +1475,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx contex
 	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
 }
 
+var _ = (*StepBasedWorkflowOrchestrator).createFailureLearningAgent
+
 // createFailureLearningAgent is a backward compatibility wrapper for createLearningAgent
 // Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
 // stepIndex: 0-based step index for token tracking
@@ -1837,7 +1839,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Filter out human tools if "no human" execution mode is active
 	execOpts := hcpo.GetExecutionOptions()
-	if execOpts != nil && (execOpts.ExecutionStrategy == ExecutionStrategyStartFromBeginningNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyFastExecuteAll) {
+	if execOpts != nil && (execOpts.ExecutionStrategy == ExecutionStrategyStartFromBeginningNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman) {
 		var filteredTools []llmtypes.Tool
 		filteredExecutors := make(map[string]interface{})
 

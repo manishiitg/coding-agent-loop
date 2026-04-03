@@ -8,7 +8,6 @@ import {
   FileCode2,
   BookOpen,
   GitBranch,
-  RotateCw,
   User,
   Route,
   ListTodo,
@@ -86,7 +85,6 @@ function stepTypeIcon(step: PlanStep): { icon: React.ElementType; accent: string
     case 'todo_task': return { icon: ListTodo, accent: 'text-teal-500' }
     case 'routing': return { icon: Route, accent: 'text-orange-500' }
     default:
-      if ((step as { has_loop?: boolean }).has_loop) return { icon: RotateCw, accent: 'text-indigo-500' }
       return { icon: Play, accent: 'text-muted-foreground' }
   }
 }
@@ -174,12 +172,6 @@ function buildFiles(step: PlanStep): VirtualFile[] {
   if (step.type === 'routing' && step.routing_question) {
     const c = step.routing_question + (step.routes?.map(r => `\n• ${r.route_name} — ${r.condition}`).join('') || '')
     files.push({ name: 'routing.md', icon: Route, iconClass: 'text-orange-500', content: c })
-  }
-  if (step.type === 'regular' && step.has_loop) {
-    const parts = []
-    if (step.loop_condition) parts.push(`Condition: ${step.loop_condition}`)
-    if (step.max_iterations) parts.push(`Max iterations: ${step.max_iterations}`)
-    files.push({ name: 'loop.md', icon: RotateCw, iconClass: 'text-indigo-500', content: parts.join('\n') })
   }
   if (step.context_dependencies?.length) {
     files.push({ name: 'dependencies.md', icon: FileText, iconClass: 'text-muted-foreground', content: step.context_dependencies.join('\n') })

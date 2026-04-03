@@ -62,28 +62,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterf
 			if found := hcpo.findStepInPlan(s.IfFalseSteps, targetID); found != nil {
 				return found
 			}
-		case *OrchestrationPlanStep:
-			// Check the inner orchestration step
-			if s.OrchestrationStep != nil {
-				if s.OrchestrationStep.GetID() == targetID {
-					return s.OrchestrationStep
-				}
-				// Recurse into inner step if it has children
-				if found := hcpo.findStepInPlan([]PlanStepInterface{s.OrchestrationStep}, targetID); found != nil {
-					return found
-				}
-			}
-			// Check sub-agents in routes
-			for _, route := range s.OrchestrationRoutes {
-				if route.SubAgentStep != nil {
-					if route.SubAgentStep.GetID() == targetID {
-						return route.SubAgentStep
-					}
-					if found := hcpo.findStepInPlan([]PlanStepInterface{route.SubAgentStep}, targetID); found != nil {
-						return found
-					}
-				}
-			}
 		case *TodoTaskPlanStep:
 			// Check sub-agents in routes
 			for _, route := range s.PredefinedRoutes {

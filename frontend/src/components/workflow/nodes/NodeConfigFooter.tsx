@@ -23,8 +23,6 @@ interface NodeConfigFooterProps {
   successCriteria?: string
   routeName?: string
   routeCondition?: string
-  loopCondition?: string
-  maxIterations?: number
   evalLLM?: string | null
   decisionQuestion?: string
   executionLLM?: string | null
@@ -49,8 +47,6 @@ export const NodeConfigFooter = memo(({
   successCriteria,
   routeName,
   routeCondition,
-  loopCondition,
-  maxIterations,
   evalLLM: _evalLLM,
   decisionQuestion,
   executionLLM: _executionLLM,
@@ -77,7 +73,6 @@ export const NodeConfigFooter = memo(({
     successCriteria ||
     routeName ||
     routeCondition ||
-    loopCondition ||
     decisionQuestion ||
     effectiveServers.length > 0 ||
     toolsDisplayInfo.length > 0 ||
@@ -184,8 +179,8 @@ export const NodeConfigFooter = memo(({
         )}
       </div>
 
-      {/* Description, Success Criteria, Route Info, Loop Condition, and Decision Question - shown when expanded */}
-      {isExpanded && (description || successCriteria || routeName || routeCondition || loopCondition || decisionQuestion) && (
+      {/* Description, Success Criteria, Route Info, and Decision Question - shown when expanded */}
+      {isExpanded && (description || successCriteria || routeName || routeCondition || decisionQuestion) && (
         <div className="mt-2 space-y-2">
           {decisionQuestion && (
             <div className="text-[10px] text-gray-600 dark:text-gray-400">
@@ -200,17 +195,6 @@ export const NodeConfigFooter = memo(({
               {routeCondition && (
                 <span className="italic text-gray-500 dark:text-gray-500 ml-1" title={routeCondition}>
                   ({routeCondition.length > 50 ? `${routeCondition.substring(0, 50)}...` : routeCondition})
-                </span>
-              )}
-            </div>
-          )}
-          {loopCondition && (
-            <div className="text-[10px] text-gray-600 dark:text-gray-400">
-              <span className="font-semibold text-indigo-700 dark:text-indigo-400">Until: </span>
-              {loopCondition}
-              {maxIterations && (
-                <span className="text-gray-500 dark:text-gray-500 ml-1">
-                  (max {maxIterations} iterations)
                 </span>
               )}
             </div>

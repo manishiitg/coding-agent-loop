@@ -395,8 +395,6 @@ func ApplyStepConfigFromFile(
 			s.AgentConfigs = matchedConfig
 		case *DecisionPlanStep:
 			s.AgentConfigs = matchedConfig
-		case *OrchestrationPlanStep:
-			s.AgentConfigs = matchedConfig
 		case *TodoTaskPlanStep:
 			s.AgentConfigs = matchedConfig
 		case *HumanInputPlanStep:
@@ -428,8 +426,6 @@ func ApplyStepConfigFromFile(
 			case *ConditionalPlanStep:
 				s.AgentConfigs = overrides
 			case *DecisionPlanStep:
-				s.AgentConfigs = overrides
-			case *OrchestrationPlanStep:
 				s.AgentConfigs = overrides
 			case *TodoTaskPlanStep:
 				s.AgentConfigs = overrides

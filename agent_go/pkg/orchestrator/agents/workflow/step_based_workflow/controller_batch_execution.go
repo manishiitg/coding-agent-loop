@@ -320,10 +320,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		}
 
 		// Close MCP session after this group completes to free resources (browser profiles, etc.)
-		// Use defer to ensure cleanup even if execution fails
+		// Use defer to ensure cleanup even if execution fails.
+		// IMPORTANT: Mark as stopped BEFORE closing to prevent in-flight tool calls
+		// (from code-exec agents still running in Docker) from resurrecting connections
+		// via broken pipe handlers or mcpcache fallback.
+		// Also resolve the browser session ID so we can mark it as stopped too.
+		// The actual playwright connection lives under this ID, not the group session ID.
+		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(group.GroupID)
 		defer func() {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s", group.GroupID, groupSessionID))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s (browser=%s)", group.GroupID, groupSessionID, browserSessionID))
+			mcpagent.MarkSessionsStopped([]string{groupSessionID, browserSessionID})
 			mcpagent.CloseSession(groupSessionID)
+			mcpagent.CloseSession(browserSessionID)
 		}()
 
 		// Update batch context for step_progress_updated events

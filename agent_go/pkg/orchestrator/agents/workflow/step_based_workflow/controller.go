@@ -361,6 +361,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) CloseWorkshopGroupSessions() {
 	hcpo.workshopGroupSessionsMu.Unlock()
 
 	sort.Strings(sessionIDs)
+	// Mark all sessions as stopped BEFORE closing to prevent in-flight tool calls
+	// from resurrecting connections via broken pipe handlers.
+	mcpagent.MarkSessionsStopped(sessionIDs)
 	for _, sessionID := range sessionIDs {
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Closing cached group MCP session: %s", sessionID))
 		mcpagent.CloseSession(sessionID)

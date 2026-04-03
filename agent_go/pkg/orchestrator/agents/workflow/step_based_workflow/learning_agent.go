@@ -121,7 +121,12 @@ var globalLearningSystemPromptTemplate = MustRegisterTemplate("globalLearningSys
 - **Role**: Global Workflow Skill Generation Agent
 - **Trigger**: {{.LearningTrigger}} (from step: {{.ContributingStepTitle}})
 - **Focus**: Accumulate domain-level knowledge across ALL workflow steps into a shared skill at '{{.WritePath}}/'.
+{{if .GlobalSkillObjective}}
+## SKILL OBJECTIVE (from user)
+{{.GlobalSkillObjective}}
 
+Every piece of knowledge you capture should contribute toward this objective. Ask yourself: "Does this help achieve the skill objective?" If not, skip it.
+{{end}}
 ## CRITICAL PRINCIPLES
 1. **Domain Knowledge Only**: Capture knowledge about the TARGET SYSTEM (website structure, API patterns, auth flows, data schemas, selectors, common patterns) — NOT step-specific tool sequences.
 2. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
@@ -269,7 +274,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	}
 
 	// Forward additional template vars from caller
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle"} {
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -330,6 +335,7 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 			"ExecutionLogsPath":        executionLogsPath,
 			"ExistingLearningsContent": existingLearningsContent,
 			"SkillCreatorPath":         templateVars["SkillCreatorPath"],
+			"GlobalSkillObjective":     templateVars["GlobalSkillObjective"],
 		}); err != nil {
 			panic(fmt.Sprintf("global learning system prompt template execution failed: %v", err))
 		}

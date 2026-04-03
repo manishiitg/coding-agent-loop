@@ -36,6 +36,7 @@ export interface AgentConfigs {
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
   disable_tier_optimization?: boolean;        // If true, always use Tier 1 (high reasoning) regardless of learning maturity
   use_global_learning?: boolean;              // If true, use workflow-level global learning instead of per-step learning
+  global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
 }
 
 // Extended TodoStep with agent_configs

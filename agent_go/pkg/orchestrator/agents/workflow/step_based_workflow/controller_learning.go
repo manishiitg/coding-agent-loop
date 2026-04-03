@@ -221,11 +221,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
 	}
 
-	// Global learning mode: pass flag and contributing step info to learning agent
+	// Global learning mode: pass flag, contributing step info, and skill objective
 	if learningPathIdentifier == GlobalLearningID {
 		successLearningTemplateVars["UseGlobalLearning"] = "true"
 		successLearningTemplateVars["ContributingStepID"] = step.GetID()
 		successLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
+		if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
+			successLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
@@ -652,6 +655,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		failureLearningTemplateVars["UseGlobalLearning"] = "true"
 		failureLearningTemplateVars["ContributingStepID"] = step.GetID()
 		failureLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
+		if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
+			failureLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+		}
 	}
 
 	// Add step-specific paths (always enabled)

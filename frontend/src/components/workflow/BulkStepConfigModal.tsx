@@ -105,12 +105,14 @@ export default function BulkStepConfigModal({
       ...(newOverrides ? {
         disable_learning: newOverrides.disable_learning ?? undefined,
         use_global_learning: newOverrides.use_global_learning ?? undefined,
+        global_skill_objective: newOverrides.global_skill_objective || undefined,
         disable_parallel_tool_execution: newOverrides.disable_parallel_tool_execution ?? undefined,
         execution_max_turns: newOverrides.execution_max_turns ?? undefined,
         enabled_custom_tools: newOverrides.enabled_custom_tools,
       } : {
         disable_learning: undefined,
         use_global_learning: undefined,
+        global_skill_objective: undefined,
         disable_parallel_tool_execution: undefined,
         execution_max_turns: undefined,
         enabled_custom_tools: undefined,
@@ -162,10 +164,12 @@ export default function BulkStepConfigModal({
     action:
       | "disable_learning" | "enable_learning"
       | "enable_global_learning" | "disable_global_learning"
+      | "set_global_skill_objective"
       | "disable_read_image_access" | "disable_read_pdf_access" | "disable_human_tools"
       | "set_execution_max_turns"
       | "enable_parallel_tool_exec" | "disable_parallel_tool_exec",
-    maxTurns?: number
+    maxTurns?: number,
+    skillObjective?: string
   ) => {
     setApplyingAction(action);
     setSaveError(null);
@@ -186,6 +190,9 @@ export default function BulkStepConfigModal({
           break;
         case "disable_global_learning":
           newOverrides.use_global_learning = false;
+          break;
+        case "set_global_skill_objective":
+          newOverrides.global_skill_objective = skillObjective || '';
           break;
         case "disable_read_image_access": {
           const cur = newOverrides.enabled_custom_tools || [];
@@ -322,6 +329,24 @@ export default function BulkStepConfigModal({
               disabled={isBusy}
               onToggle={() => handleAction(globalLearningEnabled ? "disable_global_learning" : "enable_global_learning")}
             />
+            {globalLearningEnabled && (
+              <div className="px-3 py-2">
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Skill Objective</label>
+                <textarea
+                  className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                  rows={3}
+                  placeholder="What should this global skill capture? e.g., 'Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably'"
+                  defaultValue={ov.global_skill_objective || ''}
+                  disabled={isBusy}
+                  onBlur={(e) => {
+                    const val = e.target.value.trim()
+                    if (val !== (ov.global_skill_objective || '')) {
+                      handleAction("set_global_skill_objective", undefined, val)
+                    }
+                  }}
+                />
+              </div>
+            )}
             <ToggleRow
               label="Parallel Tool Execution"
               enabled={parallelToolExecEnabled}

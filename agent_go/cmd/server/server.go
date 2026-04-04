@@ -173,6 +173,28 @@ type StreamingAPI struct {
 	// and initializing the event store for reactivated sessions
 	sessionReactivationMux sync.Mutex
 
+	// stoppedSessions tracks sessions that the user explicitly stopped.
+	//
+	// BUG FIX (2026-04-04): Race condition between stop and in-flight queries.
+	// Timeline of the bug:
+	//   1. User clicks stop → handleStopSession closes the WorkshopChatSession
+	//      (cancels its context.Background()-derived ctx) and deletes it from
+	//      workshopChatSessions map.
+	//   2. An in-flight query goroutine (started before or concurrently with stop)
+	//      reaches the workshop-creation code and calls NewWorkshopChatSession(),
+	//      creating a FRESH session with a new context.Background() — completely
+	//      detached from any cancellation.
+	//   3. This new workshop spawns step execution goroutines (group sessions,
+	//      isolated Codex CLI processes) that are never canceled because no
+	//      subsequent stop targets the new workshop.
+	//
+	// Fix: handleStopSession adds the sessionID here. The query handler checks
+	// this set before creating/reusing workshop sessions and bails early.
+	// The flag is cleared when the session is explicitly reactivated by a
+	// new user message (not by a racing goroutine).
+	stoppedSessions   map[string]bool
+	stoppedSessionsMu sync.RWMutex
+
 	// Orchestrator objects in memory for guidance injection
 	workflowOrchestrators    map[string]orchestrator.Orchestrator
 	workflowOrchestratorsMux sync.RWMutex
@@ -713,6 +735,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		claudeCodeSessionIDs:  make(map[string]string),
 		geminiSessionIDs:      make(map[string]string),
 		geminiProjectDirIDs:   make(map[string]string),
+		stoppedSessions:       make(map[string]bool),
 	}
 
 	// Kill any orphaned browser processes from a previous run.
@@ -2147,6 +2170,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			api.sessionReactivationMux.Unlock()
 		}
 	}
+
+	// Clear the stopped guard now that the user is explicitly sending a new message.
+	// This must happen AFTER session reactivation and BEFORE workshop creation,
+	// so the workshop code path sees a clean slate.
+	api.clearSessionStopped(sessionID)
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
@@ -4863,6 +4891,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for %s", workflowPhaseID)
 					}
 
+					// STOP-RACE GUARD: Check if the session was stopped while this goroutine
+					// was in flight. Without this check, the goroutine would create a new
+					// WorkshopChatSession with a fresh context.Background() that is never
+					// canceled, leaving orphaned CLI processes running indefinitely.
+					// This was the root cause of the 2026-04-04 "can't stop" bug.
+					if api.isSessionMarkedStopped(sessionID) {
+						log.Printf("[WORKFLOW_PHASE] Session %s was stopped — aborting workshop creation to prevent orphaned processes", sessionID)
+						return
+					}
+
 					// Get or create per-session workshop controller + step registry
 					workshopSessionKey := sessionID
 					var workshopSession *todo_creation_human.WorkshopChatSession
@@ -5667,6 +5705,12 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		log.Printf("[SESSION STOP] Workflow session %s not in DB, verified via activeSessions (mode=%s)", sessionID, activeSession.AgentMode)
 	}
 
+	// Mark session as stopped FIRST, before any cancellation, so that in-flight
+	// goroutines that race with this stop handler will see the flag and bail out
+	// instead of re-creating workshop sessions or spawning new CLI processes.
+	// See stoppedSessions field comment for the full race condition description.
+	api.markSessionStopped(sessionID)
+
 	// Cancel agent execution context if it exists
 	api.agentCancelMux.Lock()
 	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {
@@ -5713,6 +5757,15 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// Close workshop chat sessions for this session — cancels all running step executions.
 	// Workshop sessions use context.Background() so they survive agent context cancellation above;
 	// we must explicitly call Close() to cancel their step goroutines.
+	//
+	// Close() → cancelFunc() cascades to all execCtx (step goroutines) → kills Codex CLI
+	// processes via exec.CommandContext. It also calls CloseWorkshopGroupSessions() which
+	// closes MCP connections for group sessions (session-group-*) and isolated sub-sessions.
+	//
+	// IMPORTANT: The markSessionStopped() call above prevents in-flight goroutines from
+	// re-creating the workshop after we close it here. Without that guard, a racing
+	// goroutine could call NewWorkshopChatSession() with a fresh context.Background(),
+	// creating orphaned CLI processes that are never canceled. See stoppedSessions comment.
 	//
 	// Historically we keyed this map by sessionID / "eval-"+sessionID, but some workflow
 	// execution paths can drift from those exact keys. So first try direct keys, then scan
@@ -5790,6 +5843,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// CloseSession is idempotent, so those defers will be no-ops when they eventually run.
 	log.Printf("[SESSION DEBUG] Closing MCP sessions for stopped session %s", sessionID)
 	mcpagent.CloseHTTPSession(sessionID)
+
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)
 
@@ -8576,6 +8630,31 @@ func (api *StreamingAPI) isSessionStoppedOrInactive(sessionID string) bool {
 		return false
 	}
 	return session.Status == "stopped" || session.Status == "inactive"
+}
+
+// markSessionStopped records that a user explicitly stopped this session.
+// In-flight goroutines check this before spawning new workshop sessions or
+// step execution processes. See stoppedSessions field comment for full bug description.
+func (api *StreamingAPI) markSessionStopped(sessionID string) {
+	api.stoppedSessionsMu.Lock()
+	api.stoppedSessions[sessionID] = true
+	api.stoppedSessionsMu.Unlock()
+}
+
+// clearSessionStopped removes the stopped guard so the session can accept new queries.
+// Called when a NEW user message explicitly reactivates the session (not by racing goroutines).
+func (api *StreamingAPI) clearSessionStopped(sessionID string) {
+	api.stoppedSessionsMu.Lock()
+	delete(api.stoppedSessions, sessionID)
+	api.stoppedSessionsMu.Unlock()
+}
+
+// isSessionMarkedStopped returns true if the user explicitly stopped this session
+// and no new user message has reactivated it yet.
+func (api *StreamingAPI) isSessionMarkedStopped(sessionID string) bool {
+	api.stoppedSessionsMu.RLock()
+	defer api.stoppedSessionsMu.RUnlock()
+	return api.stoppedSessions[sessionID]
 }
 
 // setSyntheticTurn marks a session as running an auto-notification synthetic turn.

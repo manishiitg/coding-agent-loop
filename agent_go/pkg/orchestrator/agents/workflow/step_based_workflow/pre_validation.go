@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 
@@ -124,6 +125,58 @@ func RunPreValidation(
 
 	// Perform validation with schema
 	return validateWithSchema(ctx, validationSchema, workspacePath, baseOrchestrator)
+}
+
+// PreValidationLogEntry represents a pre-validation result persisted to disk
+type PreValidationLogEntry struct {
+	StepID       string                    `json:"step_id"`
+	StepPath     string                    `json:"step_path"`
+	Timestamp    string                    `json:"timestamp"`
+	OverallPass  bool                      `json:"overall_pass"`
+	TotalChecks  int                       `json:"total_checks"`
+	PassedChecks int                       `json:"passed_checks"`
+	FailedChecks int                       `json:"failed_checks"`
+	Errors       []ValidationError         `json:"errors,omitempty"`
+	FilesChecked []FileCheckResult         `json:"files_checked,omitempty"`
+	Schema       *ValidationSchema         `json:"schema_used,omitempty"`
+}
+
+// SavePreValidationLog writes pre-validation results to the step's log folder.
+// Path: logs/{stepID}/pre_validation.json
+func SavePreValidationLog(
+	ctx context.Context,
+	bo *orchestrator.BaseOrchestrator,
+	validationWorkspacePath string,
+	stepID string,
+	stepPath string,
+	results *WorkspaceVerificationResult,
+	schema *ValidationSchema,
+) {
+	if results == nil {
+		return
+	}
+
+	entry := PreValidationLogEntry{
+		StepID:       stepID,
+		StepPath:     stepPath,
+		Timestamp:    time.Now().Format(time.RFC3339),
+		OverallPass:  results.OverallPass,
+		TotalChecks:  results.Summary.TotalChecks,
+		PassedChecks: results.Summary.PassedChecks,
+		FailedChecks: results.Summary.FailedChecks,
+		Errors:       results.Summary.Errors,
+		FilesChecked: results.FilesChecked,
+		Schema:       schema,
+	}
+
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return
+	}
+
+	logFolder := getArtifactFolderName(stepID, stepPath)
+	logPath := fmt.Sprintf("%s/logs/%s/pre_validation.json", validationWorkspacePath, logFolder)
+	_ = bo.WriteWorkspaceFile(ctx, logPath, string(data))
 }
 
 // validateSchemaLimits checks if the schema exceeds resource limits

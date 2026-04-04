@@ -832,7 +832,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_decision_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "migrate_todo_route_ids", "delete_plan_steps",
+		"delete_todo_task_route", "delete_plan_steps",
 		"update_validation_schema",
 		"publish_workflow_version", "restore_workflow_version",
 	}
@@ -995,6 +995,24 @@ func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) (strin
 		return "runner", ""
 	}
 	return "optimizer", unoptimizedList
+}
+
+// newExecContext creates a child context for a step execution goroutine.
+// Returns (nil, errSessionStopped) if the session was already canceled (user pressed stop),
+// preventing orphaned CLI processes from being spawned. All step execution tool handlers
+// MUST use this instead of calling context.WithCancel(iwm.sessionCtx) directly.
+//
+// Background: When the user stops a session, WorkshopChatSession.Close() cancels
+// iwm.sessionCtx. But step execution goroutines may already be queued or in-flight.
+// Without this check, they would create a derived context from a canceled parent,
+// spawn a CLI process, and that process would either fail immediately or, in edge
+// cases, run indefinitely if the cancel signal is not delivered quickly.
+func (iwm *InteractiveWorkshopManager) newExecContext() (context.Context, context.CancelFunc, error) {
+	if iwm.sessionCtx.Err() != nil {
+		return nil, nil, fmt.Errorf("session was stopped")
+	}
+	ctx, cancel := context.WithCancel(iwm.sessionCtx)
+	return ctx, cancel, nil
 }
 
 // InteractiveWorkshopOnly runs the interactive workshop phase
@@ -1286,8 +1304,6 @@ When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? 
 1. Verify the current foundation directly in `+"`planning/plan.json`"+`. Use targeted `+"`jq`"+` or `+"`cat`"+` to check the root `+"`objective`"+` and `+"`success_criteria`"+` fields.
 2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, ask the user: "What does success look like for this workflow?" Then save via `+"`set_workflow_objective(success_criteria=...)`"+`.{{end}}
 3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, run `+"`infer_objective`"+`, confirm with user before saving.{{end}}
-4. If a todo_task workflow still uses legacy sub-agent IDs where `+"`route_id`"+` and `+"`sub_agent_step.id`"+` differ, run `+"`migrate_todo_route_ids`"+` before optimizing.
-
 **The core optimization loop is: run → eval → harden → repeat.**
 
 **harden_workflow** is the primary optimization tool. It reads evaluation reports and execution outputs from a real run, then for EVERY failing step:
@@ -1854,7 +1870,6 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **infer_objective(focus?)** — Infer workflow objective from plan structure (only when objective is truly missing from plan.json)
 - **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json
 - **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
-- **migrate_todo_route_ids(parent_step_id?, dry_run?)** — Upgrade older todo_task predefined routes to the single-ID model
 - **mark_workflow_optimized** — Code-based readiness check. Marks workflow_optimized=true in plan.json only if all checks pass.{{end}}
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
@@ -1877,7 +1892,6 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
-- **Todo task route migration**: migrate_todo_route_ids
 - **Validation**: update_validation_schema
 - **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
   To inspect available versions before restoring, use **execute_shell_command** with relative paths like `+"`ls versions/`"+` and `+"`cat versions/v3/version_meta.json`"+`.
@@ -1922,7 +1936,6 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
 - **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
-- **Todo task route migration**: migrate_todo_route_ids
 - **Validation**: update_validation_schema
 - **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
 {{end}}
@@ -1986,20 +1999,46 @@ When a step has learning_mode "human_assisted":
 - Do **not** use `+"`cd`"+` or relative paths
 All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+` when running shell commands).
 
+### Plan & Config
 | Path | Contents |
 |------|----------|
-| planning/plan.json | Workflow plan |
-| planning/step_config.json | Step-level config overrides |
+| planning/plan.json | Workflow plan — step definitions, descriptions, validation schemas |
+| planning/step_config.json | Step-level config overrides (LLM, execution mode, learnings, etc.) |
 | planning/output_plan.json | Report/output plan (output mode) |
-| runs/{iteration}/{group}/ | Execution outputs per run |
-| runs/{run}/logs/step-{N}/execution/ | Execution logs, prompts, tool calls |
-| runs/{run}/token_usage.json | Per-step token usage |
+
+### Execution Outputs (per run, per group)
+| Path | Contents |
+|------|----------|
+| runs/{iter}/{group}/execution/{step-id}/ | Step output files (*.json) |
+| runs/{iter}/{group}/execution/Downloads/ | Downloaded files (bank statements, etc.) |
+| runs/{iter}/{group}/execution/steps_done.json | Which steps completed |
+| runs/{iter}/token_usage.json | Per-step token usage |
 | token_usage.json | Aggregated token usage |
-| learnings/{step-id}/SKILL.md | Learning file (keyed by step ID, not position) |
-| learnings/{step-id}/code/*.py | Code examples for code-exec steps |
-| learnings/{step-id}/.learning_metadata.json | Iteration counts, success history |
-| evaluation/evaluation_plan.json | Eval plan definitions |
-| evaluation/runs/{run}/evaluation_report.json | Eval results |
+
+### Execution Logs (per run, per group, per step)
+| Path | Contents |
+|------|----------|
+| runs/{iter}/{group}/logs/{step-id}/execution/*-conversation.json | Full conversation log: `+"`conversation_history`"+` (messages) + `+"`tool_calls[]`"+` (each with `+"`tool_name`"+`, `+"`args`"+`, `+"`result`"+`, `+"`duration`"+`) |
+| runs/{iter}/{group}/logs/{step-id}/execution/*-iteration-*.json | Execution summary: model, result text, step path |
+| runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json | **Code exec steps**: main.py result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+`, `+"`success`"+`, `+"`script_path`"+` |
+| runs/{iter}/{group}/logs/{step-id}/pre_validation.json | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
+
+### Learnings (persistent across runs)
+| Path | Contents |
+|------|----------|
+| learnings/{step-id}/main.py | **Code exec steps**: saved Python script — executed on each run via fast path |
+| learnings/{step-id}/SKILL.md | Prose learnings for tool_search/simple steps |
+| learnings/{step-id}/script_metadata.json | Script version, run counts, success/failure stats |
+
+### Evaluation
+| Path | Contents |
+|------|----------|
+| evaluation/evaluation_plan.json | Eval step definitions |
+| evaluation/runs/{iter}/{group}/evaluation_report.json | Eval scores + reasoning per eval step |
+
+### Other
+| Path | Contents |
+|------|----------|
 | builder/session-{id}-conversation.json | Previous builder chat sessions |
 | knowledgebase/ | Persistent data shared across all runs |
 
@@ -2473,7 +2512,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("exec-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			// Inject correlation IDs so step execution events are tagged as sub-agent
 			// events. ForceCorrelationIDKey survives child agent context overwrites
@@ -2749,7 +2791,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			stepID = resolvedID
 
 			execID := fmt.Sprintf("saved-main-py-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-saved-main-py-%s-%d", stepID, time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -2954,7 +2999,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("bg-%s-%05d", nameSlug, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
 			agentSessionID := fmt.Sprintf("workshop-bg-%s-%d", nameSlug, time.Now().UnixNano())
@@ -5008,7 +5056,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Launch learning agent in background (same pattern as execute_step / optimize_step)
 			execID := fmt.Sprintf("learn-%s-%05d", resolvedID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			// Inject correlation IDs for sub-agent event tagging
 			agentSessionID := fmt.Sprintf("workshop-learning-%s-%d", resolvedID, time.Now().UnixNano())
@@ -5257,7 +5308,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("debug-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
 			agentSessionID := fmt.Sprintf("workshop-debug-%s-%d", stepID, time.Now().UnixNano())
@@ -5468,7 +5522,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("eval-optimize-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-eval-optimize-%s-%d", stepID, time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -5680,7 +5737,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("report-optimize-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-report-optimize-%s-%d", stepID, time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -5849,7 +5909,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("infer-obj-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-infer-obj-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -6036,7 +6099,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("opt-workflow-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-opt-workflow-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -6173,7 +6239,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("review-plan-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-review-plan-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -6317,7 +6386,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("replan-results-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-replan-results-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -6449,7 +6521,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("harden-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
 
 			agentSessionID := fmt.Sprintf("workshop-harden-workflow-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -9294,14 +9369,60 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 Prioritize this area while hardening: **{{.Focus}}**
 {{end}}
 
+## DATA LAYOUT
+
+All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder}}`"+` and {group} with the group subfolder name.
+
+### Per-group execution data
+| Path | Contents |
+|------|----------|
+| `+"`runs/{iter}/{group}/execution/{step-id}/`"+` | Step output files (*.json) — the primary evidence of what was produced |
+| `+"`runs/{iter}/{group}/execution/Downloads/`"+` | Downloaded files (bank statements, etc.) |
+| `+"`runs/{iter}/{group}/execution/steps_done.json`"+` | Which steps completed |
+
+### Per-group logs
+| Path | Contents |
+|------|----------|
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/`"+` | Execution logs folder for a step |
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-conversation.json`"+` | Full conversation log with `+"`conversation_history`"+` (system/human/AI messages) and `+"`tool_calls`"+` array (each entry has `+"`tool_name`"+`, `+"`args`"+`, `+"`result`"+`, `+"`duration`"+`) |
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}.json`"+` | Execution summary: model used, result text, step path |
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` | **Code exec steps only**: main.py execution result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+` (stderr), `+"`success`"+`, `+"`script_path`"+`, `+"`validation_error`"+`. This is the fastest way to see what main.py did. |
+| `+"`runs/{iter}/{group}/logs/{step-id}/pre_validation.json`"+` | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
+
+### Evaluation data
+| Path | Contents |
+|------|----------|
+| `+"`evaluation/runs/{iter}/{group}/evaluation_report.json`"+` | Eval scores + reasoning per eval step |
+| `+"`evaluation/evaluation_plan.json`"+` | Eval step definitions |
+
+### Learnings and code (persistent across runs)
+| Path | Contents |
+|------|----------|
+| `+"`learnings/{step-id}/main.py`"+` | Saved Python script for code_exec steps — **this is what gets executed on each run** |
+| `+"`learnings/{step-id}/SKILL.md`"+` | Prose learnings for tool_search steps |
+| `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, success/failure stats |
+
+### Plan and config
+| Path | Contents |
+|------|----------|
+| `+"`planning/plan.json`"+` | Step definitions, descriptions, validation schemas |
+| `+"`planning/step_config.json`"+` | Per-step config overrides |
+
+### Important: todo_task orchestrator logs
+For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts directly via shell commands instead of delegating to sub-agents. When this happens:
+- The main.py stdout/stderr is inside the orchestrator's `+"`tool_calls`"+` array in its conversation log, NOT in a separate `+"`learn_code_fast_path.json`"+`
+- Look for tool calls with tool_name `+"`mcp__api-bridge__execute_shell_command`"+` where `+"`args`"+` contains `+"`python3`"+` and the step's `+"`main.py`"+` path
+- The `+"`result`"+` JSON has `+"`exit_code`"+`, `+"`stdout`"+`, and `+"`stderr`"+`
+
 ## PROCEDURE
 
-1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul).
+1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
 
 2. **Read evaluation reports** — For each group, read:
-   - `+"`evaluation/runs/{{.TargetRunFolder}}/{group}/evaluation_report.json`"+` (or similar paths)
-   - `+"`runs/{{.TargetRunFolder}}/{group}/execution/`"+` step output files
-   - `+"`runs/{{.TargetRunFolder}}/{group}/logs/`"+` for validation/execution logs
+   - `+"`evaluation/runs/{{.TargetRunFolder}}/{group}/evaluation_report.json`"+`
+   - `+"`runs/{{.TargetRunFolder}}/{group}/execution/{step-id}/`"+` step output files
+   - `+"`runs/{{.TargetRunFolder}}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
+   - `+"`runs/{{.TargetRunFolder}}/{group}/logs/{step-id}/pre_validation.json`"+` for validation results
 
 3. **Build a failure map** — For each step, aggregate failures across all groups:
    | Step ID | Groups that passed | Groups that failed | Failure reasons |
@@ -10515,7 +10636,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_decision_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
-		"delete_todo_task_route", "migrate_todo_route_ids", "delete_plan_steps",
+		"delete_todo_task_route", "delete_plan_steps",
 		"update_validation_schema",
 	}
 	toolsToRegister, executorsToUse := filterWorkspaceToolsByName(iwm.controller.WorkspaceTools, iwm.controller.WorkspaceToolExecutors, allowedToolNames)

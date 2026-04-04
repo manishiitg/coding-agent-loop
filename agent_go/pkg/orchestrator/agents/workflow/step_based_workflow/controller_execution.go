@@ -1786,6 +1786,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				learnCodePreValidationResultsOverride = nil
 				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, preValidationResults)
 
+				// Persist pre-validation results to disk for harden_workflow analysis
+				if hcpo.selectedRunFolder != "" {
+					preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+					SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, preValidationResults, preValidationSchema)
+				}
+
 				// Build validation response based on pre-validation results
 				if !preValidationResults.OverallPass {
 					hcpo.GetLogger().Warn(fmt.Sprintf("Pre-validation failed for step %d - rejecting", stepIndex+1))

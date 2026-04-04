@@ -37,6 +37,16 @@ func NewWorkflowEvaluationScoringAgent(config *agents.OrchestratorAgentConfig, l
 // Execute implements the OrchestratorAgent interface
 func (a *WorkflowEvaluationScoringAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	systemPrompt := a.GetSystemPrompt()
+
+	// Append code execution instructions so the LLM knows to use get_api_spec + execute_shell_command
+	// to call submit_score via HTTP API (same pattern as other agents via {{.CodeExecutionSection}})
+	if a.GetConfig() != nil && a.GetConfig().UseCodeExecutionMode {
+		codeExecSection := BuildCodeExecutionSection(true, false, "")
+		if codeExecSection != "" {
+			systemPrompt += "\n\n" + codeExecSection
+		}
+	}
+
 	return a.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, nil, conversationHistory, nil, systemPrompt, true)
 }
 

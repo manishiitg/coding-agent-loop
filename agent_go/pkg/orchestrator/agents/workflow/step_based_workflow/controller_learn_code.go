@@ -594,6 +594,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
 		if preValResults != nil {
 			hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, preValResults)
+			if hcpo.selectedRunFolder != "" {
+				preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, preValResults, getValidationSchema(step))
+			}
 		}
 		if preValResults != nil && preValResults.OverallPass {
 			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
@@ -629,6 +633,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
 	if preValResults != nil {
 		hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, preValResults)
+		if hcpo.selectedRunFolder != "" {
+			preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+			SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, preValResults, getValidationSchema(step))
+		}
 	}
 	if preValResults != nil && !preValResults.OverallPass {
 		errMsg := formatWorkspaceResults(preValResults)

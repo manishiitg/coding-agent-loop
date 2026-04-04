@@ -1340,6 +1340,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskPreValidation(
 	// Emit pre-validation completed event
 	hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, workspaceResults)
 
+	// Persist pre-validation results to disk for harden_workflow analysis
+	if hcpo.selectedRunFolder != "" {
+		preValLogPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, workspaceResults, validationSchema)
+	}
+
 	// Format results for feedback
 	formattedResults := formatWorkspaceResults(workspaceResults)
 

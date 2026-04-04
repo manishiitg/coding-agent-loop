@@ -417,6 +417,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		}
 		readPaths = append([]string{stepLearningsPath}, readPaths...)
 	}
+	// Always add global learnings folder to read paths — harmless if it doesn't exist,
+	// and required when global learning is enabled (checked at execution time via execution_defaults)
+	globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
+	readPaths = append(readPaths, globalLearningsPath)
 	writePaths = []string{stepFolderPath, downloadsPath}
 
 	// Add knowledgebase folder paths only if enabled
@@ -990,6 +994,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 		}
 		readPaths = append([]string{stepLearningsPath}, readPaths...)
 	}
+	// Always add global learnings folder to read paths
+	globalLearningsPath2 := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
+	readPaths = append(readPaths, globalLearningsPath2)
 	writePaths = []string{stepFolderPath}
 
 	// Add knowledgebase folder paths only if enabled

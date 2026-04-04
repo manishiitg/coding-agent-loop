@@ -1118,7 +1118,7 @@ func RegisterRunFullWorkflowTool(
 			"properties": map[string]interface{}{
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name (e.g., 'iteration-1', 'iteration-3'). If provided, reuses this iteration folder. If omitted, creates a new iteration automatically.",
+					"description": "Iteration folder name (e.g., 'iteration-1', 'iteration-28'). Required. Reuses the folder if it exists, creates it if not.",
 				},
 				"execution_strategy": map[string]interface{}{
 					"type":        "string",
@@ -1127,7 +1127,7 @@ func RegisterRunFullWorkflowTool(
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Variable group ID to execute (e.g., 'group1'). Defaults to the first group currently selected in the toolbar. Only one group runs at a time.",
+					"description": "Variable group ID to execute (e.g., 'group-1', 'saurabh'). Required. Only one group runs at a time.",
 				},
 				"human_inputs": map[string]interface{}{
 					"type":        "object",
@@ -1137,6 +1137,7 @@ func RegisterRunFullWorkflowTool(
 					},
 				},
 			},
+			"required": []string{"iteration", "group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cfg := session.config
@@ -1144,10 +1145,13 @@ func RegisterRunFullWorkflowTool(
 				return "session config not available — cannot create workflow controller", nil
 			}
 
-			// Parse optional parameters
+			// Parse required parameters
 			iteration := ""
 			if it, ok := args["iteration"].(string); ok && it != "" {
 				iteration = it
+			}
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-1', 'iteration-28').", nil
 			}
 
 			strategy := "start_from_beginning_no_human"
@@ -1155,18 +1159,15 @@ func RegisterRunFullWorkflowTool(
 				strategy = s
 			}
 
-			// Single group only
+			// Single group only — required
 			groupID := ""
 			if g, ok := args["group_id"].(string); ok && g != "" {
 				groupID = g
 			}
-			var enabledGroupIDs []string
-			if groupID != "" {
-				enabledGroupIDs = []string{groupID}
-			} else if len(cfg.EnabledGroupIDs) > 0 {
-				// Use only the first enabled group from toolbar
-				enabledGroupIDs = []string{cfg.EnabledGroupIDs[0]}
+			if groupID == "" {
+				return "group_id is required. Read variables.json to see available groups.", nil
 			}
+			enabledGroupIDs := []string{groupID}
 
 			// Parse human_inputs (optional map of step_id → response)
 			var humanInputs map[string]string
@@ -1201,11 +1202,8 @@ func RegisterRunFullWorkflowTool(
 				}
 			}
 
-			// Determine run mode: reuse iteration or create new
-			runMode := "create_new_runs_always"
-			if iteration != "" {
-				runMode = "use_same_run"
-			}
+			// Iteration is always provided — reuse the folder (creates if doesn't exist)
+			runMode := "use_same_run"
 
 			execID := fmt.Sprintf("workflow-full-%d", time.Now().UnixNano())
 			execCtx, cancel := context.WithCancel(session.sessionCtx)

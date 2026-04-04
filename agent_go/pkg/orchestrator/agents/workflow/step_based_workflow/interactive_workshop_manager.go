@@ -1282,7 +1282,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - When the user describes what they want, respond with a proposed plan (step breakdown, types, context flow) and ask for confirmation before creating any steps in plan.json
 - If the user is just asking questions, brainstorming, or exploring possibilities, engage in discussion — do NOT jump to creating steps
 - Add, remove, reorder, and configure steps freely once the plan is confirmed
-- Test steps to verify they produce correct output — use execute_step(step_id) with default skip_learning=true for fast iteration
+- Test steps to verify they produce correct output — use execute_step(step_id). Learning runs by default; pass skip_learning=true for fast iteration
 - Set up servers, tools, and context dependencies
 - Do NOT worry about optimization yet — the workflow structure may still change
 - Do NOT mark steps as optimized or run harden_workflow — premature optimization wastes effort on steps that may be restructured
@@ -1418,7 +1418,7 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 Do NOT modify execution steps or evaluation steps in output mode unless the user explicitly asks to switch contexts. Focus on the final markdown artifact definition only.
 {{else}}
 **RUN MODE** — All steps are optimized. Execute and report results.
-- Run steps with execute_step(step_id) using default skip_learning=true — learnings are already locked
+- Run steps with execute_step(step_id) — learnings are already locked, so learning phase is a no-op for locked steps
 - Report results concisely
 - If a step fails or produces incorrect output, reset its optimized flag (update_step_config(step_id, optimized=false)) and investigate
 - Do NOT make structural changes to the plan in this mode
@@ -1570,7 +1570,7 @@ When running a step or the full workflow:
 
 ### Execution Procedure
 1. User says "run step-X" → determine group → call **execute_step("step-id", group_id=group_id)** → get execution_id
-2. By default, execute_step runs with **skip_learning=true** for faster iteration. Pass skip_learning=false to generate learnings.
+2. By default, execute_step runs with **learning enabled**. Pass skip_learning=true to skip learning for faster iteration.
 3. **Human input steps**: Pass **human_input** parameter with the appropriate answer from your conversation context. This prevents blocking for manual UI input.
 4. Tell user step is running. Move on to other work or wait for the auto-notification.
 5. When the notification arrives — respond based on the current mode:
@@ -1839,7 +1839,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
-- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
+- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
 {{if ne .WorkshopMode "runner"}}- **run_saved_main_py(step_id, group_id?)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
@@ -2352,7 +2352,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is skipped (skip_learning=true) for faster iteration. Set skip_learning=false to generate/update learnings after execution. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry).",
+		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is enabled (skip_learning=false). Set skip_learning=true to skip learning for faster iteration. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2362,15 +2362,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Read variables.json to see available groups.",
+					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
+					"description": "Iteration folder name (e.g., 'iteration-0', 'iteration-28'). Required. Use an existing iteration to add results to it, or a new name to create it.",
 				},
 				"skip_learning": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true (default), skip the learning phase after execution for faster iteration. Set to false to generate/update learnings.",
+					"description": "If true, skip the learning phase after execution for faster iteration. Default is false (learning enabled).",
 				},
 				"instructions": map[string]interface{}{
 					"type":        "string",
@@ -2386,7 +2386,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Optional LLM tier override for this execution. 'high' = Tier 1 (most capable), 'medium' = Tier 2, 'low' = Tier 3 (fastest/cheapest). Overrides the default maturity-based tier selection. Only works in tiered mode.",
 				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "group_id", "iteration"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -2401,6 +2401,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Extract group_id and other options
 			groupIDRaw, _ := args["group_id"]
 			groupID, _ := groupIDRaw.(string)
+			if groupID == "" {
+				return "group_id is required. Read variables.json to see available groups.", nil
+			}
 
 			// Fallback to session-level group from toolbar selection
 			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
@@ -2417,8 +2420,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
 			}
 
-			// Workshop builder mode always uses the scratch iteration.
-			iteration := workshopFixedIteration
+			// Use the iteration provided by the caller
+			iteration := ""
+			if it, ok := args["iteration"].(string); ok && it != "" {
+				iteration = it
+			}
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-0', 'iteration-28').", nil
+			}
 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
@@ -2444,8 +2453,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
 
-			// skip_learning defaults to true for faster workshop iteration
-			skipLearning := true
+			// skip_learning defaults to false — learning is enabled by default
+			skipLearning := false
 			if val, ok := args["skip_learning"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					skipLearning = b
@@ -2720,14 +2729,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Read variables.json to see available groups.",
+					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
+					"description": "Iteration folder name (e.g., 'iteration-0', 'iteration-28'). Required.",
 				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "group_id", "iteration"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -2741,18 +2750,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			groupIDRaw, _ := args["group_id"]
 			groupID, _ := groupIDRaw.(string)
-			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
-				groupID = iwm.controller.enabledGroupIDs[0]
-			}
 			if groupID == "" {
-				iwm.refreshVariablesManifest(ctx)
-				if iwm.controller.variablesManifest == nil || len(iwm.controller.variablesManifest.Groups) == 0 {
-					return "No variable groups exist. Create a group first using add_group before running steps.", nil
-				}
-				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
+				return "group_id is required. Read variables.json to see available groups.", nil
 			}
 
-			iteration := workshopFixedIteration
+			iteration := ""
+			if it, ok := args["iteration"].(string); ok && it != "" {
+				iteration = it
+			}
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-0', 'iteration-28').", nil
+			}
 			iwm.refreshVariablesManifest(ctx)
 			groupFolderName := groupID
 			groupDisplayName := ""
@@ -3223,14 +3231,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
+					"description": "Iteration folder name (e.g., 'iteration-0', 'iteration-28'). Required.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Variable group ID (e.g., 'group-1'). Read variables.json to see available groups.",
+					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
 			},
-			"required": []string{"step_id", "group_id"},
+			"required": []string{"step_id", "group_id", "iteration"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -3245,8 +3253,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Extract group_id
 			groupID, _ := args["group_id"].(string)
 
-			// Workshop builder mode always reads from the scratch iteration.
-			iteration := workshopFixedIteration
+			iteration := ""
+			if it, ok := args["iteration"].(string); ok && it != "" {
+				iteration = it
+			}
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-0', 'iteration-28').", nil
+			}
 			if groupID == "" {
 				return "group_id is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
 			}
@@ -4805,11 +4818,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Ignored in workshop builder mode. Builder always uses 'iteration-0'. Kept only for backward compatibility.",
+					"description": "Iteration folder name (e.g., 'iteration-0', 'iteration-28'). Required.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The variable group ID (e.g., 'group1').",
+					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required.",
 				},
 				"guidance": map[string]interface{}{
 					"type":        "string",
@@ -4820,7 +4833,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Optional execution history from your own tool calls. Pass this when you ran the test yourself (not via execute_step). Format: describe the tool calls you made, their arguments, and results. The learning agent will use this directly instead of reading execution log files.",
 				},
 			},
-			"required": []string{"step_id", "group_id"},
+			"required": []string{"step_id", "group_id", "iteration"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -4832,8 +4845,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id must be a non-empty string", nil
 			}
 
-			// Workshop builder mode always uses the scratch iteration.
-			iteration := workshopFixedIteration
+			iteration := ""
+			if it, ok := args["iteration"].(string); ok && it != "" {
+				iteration = it
+			}
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-0', 'iteration-28').", nil
+			}
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
 				return "group_id is required (e.g., 'group1')", nil

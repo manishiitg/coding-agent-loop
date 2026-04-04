@@ -127,12 +127,14 @@ func CreateLLMInstance(
 	var llmAPIKeys *llm.ProviderAPIKeys
 	if config.APIKeys != nil {
 		llmAPIKeys = &llm.ProviderAPIKeys{
-			OpenRouter: config.APIKeys.OpenRouter,
-			OpenAI:     config.APIKeys.OpenAI,
-			Anthropic:  config.APIKeys.Anthropic,
-			Vertex:     config.APIKeys.Vertex,
-			GeminiCLI:  config.APIKeys.GeminiCLI,
-			MiniMax:    config.APIKeys.MiniMax,
+			OpenRouter:        config.APIKeys.OpenRouter,
+			OpenAI:            config.APIKeys.OpenAI,
+			Anthropic:         config.APIKeys.Anthropic,
+			Vertex:            config.APIKeys.Vertex,
+			GeminiCLI:         config.APIKeys.GeminiCLI,
+			CodexCLI:          config.APIKeys.CodexCLI,
+			MiniMax:           config.APIKeys.MiniMax,
+			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}
 		if config.APIKeys.Bedrock != nil {
 			llmAPIKeys.Bedrock = &llm.BedrockConfig{
@@ -167,8 +169,12 @@ func CreateLLMInstance(
 			llmAPIKeys.OpenRouter = config.LLMConfig.Primary.APIKey
 		case "minimax":
 			llmAPIKeys.MiniMax = config.LLMConfig.Primary.APIKey
+		case "minimax-coding-plan":
+			llmAPIKeys.MiniMaxCodingPlan = config.LLMConfig.Primary.APIKey
 		case "gemini-cli":
 			llmAPIKeys.GeminiCLI = config.LLMConfig.Primary.APIKey
+		case "codex-cli":
+			llmAPIKeys.CodexCLI = config.LLMConfig.Primary.APIKey
 		case "azure":
 			// For Azure, per-model API key only sets the key, not endpoint/version
 			// If Azure config exists, update just the key

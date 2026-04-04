@@ -1629,13 +1629,15 @@ After a step runs successfully, always check: could a stale/fake output file pas
 - **Complex steps** that have run successfully a few times: suggest **lock_learnings: true** — freezes existing learnings, skips the learning agent, but still uses accumulated knowledge
 - Only keep learning enabled + unlocked for steps that are actively being iterated on
 - **Wait for maturity**: Don't suggest locking learnings or disabling learning until the step has had several successful runs. Premature optimization can hurt quality.
-- **Global Learning Mode** (`+"`use_global_learning: true`"+` in workflow.json execution_defaults): When a workflow benefits from accumulated domain knowledge shared across ALL steps (e.g., QA testing a website, stock trading, data pipelines), enable global learning. All steps contribute to and read from a single shared skill at 'learnings/_global/SKILL.md' instead of per-step skills. Each step can contribute a maximum of 2 times. Use global learning when:
-  - Steps interact with the same target system (website, API, database) and need shared knowledge about it
-  - Per-step learning would just repeat the same domain facts in each step's skill
-  - The workflow needs holistic knowledge (page structure, auth flows, common selectors, API patterns)
-  Do NOT use global learning when:
-  - Steps are independent with different tools/servers
-  - Each step has unique, complex tool sequences that benefit from step-specific replay instructions
+- **Global Learning Mode** (`+"`use_global_learning: true`"+` in workflow.json execution_defaults): When a workflow benefits from accumulated domain knowledge shared across ALL steps (e.g., QA testing a website, stock trading, data pipelines), enable global learning. All steps contribute to and read from a single shared skill at 'learnings/_global/' instead of per-step skills. The skill structure follows the Anthropic skill-creator guide (SKILL.md + references/ + scripts/). Global learning never auto-locks — the user decides when to lock via the UI.
+  - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): When enabling global learning, always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
+  - Use global learning when:
+    - Steps interact with the same target system (website, API, database) and need shared knowledge about it
+    - Per-step learning would just repeat the same domain facts in each step's skill
+    - The workflow needs holistic knowledge (page structure, auth flows, common selectors, API patterns)
+  - Do NOT use global learning when:
+    - Steps are independent with different tools/servers
+    - Each step has unique, complex tool sequences that benefit from step-specific replay instructions
 
 ### 3. Managing Learnings
 Learnings are stored as SKILL.md files in the workspace at 'learnings/{step-id}/SKILL.md' (or 'learnings/_global/SKILL.md' when global learning is enabled). Each learning file MUST use YAML frontmatter format:

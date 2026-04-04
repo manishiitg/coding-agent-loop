@@ -62,7 +62,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// LOCK LEARNINGS: If learnings are locked, skip the entire learning phase (both success and failure)
 	// Locked means the learnings are considered final — no further learning needed
+	// For global learning: check lock_global_learning from execution_defaults
+	// For per-step learning: check lock_learnings from step config
 	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
+	if learningPathIdentifier == GlobalLearningID && agentConfigs != nil && agentConfigs.LockGlobalLearning != nil && *agentConfigs.LockGlobalLearning {
+		isLearningsLocked = true
+	}
 	if isLearningsLocked {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked for step %s - skipping success learning phase entirely", step.GetID()))
 		return nil

@@ -1814,6 +1814,7 @@ export interface WorkflowExecutionDefaults {
   // Global step overrides (replaces step_override.json)
   disable_learning?: boolean
   use_global_learning?: boolean
+  lock_global_learning?: boolean
   global_skill_objective?: string
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number

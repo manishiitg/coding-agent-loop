@@ -56,6 +56,7 @@ type WorkflowExecutionDefaults struct {
 	// Global step overrides (replaces step_override.json)
 	DisableLearning              *bool    `json:"disable_learning,omitempty"`
 	UseGlobalLearning            *bool    `json:"use_global_learning,omitempty"`
+	LockGlobalLearning           *bool    `json:"lock_global_learning,omitempty"`
 	GlobalSkillObjective         string   `json:"global_skill_objective,omitempty"`
 	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`

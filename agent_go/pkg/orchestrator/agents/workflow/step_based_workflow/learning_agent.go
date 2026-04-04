@@ -173,7 +173,11 @@ It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + a
    ` + "```" + `
    - Organize supporting files following the skill creator guide (references/, scripts/, etc.).
    - Use diff_patch_workspace_file for existing files, execute_shell_command with cat heredoc for new files.
-6. **Clean Up**: Remove only legacy '*_learning.md' files. Do NOT remove reference files, scripts, or topic files.
+{{if .IsScriptedCodeMode}}6. **Scripts (Code Execution Mode)**:
+   - ` + "`main.py`" + ` and helper scripts are STEP-SPECIFIC — save them to '{{.StepScriptsPath}}/' (NOT to the global skill folder).
+   - Domain knowledge (selectors, API patterns, common issues) goes to the global skill at '{{.WritePath}}/'.
+   - Reference the step scripts path from SKILL.md if relevant patterns were discovered.
+{{end}}7. **Clean Up**: Remove only legacy '*_learning.md' files. Do NOT remove reference files, scripts, or topic files.
 
 ## FINAL ACTION
 After writing, list what was updated:
@@ -274,7 +278,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	}
 
 	// Forward additional template vars from caller
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective"} {
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective", "StepScriptsPath"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -336,6 +340,8 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 			"ExistingLearningsContent": existingLearningsContent,
 			"SkillCreatorPath":         templateVars["SkillCreatorPath"],
 			"GlobalSkillObjective":     templateVars["GlobalSkillObjective"],
+			"IsScriptedCodeMode":       templateVars["IsScriptedCodeMode"] == "true",
+			"StepScriptsPath":          templateVars["StepScriptsPath"],
 		}); err != nil {
 			panic(fmt.Sprintf("global learning system prompt template execution failed: %v", err))
 		}

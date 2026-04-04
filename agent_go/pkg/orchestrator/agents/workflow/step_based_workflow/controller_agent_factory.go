@@ -1004,7 +1004,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 // setupLearningFolderGuard sets up folder guard paths for learning agents
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps) - used for execution logs folder
-func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPathIdentifier string, stepPath string) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPathIdentifier string, stepPath string, extraWritePaths ...string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -1045,6 +1045,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 	readPaths = append(readPaths, "skills")
 
 	writePaths = []string{learningsPath}
+	// Add extra write paths (e.g., per-step scripts folder for code exec + global learning)
+	writePaths = append(writePaths, extraWritePaths...)
 	return readPaths, writePaths
 }
 
@@ -1351,7 +1353,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
 	// Pass stepPath to include execution logs folder in read paths
-	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier, stepPath)
+	// For code exec + global learning: also grant write access to per-step scripts folder
+	var extraWritePaths []string
+	if learningPathIdentifier == GlobalLearningID && isCodeExecutionMode && stepID != "" {
+		baseWorkspacePath := hcpo.GetWorkspacePath()
+		stepScriptsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+		extraWritePaths = append(extraWritePaths, stepScriptsPath)
+	}
+	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier, stepPath, extraWritePaths...)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	agentType := "learning agent"
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v (includes execution logs folder)", agentType, readPaths, writePaths))

@@ -1362,8 +1362,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			} else {
 				// Learning is enabled - read learning history
 				if isGlobalLearningEnabled(agentConfigs) {
-					// Global learning mode: read ONLY from shared workflow-level skill
+					// Global learning mode: read from shared workflow-level skill
 					formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
+					// Code exec + global: also include per-step scripts reference
+					if isCodeExecutionMode && formattedLearningHistory != "" {
+						stepScriptsHistory, _ := hcpo.readLearningHistory(ctx, stepIndex, step.GetID(), stepPath)
+						if stepScriptsHistory != "" {
+							formattedLearningHistory = formattedLearningHistory + "\n\n" + stepScriptsHistory
+						}
+					}
 				} else {
 					// Per-step learning mode: read from step-specific folder
 					formattedLearningHistory, err = hcpo.readLearningHistory(

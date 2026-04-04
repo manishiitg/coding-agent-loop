@@ -234,6 +234,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
 			successLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
 		}
+		// Code exec + global: scripts go to per-step folder, domain knowledge to global
+		if isCodeExecutionMode {
+			docsRoot := GetPromptDocsRoot()
+			successLearningTemplateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, hcpo.GetWorkspacePath(), step.GetID())
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
@@ -664,6 +669,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		failureLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
 		if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
 			failureLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+		}
+		if isCodeExecutionMode {
+			docsRoot := GetPromptDocsRoot()
+			failureLearningTemplateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, hcpo.GetWorkspacePath(), step.GetID())
 		}
 	}
 

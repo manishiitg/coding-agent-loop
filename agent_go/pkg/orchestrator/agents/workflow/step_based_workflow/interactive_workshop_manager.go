@@ -2682,7 +2682,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// Notify server layer so bgAgentRegistry marks this execution as done.
 				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
 				if iwm.executionNotifier != nil && !alreadyCancelled {
-					execMeta := map[string]string{}
+					execMeta := map[string]string{
+						"iteration": iteration,
+						"group_id":  groupID,
+					}
 					if isOptimized {
 						execMeta["step_optimized"] = "true"
 					}

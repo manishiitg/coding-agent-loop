@@ -4625,8 +4625,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseRunFolder = req.ExecutionOptions.SelectedRunFolder
 					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
 				}
-				// Builder chat uses iteration-0 as its scratch run by default.
-				// Other phases keep the existing "latest iteration" fallback.
+				// Builder chat uses iteration-0 as its scratch run (intentional).
+				// Other phases resolve the latest iteration from the workspace.
 				if phaseRunFolder == "" && phaseWorkspacePath != "" {
 					if workflowPhaseID == "workflow-builder" {
 						phaseRunFolder = "iteration-0"
@@ -8772,7 +8772,17 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 			isStepOptimized = snap.Metadata["step_optimized"] == "true"
 		}
 		actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, snap.Status == BGAgentFailed)
-		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s): %s\n  Result: %s%s", snap.Name, snap.ID, snap.Status, resultText, actionHint))
+		batchContext := ""
+		if snap.Metadata != nil {
+			if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
+				batchContext += fmt.Sprintf(" [%s", iter)
+				if gid, ok := snap.Metadata["group_id"]; ok && gid != "" {
+					batchContext += "/" + gid
+				}
+				batchContext += "]"
+			}
+		}
+		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s)%s: %s\n  Result: %s%s", snap.Name, snap.ID, batchContext, snap.Status, resultText, actionHint))
 		emittedIDs = append(emittedIDs, agentID)
 	}
 
@@ -8868,9 +8878,19 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	isFailed := snap.Status == BGAgentFailed
 	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isFailed)
 
+	// Include iteration and group_id if available in metadata
+	contextInfo := ""
+	if snap.Metadata != nil {
+		if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
+			contextInfo += fmt.Sprintf("\nIteration: %s", iter)
+		}
+		if gid, ok := snap.Metadata["group_id"]; ok && gid != "" {
+			contextInfo += fmt.Sprintf("\nGroup: %s", gid)
+		}
+	}
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s%s",
-		snap.Name, snap.ID, snap.Status, resultText, actionHint)
+		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s%s\nResult:\n%s%s",
+		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint)
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.
 	// handleQuery will add it via StreamWithEvents when the synthetic turn runs.

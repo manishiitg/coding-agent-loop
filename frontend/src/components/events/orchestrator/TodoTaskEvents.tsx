@@ -85,6 +85,7 @@ export const TodoTaskItemCompletedEventDisplay: React.FC<TodoTaskEventProps<Todo
 }
 
 export const TodoTaskRouteSelectedEventDisplay: React.FC<TodoTaskEventProps<TodoTaskRouteSelectedEvent>> = ({ event, compact }) => {
+  const [instructionsExpanded, setInstructionsExpanded] = React.useState(false)
   const getActionIcon = (action: string) => {
     switch (action) {
       case 'delegate': return '🤖'
@@ -118,23 +119,45 @@ export const TodoTaskRouteSelectedEventDisplay: React.FC<TodoTaskEventProps<Todo
             <span className="font-semibold text-blue-600 dark:text-blue-400">
               {event.use_generic_agent ? 'Generic Agent' : (event.selected_route_name || event.selected_route_id)}
             </span>
-            {event.preferred_tier_label && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+          </div>
+          {event.preferred_tier_label && (
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">Tier:</span>
+              <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
                 event.preferred_tier === 1 ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' :
                 event.preferred_tier === 2 ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300' :
                 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
               }`}>
                 {event.preferred_tier_label}
               </span>
-            )}
-          </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-gray-500">Task:</span>
             <span className="font-medium">{event.todo_title || event.todo_id_to_execute}</span>
           </div>
-          {event.instructions_to_sub_agent && !compact && (
-            <div className="mt-2 text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 p-2 rounded border border-purple-100 dark:border-purple-900/30 italic">
-              "{event.instructions_to_sub_agent}"
+          {event.instructions_to_sub_agent && (
+            <div className="mt-2">
+              <button
+                onClick={() => setInstructionsExpanded(!instructionsExpanded)}
+                className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 text-[11px] font-medium transition-colors"
+              >
+                <span className={`transform transition-transform ${instructionsExpanded ? 'rotate-90' : ''}`}>▶</span>
+                <span>Instructions</span>
+              </button>
+              {instructionsExpanded && (
+                <div className="mt-1 text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 p-2 rounded border border-purple-100 dark:border-purple-900/30 italic text-xs">
+                  "{event.instructions_to_sub_agent}"
+                </div>
+              )}
+              {!instructionsExpanded && (
+                <div
+                  className="mt-1 text-gray-500 dark:text-gray-400 text-[11px] truncate max-w-md cursor-pointer italic"
+                  onClick={() => setInstructionsExpanded(true)}
+                >
+                  "{event.instructions_to_sub_agent}"
+                </div>
+              )}
             </div>
           )}
         </div>

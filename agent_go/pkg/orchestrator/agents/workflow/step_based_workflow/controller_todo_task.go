@@ -137,11 +137,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	// Load orchestrator learnings — provide file path reference instead of full content
-	// Check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
+	// Global learning mode: read from _global folder; otherwise check step-specific folder
 	var orchestratorLearningHistory string
 	if isLearningDisabled {
 		orchestratorLearningHistory = ""
+	} else if isGlobalLearningEnabled(stepConfig) {
+		// Global learning: read from shared workflow-level skill
+		orchestratorLearningHistory, _ = hcpo.readGlobalLearningHistory(ctx)
 	} else {
+		// Per-step: check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
 		docsRoot := GetPromptDocsRoot()
 		orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
 		_, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)

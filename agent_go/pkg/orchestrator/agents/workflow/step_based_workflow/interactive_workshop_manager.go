@@ -1639,6 +1639,7 @@ After a step runs successfully, always check: could a stale/fake output file pas
   - Do NOT use global learning when:
     - Steps are independent with different tools/servers
     - Each step has unique, complex tool sequences that benefit from step-specific replay instructions
+  - **Disable learning for irrelevant steps**: When enabling global learning, review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should have learning disabled via `+"`update_step_config(step_id, disable_learning=true)`"+`. This saves tokens and prevents noise in the global skill. Only steps that interact with the target system (the subject of the skill objective) should contribute.
 
 ### 3. Managing Learnings
 Learnings are stored as SKILL.md files in the workspace at 'learnings/{step-id}/SKILL.md' (or 'learnings/_global/SKILL.md' when global learning is enabled). Each learning file MUST use YAML frontmatter format:

@@ -243,7 +243,7 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		}
 
 		// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
-		// The todo task orchestrator now manages tasks via tasks.md using shell commands.
+		// The todo task orchestrator manages tasks directly via shell commands.
 
 		// Note: Browser tools are NOT added unconditionally here.
 		// They are added conditionally based on preset.EnableBrowserAccess in workflow initialization.

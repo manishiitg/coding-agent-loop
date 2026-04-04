@@ -25,8 +25,6 @@ const (
 	ExecuteGenericAgentKey subAgentContextKey = "execute_generic_agent"
 	// PredefinedRoutesKey is the context key for available predefined routes
 	PredefinedRoutesKey subAgentContextKey = "predefined_routes"
-	// ValidateTodoExistsKey is the context key for the todo validation function
-	ValidateTodoExistsKey subAgentContextKey = "validate_todo_exists"
 	// PreferredTierContextKey is the context key for preferred LLM tier override (1/2/3)
 	PreferredTierContextKey subAgentContextKey = "preferred_tier"
 	// SubAgentLLMContextKey is the context key for direct LLM override for sub-agents (works in both tiered and manual modes)
@@ -45,10 +43,6 @@ const (
 // todoID identifies the sub-agent call, fromLastX is how many entries to return,
 // offsetLastX skips that many entries from the tail before applying fromLastX (for paging).
 type GetSubAgentConversationFunc func(ctx context.Context, todoID string, fromLastX, offsetLastX int) (string, error)
-
-// ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md
-// Returns (exists bool, totalTasks int, tasksFilePath string, error)
-type ValidateTodoExistsFunc func(ctx context.Context, todoID string) (bool, int, string, error)
 
 // SubAgentResult represents the result of a sub-agent execution
 type SubAgentResult struct {
@@ -247,17 +241,6 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
 	}
 
-	// Validate todo_id against tasks.md when the runtime provides a validator.
-	if validateTodoFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateTodoFunc != nil {
-		exists, totalTasks, tasksFilePath, err := validateTodoFunc(ctx, todoID)
-		if err != nil {
-			return "", fmt.Errorf("failed to validate todo_id %q: %w", todoID, err)
-		}
-		if !exists {
-			return "", fmt.Errorf("todo_id %q was not found in tasks.md (%d tasks parsed from %s)", todoID, totalTasks, tasksFilePath)
-		}
-	}
-
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecutePredefinedSubAgentKey).(ExecutePredefinedSubAgentFunc)
 	if !ok || executeFunc == nil {
@@ -322,17 +305,6 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	// Extract share_browser param (defaults to true — shared browser)
 	if sb, ok := args["share_browser"].(bool); ok && !sb {
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
-	}
-
-	// Validate todo_id against tasks.md when the runtime provides a validator.
-	if validateTodoFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateTodoFunc != nil {
-		exists, totalTasks, tasksFilePath, err := validateTodoFunc(ctx, todoID)
-		if err != nil {
-			return "", fmt.Errorf("failed to validate todo_id %q: %w", todoID, err)
-		}
-		if !exists {
-			return "", fmt.Errorf("todo_id %q was not found in tasks.md (%d tasks parsed from %s)", todoID, totalTasks, tasksFilePath)
-		}
 	}
 
 	// Get the execution function from context

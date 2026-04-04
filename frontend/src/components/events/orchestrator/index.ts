@@ -10,7 +10,6 @@ export { DecisionEvaluatedEventDisplay } from './DecisionEvaluatedEvent'
 export { RoutingEvaluatedEventDisplay } from './RoutingEvaluatedEvent'
 export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
 export * from './TodoTaskEvents'
-export { TodoTaskStatusUpdateEventDisplay } from './TodoTaskStatusUpdateEvent'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

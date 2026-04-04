@@ -56,6 +56,7 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 {{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | READ/WRITE |
 {{end}}
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
+- **Output validation**: Your step's output files may be validated after execution. If validation fails, you'll receive feedback and must fix the issues.
 - Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
 {{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
 {{end}}
@@ -209,6 +210,12 @@ The following files from previous steps are available for reading:
 {{.DecisionReasoning}}
 {{end}}
 
+{{if .ValidationFeedback}}
+## Pre-Validation Failed (Previous Attempt)
+{{.ValidationFeedback}}
+Fix the issues above — ensure all required output files are generated in the step folder.
+{{end}}
+
 Execute the step objective. Use sub-agents for specialized tasks and direct execution for everything else. Run all tasks to completion.`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
@@ -340,6 +347,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"DecisionReasoning":       templateVars["DecisionReasoning"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
+		"ValidationFeedback":      templateVars["ValidationFeedback"],
 	}
 
 	var result strings.Builder

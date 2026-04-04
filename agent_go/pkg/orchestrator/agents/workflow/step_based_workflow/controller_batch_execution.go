@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
@@ -317,6 +318,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		// Track group session under HTTP session so stop handler can close it immediately
 		if hcpo.httpSessionID != "" {
 			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
+			// Inherit folder guard from parent HTTP session so sub-agents running
+			// under this group session ID cannot bypass write restrictions (e.g.,
+			// planning/ is read-only in workflow-builder mode).
+			common.CopySessionFolderGuard(hcpo.httpSessionID, groupSessionID)
 		}
 
 		// Close MCP session after this group completes to free resources (browser profiles, etc.)

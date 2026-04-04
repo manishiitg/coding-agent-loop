@@ -28,24 +28,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) getTodoTaskStepExecutionPath(stepID, 
 	return getExecutionFolderPath(hcpo.getTodoTaskExecutionWorkspacePath(), stepID, stepPath)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) getTodoTaskTasksFilePath(stepID, stepPath string) string {
-	return filepath.Join(hcpo.getTodoTaskStepExecutionPath(stepID, stepPath), "tasks.md")
-}
-
 // executeTodoTaskStep executes a todo task step by:
-//  1. The orchestrator LLM manages tasks.md (markdown format) via shell commands
-//  2. Executing TodoTaskOrchestratorAgent in a loop
-//  3. Processing tool calls:
+//  1. The orchestrator LLM delegates to sub-agents and/or executes directly
+//  2. Processing tool calls:
 //     - call_sub_agent: Delegate to predefined sub-agents (with learning/prevalidation)
 //     - call_generic_agent: Delegate to generic agent (no learning/prevalidation)
-//  4. Completion detection: all tasks marked [x] in tasks.md
+//  3. Pre-validation checks output files after execution
+//  4. Retry with feedback on pre-validation failure (up to 3 attempts)
 //  5. Return success status and next step ID
-//
-// Task Management:
-//   - LLM creates/updates tasks.md directly using execute_shell_command
-//   - Step completes when all tasks in tasks.md are [x]
-//   - Sub-agents receive instructions via tool parameters (NOT by reading files)
-//   - Validation reads tasks.md to ensure tasks exist before delegation
 //
 // Returns: (successCriteriaMet bool, nextStepID string, error)
 func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
@@ -76,7 +66,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	// Setup folder guard for todo task orchestrator agent
-	// The orchestrator needs to read/write tasks.md and access workspace files
+	// The orchestrator needs to read/write output files and access workspace files
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepID := step.GetID()
 	if stepID == "" {
@@ -121,12 +111,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// Emit step_started event
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 
-	// Note: Task management is now handled via shell commands with tasks.md
-	// The LLM creates and updates tasks.md directly using execute_shell_command
-	// Sub-agents receive instructions via tool parameters (NOT by reading files)
-
 	// Keep only the latest iteration conversation history in-memory.
-	// Todo-task state should come from current files (tasks.md, outputs, tool results),
+	// Todo-task state should come from current files (outputs, tool results),
 	// not from replaying previous assistant narration across loop iterations.
 	var conversationHistory []llmtypes.MessageContent
 	defer func() {
@@ -189,53 +175,97 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		cab.StartToolCallCapture()
 	}
 
-	// Execute TodoTaskOrchestratorAgent — single-shot, no retry loop.
-	// The LLM is expected to complete all tasks in one execution.
-	_, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
-		ctx,
-		todoTaskStep,
-		stepIndex,
-		todoTaskStepPath,
-		templateVars,
-		conversationHistory,
-		allSteps,
-		progress,
-	)
-
-	// Drain captured tool calls regardless of error
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		capturedToolCalls = cab.DrainToolCalls()
-	}
-
-	if err != nil {
-		return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
-	}
-
-	// Log execution
-	hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, 0, executionLLM, updatedHistory, capturedToolCalls)
-
-	// Run pre-validation if schema exists
+	// Retry loop: execute with validation feedback on pre-validation failure
+	maxRetryAttempts := 3
 	validationSchema := step.GetValidationSchema()
-	if validationSchema != nil {
-		hcpo.GetLogger().Info("🔍 Running pre-validation after execution")
-		preValidationPassed, _ := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
+	var validationResponse *ValidationResponse
 
-		if preValidationPassed {
-			hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
-			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
-			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-			return true, todoTaskStep.NextStepID, nil
+	for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
+		// Check for context cancellation before each attempt
+		select {
+		case <-ctx.Done():
+			return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
+		default:
 		}
 
-		hcpo.GetLogger().Warn("⚠️ Pre-validation failed after execution")
-		return false, todoTaskStep.NextStepID, nil
+		// On retry, inject validation feedback so the LLM knows what to fix
+		if retryAttempt > 1 && validationResponse != nil {
+			contextStr := fmt.Sprintf("Pre-Validation Feedback (Retry Attempt %d/%d)", retryAttempt, maxRetryAttempts)
+			templateVars["ValidationFeedback"] = hcpo.formatValidationResponseForTemplate(validationResponse, contextStr)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Retrying todo task step %d execution with validation feedback (attempt %d/%d)", stepIndex+1, retryAttempt, maxRetryAttempts))
+		} else {
+			templateVars["ValidationFeedback"] = ""
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing todo task orchestrator (attempt %d/%d)", retryAttempt, maxRetryAttempts))
+
+		_, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
+			ctx,
+			todoTaskStep,
+			stepIndex,
+			todoTaskStepPath,
+			templateVars,
+			conversationHistory,
+			allSteps,
+			progress,
+		)
+
+		// Drain captured tool calls regardless of error
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			capturedToolCalls = cab.DrainToolCalls()
+		}
+
+		if err != nil {
+			return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
+		}
+
+		// Log execution
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls)
+
+		// Run pre-validation if schema exists
+		if validationSchema != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after execution (attempt %d/%d)", retryAttempt, maxRetryAttempts))
+			preValidationPassed, formattedResults := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
+
+			if preValidationPassed {
+				hcpo.GetLogger().Info("✅ Todo task step complete (pre-validation passed)")
+				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Pre-validation passed", todoTaskStep.NextStepID)
+				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+				return true, todoTaskStep.NextStepID, nil
+			}
+
+			// Build validation response for feedback on next retry
+			validationResponse = &ValidationResponse{
+				IsSuccessCriteriaMet: false,
+				ExecutionStatus:      "FAILED",
+				Reasoning:            formattedResults + "\n\nPre-validation failed - required output files are missing or invalid. Fix these issues.",
+				Feedback: []ValidationFeedback{{
+					Type:        "structural_validation",
+					Description: "Pre-validation failed - output structure does not meet requirements",
+					Severity:    "HIGH",
+				}},
+			}
+
+			if retryAttempt >= maxRetryAttempts {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d pre-validation failed after %d attempts", stepIndex+1, maxRetryAttempts), nil)
+				return false, todoTaskStep.NextStepID, nil
+			}
+
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for todo task step %d (attempt %d/%d) - retrying with feedback", stepIndex+1, retryAttempt, maxRetryAttempts))
+			// Reset conversation history for retry — LLM gets a fresh start with feedback
+			conversationHistory = nil
+			continue
+		}
+
+		// No validation schema — execution completion is the signal
+		hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
+		hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
+		hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+		return true, todoTaskStep.NextStepID, nil
 	}
 
-	// No validation schema — execution completion is the signal
-	hcpo.GetLogger().Info("✅ Todo task step complete (execution finished)")
-	hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "Execution completed", todoTaskStep.NextStepID)
-	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-	return true, todoTaskStep.NextStepID, nil
+	// Should not reach here, but handle gracefully
+	return false, todoTaskStep.NextStepID, nil
 }
 
 // buildTodoTaskOrchestratorTemplateVars builds template variables for the orchestrator agent

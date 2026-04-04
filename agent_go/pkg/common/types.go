@@ -134,6 +134,23 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
+// CopySessionFolderGuard copies the folder guard (ReadPaths + WritePaths) from
+// one session to another. Used to propagate restrictions from a parent HTTP
+// session to child group sessions (batch execution, workshop groups) so that
+// sub-agents running under the new session ID inherit the same write restrictions.
+// Returns true if a guard was copied.
+func CopySessionFolderGuard(fromSessionID, toSessionID string) bool {
+	sessionShellConfigsMu.RLock()
+	src := sessionShellConfigs[fromSessionID]
+	sessionShellConfigsMu.RUnlock()
+	if src == nil || (len(src.ReadPaths) == 0 && len(src.WritePaths) == 0) {
+		return false
+	}
+	SetSessionFolderGuard(toSessionID, src.ReadPaths, src.WritePaths)
+	log.Printf("[FOLDER_GUARD] Copied folder guard from session %s to %s: read=%v write=%v", fromSessionID, toSessionID, src.ReadPaths, src.WritePaths)
+	return true
+}
+
 // ClearSessionShellConfig removes all shell config for a session.
 func ClearSessionShellConfig(sessionID string) {
 	sessionShellConfigsMu.Lock()

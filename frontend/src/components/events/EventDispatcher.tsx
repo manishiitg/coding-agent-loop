@@ -26,7 +26,6 @@ import {
   type TodoTaskItemUpdatedEvent,
   type TodoTaskItemCompletedEvent,
   type TodoTaskStepCompletedEvent,
-  type TodoTaskStatusUpdateEvent,
 } from '../../generated/event-types'
 
 // Import from the new organized component structure
@@ -86,7 +85,6 @@ import {
   TodoTaskItemUpdatedEventDisplay,
   TodoTaskItemCompletedEventDisplay,
   TodoTaskStepCompletedEventDisplay,
-  TodoTaskStatusUpdateEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -929,11 +927,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         </div>
       </CompactWrapper>
     )
-  }
-
-  if (isEventType(event, 'todo_task_status_update')) {
-    const data = getEventData(event) as TodoTaskStatusUpdateEvent
-    return <CompactWrapper compact={compact}><TodoTaskStatusUpdateEventDisplay event={data} /></CompactWrapper>
   }
 
   // Debug Events

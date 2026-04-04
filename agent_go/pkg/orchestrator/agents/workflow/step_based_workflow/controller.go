@@ -317,6 +317,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID st
 		hcpo.workshopGroupSessionIDs[groupID] = groupSessionID
 		if hcpo.httpSessionID != "" {
 			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
+			// Inherit folder guard from parent HTTP session so tools called
+			// under the group session enforce the same write restrictions
+			// (e.g., planning/ is read-only in workflow-builder mode).
+			common.CopySessionFolderGuard(hcpo.httpSessionID, groupSessionID)
 		}
 	}
 	hcpo.workshopGroupSessionsMu.Unlock()

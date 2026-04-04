@@ -1825,8 +1825,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for todo task orchestrator agent: %d tools", len(toolsToRegister)))
 	}
 
-	// NOTE: Task management is handled via shell commands (execute_shell_command)
-	// The LLM manages tasks.md (markdown format) using shell tools like cat, sed, heredoc
+	// NOTE: Task management is handled directly by the orchestrator LLM via shell commands
 
 	// Filter out human tools if "no human" execution mode is active
 	execOpts := hcpo.GetExecutionOptions()
@@ -1891,9 +1890,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info("🔧 Sub-agent execution context not provided - sub-agent tools will not be available")
 	}
 
-	// NOTE: mark_step_complete tool removed — completion is now detected by checking tasks.md
-	// (all tasks [x] = step done). This eliminates the completed.txt file roundtrip and
-	// avoids path mismatch bugs.
+	// NOTE: mark_step_complete tool removed — completion is detected by pre-validation.
 
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
@@ -1952,17 +1949,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) restoreSubAgentToolExecutors(execCtx 
 }
 
 // wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
-// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes, validate_todo_exists, sub_agent_llm
+// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, predefined_routes, sub_agent_llm
 func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
 	execCtx *SubAgentExecutionContext,
 ) func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Return wrapper function that injects execution functions into context
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Inject validate_todo_exists function for validation before delegation
-		validateTodoFunc := hcpo.createValidateTodoExistsFunc(execCtx)
-		ctx = context.WithValue(ctx, virtualtools.ValidateTodoExistsKey, validateTodoFunc)
-
 		// Inject execute_predefined_sub_agent function
 		executePredefinedFunc := hcpo.createExecutePredefinedSubAgentFunc(execCtx)
 		ctx = context.WithValue(ctx, virtualtools.ExecutePredefinedSubAgentKey, executePredefinedFunc)
@@ -2034,68 +2027,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		result, err := originalExecutor(ctx, args)
 
 		return result, err
-	}
-}
-
-// createValidateTodoExistsFunc creates a function that validates if a task exists
-// This function is injected into context for call_sub_agent/call_generic_agent to use
-// Reads tasks.md and parses markdown checkboxes to find tasks
-// Returns (exists, totalTasks, fullTasksFilePath, error) - fullTasksFilePath includes workspace path
-func (hcpo *StepBasedWorkflowOrchestrator) createValidateTodoExistsFunc(
-	execCtx *SubAgentExecutionContext,
-) virtualtools.ValidateTodoExistsFunc {
-	return func(ctx context.Context, todoID string) (bool, int, string, error) {
-		// Build the tasks file path (relative to workspace) from the parent todo step's
-		// artifact folder, not the logical step path. This avoids legacy step-N lookups.
-		parentStepID := ""
-		if execCtx.TodoTaskStep != nil {
-			parentStepID = execCtx.TodoTaskStep.GetID()
-		}
-		tasksFilePathRelative := hcpo.getTodoTaskTasksFilePath(parentStepID, execCtx.StepPath)
-
-		// Build full path including workspace for error messages
-		fullTasksFilePath := filepath.Join(hcpo.GetWorkspacePath(), tasksFilePathRelative)
-
-		// Read the tasks file
-		content, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePathRelative)
-		if err != nil {
-			// File doesn't exist means no tasks
-			return false, 0, fullTasksFilePath, nil
-		}
-
-		// Parse markdown to find tasks
-		// Format: - [ ] task_id: description  OR  - [x] task_id: description  OR  - [~] task_id: description
-		lines := strings.Split(content, "\n")
-		var taskIDs []string
-
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			// Match checkbox patterns: - [ ], - [x], - [~]
-			if strings.HasPrefix(line, "- [ ]") || strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [~]") {
-				// Extract task ID (text after checkbox up to colon)
-				// Format: "- [ ] task_id: description"
-				checkboxEnd := 6 // Length of "- [ ] " or "- [x] " or "- [~] "
-				if len(line) > checkboxEnd {
-					remainder := line[checkboxEnd:]
-					// Find the colon separator
-					colonIdx := strings.Index(remainder, ":")
-					if colonIdx > 0 {
-						taskID := strings.TrimSpace(remainder[:colonIdx])
-						taskIDs = append(taskIDs, taskID)
-					}
-				}
-			}
-		}
-
-		// Check if task exists
-		totalTasks := len(taskIDs)
-		for _, id := range taskIDs {
-			if id == todoID {
-				return true, totalTasks, fullTasksFilePath, nil
-			}
-		}
-
-		return false, totalTasks, fullTasksFilePath, nil
 	}
 }
 
@@ -2344,6 +2275,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	var capturedSummary string
 	expectedScores := len(stepInputs)
 
+	// In code execution mode, the agent needs execute_shell_command so the LLM can
+	// make HTTP POST calls to /tools/custom/submit_score via the MCP bridge.
+	var shellTools []llmtypes.Tool
+	var shellExecutors map[string]interface{}
+	if config.UseCodeExecutionMode {
+		shellTools, shellExecutors = hcpo.prepareWorkspaceToolsOnly()
+	}
+
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,
@@ -2352,7 +2291,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowEvaluationScoringAgent(cfg, logger, tracer, eventBridge)
 		},
-		nil, nil, true,
+		shellTools, shellExecutors, true,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create evaluation scoring agent: %w", err)
@@ -2416,7 +2355,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		"structured_output",
 	)
 
-	// Rebuild code execution registry so submit_score appears in the TOOL_STRUCTURE JSON
+	// Rebuild code execution registry so submit_score appears in the tool index
 	if config.UseCodeExecutionMode {
 		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for scoring agent: %v", err))

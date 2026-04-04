@@ -435,7 +435,6 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Conditional: `+"`logs/step-X/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
 - Decision: `+"`logs/step-X/decision-evaluation.json`"+` — decision_result, decision_reasoning, routing targets
 - Orchestration/TodoTask: `+"`logs/step-X/orchestration-execution.json`"+` (JSONL, one line per iteration)
-- TodoTask progress: `+"`execution/step-X/tasks.md`"+` — markdown task list with checkbox progress
 - Steps done: `+"`execution/steps_done.json`"+` — which steps completed, branch decisions, retry counts
 
 **How to Investigate:**

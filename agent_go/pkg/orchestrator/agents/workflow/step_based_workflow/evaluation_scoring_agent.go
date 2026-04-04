@@ -102,7 +102,7 @@ func (a *WorkflowEvaluationScoringAgent) GetUserPromptForAllSteps(steps []Evalua
 
 	sb.WriteString("---\n## Instructions\n")
 	sb.WriteString("Analyze ALL steps above and call submit_score for EACH step.\n")
-	sb.WriteString("After scoring all steps, call submit_summary with your overall analysis.\n")
+	sb.WriteString("After scoring all steps, write your overall evaluation summary as your final response.\n")
 
 	return sb.String()
 }

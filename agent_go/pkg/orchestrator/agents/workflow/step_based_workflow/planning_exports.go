@@ -660,18 +660,27 @@ func RegisterRunFullEvaluationTool(
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"target_run_folder": map[string]interface{}{
+				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "The execution run folder to evaluate (e.g., 'iteration-1' or 'iteration-1/group-a'). This identifies the source artifacts under runs/ that evaluation should inspect; evaluation execution itself uses the internal iteration-0 sandbox.",
+					"description": "The iteration folder name (e.g., 'iteration-1', 'iteration-27'). This is the top-level run folder under runs/.",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces'). Required for grouped/batch workflows where each group has its own execution folder.",
 				},
 			},
-			"required": []string{"target_run_folder"},
+			"required": []string{"iteration", "group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			targetRunFolder, _ := args["target_run_folder"].(string)
-			if targetRunFolder == "" {
-				return "target_run_folder is required", nil
+			iteration, _ := args["iteration"].(string)
+			if iteration == "" {
+				return "iteration is required", nil
 			}
+			groupID, _ := args["group_id"].(string)
+			if groupID == "" {
+				return "group_id is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
+			}
+			targetRunFolder := iteration + "/" + groupID
 
 			cfg := session.config
 			if cfg == nil {
@@ -809,21 +818,27 @@ func RegisterRunFullReportTool(
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"target_run_folder": map[string]interface{}{
+				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "The group-scoped execution run folder to generate a report for (e.g., 'iteration-2/manish').",
+					"description": "The iteration folder name (e.g., 'iteration-1', 'iteration-27').",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish'). Required — reports are always group-scoped.",
 				},
 			},
-			"required": []string{"target_run_folder"},
+			"required": []string{"iteration", "group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			targetRunFolder, _ := args["target_run_folder"].(string)
-			if targetRunFolder == "" {
-				return "target_run_folder is required", nil
+			iteration, _ := args["iteration"].(string)
+			if iteration == "" {
+				return "iteration is required", nil
 			}
-			if !strings.Contains(targetRunFolder, "/") {
-				return "target_run_folder must be group-scoped, e.g. 'iteration-2/group-name'", nil
+			groupID, _ := args["group_id"].(string)
+			if groupID == "" {
+				return "group_id is required — reports are always group-scoped, e.g. group_id='manish'", nil
 			}
+			targetRunFolder := iteration + "/" + groupID
 
 			cfg := session.config
 			if cfg == nil {

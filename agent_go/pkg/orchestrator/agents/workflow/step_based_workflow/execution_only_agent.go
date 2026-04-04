@@ -103,7 +103,7 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 {{if eq .SkipExecutionCleanup "true"}}
 ## State Verification Required (Skip Cleanup Mode)
 
-Previous execution outputs are preserved. Existing progress files (tasks.md, todos.json, step outputs) may contain completed work from prior runs.
+Previous execution outputs are preserved. Existing progress files and step outputs may contain completed work from prior runs.
 
 **IMPORTANT**: Do NOT assume existing "completed" state is still valid. Step configurations or requirements may have changed since the last run.
 

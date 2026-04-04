@@ -821,7 +821,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Step config & analysis tools
 	stepConfig := []string{
-		"update_step_config", "generate_learnings",
+		"update_step_config", "generate_learnings", "organize_global_learnings",
 		"infer_objective", "set_workflow_objective", "mark_workflow_optimized",
 		"replan_workflow_from_results", "harden_workflow",
 	}
@@ -4926,8 +4926,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Determine code execution mode — use already-extracted agentConfigs to avoid redundant scan
 			isCodeExecMode := isCodeExecutionModeEnabled(agentConfigs, iwm.controller.GetUseCodeExecutionMode())
 
-			// Read existing learnings — use the step's own ID for the learning folder
-			learningsPath := getLearningFolderPathByStepID("", resolvedID, "", iwm.controller.isEvaluationMode)
+			// Read existing learnings — use step ID or _global depending on mode
+			var learningsPathID string
+			if isGlobalLearningEnabled(agentConfigs) {
+				learningsPathID = GlobalLearningID
+			} else {
+				learningsPathID = resolvedID
+			}
+			learningsPath := getLearningFolderPathByStepID("", learningsPathID, "", iwm.controller.isEvaluationMode)
 			_ = iwm.controller.ensureStepLearningsFolderExists(ctx, learningsPath)
 			existingLearningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
 			existingLearningsContent := ""
@@ -4935,8 +4941,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				existingLearningsContent, _ = iwm.controller.formatStepLearningFilesAsHistory(existingLearningFiles)
 			}
 
-			// learningPathIdentifier = step's own ID (used as learning folder name)
+			// learningPathIdentifier = step's own ID, or _global if global learning is enabled
 			learningPathIdentifier := resolvedID
+			if isGlobalLearningEnabled(agentConfigs) {
+				learningPathIdentifier = GlobalLearningID
+			}
 			resolvedTitle := ResolveVariables(targetStep.GetTitle(), iwm.controller.variableValues)
 			sanitizedTitle := iwm.controller.sanitizeTitleForAgentName(resolvedTitle)
 			agentName := fmt.Sprintf("%s-skill-generation-%s", learningPathIdentifier, sanitizedTitle)
@@ -5039,6 +5048,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"StepNumber":               learningPathIdentifier,
 				"ExecutionLogsPath":        executionLogsPath,
 				"ExistingLearningsContent": existingLearningsContent,
+			}
+
+			// Global learning mode: add template vars for global skill
+			if learningPathIdentifier == GlobalLearningID {
+				templateVars["UseGlobalLearning"] = "true"
+				templateVars["ContributingStepID"] = resolvedID
+				templateVars["ContributingStepTitle"] = targetStep.GetTitle()
+				if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
+					templateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+				}
+				// Code exec + global: scripts go to per-step folder
+				if isCodeExecMode {
+					docsRoot := GetPromptDocsRoot()
+					templateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, iwm.controller.GetWorkspacePath(), resolvedID)
+				}
 			}
 
 			// Add context dependencies
@@ -5230,6 +5254,239 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register generate_learnings tool: %v", err))
+	}
+
+	// Tool 7a: organize_global_learnings — reorganize and consolidate the global skill folder
+	if err := mcpAgent.RegisterCustomTool(
+		"organize_global_learnings",
+		"Reorganize and consolidate the global skill folder (learnings/_global/). Reads all files, restructures them following the Anthropic skill-creator guide — splits bloated files, merges small ones, removes duplicates, updates the SKILL.md index. Call after several steps have contributed to clean up the accumulated knowledge.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"guidance": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional guidance for how to reorganize. E.g., 'merge the auth files into one', 'split the API section by endpoint', 'remove outdated selectors'.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			guidance := ""
+			if val, ok := args["guidance"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					guidance = s
+				}
+			}
+
+			// Ensure plan is loaded (needed for workspace path)
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				return fmt.Sprintf("Failed to load plan: %v", err), nil
+			}
+
+			// Check if global learning is actually enabled
+			stepOverrides, _ := iwm.controller.ReadStepOverrides(ctx)
+			if !isGlobalLearningEnabled(stepOverrides) {
+				return "Global learning is not enabled. Set use_global_learning: true in workflow.json execution_defaults first.", nil
+			}
+
+			// Read existing global learnings
+			globalLearningsPath := iwm.controller.getLearningsBasePath() + "/" + GlobalLearningID
+			_ = iwm.controller.ensureStepLearningsFolderExists(ctx, globalLearningsPath)
+			existingFiles, _ := iwm.controller.readStepLearningFiles(ctx, globalLearningsPath)
+			if len(existingFiles) == 0 {
+				return "No global learnings found yet. Run some steps first so the global skill has content to organize.", nil
+			}
+			existingContent, _ := iwm.controller.formatStepLearningFilesAsHistory(existingFiles)
+
+			// Get skill objective
+			skillObjective := ""
+			if stepOverrides != nil && stepOverrides.GlobalSkillObjective != "" {
+				skillObjective = stepOverrides.GlobalSkillObjective
+			}
+
+			// Build template vars — reuse the global learning template with a special "reorganize" trigger
+			templateVars := map[string]string{
+				"StepTitle":                "Global Skill Reorganization",
+				"StepDescription":          "Reorganize and consolidate the global skill folder. Review all files, restructure following the skill-creator guide, remove duplicates, split bloated files, merge small ones, and update the SKILL.md index.",
+				"StepSuccessCriteria":      "",
+				"StepContextOutput":        "",
+				"WorkspacePath":            iwm.controller.GetWorkspacePath(),
+				"ExecutionHistory":         "",
+				"ValidationResult":         "N/A — this is a reorganization task, not an execution result.",
+				"CurrentObjective":         iwm.controller.GetObjective(),
+				"LearningDetailLevel":      "exact",
+				"LearningTrigger":          "success",
+				"IsScriptedCodeMode":       "false",
+				"AllowedTools":             "",
+				"StepExecutionPath":        "",
+				"StepNumber":               GlobalLearningID,
+				"ExecutionLogsPath":        "",
+				"ExistingLearningsContent": existingContent,
+				"UseGlobalLearning":        "true",
+				"ContributingStepID":       "reorganize",
+				"ContributingStepTitle":    "Reorganization",
+			}
+			if skillObjective != "" {
+				templateVars["GlobalSkillObjective"] = skillObjective
+			}
+			if guidance != "" {
+				templateVars["StepDescription"] = fmt.Sprintf("%s\n\n## Human Guidance\n%s", templateVars["StepDescription"], guidance)
+			}
+
+			// Add variable names
+			if variableNames := FormatVariableNames(iwm.controller.variablesManifest); variableNames != "" {
+				templateVars["VariableNames"] = variableNames
+			}
+
+			// Ensure skill-creator guide is available
+			if guidePath, err := iwm.controller.ensureSkillCreator(ctx); err == nil {
+				templateVars["SkillCreatorPath"] = guidePath
+			}
+
+			// Launch in background
+			execID := fmt.Sprintf("organize-global-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
+
+			agentSessionID := fmt.Sprintf("workshop-organize-global-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         GlobalLearningID,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Organize Global Learnings", Cancel: cancel})
+			}
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-organize-learnings",
+						AgentName:     "Organize Global Learnings",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				// Create learning agent with write access to _global folder
+				agentName := fmt.Sprintf("%s-organize-global-skill", GlobalLearningID)
+				learningAgent, createErr := iwm.controller.createSuccessLearningAgent(
+					execCtx, "organize_learnings", GlobalLearningID, agentName,
+					stepOverrides, false, GlobalLearningID, "", 0,
+				)
+				if createErr != nil {
+					logger.Warn(fmt.Sprintf("⚠️ Failed to create organize agent: %v", createErr))
+					exec.mu.Lock()
+					exec.Status = WorkshopStepFailed
+					exec.Err = createErr
+					exec.mu.Unlock()
+					if eventBridge != nil {
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-organize-learnings",
+							AgentName:     "Organize Global Learnings",
+							Success:       false,
+							Result:        fmt.Sprintf("Failed: %v", createErr),
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", "", nil, createErr)
+					}
+					return
+				}
+
+				organizeResult, _, execErr := learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
+
+				var result string
+				if execErr == nil {
+					updatedFiles, _ := iwm.controller.readStepLearningFiles(execCtx, globalLearningsPath)
+					var sb strings.Builder
+					sb.WriteString("✅ Global learnings reorganized\n")
+					sb.WriteString(fmt.Sprintf("Files: %d | Path: %s\n", len(updatedFiles), globalLearningsPath))
+					for f := range updatedFiles {
+						sb.WriteString(fmt.Sprintf("  - %s\n", f))
+					}
+					sb.WriteString(fmt.Sprintf("\nAgent output:\n%s", organizeResult))
+					result = sb.String()
+				}
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if execErr != nil {
+						if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = execErr
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = execErr
+						}
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-organize-learnings",
+						AgentName:     "Organize Global Learnings",
+						Success:       execErr == nil && !isCancelled,
+					}
+					if isCancelled {
+						endEvent.Result = "Cancelled"
+					} else if execErr != nil {
+						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", result, nil, execErr)
+				}
+			}()
+
+			guidanceInfo := ""
+			if guidance != "" {
+				guidanceInfo = fmt.Sprintf("\nGuidance: %s", guidance)
+			}
+			logger.Info(fmt.Sprintf("🧠 Workshop: organize global learnings started in background, execution_id=%q", execID))
+			return fmt.Sprintf("Organize global learnings started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", execID, guidanceInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register organize_global_learnings tool: %v", err))
 	}
 
 	// Tool 7b: optimize_step — background optimization agent

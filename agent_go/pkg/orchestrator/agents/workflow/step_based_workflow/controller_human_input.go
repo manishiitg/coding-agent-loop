@@ -117,9 +117,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Workshop multiple_choice response: %s (index: %d)", response, selectedOptionIndex))
 		}
 	} else if hcpo.IsSkipHumanInput() {
-		// Full workflow run (start_from_beginning_no_human): use pre-loaded variable value instead of blocking.
-		// Try exact match first, then uppercase (variable groups store keys uppercase, step config uses lowercase).
-		if humanInputStep.VariableName != "" {
+		// Full workflow run (start_from_beginning_no_human): resolve response from overrides or variables.
+		// Priority: 1) humanInputOverrides[step_id], 2) variableValues[variable_name], 3) "approved" fallback
+		if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
+			response = val
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skip human input: using human_inputs override for step '%s': %s", step.GetID(), response))
+		} else if humanInputStep.VariableName != "" {
 			if val, ok := hcpo.variableValues[humanInputStep.VariableName]; ok && val != "" {
 				response = val
 			} else if val, ok := hcpo.variableValues[strings.ToUpper(humanInputStep.VariableName)]; ok && val != "" {
@@ -128,9 +131,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 		}
 		if response == "" {
 			response = "approved"
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skip human input: no pre-set value found for variable '%s', using 'approved'", humanInputStep.VariableName))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skip human input: using pre-set variable value for '%s': %s", humanInputStep.VariableName, response))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skip human input: no pre-set value found for step '%s' (variable '%s'), using 'approved'", step.GetID(), humanInputStep.VariableName))
+		} else if !strings.HasPrefix(response, "approved") {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skip human input: using pre-set value for step '%s': %s", step.GetID(), response))
 		}
 		// Normalize for yesno
 		if responseType == "yesno" {

@@ -1112,7 +1112,7 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1128,6 +1128,13 @@ func RegisterRunFullWorkflowTool(
 				"group_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID to execute (e.g., 'group1'). Defaults to the first group currently selected in the toolbar. Only one group runs at a time.",
+				},
+				"human_inputs": map[string]interface{}{
+					"type":        "object",
+					"description": "Responses for human_input steps, keyed by step ID. Required if the plan has human_input steps. Example: {\"choose-workflow\": \"Option 2\", \"confirm-deploy\": \"yes\"}. Read the plan to see which human_input steps exist and what they ask.",
+					"additionalProperties": map[string]interface{}{
+						"type": "string",
+					},
 				},
 			},
 		},
@@ -1159,6 +1166,39 @@ func RegisterRunFullWorkflowTool(
 			} else if len(cfg.EnabledGroupIDs) > 0 {
 				// Use only the first enabled group from toolbar
 				enabledGroupIDs = []string{cfg.EnabledGroupIDs[0]}
+			}
+
+			// Parse human_inputs (optional map of step_id → response)
+			var humanInputs map[string]string
+			if hi, ok := args["human_inputs"]; ok && hi != nil {
+				if hiMap, ok := hi.(map[string]interface{}); ok {
+					humanInputs = make(map[string]string, len(hiMap))
+					for k, v := range hiMap {
+						if s, ok := v.(string); ok {
+							humanInputs[k] = s
+						}
+					}
+				}
+			}
+
+			// Validate: if plan has human_input steps, human_inputs must cover them all
+			if err := session.controller.LoadPlanForWorkshop(ctx); err != nil {
+				return fmt.Sprintf("Failed to load plan: %v", err), nil
+			}
+			if session.controller.approvedPlan != nil {
+				var missingSteps []string
+				for _, step := range session.controller.approvedPlan.Steps {
+					if step.StepType() == StepTypeHumanInput {
+						stepID := step.GetID()
+						if _, ok := humanInputs[stepID]; !ok {
+							hiStep := step.(*HumanInputPlanStep)
+							missingSteps = append(missingSteps, fmt.Sprintf("  - %s (id: %s, question: %q)", hiStep.GetTitle(), stepID, hiStep.Question))
+						}
+					}
+				}
+				if len(missingSteps) > 0 {
+					return fmt.Sprintf("❌ Plan has human_input steps that require responses via human_inputs parameter. Missing:\n%s\n\nProvide human_inputs with a response for each step ID listed above.", strings.Join(missingSteps, "\n")), nil
+				}
 			}
 
 			// Determine run mode: reuse iteration or create new
@@ -1269,6 +1309,7 @@ func RegisterRunFullWorkflowTool(
 					SelectedRunFolder: iteration,
 					ExecutionStrategy: strategy,
 					EnabledGroupIDs:   enabledGroupIDs,
+					HumanInputs:      humanInputs,
 				}
 				workflowController.SetExecutionOptions(execOpts)
 

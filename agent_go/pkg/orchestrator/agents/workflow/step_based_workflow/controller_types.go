@@ -81,6 +81,10 @@ type ExecutionOptions struct {
 
 	// Cleanup control
 	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
+
+	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
+	// When SkipHumanInput is true, these take priority over variableValues fallback.
+	HumanInputs map[string]string `json:"human_inputs,omitempty"`
 }
 
 // BatchExecutionProgress tracks execution progress across multiple variable groups
@@ -104,6 +108,10 @@ type ExecutionContext struct {
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
 	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
 	StepPathOverride   string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
+
+	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
+	// Propagated from ExecutionOptions.HumanInputs to controller.humanInputOverrides.
+	HumanInputs map[string]string
 
 	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine
 	// writes the agent's full conversation history into it after Execute() returns.

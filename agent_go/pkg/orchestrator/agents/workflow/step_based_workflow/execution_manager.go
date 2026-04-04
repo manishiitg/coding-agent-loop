@@ -231,6 +231,11 @@ func (em *ExecutionManager) PrepareExecution(
 	// Copy SkipExecutionCleanup flag from options (opts is guaranteed non-nil after line 53-65)
 	setup.SkipExecutionCleanup = opts.SkipExecutionCleanup
 
+	// Propagate human input overrides for human_input steps
+	if len(opts.HumanInputs) > 0 {
+		setup.Context.HumanInputs = opts.HumanInputs
+	}
+
 	orch.GetLogger().Info(fmt.Sprintf("📋 Prepared execution: mode=%s, startFrom=%d, cleanup=%s, skipCleanup=%v",
 		setup.Mode, setup.StartFromStep+1, em.GetCleanupDescription(setup.Cleanup), setup.SkipExecutionCleanup))
 
@@ -627,6 +632,10 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 
 	// Apply context flags to orchestrator
 	orch.SetSkipHumanInput(setup.Context.SkipHumanInput)
+	if len(setup.Context.HumanInputs) > 0 {
+		orch.humanInputOverrides = setup.Context.HumanInputs
+		orch.GetLogger().Info(fmt.Sprintf("🔧 Set humanInputOverrides for %d step(s)", len(setup.Context.HumanInputs)))
+	}
 
 	orch.SetRunSingleStepMode(setup.Context.RunSingleStepOnly, setup.Context.SingleStepTarget)
 

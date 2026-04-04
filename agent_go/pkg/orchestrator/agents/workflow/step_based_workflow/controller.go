@@ -130,6 +130,11 @@ type StepBasedWorkflowOrchestrator struct {
 	// Workshop: ad-hoc human input passed via execute_step (injected into PreviousStepsSummary as critical feedback)
 	interactiveWorkflowHumanInput string
 
+	// Human input overrides: per-step responses for human_input steps during run_full_workflow.
+	// Key is step ID (e.g., "choose-workflow"), value is the response to use.
+	// Checked before variableValues fallback when SkipHumanInput is true.
+	humanInputOverrides map[string]string
+
 	// SubAgentNotifier is called when a todo task sub-agent starts/completes.
 	// Used by the server layer to inject auto-notifications into the main workshop agent.
 	subAgentNotifier SubAgentNotifier

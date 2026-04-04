@@ -1356,7 +1356,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 // createLearningAgentInternal is the unified internal function for creating learning agents (extraction or consolidation)
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-// stepIndex: 0-based step index for token tracking (should be passed from runSuccessLearningPhase/runFailureLearningPhase)
+// stepIndex: 0-based step index for token tracking (should be passed from runSuccessLearningPhase)
 func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
 	// Pass stepPath to include execution logs folder in read paths
@@ -1432,7 +1432,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workspace-only tools for %s: %d tools (human tools excluded)", agentType, len(toolsToRegister)))
 
 	// 5. Use base factory! (This handles all setup automatically)
-	// Use stepIndex directly (passed from runSuccessLearningPhase/runFailureLearningPhase) instead of parsing from stepPath
+	// Use stepIndex directly (passed from runSuccessLearningPhase) instead of parsing from stepPath
 	// This ensures learning costs are correctly attributed to the step, even if stepPath parsing fails
 	stepNumberForContext := stepIndex // stepIndex is already 0-based
 
@@ -1479,15 +1479,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 // Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
 // stepIndex: 0-based step index for token tracking
 func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
-}
-
-var _ = (*StepBasedWorkflowOrchestrator).createFailureLearningAgent
-
-// createFailureLearningAgent is a backward compatibility wrapper for createLearningAgent
-// Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
-// stepIndex: 0-based step index for token tracking
-func (hcpo *StepBasedWorkflowOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
 }
 

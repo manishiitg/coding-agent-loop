@@ -142,9 +142,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
 		metadata.SuccessfulRuns++
-		// Reset failure learning counter on success — future failures can learn again
-		metadata.FailureLearningRuns = 0
-		// Track per-step contributions for global learning (max 2 per step)
+		// Track per-step contributions for global learning
 		if learningPathIdentifier == GlobalLearningID && step != nil {
 			if metadata.StepContributions == nil {
 				metadata.StepContributions = make(map[string]int)

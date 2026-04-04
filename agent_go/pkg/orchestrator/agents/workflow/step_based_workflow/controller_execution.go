@@ -1431,9 +1431,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Track which LLM model was used for execution (to be stored in learning metadata)
 			var executionLLM string
 
-			// Track failure learning attempts for this execution session (currently unused - failure learning disabled)
-			_ = 0 // failureLearningAttempts - disabled while failure learning is turned off
-
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 				// Check for context cancellation before retry attempt
@@ -2007,9 +2004,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								}()
 							}
 						}
-					} else {
-						// Failure Learning Agent - DISABLED: only trigger learnings on success
-						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning for %s - failure learning disabled (learnings only trigger on success)", stepPath))
 					}
 				}
 

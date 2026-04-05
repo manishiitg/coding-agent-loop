@@ -125,7 +125,7 @@ function getWorkspaceApiBaseUrl(): string {
 
   const env = import.meta.env.VITE_WORKSPACE_API_URL
   if (env) return env
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/workspace`
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/api/wp`
   return 'http://localhost:8081'
 }
 

@@ -161,6 +161,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		// Multi-user mode: require JWT authentication
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
+			// Fallback: check query parameter (needed for EventSource/SSE which can't set headers)
+			if qToken := r.URL.Query().Get("token"); qToken != "" {
+				authHeader = "Bearer " + qToken
+			}
+		}
+		if authHeader == "" {
 			http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
 			return
 		}

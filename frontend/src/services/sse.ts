@@ -52,6 +52,12 @@ export class SSEConnection {
       params.set('since', String(this.sinceIndex))
     }
 
+    // EventSource can't send Authorization headers, so pass JWT as query param
+    const authToken = localStorage.getItem('auth_token')
+    if (authToken) {
+      params.set('token', authToken)
+    }
+
     const url = `${baseUrl}/api/sessions/${this.sessionId}/events/stream?${params}`
 
     this.eventSource = new EventSource(url, { withCredentials: true })

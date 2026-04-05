@@ -28,7 +28,7 @@ Every piece of knowledge you capture should contribute toward this objective. As
 {{end}}
 ## CRITICAL PRINCIPLES
 1. **Domain Knowledge Only**: Capture knowledge about the TARGET SYSTEM (website structure, API patterns, auth flows, data schemas, selectors, common patterns) — NOT step-specific tool sequences.
-2. **NEVER Store Secrets or Sensitive Data**: Do NOT save passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII (names, emails, phone numbers), or any other sensitive information in skill files. Use {{VARIABLE_NAME}} placeholders instead. If execution logs contain such data, extract only the structural patterns — never the actual values.
+2. **NEVER Store Secrets or Sensitive Data**: Do NOT save passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII (names, emails, phone numbers), or any other sensitive information in skill files. Use {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders instead. If execution logs contain such data, extract only the structural patterns — never the actual values.
 3. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
 3. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 {{if .SkillCreatorPath}}

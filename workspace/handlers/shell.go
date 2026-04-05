@@ -57,18 +57,6 @@ func ExecuteShellCommand(c *gin.Context) {
 		// Sanitize and validate working directory
 		sanitizedDir := utils.SanitizeInputPath(req.WorkingDirectory, docsDir)
 
-		// When FolderGuard is enabled, do NOT resolve per-user paths for the working directory.
-		// The Isolator's mount namespace handles path mapping via WritePathMappings
-		// (e.g., mounts _users/default/Chats/ at logical Chats/). Resolving to the physical
-		// per-user path would place the command in the read-only view of the physical path,
-		// while the writable mount is at the logical path.
-		if req.FolderGuard == nil || !req.FolderGuard.Enabled {
-			userID := getUserID(c)
-			if userID != "" && utils.IsPerUserPath(sanitizedDir) {
-				sanitizedDir = filepath.Join(utils.UsersDirectory, userID, sanitizedDir)
-			}
-		}
-
 		// Build full path
 		fullWorkingDir := filepath.Join(docsDir, sanitizedDir)
 
@@ -117,34 +105,13 @@ func ExecuteShellCommand(c *gin.Context) {
 
 	// Check if folder guard is enabled
 	if req.FolderGuard != nil && req.FolderGuard.Enabled {
-		// Build per-user write path mappings for filesystem isolation.
-		// Shell commands see logical paths (e.g., Chats/{planID}/),
-		// but the physical location is under _users/{userID}/.
-		// WritePathMappings tells the Isolator to source files from the physical per-user path
-		// while mounting them at the logical path the shell command expects.
+		// No per-user write path mappings needed — all users share the same filesystem.
 		var writePathMappings map[string]string
-		userID := getUserID(c)
-		if userID != "" {
-			for _, wp := range req.FolderGuard.WritePaths {
-				cleanWP := strings.TrimSuffix(strings.TrimPrefix(wp, "/"), "/")
-				if utils.IsPerUserPath(cleanWP) {
-					if writePathMappings == nil {
-						writePathMappings = make(map[string]string)
-					}
-					writePathMappings[wp] = filepath.Join(utils.UsersDirectory, userID, wp)
-				}
-			}
-		}
 
 		// Pre-create write path directories in the real filesystem before isolation.
-		// The mount script relies on these existing so it can bind-mount them as writable;
-		// if they don't exist, the "if [ -e $tempPath ]" check in step 4 fails and the
-		// mount point is never created, causing step 5 to error with "does not exist".
+		// The mount script relies on these existing so it can bind-mount them as writable.
 		for _, wp := range req.FolderGuard.WritePaths {
 			physicalPath := wp
-			if userID != "" && utils.IsPerUserPath(wp) {
-				physicalPath = filepath.Join(utils.UsersDirectory, userID, wp)
-			}
 			// Resolve relative to docsDir if not already absolute
 			if !filepath.IsAbs(physicalPath) {
 				physicalPath = filepath.Join(docsDir, physicalPath)

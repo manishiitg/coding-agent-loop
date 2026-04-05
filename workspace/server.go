@@ -51,43 +51,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Migrate per-user folders from root to /_users/default/ if needed
-	// This handles backwards compatibility with workspaces created before per-user isolation
-	fmt.Printf("🔄 Checking for per-user folder migration...\n")
-	migratedCount, err := utils.MigratePerUserFolders(docsDir)
-	if err != nil {
-		fmt.Printf("⚠️  Failed to migrate per-user folders: %v\n", err)
-		// Continue anyway - this is not a fatal error
-	} else if migratedCount > 0 {
-		fmt.Printf("✅ Migrated %d per-user folders to /_users/default/\n", migratedCount)
-	} else {
-		fmt.Printf("✅ No per-user folders need migration\n")
-	}
-
-	// Create default shared workspace subdirectories (these remain at root level)
-	sharedFolders := []string{"Workflow", "skills"}
-	for _, folder := range sharedFolders {
+	// Create default workspace subdirectories
+	defaultFolders := []string{"Chats", "Downloads", "Workflow", "skills"}
+	for _, folder := range defaultFolders {
 		path := filepath.Join(docsDir, folder)
 		if err := os.MkdirAll(path, 0755); err != nil {
-			fmt.Printf("Warning: Failed to create shared folder %s: %v\n", folder, err)
-		} else {
-			fmt.Printf("Created shared folder: %s\n", path)
+			fmt.Printf("Warning: Failed to create folder %s: %v\n", folder, err)
 		}
-	}
-
-	// Ensure default user directories exist (for per-user folders)
-	if err := utils.EnsureUserDirectories(docsDir, utils.GetDefaultUserID()); err != nil {
-		fmt.Printf("Warning: Failed to create default user directories: %v\n", err)
-	} else {
-		fmt.Printf("Created default user directories under /_users/%s/\n", utils.GetDefaultUserID())
-	}
-
-	// Create root-level symlinks for per-user folders so shell commands can access
-	// Chats/ and Downloads/ via their logical paths (physical files are under _users/{userID}/)
-	if err := utils.EnsurePerUserSymlinks(docsDir, utils.GetDefaultUserID()); err != nil {
-		fmt.Printf("Warning: Failed to create per-user symlinks: %v\n", err)
-	} else {
-		fmt.Printf("Ensured per-user symlinks for default user\n")
 	}
 
 	// Sync with GitHub on startup if credentials are configured

@@ -267,20 +267,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learnings content to pass (first iteration)"))
 	}
 
-	// Also pass existing learning file path for backward compatibility (if agent needs to read file)
-	// Extract step number from learning path identifier for getExistingLearningFilePath (which expects numeric step number)
-	// For branch steps, we'll use the parent step number
-	var stepNumberForFileCheck int
-	fmt.Sscanf(learningPathIdentifier, "step-%d", &stepNumberForFileCheck)
-	existingLearningFilePath := hcpo.getExistingLearningFilePath(ctx, stepNumberForFileCheck, step.GetTitle())
-	if existingLearningFilePath != "" {
-		successLearningTemplateVars["ExistingLearningFilePath"] = existingLearningFilePath
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 Found existing learning file path: %s", existingLearningFilePath))
-	} else {
-		successLearningTemplateVars["ExistingLearningFilePath"] = ""
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file path found for %s", learningPathIdentifier))
-	}
-
 	// Execute extraction agent
 	learningResult, learningConv, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
@@ -434,8 +420,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 		var result string
 		var execErr error
 		defer func() {
-			cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
-			if !cancelled && hcpo.workshopExecutionNotifier != nil {
+			skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+			if !skipNotify && hcpo.workshopExecutionNotifier != nil {
 				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, execErr)
 			}
 		}()
@@ -641,35 +627,6 @@ func extractSkillLearningContent(content string) (string, string) {
 	return name, body
 }
 
-// getExistingLearningFilePath checks if an existing learning file exists for the given step
-// Returns the RELATIVE file path if it exists, empty string otherwise
-// Checks for SKILL.md first (new format), then falls back to legacy {StepTitle}_learning.md
-func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx context.Context, stepNumber int, stepTitle string) string {
-	// Use RELATIVE path - workspace functions auto-prepend workspacePath
-	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
-	learningsBase := hcpo.getLearningsBasePath()
-	learningsBasePath := fmt.Sprintf("%s/step-%d", learningsBase, stepNumber)
-
-	// Check for new SKILL.md format first
-	skillFilePath := filepath.Join(learningsBasePath, "SKILL.md")
-	_, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, skillFilePath)
-	if err == nil {
-		return skillFilePath
-	}
-
-	// Fall back to legacy format: {StepTitle}_learning.md
-	resolvedTitle := ResolveVariables(stepTitle, hcpo.variableValues)
-	learningFileName := fmt.Sprintf("%s_learning.md", resolvedTitle)
-	expectedFilePath := filepath.Join(learningsBasePath, learningFileName)
-
-	_, err = hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, expectedFilePath)
-	if err == nil {
-		return expectedFilePath
-	}
-
-	// File doesn't exist, return empty string
-	return ""
-}
 
 // logLearningExecution appends a learning execution entry to the learning log file (JSONL format)
 func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Context, stepID string, stepPath string, entry map[string]interface{}) error {

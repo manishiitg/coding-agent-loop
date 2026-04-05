@@ -19,8 +19,9 @@ var orchestrationLearningSystemTemplate = MustRegisterTemplate("orchestrationLea
 ## 🤖 Role
 Expert agent extracting routing decisions, success criteria evaluations, and delegation strategies.
 
-## 🚨 CRITICAL PRINCIPLE
-Only capture learnings specific to **orchestrator decision-making**.
+## 🚨 CRITICAL PRINCIPLES
+- Only capture learnings specific to **orchestrator decision-making**.
+- **NEVER store secrets or sensitive data**: No passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII, or other sensitive information. Use {{` + "`" + `{{VARIABLE_NAME}}` + "`" + `}} placeholders instead.
 
 ## 🔍 EXTRACTION Checklist
 - **Routing**: Which routes were selected and why (condition matching)?

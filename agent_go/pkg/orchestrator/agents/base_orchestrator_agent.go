@@ -556,6 +556,14 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		}
 	}
 
+	// Suppress verbose prompts for internal agents (learning, organizer) — they're noisy in the UI
+	emitSystemPrompt := fullSystemPrompt
+	emitUserMessage := userMessage
+	if boa.agentType == TodoPlannerSuccessLearningAgentType {
+		emitSystemPrompt = ""
+		emitUserMessage = ""
+	}
+
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp:     time.Now(),
@@ -569,8 +577,8 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		ServersCount:         len(boa.config.ServerNames),
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
-		SystemPrompt:         fullSystemPrompt,
-		UserMessage:          userMessage,
+		SystemPrompt:         emitSystemPrompt,
+		UserMessage:          emitUserMessage,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentStart, eventData)

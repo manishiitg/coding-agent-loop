@@ -713,8 +713,8 @@ func RegisterRunFullEvaluationTool(
 					execMeta["group_display_name"] = groupName
 				}
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if !cancelled && session.executionNotifier != nil {
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if !skipNotify && session.executionNotifier != nil {
 						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
 					}
 				}()
@@ -857,13 +857,13 @@ func RegisterRunFullReportTool(
 					execMeta["group_display_name"] = groupName
 				}
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-report-execution",
 							AgentName:     displayName,
-							Success:       execErr == nil && !cancelled,
+							Success:       execErr == nil && !skipNotify,
 							InputData: map[string]string{
 								"run_folder":     targetRunFolder,
 								"workshop_mode":  "output",
@@ -878,7 +878,7 @@ func RegisterRunFullReportTool(
 							endEvent.InputData["group_display_name"] = groupName
 						}
 						if execErr != nil {
-							if cancelled {
+							if skipNotify || execCtx.Err() != nil {
 								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
 							} else {
 								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
@@ -893,7 +893,7 @@ func RegisterRunFullReportTool(
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && session.executionNotifier != nil {
+					if !skipNotify && session.executionNotifier != nil {
 						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
 					}
 				}()
@@ -1229,20 +1229,20 @@ func RegisterRunFullWorkflowTool(
 					execMeta["group_display_name"] = enabledGroupIDs[0]
 				}
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-workflow-execution",
 							AgentName:     "Full Workflow Execution",
-							Success:       execErr == nil && !cancelled,
+							Success:       execErr == nil && !skipNotify,
 							InputData: map[string]string{
 								"execution_strategy": strategy,
 								"execution_type":     "full-workflow",
 							},
 						}
 						if execErr != nil {
-							if cancelled {
+							if skipNotify || execCtx.Err() != nil {
 								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
 							} else {
 								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
@@ -1257,7 +1257,7 @@ func RegisterRunFullWorkflowTool(
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && session.executionNotifier != nil {
+					if !skipNotify && session.executionNotifier != nil {
 						session.executionNotifier.OnExecutionComplete(execID, "Full Workflow Execution", result, execMeta, execErr)
 					}
 				}()

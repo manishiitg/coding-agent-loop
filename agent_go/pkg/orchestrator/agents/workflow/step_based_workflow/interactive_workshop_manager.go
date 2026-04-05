@@ -7,14 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"os"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/prompt"
@@ -471,39 +471,47 @@ func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 }
 
 // finalizeExecStatus sets the final status on a WorkshopStepExecution under lock,
-// with context-cancellation detection. Returns true if the execution was cancelled
-// (either externally via stop_step, or because the context was cancelled/timed out).
+// with context-cancellation detection.
+//
+// Returns true only when stop_step/stop_all already set the status to Cancelled
+// (meaning OnExecutionTerminated was already called — skip OnExecutionComplete).
+// Returns false for context-cancelled errors (status is set to Cancelled but
+// OnExecutionComplete must still fire since OnExecutionTerminated was NOT called).
+//
+// Callers that need to distinguish cancel vs failure for display purposes should
+// check execCtx.Err() != nil after this call.
 //
 // Usage at the top of every background execution goroutine:
 //
 //	var result string
 //	var execErr error
 //	defer func() {
-//	    cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
-//	    // ... eventBridge end event ...
-//	    if !cancelled && notifier != nil {
+//	    skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+//	    // ... eventBridge end event (use execCtx.Err() != nil for cancel display) ...
+//	    if !skipNotify && notifier != nil {
 //	        notifier.OnExecutionComplete(execID, name, result, meta, execErr)
 //	    }
 //	}()
-//
-// This guarantees OnExecutionComplete fires on every non-cancelled exit path,
-// preventing silent notification drops when goroutines return early.
-func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result *string, execErr *error) (cancelled bool) {
+func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result *string, execErr *error) (skipNotify bool) {
 	exec.mu.Lock()
 	defer exec.mu.Unlock()
 	if exec.Status == WorkshopStepCancelled {
-		return true
+		log.Printf("[FINALIZE_EXEC] exec=%s step=%s — already cancelled by stop_step, skipNotify=true", exec.ID, exec.StepID)
+		return true // stop_step already called OnExecutionTerminated
 	}
 	if *execErr != nil {
 		if ctx.Err() != nil || errors.Is(*execErr, context.Canceled) || errors.Is(*execErr, context.DeadlineExceeded) {
 			exec.Status = WorkshopStepCancelled
 			exec.Err = *execErr
-			return true
+			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — context cancelled (err=%v), status=Cancelled, skipNotify=false (OnExecutionComplete will fire)", exec.ID, exec.StepID, *execErr)
+		} else {
+			exec.Status = WorkshopStepFailed
+			exec.Err = *execErr
+			log.Printf("[FINALIZE_EXEC] exec=%s step=%s — failed (err=%v)", exec.ID, exec.StepID, *execErr)
 		}
-		exec.Status = WorkshopStepFailed
-		exec.Err = *execErr
 	} else {
 		exec.Status = WorkshopStepDone
+		log.Printf("[FINALIZE_EXEC] exec=%s step=%s — done (result_len=%d)", exec.ID, exec.StepID, len(*result))
 		exec.Result = *result
 	}
 	return false
@@ -2547,9 +2555,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-execution",
@@ -2588,7 +2596,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
 							"iteration": iteration,
 							"group_id":  groupID,
@@ -2796,9 +2804,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-saved-main-py",
@@ -2833,7 +2841,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
 							"saved_script_only": "true",
 						}
@@ -2981,9 +2989,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-background-task",
@@ -3006,7 +3014,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, name, result, nil, execErr)
 					}
 				}()
@@ -4963,9 +4971,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-learning",
@@ -4988,7 +4996,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, nil, execErr)
 					}
 				}()
@@ -5175,9 +5183,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-organize-learnings",
@@ -5200,7 +5208,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", result, nil, execErr)
 					}
 				}()
@@ -5374,9 +5382,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-debug",
@@ -5399,7 +5407,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, nil, execErr)
 					}
 				}()
@@ -5571,9 +5579,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-eval-step-debug",
@@ -5607,7 +5615,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
 							"workshop_mode": "eval",
 						}
@@ -5765,9 +5773,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-report-step-debug",
@@ -5801,7 +5809,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
 							"workshop_mode": "output",
 						}
@@ -5921,9 +5929,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-infer-objective",
@@ -5944,7 +5952,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data: endEvent, CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Infer Objective", result, nil, execErr)
 					}
 				}()
@@ -6098,9 +6106,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-optimize-workflow",
@@ -6121,7 +6129,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data: endEvent, CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Optimize Workflow Structure", result, nil, execErr)
 					}
 				}()
@@ -6225,9 +6233,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-review-plan",
@@ -6248,7 +6256,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data: endEvent, CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Plan", result, nil, execErr)
 					}
 				}()
@@ -6359,9 +6367,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-replan-workflow",
@@ -6382,7 +6390,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data: endEvent, CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Replan Workflow From Results", result, nil, execErr)
 					}
 				}()
@@ -6481,9 +6489,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
-					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
 					if eventBridge != nil {
-						isCancelled := cancelled || execCtx.Err() != nil
+						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-harden-workflow",
@@ -6504,7 +6512,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data: endEvent, CorrelationID: agentSessionID,
 						})
 					}
-					if !cancelled && iwm.executionNotifier != nil {
+					if !skipNotify && iwm.executionNotifier != nil {
 						iwm.executionNotifier.OnExecutionComplete(execID, "Harden Workflow", result, nil, execErr)
 					}
 				}()

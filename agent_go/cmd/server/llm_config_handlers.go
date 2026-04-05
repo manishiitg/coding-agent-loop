@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -466,7 +467,17 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", "Say hello in one short sentence.")
+	cmd := exec.CommandContext(ctx, "claude", "--print", "Say hello in one short sentence.")
+	// Remove ANTHROPIC_API_KEY from env so Claude Code uses its own OAuth credentials
+	// instead of picking up the server's API key (which may have different billing).
+	env := os.Environ()
+	filteredEnv := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			filteredEnv = append(filteredEnv, e)
+		}
+	}
+	cmd.Env = filteredEnv
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
@@ -510,10 +521,14 @@ func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 		log.Printf("[GEMINI-CLI VALIDATION] CLI not found on PATH: %v", err)
 		return llm.APIKeyValidationResponse{
 			Valid:   false,
-			Message: "Gemini CLI not found. Install it with: npm install -g @anthropic-ai/gemini-cli (see https://github.com/google-gemini/gemini-cli)",
+			Message: "Gemini CLI not found. Install it with: npm install -g @google/gemini-cli (see https://github.com/google-gemini/gemini-cli)",
 		}
 	}
 	log.Printf("[GEMINI-CLI VALIDATION] CLI found at: %s", geminiPath)
+
+	// Step 1.5: Ensure Gemini CLI settings are configured for API key auth
+	// Without this, the CLI defaults to oauth-personal and fails in non-interactive mode.
+	ensureGeminiAPIKeyAuth()
 
 	// Step 2: Send a test prompt via the CLI and check for a response
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -558,6 +573,59 @@ func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 		Valid:   true,
 		Message: fmt.Sprintf("Gemini CLI is working. Response: %s", responseText),
 	}
+}
+
+// ensureGeminiAPIKeyAuth ensures Gemini CLI settings.json uses "gemini-api-key" auth type
+// instead of the default "oauth-personal" which requires an interactive terminal.
+func ensureGeminiAPIKeyAuth() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[GEMINI-CLI] Could not determine home dir: %v", err)
+		return
+	}
+	geminiDir := filepath.Join(homeDir, ".gemini")
+	settingsPath := filepath.Join(geminiDir, "settings.json")
+
+	// Read existing settings
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &settings)
+	}
+	if settings == nil {
+		settings = make(map[string]interface{})
+	}
+
+	// Check if already set to gemini-api-key
+	if security, ok := settings["security"].(map[string]interface{}); ok {
+		if auth, ok := security["auth"].(map[string]interface{}); ok {
+			if auth["selectedType"] == "gemini-api-key" {
+				return // already configured
+			}
+		}
+	}
+
+	// Set auth type to gemini-api-key
+	settings["security"] = map[string]interface{}{
+		"auth": map[string]interface{}{
+			"selectedType": "gemini-api-key",
+		},
+	}
+
+	if err := os.MkdirAll(geminiDir, 0700); err != nil {
+		log.Printf("[GEMINI-CLI] Could not create .gemini dir: %v", err)
+		return
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		log.Printf("[GEMINI-CLI] Could not marshal settings: %v", err)
+		return
+	}
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		log.Printf("[GEMINI-CLI] Could not write settings: %v", err)
+		return
+	}
+	log.Printf("[GEMINI-CLI] Configured settings.json for API key auth")
 }
 
 // validateCodexCLI validates the OpenAI Codex CLI by checking it exists and sending a test prompt

@@ -1,0 +1,29 @@
+{
+    email {EMAIL}
+}
+
+{DOMAIN} {
+    # Reverse proxy for Workspace API
+    handle_path /workspace* {
+        reverse_proxy workspace-api:8080
+    }
+
+    # Reverse proxy for Agent API
+    handle /api* {
+        reverse_proxy agent:8000
+    }
+
+    # Reverse proxy for Agent WebSockets
+    handle /ws* {
+        reverse_proxy agent:8000
+    }
+
+    # Reverse proxy for Frontend
+    handle /* {
+        reverse_proxy frontend:80
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
+}

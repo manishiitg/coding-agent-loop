@@ -351,7 +351,7 @@ func (p *SupabaseProvider) Name() string {
 }
 
 func (p *SupabaseProvider) Type() string {
-	return "oauth"
+	return "credentials"
 }
 
 func (p *SupabaseProvider) GetAuthURL(state, redirectURI string) string {

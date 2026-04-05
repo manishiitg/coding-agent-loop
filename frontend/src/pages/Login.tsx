@@ -30,10 +30,38 @@ const GoogleIcon = () => (
   </svg>
 )
 
-// AWS Cognito icon
+// AWS Cognito icon (official mark)
 const CognitoIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+  <svg className="w-5 h-5" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient x1="0%" y1="100%" x2="100%" y2="0%" id="cognito-a">
+        <stop stopColor="#BD0816" offset="0%"/>
+        <stop stopColor="#FF5252" offset="100%"/>
+      </linearGradient>
+    </defs>
+    <g fill="none" fillRule="evenodd">
+      <path d="M0 0h40v40H0z" fill="url(#cognito-a)"/>
+      <path d="M20 8c-4.42 0-8 3.58-8 8 0 2.8 1.44 5.26 3.62 6.7L14 28h12l-1.62-5.3A7.97 7.97 0 0028 16c0-4.42-3.58-8-8-8zm0 2a6 6 0 110 12 6 6 0 010-12zm-4 20h8v2h-8v-2z" fill="#FFF"/>
+    </g>
+  </svg>
+)
+
+// Supabase icon (official mark)
+const SupabaseIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 109 113" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M63.7076 110.284C60.8481 113.885 55.0502 111.912 54.9813 107.314L53.9738 40.0627H99.1935C108.384 40.0627 113.269 51.2094 107.028 57.7512L63.7076 110.284Z" fill="url(#paint0_linear)"/>
+    <path d="M63.7076 110.284C60.8481 113.885 55.0502 111.912 54.9813 107.314L53.9738 40.0627H99.1935C108.384 40.0627 113.269 51.2094 107.028 57.7512L63.7076 110.284Z" fill="url(#paint1_linear)" fillOpacity="0.2"/>
+    <path d="M45.317 2.07103C48.1765 -1.53037 53.9745 0.442937 54.0434 5.041L54.4849 72.2922H9.83113C0.640869 72.2922 -4.24459 61.1455 1.99622 54.6037L45.317 2.07103Z" fill="#3ECF8E"/>
+    <defs>
+      <linearGradient id="paint0_linear" x1="53.9738" y1="54.974" x2="94.1635" y2="71.8295" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#249361"/>
+        <stop offset="1" stopColor="#3ECF8E"/>
+      </linearGradient>
+      <linearGradient id="paint1_linear" x1="36.1558" y1="30.578" x2="54.4844" y2="65.0806" gradientUnits="userSpaceOnUse">
+        <stop/>
+        <stop offset="1" stopOpacity="0"/>
+      </linearGradient>
+    </defs>
   </svg>
 )
 
@@ -50,15 +78,15 @@ const providerConfig: Record<string, {
     description: 'Sign in with your credentials'
   },
   cognito: {
-    displayName: 'Continue with Google',
-    icon: <GoogleIcon />,
-    description: 'Sign in with your Google Workspace account',
+    displayName: 'AWS Cognito',
+    icon: <CognitoIcon />,
+    description: 'Sign in with your Google Workspace account via AWS Cognito',
     buttonClass: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700 dark:text-gray-200 dark:border-gray-600'
   },
   supabase: {
-    displayName: 'Sign in with Supabase',
-    icon: <CognitoIcon />,
-    description: 'Sign in with Supabase'
+    displayName: 'Supabase',
+    icon: <SupabaseIcon />,
+    description: 'Sign in with Supabase email & password'
   }
 }
 
@@ -160,6 +188,11 @@ export function Login() {
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
           <CardDescription className="text-base">
             Sign in to continue to AgentForge
+            {providers.length > 0 && (
+              <span className="block text-xs text-muted-foreground/70 mt-1">
+                via {providers.map(p => (providerConfig[p.name]?.displayName || p.name)).join(', ')}
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
 

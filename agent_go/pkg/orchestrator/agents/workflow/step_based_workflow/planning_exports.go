@@ -1145,12 +1145,14 @@ func RegisterRunFullWorkflowTool(
 				}
 			}
 
-			// Validate: if plan has human_input steps, human_inputs must cover them all
+			// Validate: if plan has human_input steps, human_inputs must cover them all.
+			// Also warn about routing steps that accept human_inputs for user intent.
 			if err := session.controller.LoadPlanForWorkshop(ctx); err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
 			if session.controller.approvedPlan != nil {
 				var missingSteps []string
+				var routingStepHints []string
 				for _, step := range session.controller.approvedPlan.Steps {
 					if step.StepType() == StepTypeHumanInput {
 						stepID := step.GetID()
@@ -1159,9 +1161,30 @@ func RegisterRunFullWorkflowTool(
 							missingSteps = append(missingSteps, fmt.Sprintf("  - %s (id: %s, question: %q)", hiStep.GetTitle(), stepID, hiStep.Question))
 						}
 					}
+					// Hint about routing steps that have a description (execute-then-route)
+					// so the builder knows to pass human_inputs for them too.
+					if step.StepType() == StepTypeRouting {
+						if routingStep, ok := step.(*RoutingPlanStep); ok && routingStep.Description != "" {
+							stepID := step.GetID()
+							if _, ok := humanInputs[stepID]; !ok {
+								routingStepHints = append(routingStepHints, fmt.Sprintf("  - %s (id: %s) — pass the user's choice so the agent knows what to do", step.GetTitle(), stepID))
+							}
+						}
+					}
 				}
 				if len(missingSteps) > 0 {
 					return fmt.Sprintf("❌ Plan has human_input steps that require responses via human_inputs parameter. Missing:\n%s\n\nProvide human_inputs with a response for each step ID listed above.", strings.Join(missingSteps, "\n")), nil
+				}
+				if len(routingStepHints) > 0 {
+					// Find the first routing step ID for the example
+					exampleStepID := "route-step"
+					for _, step := range session.controller.approvedPlan.Steps {
+						if step.StepType() == StepTypeRouting {
+							exampleStepID = step.GetID()
+							break
+						}
+					}
+					return fmt.Sprintf("⚠️ Plan has routing steps that need the user's choice via human_inputs. Without it, the routing agent won't know the user's intent. Missing:\n%s\n\nPlease re-call with human_inputs including the routing step. Example: human_inputs: {\"%s\": \"<user's choice here>\"}", strings.Join(routingStepHints, "\n"), exampleStepID), nil
 				}
 			}
 

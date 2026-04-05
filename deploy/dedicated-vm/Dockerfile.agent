@@ -1,0 +1,56 @@
+# Agent image - uses shared base (Dockerfile.base).
+# Build context: src/ directory (containing agent_go/, workspace/, mcpagent/, multi-llm-provider-go/)
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS runtime
+
+# Build stage
+FROM golang:1.24-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy all local dependencies (matching go.mod replace directives)
+COPY workspace/ ./workspace/
+COPY mcpagent/ ./mcpagent/
+COPY multi-llm-provider-go/ ./multi-llm-provider-go/
+
+COPY agent_go/go.mod agent_go/go.sum ./agent_go/
+
+# Fix replace directives to match Docker build context paths
+RUN cd agent_go && \
+    sed -i 's|=> \.\./workspace|=> ../workspace|' go.mod && \
+    sed -i 's|=> \.\./\.\./mcpagent|=> ../mcpagent|' go.mod && \
+    sed -i 's|=> \.\./\.\./multi-llm-provider-go|=> ../multi-llm-provider-go|' go.mod && \
+    go mod download
+
+COPY agent_go/ ./agent_go/
+
+# Fix replace directives again (COPY overwrites go.mod)
+RUN cd /app/agent_go && \
+    sed -i 's|=> \.\./\.\./mcpagent|=> ../mcpagent|' go.mod && \
+    sed -i 's|=> \.\./\.\./multi-llm-provider-go|=> ../multi-llm-provider-go|' go.mod && \
+    CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent .
+
+# Runtime: use shared base
+FROM runtime
+
+COPY --from=builder /app/agent_go/mcp-agent .
+
+# Copy Go for code execution
+COPY --from=builder /usr/local/go /usr/local/go
+ENV GOROOT=/usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+RUN go version
+
+COPY --from=builder /app/agent_go/configs ./configs
+COPY --from=builder /app/agent_go/pkg/database/migrations ./pkg/database/migrations
+COPY --from=builder /app/agent_go/pkg/database/migrations_postgres ./pkg/database/migrations_postgres
+
+RUN mkdir -p reports logs && chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_simple.json"]

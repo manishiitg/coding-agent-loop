@@ -1,0 +1,29 @@
+# Workspace API image - uses shared base (Dockerfile.base).
+# Build context: src/ directory (containing workspace/)
+ARG BASE_IMAGE
+
+FROM golang:1.24-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY workspace/go.mod workspace/go.sum ./
+RUN go mod download
+COPY workspace/ .
+
+ENV CGO_ENABLED=1
+RUN go build -o planner .
+
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+COPY --from=builder /app/planner .
+
+RUN mkdir -p /app/workspace-docs /app/data \
+  /app/workspace-docs/Downloads /app/workspace-docs/Chats /app/workspace-docs/Workspace
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+CMD ["./planner", "server", "--port", "8080", "--docs-dir", "/app/workspace-docs"]

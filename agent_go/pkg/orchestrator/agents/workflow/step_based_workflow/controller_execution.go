@@ -1655,6 +1655,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 
 					for fixIter := 0; fixIter <= maxFixIter && (lastLcResult == nil || !lastLcResult.Success); fixIter++ {
+						// Check for context cancellation before each fix iteration
+						select {
+						case <-ctx.Done():
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Step execution canceled during fix iteration %d for step %d", fixIter+1, stepIndex+1))
+							return "", updatedContextFiles, fmt.Errorf("step execution canceled during learn_code fix loop: %w", ctx.Err())
+						default:
+						}
+
 						lastLcResult = hcpo.runLearnCodeMainPyFromExecution(ctx, step, stepIndex, stepPath, allSteps, stepExecutionPath, executionWorkspacePath)
 
 						// Emit UI event only when a script was actually executed (not when main.py is simply absent).

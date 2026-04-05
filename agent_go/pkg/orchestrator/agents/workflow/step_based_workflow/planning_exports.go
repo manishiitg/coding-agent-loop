@@ -1112,7 +1112,7 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1131,7 +1131,7 @@ func RegisterRunFullWorkflowTool(
 				},
 				"human_inputs": map[string]interface{}{
 					"type":        "object",
-					"description": "Responses for human_input steps, keyed by step ID. Required if the plan has human_input steps. Example: {\"choose-workflow\": \"Option 2\", \"confirm-deploy\": \"yes\"}. Read the plan to see which human_input steps exist and what they ask.",
+					"description": "Responses for human_input and routing steps, keyed by step ID. Required if the plan has human_input steps. Also supports routing steps — pass the user's choice so the routing execution agent can use it instead of defaulting. Example: {\"choose-workflow\": \"Option 2\", \"route-workflow\": \"Option 2 - execute tests for ai-workshop\"}. Read the plan to see which human_input and routing steps exist.",
 					"additionalProperties": map[string]interface{}{
 						"type": "string",
 					},

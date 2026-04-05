@@ -458,30 +458,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 
 	// Set the agent's API keys for fallback LLM creation
 	if config.APIKeys != nil {
-		// Convert from wrapper API keys to agent API keys
-		agentAPIKeys := &mcpagent.AgentAPIKeys{
-			OpenRouter:        config.APIKeys.OpenRouter,
-			OpenAI:            config.APIKeys.OpenAI,
-			Anthropic:         config.APIKeys.Anthropic,
-			Vertex:            config.APIKeys.Vertex,
-			GeminiCLI:         config.APIKeys.GeminiCLI,
-			MiniMax:           config.APIKeys.MiniMax,
-			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
-		}
-		if config.APIKeys.Bedrock != nil {
-			agentAPIKeys.Bedrock = &mcpagent.AgentBedrockConfig{
-				Region: config.APIKeys.Bedrock.Region,
-			}
-		}
-		if config.APIKeys.Azure != nil {
-			agentAPIKeys.Azure = &mcpagent.AgentAzureConfig{
-				Endpoint:   config.APIKeys.Azure.Endpoint,
-				APIKey:     config.APIKeys.Azure.APIKey,
-				APIVersion: config.APIKeys.Azure.APIVersion,
-				Region:     config.APIKeys.Azure.Region,
-			}
-		}
-		agent.APIKeys = agentAPIKeys
+		agent.APIKeys = config.APIKeys.Clone()
 		logger.Info("🔑 API keys configured for agent fallback LLM creation")
 	}
 

@@ -122,34 +122,9 @@ func CreateLLMInstance(
 		logger.Info(fmt.Sprintf("🔧 Using default fallback models for %s LLM provider: %s", llmType, primaryProvider))
 	}
 
-	// Convert API keys from agent config to LLM config format
+	// Clone API keys — same underlying type, so Clone() avoids field-by-field copy.
 	// Priority: per-model APIKey > global APIKeys
-	var llmAPIKeys *llm.ProviderAPIKeys
-	if config.APIKeys != nil {
-		llmAPIKeys = &llm.ProviderAPIKeys{
-			OpenRouter:        config.APIKeys.OpenRouter,
-			OpenAI:            config.APIKeys.OpenAI,
-			Anthropic:         config.APIKeys.Anthropic,
-			Vertex:            config.APIKeys.Vertex,
-			GeminiCLI:         config.APIKeys.GeminiCLI,
-			CodexCLI:          config.APIKeys.CodexCLI,
-			MiniMax:           config.APIKeys.MiniMax,
-			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
-		}
-		if config.APIKeys.Bedrock != nil {
-			llmAPIKeys.Bedrock = &llm.BedrockConfig{
-				Region: config.APIKeys.Bedrock.Region,
-			}
-		}
-		if config.APIKeys.Azure != nil {
-			llmAPIKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   config.APIKeys.Azure.Endpoint,
-				APIKey:     config.APIKeys.Azure.APIKey,
-				APIVersion: config.APIKeys.Azure.APIVersion,
-				Region:     config.APIKeys.Azure.Region,
-			}
-		}
-	}
+	llmAPIKeys := config.APIKeys.Clone()
 
 	// Check for per-model API key (takes priority over global if set)
 	// This handles cases where API key is specified in LLMConfig.Primary.APIKey
@@ -157,37 +132,17 @@ func CreateLLMInstance(
 		if llmAPIKeys == nil {
 			llmAPIKeys = &llm.ProviderAPIKeys{}
 		}
-		// Set the appropriate provider key based on primary provider
-		switch primaryProvider {
-		case "vertex":
-			llmAPIKeys.Vertex = config.LLMConfig.Primary.APIKey
-		case "openai":
-			llmAPIKeys.OpenAI = config.LLMConfig.Primary.APIKey
-		case "anthropic":
-			llmAPIKeys.Anthropic = config.LLMConfig.Primary.APIKey
-		case "openrouter":
-			llmAPIKeys.OpenRouter = config.LLMConfig.Primary.APIKey
-		case "minimax":
-			llmAPIKeys.MiniMax = config.LLMConfig.Primary.APIKey
-		case "minimax-coding-plan":
-			llmAPIKeys.MiniMaxCodingPlan = config.LLMConfig.Primary.APIKey
-		case "gemini-cli":
-			llmAPIKeys.GeminiCLI = config.LLMConfig.Primary.APIKey
-		case "codex-cli":
-			llmAPIKeys.CodexCLI = config.LLMConfig.Primary.APIKey
-		case "azure":
-			// For Azure, per-model API key only sets the key, not endpoint/version
-			// If Azure config exists, update just the key
+		// Azure needs special handling (endpoint/version config)
+		if primaryProvider == "azure" {
 			if llmAPIKeys.Azure != nil {
 				llmAPIKeys.Azure.APIKey = *config.LLMConfig.Primary.APIKey
 			} else {
-				// If no Azure config exists, we can't create one with just an API key
-				// But we can create a partial one if needed, though endpoint is mandatory
-				// For now, assume endpoint comes from env var if not in config
 				llmAPIKeys.Azure = &llm.AzureAPIConfig{
 					APIKey: *config.LLMConfig.Primary.APIKey,
 				}
 			}
+		} else {
+			llmAPIKeys.SetKeyForProvider(llm.Provider(primaryProvider), config.LLMConfig.Primary.APIKey)
 		}
 		logger.Info(fmt.Sprintf("🔑 Using per-model API key for %s provider", primaryProvider))
 	}

@@ -300,19 +300,67 @@ func (api *StreamingAPI) handleSaveProviderKeys(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var keys StoredProviderKeys
-	if err := json.NewDecoder(r.Body).Decode(&keys); err != nil {
+	var incoming StoredProviderKeys
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if err := SaveProviderKeys(r.Context(), &keys); err != nil {
+	// Merge: load existing keys first, then overlay non-empty incoming fields.
+	// This prevents the frontend from wiping keys it didn't send.
+	merged := mergeStoredProviderKeys(r.Context(), &incoming)
+
+	if err := SaveProviderKeys(r.Context(), merged); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save keys: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+}
+
+// mergeStoredProviderKeys loads existing keys and overlays incoming non-empty values.
+// Empty strings in incoming are treated as "not sent" and won't erase existing keys.
+// To explicitly delete a key, send the sentinel value "__DELETE__".
+func mergeStoredProviderKeys(ctx context.Context, incoming *StoredProviderKeys) *StoredProviderKeys {
+	existing, err := LoadProviderKeys(ctx)
+	if err != nil || existing == nil {
+		return incoming // nothing to merge with
+	}
+
+	pick := func(existingVal, incomingVal string) string {
+		if incomingVal == "__DELETE__" {
+			return ""
+		}
+		if incomingVal != "" {
+			return incomingVal
+		}
+		return existingVal
+	}
+
+	merged := &StoredProviderKeys{
+		OpenRouter:        pick(existing.OpenRouter, incoming.OpenRouter),
+		OpenAI:            pick(existing.OpenAI, incoming.OpenAI),
+		Anthropic:         pick(existing.Anthropic, incoming.Anthropic),
+		Vertex:            pick(existing.Vertex, incoming.Vertex),
+		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
+		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),
+		MiniMaxCodingPlan: pick(existing.MiniMaxCodingPlan, incoming.MiniMaxCodingPlan),
+	}
+
+	// Bedrock / Azure: incoming wins if present, else keep existing
+	if incoming.Bedrock != nil {
+		merged.Bedrock = incoming.Bedrock
+	} else {
+		merged.Bedrock = existing.Bedrock
+	}
+	if incoming.Azure != nil {
+		merged.Azure = incoming.Azure
+	} else {
+		merged.Azure = existing.Azure
+	}
+
+	return merged
 }
 
 // handleLoadProviderKeys loads and returns decrypted provider API keys.

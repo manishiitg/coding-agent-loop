@@ -26,7 +26,7 @@ const (
 	FolderGuardBlockedPathsKey ContextKey = "folder_guard_blocked_paths"
 	// FolderGuardAllowedWriteFolderKey is the context key for allowed write folders ([]string) in chat/plan mode
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
-	// UserIDKey is the context key for the user ID (used for per-user workspace isolation)
+	// UserIDKey is the context key for the user ID (used for auth/database scoping)
 	UserIDKey ContextKey = "user_id"
 	// BrowserDownloadsPathKey is the context key for the browser downloads folder path (relative to workspace root)
 	// Used by agent-browser executor to set the working directory for screenshot/download commands
@@ -43,9 +43,8 @@ const (
 	ChatSessionIDKey ContextKey = "chat_session_id"
 )
 
-// PerUserFolders are folders isolated per-user in the workspace.
-// Must stay in sync with workspace/utils/path.go PerUserFolders.
-var PerUserFolders = []string{"Chats", "Downloads"}
+// WorkspaceFolders are the standard workspace folders.
+var WorkspaceFolders = []string{"Chats", "Downloads"}
 
 // SessionShellConfig holds per-session shell execution settings.
 // Shared by execute_shell_command and agent_browser to ensure identical sandboxing.

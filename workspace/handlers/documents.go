@@ -451,7 +451,7 @@ func ListDocuments(c *gin.Context) {
 	var err error
 	var isRootListing bool
 	if normalizedFolder != "" && normalizedFolder != "." {
-		// Resolve with user isolation for per-user folders
+		// Resolve path
 		searchPath, err = resolveUserPath(c, normalizedFolder)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -462,8 +462,7 @@ func ListDocuments(c *gin.Context) {
 			return
 		}
 	} else {
-		// Root listing - need to handle specially for per-user folders
-		// In this case, list from docsDir but we'll inject per-user folder contents
+		// Root listing
 		searchPath = docsDir
 		isRootListing = true
 	}
@@ -574,7 +573,7 @@ func GlobDocuments(c *gin.Context) {
 	// Normalize folder path
 	normalizedFolder := normalizeFolderPath(req.Folder)
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	var searchPath string
 	var err error
 	if normalizedFolder != "" {
@@ -1161,7 +1160,7 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Resolve user paths for per-user folder isolation
+	// Resolve user paths
 	sourceFilePath, err := resolveUserPath(c, sourcePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1281,7 +1280,7 @@ func GetFileVersionHistory(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	filePath, err := resolveUserPath(c, filePathParam)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1346,7 +1345,7 @@ func RestoreFileVersion(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	filePath, err := resolveUserPath(c, filePathParam)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1512,7 +1511,7 @@ func CopyFolder(c *gin.Context) {
 		return
 	}
 
-	// Resolve user paths for per-user folder isolation
+	// Resolve user paths
 	sourcePath, err := resolveUserPath(c, req.SourcePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1705,7 +1704,7 @@ func DeleteFolder(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	folderPath, err := resolveUserPath(c, folderPathParam)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1778,7 +1777,7 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	folderPath, err := resolveUserPath(c, folderPathParam)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1963,7 +1962,7 @@ func UploadFile(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Resolve user path for per-user folder isolation
+	// Resolve user path
 	folderPath, err := resolveUserPath(c, req.FolderPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{

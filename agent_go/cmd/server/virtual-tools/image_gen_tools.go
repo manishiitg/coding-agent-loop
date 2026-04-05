@@ -28,7 +28,7 @@ type ImageGenExecutorConfig struct {
 	ModelID         string // e.g. "imagen-4.0-generate-001"
 	APIKey          string // optional; falls back to GEMINI_API_KEY env var on the server
 	WorkspaceAPIURL string // workspace API base URL for saving generated images
-	UserID          string // user ID for per-user workspace isolation
+	UserID          string // user ID for auth scoping
 }
 
 // GetImageGenToolCategory returns the category name for the image gen tool

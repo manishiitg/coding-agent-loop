@@ -44,7 +44,7 @@ func ExportWorkspace(c *gin.Context) {
 	docsDir := viper.GetString("docs-dir")
 	userID := getUserID(c)
 
-	// Resolve workspace path with per-user folder support
+	// Resolve workspace path
 	fullWorkspacePath, err := utils.ResolveUserPath(docsDir, req.WorkspacePath, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
@@ -234,7 +234,7 @@ func ImportWorkspace(c *gin.Context) {
 	docsDir := viper.GetString("docs-dir")
 	userID := getUserID(c)
 
-	// Resolve workspace path with per-user folder support
+	// Resolve workspace path
 	fullWorkspacePath, resolveErr := utils.ResolveUserPath(docsDir, req.WorkspacePath, userID)
 	if resolveErr != nil {
 		fmt.Printf("❌ Failed to resolve path: %v\n", resolveErr)

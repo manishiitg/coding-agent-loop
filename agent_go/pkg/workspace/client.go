@@ -29,7 +29,7 @@ type Client struct {
 	BaseURL            string
 	HTTPClient         *http.Client
 	FolderGuard        *FolderGuardConfig
-	UserID             string            // User ID for per-user folder isolation
+	UserID             string            // User ID for auth/database scoping
 	ExtraEnv           map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
 	DefaultWorkingDir  string            // Default working directory for shell commands (relative to docs-dir)
 }
@@ -51,10 +51,8 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 	}
 }
 
-// WithUserID sets the user ID for per-user folder isolation
+// WithUserID sets the user ID for auth/database scoping
 // When set, the client includes X-User-ID header in all requests
-// The workspace API uses this to route per-user folders (Chats/, Downloads/)
-// to /_users/{userID}/ while keeping shared folders at root
 func WithUserID(userID string) ClientOption {
 	return func(c *Client) {
 		c.UserID = userID
@@ -307,8 +305,7 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Include user ID header for per-user folder isolation
-	// Check both static UserID and context-based user ID
+	// Include user ID header for auth/database scoping
 	if userID := c.getUserIDFromContext(ctx); userID != "" {
 		req.Header.Set("X-User-ID", userID)
 		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with X-User-ID=%q", method, path, userID)

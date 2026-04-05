@@ -851,7 +851,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// but this covers any direct HTTP /api/mcp/execute calls that bypass the agent.
 	// Resolves workspace-relative paths (e.g. "Downloads/file.pdf") to absolute host paths
 	// so Playwright MCP can find them — Playwright requires absolute paths for browser_file_upload.
-	workspaceAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
+	workspaceAbsPath := getWorkspaceDocsAbsPath()
 	log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
 	executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 		paths, ok := args["paths"].([]interface{})
@@ -1125,6 +1125,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Employee API routes (in employee_routes.go)
 	EmployeeRoutes(apiRouter)
+
+	// Workspace API reverse proxy (auth-protected) — frontend calls /api/wp/* instead of /workspace/*
+	apiRouter.PathPrefix("/wp/").Handler(workspaceProxyHandler())
 
 	// Consolidated workspace state endpoint (NEW - loads everything in one call)
 	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
@@ -2674,8 +2677,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
 
-		// Inject user ID into the workflow context for per-user folder isolation
-		// This allows workspace tools to route per-user folders correctly
+		// Inject user ID into the workflow context
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
 		// Inject chat session ID so execute_shell_command can look up the session's
 		// working directory and folder guard config from the global session map.
@@ -3568,25 +3570,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// User ID for per-user OAuth token isolation
 			// This ensures MCP servers with OAuth use user-specific token files
 			UserID: currentUserID,
-			// [BROWSER_UPLOAD] Dynamically override Playwright MCP server config per user.
-			// Playwright restricts file access to its working_dir (cwd). By default the static
-			// config points to ../workspace-docs/Downloads, but per-user files live at
-			// _users/{userId}/Downloads, _users/{userId}/Chats, etc. This override sets:
-			//   working_dir  → _users/{userId}/       (allows access to all user subfolders)
-			//   --output-dir → _users/{userId}/Downloads (browser downloads go to user's folder)
-			// Without this, Playwright rejects uploads with "outside allowed roots" errors.
+			// [BROWSER_UPLOAD] Override Playwright MCP server config to use shared workspace.
+			// Playwright restricts file access to its working_dir (cwd).
 			RuntimeOverrides: func() mcpclient.RuntimeOverrides {
-				userFolder := currentUserID
-				if userFolder == "" {
-					userFolder = "default"
-				}
-				userWorkspacePath := filepath.Join("..", "workspace-docs", "_users", userFolder)
-				userDownloadsPath := filepath.Join(userWorkspacePath, "Downloads")
-				log.Printf("[BROWSER_UPLOAD] Playwright runtime override: working_dir=%s, output-dir=%s", userWorkspacePath, userDownloadsPath)
+				workspacePath := filepath.Join("..", "workspace-docs")
+				downloadsPath := filepath.Join(workspacePath, "Downloads")
+				log.Printf("[BROWSER_UPLOAD] Playwright runtime override: working_dir=%s, output-dir=%s", workspacePath, downloadsPath)
 				return mcpclient.RuntimeOverrides{
 					"playwright": {
-						WorkingDir:  userWorkspacePath,
-						ArgsReplace: map[string]string{"--output-dir": userDownloadsPath},
+						WorkingDir:  workspacePath,
+						ArgsReplace: map[string]string{"--output-dir": downloadsPath},
 					},
 				}
 			}(),
@@ -4050,7 +4043,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 							Enabled:      true,
 							WritePaths:   []string{planWriteFolder},
-							BlockedPaths: []string{"_users"},
+							BlockedPaths: []string{},
 						}),
 						workspace.WithUserID(currentUserID),
 					)
@@ -4240,7 +4233,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 					Enabled:      true,
 					WritePaths:   memoryWritePaths,
-					BlockedPaths: []string{"_users"},
+					BlockedPaths: []string{},
 				}),
 				workspace.WithUserID(currentUserID),
 			)
@@ -4460,7 +4453,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
 				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
 				{
-					wsAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
+					wsAbsPath := getWorkspaceDocsAbsPath()
 					underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 						paths, ok := args["paths"].([]interface{})
 						if !ok || len(paths) == 0 {
@@ -5210,8 +5203,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This prevents the agent from being canceled when the HTTP request ends
 		agentCtx, agentCancel := context.WithCancel(context.Background())
 
-		// Inject user ID into the agent context for per-user folder isolation
-		// This allows workspace tools to route per-user folders correctly
+		// Inject user ID into the agent context
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
 		log.Printf("[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
@@ -7782,7 +7774,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 		}
 		if hasBrowserAccess || hasPlaywright || hasCamofox {
-			wsAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
+			wsAbsPath := getWorkspaceDocsAbsPath()
 			underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 				paths, ok := args["paths"].([]interface{})
 				if !ok || len(paths) == 0 {
@@ -8863,7 +8855,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 	// Create cancellable context for this synthetic turn
 	agentCtx, agentCancel := context.WithCancel(context.Background())
 
-	// Inject user ID into context for per-user folder isolation
+	// Inject user ID into context
 	if hasReq && req.userID != "" {
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, req.userID)
 	}

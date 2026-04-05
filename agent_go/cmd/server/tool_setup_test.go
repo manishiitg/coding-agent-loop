@@ -18,7 +18,7 @@ func TestExtractWorkflowContextFolders(t *testing.T) {
 		},
 		{
 			name:  "drops protected and invalid paths",
-			input: []string{"", ".", "/", "/abs/path", "../Workflow/Bad", "_users/private", "Chats/test", "Workflow/Good"},
+			input: []string{"", ".", "/", "/abs/path", "../Workflow/Bad", "Chats/test", "Workflow/Good"},
 			want:  []string{"Workflow/Good"},
 		},
 	}

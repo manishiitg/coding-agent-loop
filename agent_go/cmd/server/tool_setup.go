@@ -38,7 +38,7 @@ func extractWorkspacePathFromObjective(objective string) string {
 // and returns paths that should be granted write access in the FolderGuard.
 // Files (last component contains '.') are returned as-is (exact match).
 // Folders are returned as-is (prefix match in isPathAllowed).
-// Skips _users/, Chats/ (already handled), and root-level files (no '/' in path).
+// Skips Chats/ (already handled) and root-level files (no '/' in path).
 func extractFileContextWriteFolders(query string) []string {
 	prefix := "📁 Files in context: "
 	idx := strings.Index(query, prefix)
@@ -73,7 +73,7 @@ func extractFileContextWriteFolders(query string) []string {
 
 		// Skip protected/already-handled paths
 		pLower := strings.ToLower(p)
-		if strings.HasPrefix(pLower, "_users") || strings.HasPrefix(pLower, "chats") {
+		if strings.HasPrefix(pLower, "chats") {
 			continue
 		}
 
@@ -120,7 +120,7 @@ func extractWorkflowContextFolders(paths []string) []string {
 		}
 
 		pLower := strings.ToLower(p)
-		if strings.HasPrefix(pLower, "_users") || strings.HasPrefix(pLower, "chats") {
+		if strings.HasPrefix(pLower, "chats") {
 			continue
 		}
 
@@ -316,21 +316,15 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription strin
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode writes.
 // By default, only Chats/ is writable. Pass additionalWriteFolders to allow extra folders (e.g. "skills/custom/").
 // This creates a wrapper that:
-// 1. BLOCKS access to _users/ directory (internal structure, prevents accessing other users' data)
-// 2. ALLOWS read access to all other folders (skills/, Workflow/, Downloads/, etc.)
-// 3. ONLY ALLOWS write access to Chats/ folder (user's workspace, plus any additionalWriteFolders)
-// 4. Restricts shell writes to allowed folders
-// Note: Chats/ and Downloads/ are routed to /_users/{user_id}/ by the workspace API via X-User-ID header
+// 1. ALLOWS read access to all folders (skills/, Workflow/, Downloads/, etc.)
+// 2. ONLY ALLOWS write access to Chats/ folder (plus any additionalWriteFolders)
+// 3. Restricts shell writes to allowed folders
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Protected folders - block ALL access (read and write)
-	// Only _users/ is blocked to prevent direct access to internal user directory structure
-	protectedFolders := []string{"_users"}
+	// No protected folders — all users share the same filesystem
+	protectedFolders := []string{}
 
-	// Build the list of allowed write folders from per-user folders.
-	allowedWriteFolders := make([]string, 0, len(common.PerUserFolders))
-	for _, f := range common.PerUserFolders {
-		allowedWriteFolders = append(allowedWriteFolders, f+"/")
-	}
+	// Allowed write folders: Chats/ and Downloads/
+	allowedWriteFolders := []string{"Chats/", "Downloads/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
 	// For shell sandboxing, pass all allowed write folders
@@ -402,7 +396,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 						cleanedPath := filepath.Clean(pathStr)
 						if isPathProtected(cleanedPath) {
 							log.Printf("[CHAT MODE FOLDER GUARD] Blocked access to protected folder '%s' for tool %s", pathStr, toolNameCopy)
-							return "", fmt.Errorf("access denied: '%s' is a protected system folder (Chats/, Downloads/, _users/ are off-limits)", pathStr)
+							return "", fmt.Errorf("access denied: '%s' is a protected system folder", pathStr)
 						}
 					}
 				}
@@ -482,7 +476,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 // Like wrapExecutorsWithChatModeFolderGuard but uses the plan folder (e.g. "Chats/{planID}")
 // instead of the whole "Chats/" tree as the allowed write folder. This ensures sub-agents only write to their assigned plan folder.
 func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	protectedFolders := []string{"_users"}
+	protectedFolders := []string{}
 
 	// Use the plan folder as the allowed write folder (instead of Chats/)
 	planFolderWithSlash := strings.TrimSuffix(planFolder, "/") + "/"
@@ -573,7 +567,7 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 					if pathStr, ok := pathValue.(string); ok {
 						cleanedPath := filepath.Clean(pathStr)
 						if isPathProtected(cleanedPath) {
-							return "", fmt.Errorf("access denied: cannot access protected folder _users/")
+							return "", fmt.Errorf("access denied: cannot access protected folder")
 						}
 					}
 				}

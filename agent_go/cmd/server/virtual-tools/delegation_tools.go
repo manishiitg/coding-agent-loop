@@ -1042,8 +1042,7 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 		log.Printf("[DELEGATION PLAN] Emitted file event for plan: %s", planFilePath)
 	}
 
-	// Read plan.md content via workspace API (handles per-user path resolution correctly)
-	// This avoids the mount namespace issue where shell cat can't find per-user files
+	// Read plan.md content via workspace API
 	var planContent string
 	if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
 		readResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{

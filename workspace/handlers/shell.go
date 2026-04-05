@@ -105,9 +105,6 @@ func ExecuteShellCommand(c *gin.Context) {
 
 	// Check if folder guard is enabled
 	if req.FolderGuard != nil && req.FolderGuard.Enabled {
-		// No per-user write path mappings needed — all users share the same filesystem.
-		var writePathMappings map[string]string
-
 		// Pre-create write path directories in the real filesystem before isolation.
 		// The mount script relies on these existing so it can bind-mount them as writable.
 		for _, wp := range req.FolderGuard.WritePaths {
@@ -123,17 +120,16 @@ func ExecuteShellCommand(c *gin.Context) {
 
 		// Use isolated execution with filesystem restrictions
 		isolator := &security.Isolator{
-			ReadPaths:         req.FolderGuard.ReadPaths,
-			WritePaths:        req.FolderGuard.WritePaths,
-			WritePathMappings: writePathMappings,
-			BlockedPaths:      req.FolderGuard.BlockedPaths,
-			WorkDir:           workingDir,
-			BaseDir:           docsDir,
+			ReadPaths:    req.FolderGuard.ReadPaths,
+			WritePaths:   req.FolderGuard.WritePaths,
+			BlockedPaths: req.FolderGuard.BlockedPaths,
+			WorkDir:      workingDir,
+			BaseDir:      docsDir,
 		}
 
 		// Debug: log isolator configuration for troubleshooting mount namespace issues
-		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v WritePathMappings=%v\n",
-			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths, writePathMappings)
+		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v\n",
+			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths)
 
 		fullCommand = stripShellPrefix(req.Command)
 

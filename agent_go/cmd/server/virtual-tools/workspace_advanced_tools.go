@@ -25,7 +25,7 @@ func CreateWorkspaceAdvancedTools() []llmtypes.Tool {
 
 // CreateWorkspaceAdvancedToolExecutors creates the execution functions for workspace advanced tools
 // Uses the shared executors from pkg/workspace
-// Includes FolderGuard to protect per-user folders (Chats/, Downloads/) from LLM writes
+// Includes FolderGuard to restrict LLM writes
 // The read_image executor is wrapped with LLM analysis (config read from context at execution time)
 func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context, args map[string]any) (string, error) {
 	env := getMCPExtraEnv()
@@ -41,7 +41,7 @@ func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context,
 }
 
 // CreateWorkspaceAdvancedToolExecutorsWithUserID creates workspace advanced tool executors
-// with an explicit user ID set on the client, ensuring per-user folder isolation
+// with an explicit user ID set on the client
 // even if the context doesn't carry the user ID.
 // The read_image executor is wrapped with LLM analysis (config read from context at execution time)
 func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]func(ctx context.Context, args map[string]any) (string, error) {

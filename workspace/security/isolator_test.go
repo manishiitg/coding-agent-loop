@@ -457,191 +457,49 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Create _users/default/Chats and _users/default/Downloads
-	usersDir := filepath.Join(tempDir, "_users", "default")
-	for _, folder := range []string{"Chats", "Downloads"} {
-		if err := os.MkdirAll(filepath.Join(usersDir, folder), 0755); err != nil {
+	// Create shared folders at root level
+	for _, folder := range []string{"Chats", "Downloads", "skills"} {
+		if err := os.MkdirAll(filepath.Join(tempDir, folder), 0755); err != nil {
 			t.Fatalf("Failed to create dir: %v", err)
 		}
-		// Create a test file in each
-		if err := os.WriteFile(filepath.Join(usersDir, folder, "test.txt"), []byte("data"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, folder, "test.txt"), []byte("data"), 0644); err != nil {
 			t.Fatalf("Failed to write file: %v", err)
 		}
 	}
 
-	// Create symlinks: Chats -> _users/default/Chats, etc.
-	for _, folder := range []string{"Chats", "Downloads"} {
-		symlinkPath := filepath.Join(tempDir, folder)
-		target := filepath.Join("_users", "default", folder)
-		if err := os.Symlink(target, symlinkPath); err != nil {
-			t.Fatalf("Failed to create symlink %s -> %s: %v", folder, target, err)
-		}
-	}
-
-	// Also create a user2 directory (should remain hidden)
-	user2Dir := filepath.Join(tempDir, "_users", "user2", "Chats")
-	if err := os.MkdirAll(user2Dir, 0755); err != nil {
-		t.Fatalf("Failed to create user2 dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(user2Dir, "secret.txt"), []byte("user2 secret"), 0644); err != nil {
-		t.Fatalf("Failed to write user2 file: %v", err)
-	}
-
-	// Create a non-symlink directory (should not be affected)
-	skillsDir := filepath.Join(tempDir, "skills")
-	if err := os.MkdirAll(skillsDir, 0755); err != nil {
-		t.Fatalf("Failed to create skills dir: %v", err)
+	// Create a blocked directory
+	blockedDir := filepath.Join(tempDir, "secret")
+	if err := os.MkdirAll(blockedDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
 	}
 
 	isolator := &Isolator{
-		BlockedPaths: []string{"_users"},
+		BlockedPaths: []string{"secret"},
 		WorkDir:      tempDir,
 		BaseDir:      tempDir,
 	}
 
-	t.Run("LinuxMountScriptFixesSymlinks", func(t *testing.T) {
+	t.Run("LinuxMountScriptBlocksPaths", func(t *testing.T) {
 		script := isolator.generateMountScript("ls Chats/", nil)
 
-		// Should preserve workspace first (bind mount to temp)
-		if !strings.Contains(script, "mount --bind") {
-			t.Error("Mount script should preserve workspace with bind mount for symlink fixup")
-		}
-
-		// Should hide _users with tmpfs
+		// Should hide blocked path with tmpfs
 		if !strings.Contains(script, "mount -t tmpfs tmpfs") {
-			t.Error("Mount script should hide _users/ with tmpfs")
+			t.Error("Mount script should hide blocked path with tmpfs")
 		}
 
-		// Should fix each symlink target
-		for _, folder := range []string{"Chats", "Downloads"} {
-			expectedTarget := filepath.Join("_users", "default", folder)
-			if !strings.Contains(script, expectedTarget) {
-				t.Errorf("Mount script should fix symlink for %s (target: %s)", folder, expectedTarget)
-			}
-		}
-
-		// Should NOT reference user2 (only current user's symlink targets)
-		if strings.Contains(script, "user2") {
-			t.Error("Mount script should NOT reference user2 directory")
-		}
-
-		t.Logf("✓ Linux mount script correctly fixes symlinks:\n%s", script)
+		t.Logf("✓ Linux mount script correctly blocks paths:\n%s", script)
 	})
 
-	t.Run("MacOSSandboxAllowsSymlinkTargets", func(t *testing.T) {
+	t.Run("MacOSSandboxBlocksPaths", func(t *testing.T) {
 		profile := isolator.generateSandboxProfile()
 
-		// Should deny _users
+		// Should deny blocked paths
 		if !strings.Contains(profile, "deny file-read* file-write*") {
 			t.Error("Sandbox profile should deny access to blocked paths")
 		}
 
-		// Should re-allow symlink targets within _users/default/
-		for _, folder := range []string{"Chats", "Downloads"} {
-			expectedPath := filepath.Join(tempDir, "_users", "default", folder)
-			if !strings.Contains(profile, expectedPath) {
-				t.Errorf("Sandbox profile should allow symlink target: %s", expectedPath)
-			}
-		}
-
-		// Should NOT allow user2's paths
-		if strings.Contains(profile, "user2") {
-			t.Error("Sandbox profile should NOT allow user2 paths")
-		}
-
-		t.Logf("✓ macOS sandbox profile allows symlink targets:\n%s", profile)
+		t.Logf("✓ macOS sandbox profile blocks paths:\n%s", profile)
 	})
-}
-
-// TestDenyListNoSymlinks tests Mode 1 when there are no symlinks to fix
-func TestDenyListNoSymlinks(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "isolator-nosymlink-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create _users/ directory (blocked) but no symlinks pointing into it
-	if err := os.MkdirAll(filepath.Join(tempDir, "_users", "default"), 0755); err != nil {
-		t.Fatalf("Failed to create dir: %v", err)
-	}
-
-	// Create a regular directory (not a symlink)
-	if err := os.MkdirAll(filepath.Join(tempDir, "skills"), 0755); err != nil {
-		t.Fatalf("Failed to create dir: %v", err)
-	}
-
-	isolator := &Isolator{
-		BlockedPaths: []string{"_users"},
-		WorkDir:      tempDir,
-		BaseDir:      tempDir,
-	}
-
-	script := isolator.generateMountScript("echo test", nil)
-
-	// Should still hide _users with tmpfs
-	if !strings.Contains(script, "mount -t tmpfs") {
-		t.Error("Mount script should hide _users/ with tmpfs")
-	}
-
-	// Should NOT preserve workspace (no symlinks to fix)
-	if strings.Contains(script, "workspace-original") {
-		t.Error("Mount script should NOT preserve workspace when no symlinks need fixing")
-	}
-
-	t.Logf("✓ No-symlink case handled correctly:\n%s", script)
-}
-
-// TestDenyListWithMultiUser tests Mode 1 with multiple users
-func TestDenyListWithMultiUser(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "isolator-multiuser-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create multiple user directories
-	for _, user := range []string{"default", "alice", "bob"} {
-		for _, folder := range []string{"Chats", "Downloads"} {
-			if err := os.MkdirAll(filepath.Join(tempDir, "_users", user, folder), 0755); err != nil {
-				t.Fatalf("Failed to create dir: %v", err)
-			}
-		}
-	}
-
-	// Symlinks point to default user (single-user mode)
-	for _, folder := range []string{"Chats", "Downloads"} {
-		target := filepath.Join("_users", "default", folder)
-		if err := os.Symlink(target, filepath.Join(tempDir, folder)); err != nil {
-			t.Fatalf("Failed to create symlink: %v", err)
-		}
-	}
-
-	isolator := &Isolator{
-		BlockedPaths: []string{"_users"},
-		WorkDir:      tempDir,
-		BaseDir:      tempDir,
-	}
-
-	script := isolator.generateMountScript("ls Chats/", nil)
-
-	// Should only expose default user's paths (from symlinks), not alice or bob
-	if strings.Contains(script, "alice") {
-		t.Error("Mount script should NOT expose alice's data")
-	}
-	if strings.Contains(script, "bob") {
-		t.Error("Mount script should NOT expose bob's data")
-	}
-
-	// Should expose default user's symlink targets
-	for _, folder := range []string{"Chats", "Downloads"} {
-		target := filepath.Join("_users", "default", folder)
-		if !strings.Contains(script, target) {
-			t.Errorf("Mount script should expose default user's %s", folder)
-		}
-	}
-
-	t.Logf("✓ Multi-user isolation correct - only default user's symlink targets exposed")
 }
 
 // BenchmarkIsolatorOverhead measures the performance overhead of isolation

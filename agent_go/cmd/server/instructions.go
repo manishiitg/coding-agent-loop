@@ -19,7 +19,7 @@ type AgentInstructions struct {
 }
 
 // GetAgentInstructions returns the custom instructions for agents.
-// workspaceAbsPath is the absolute filesystem path to the workspace root (e.g. "/app/workspace-docs/_users/default").
+// workspaceAbsPath is the absolute filesystem path to the workspace root (e.g. "/app/workspace-docs").
 // If empty, only relative paths are shown.
 func GetAgentInstructions(workspaceAbsPath string) string {
 	instructions := utils.GetCommonFileInstructions()
@@ -48,7 +48,7 @@ The workspace is organized into the following folders:
 ` + fmt.Sprintf("- **Downloads/**%s (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).", absPath("Downloads")) + `
 ` + fmt.Sprintf("- **subagents/**%s (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.", absPath("subagents")) + `
 ` + fmt.Sprintf("- **config/**%s (read/write) - Configuration files for this agent session. Read and update using execute_shell_command. Changes take effect immediately when the next sub-agent spawns.", absPath("config")) + `
-- **_users/** (blocked) - Internal directory, access not allowed.
+
 
 ## LLM Tier Configuration
 ` + fmt.Sprintf("Edit `config/delegation-tier-config.json`%s to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.", absPath("config/delegation-tier-config.json")) + `

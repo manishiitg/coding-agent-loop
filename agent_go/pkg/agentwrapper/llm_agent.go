@@ -92,14 +92,10 @@ type LLMAgentConfig struct {
 	SessionID string
 
 	// User ID for per-user OAuth token isolation
-	// When set, OAuth tokens for MCP servers are stored at user-specific paths
-	// This enables multi-user deployments where each user's OAuth credentials are isolated
 	UserID string
 
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
-	// Used to dynamically set Playwright's working_dir and --output-dir to the user-specific
-	// workspace folder (e.g., _users/{userId}/), so Playwright's file access guard permits
-	// uploads from Downloads/, Chats/, etc. Built from currentUserID at agent creation time.
+	// Used to dynamically set Playwright's working_dir and --output-dir.
 	RuntimeOverrides mcpclient.RuntimeOverrides
 }
 
@@ -288,9 +284,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	}
 
 	// Pass runtime overrides to mcpagent so it can modify MCP server config at startup.
-	// For Playwright: overrides working_dir to the user's workspace root and --output-dir
-	// to their Downloads folder. This ensures Playwright's file access guard accepts paths
-	// under the user's workspace (not just the static default from mcp_servers_clean.json).
+	// For Playwright: overrides working_dir and --output-dir for the shared workspace.
 	if len(config.RuntimeOverrides) > 0 {
 		agentOptions = append(agentOptions, mcpagent.WithRuntimeOverrides(config.RuntimeOverrides))
 		logger.Info(fmt.Sprintf("[BROWSER_UPLOAD] Runtime overrides configured for %d servers", len(config.RuntimeOverrides)))

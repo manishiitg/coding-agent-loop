@@ -12,12 +12,11 @@ import (
 )
 
 type Isolator struct {
-	ReadPaths         []string
-	WritePaths        []string
-	WritePathMappings map[string]string // Maps logical write paths to physical source paths (for per-user isolation)
-	BlockedPaths      []string          // Paths to explicitly deny (deny-list, takes precedence)
-	WorkDir           string
-	BaseDir           string // Workspace base directory (default: /app/workspace-docs)
+	ReadPaths    []string
+	WritePaths   []string
+	BlockedPaths []string // Paths to explicitly deny (deny-list, takes precedence)
+	WorkDir      string
+	BaseDir      string // Workspace base directory (default: /app/workspace-docs)
 }
 
 const defaultBaseDir = "/app/workspace-docs"
@@ -121,36 +120,7 @@ func (iso *Isolator) generateSandboxProfile() string {
 	baseDir := iso.getBaseDir()
 
 	// Mode 1: BlockedPaths only (deny-list mode for chat)
-	// Block access to specified paths, but allow access to symlink targets within them.
-	// Example: _users/ is blocked, but Chats -> _users/default/Chats must still work.
 	if len(iso.BlockedPaths) > 0 && len(iso.ReadPaths) == 0 && len(iso.WritePaths) == 0 {
-		// Find symlinks in workspace root that resolve into blocked paths
-		var allowedSubpaths []string
-		entries, _ := os.ReadDir(baseDir)
-		for _, entry := range entries {
-			entryPath := filepath.Join(baseDir, entry.Name())
-			info, lstatErr := os.Lstat(entryPath)
-			if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
-				continue
-			}
-			target, readErr := os.Readlink(entryPath)
-			if readErr != nil {
-				continue
-			}
-			for _, blocked := range iso.BlockedPaths {
-				blockedClean := strings.TrimSuffix(blocked, "/")
-				if strings.HasPrefix(target, blockedClean+"/") || target == blockedClean {
-					// Allow access to this specific target within the blocked path
-					targetFull := target
-					if !strings.HasPrefix(target, "/") {
-						targetFull = filepath.Join(baseDir, target)
-					}
-					allowedSubpaths = append(allowedSubpaths, targetFull)
-					break
-				}
-			}
-		}
-
 		sb.WriteString("; Deny-list mode: block specific paths\n")
 		sb.WriteString("(deny file-read* file-write*\n")
 		for _, path := range iso.BlockedPaths {
@@ -161,16 +131,6 @@ func (iso *Isolator) generateSandboxProfile() string {
 			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
 		}
 		sb.WriteString(")\n\n")
-
-		// Re-allow symlink targets within blocked paths
-		if len(allowedSubpaths) > 0 {
-			sb.WriteString("; Allow symlink targets within blocked paths\n")
-			sb.WriteString("(allow file-read* file-write*\n")
-			for _, subpath := range allowedSubpaths {
-				sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", subpath))
-			}
-			sb.WriteString(")\n\n")
-		}
 
 		return sb.String()
 	}
@@ -229,49 +189,9 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 	baseDir := iso.getBaseDir()
 
 	// Mode 1: BlockedPaths only (deny-list mode for chat)
-	// Hide blocked paths with tmpfs, then fix any symlinks that pointed into them.
-	// Example: if _users/ is blocked and Chats -> _users/default/Chats is a symlink,
-	// hiding _users/ breaks the symlink. We fix this by bind-mounting the original
-	// symlink targets back from a preserved copy of the workspace.
+	// Hide blocked paths with tmpfs.
 	if len(iso.BlockedPaths) > 0 && len(iso.ReadPaths) == 0 && len(iso.WritePaths) == 0 {
-		// Scan workspace for symlinks pointing into blocked paths (done in Go before script generation)
-		type symlinkFixup struct {
-			target string // relative symlink target (e.g., "_users/default/Chats")
-		}
-		var fixups []symlinkFixup
-
-		entries, _ := os.ReadDir(baseDir)
-		for _, entry := range entries {
-			entryPath := filepath.Join(baseDir, entry.Name())
-			info, lstatErr := os.Lstat(entryPath)
-			if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
-				continue
-			}
-			target, readErr := os.Readlink(entryPath)
-			if readErr != nil {
-				continue
-			}
-			// Check if symlink target starts with any blocked path
-			for _, blocked := range iso.BlockedPaths {
-				blockedClean := strings.TrimSuffix(blocked, "/")
-				if strings.HasPrefix(target, blockedClean+"/") || target == blockedClean {
-					fixups = append(fixups, symlinkFixup{target: target})
-					break
-				}
-			}
-		}
-
-		needsPreserve := len(fixups) > 0
-		tempDir := "/tmp/workspace-original-$$"
-
 		sb.WriteString("# Deny-list mode: hide specific blocked paths\n")
-
-		// If symlinks need fixing, preserve the original workspace first
-		if needsPreserve {
-			sb.WriteString("# Preserve workspace for symlink resolution\n")
-			sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", tempDir))
-			sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", baseDir, tempDir))
-		}
 
 		// Hide blocked paths with tmpfs
 		for _, path := range iso.BlockedPaths {
@@ -282,18 +202,6 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 			sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs \"%s\" 2>/dev/null || true\n", fullPath))
 		}
 		sb.WriteString("\n")
-
-		// Fix broken symlinks by bind-mounting their targets from the preserved copy
-		if needsPreserve {
-			sb.WriteString("# Fix symlinks broken by tmpfs (bind-mount original targets)\n")
-			for _, fix := range fixups {
-				targetFull := filepath.Join(baseDir, fix.target)
-				targetTemp := filepath.Join(tempDir, fix.target)
-				sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", targetFull))
-				sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n", targetTemp, targetFull))
-			}
-			sb.WriteString("\n")
-		}
 
 		// Change to working directory
 		sb.WriteString(fmt.Sprintf("cd \"%s\"\n", iso.WorkDir))
@@ -320,8 +228,7 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 	sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", baseDir, tempDir))
 
 	// Step 2: Create write path directories in temp (= real filesystem via bind mount)
-	// Both logical paths (e.g., Chats/{planID}) and physical paths
-	// (e.g., _users/default/Chats/{planID}) must exist before tmpfs hides them.
+	// These must exist before tmpfs hides them.
 	if len(iso.WritePaths) > 0 {
 		sb.WriteString("# Create write path dirs in original workspace (via temp bind mount)\n")
 		for _, path := range iso.WritePaths {
@@ -329,21 +236,8 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 			if relPath == path && !strings.HasPrefix(path, "/") {
 				relPath = path
 			}
-			// Create logical path in temp (so read-only mount of "." will include it as mount point)
 			logicalTempPath := filepath.Join(tempDir, relPath)
 			sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", logicalTempPath))
-
-			// Also create physical source path if per-user mapping exists
-			if iso.WritePathMappings != nil {
-				if physicalPath, ok := iso.WritePathMappings[path]; ok {
-					sourceRelPath := strings.TrimPrefix(physicalPath, baseDir+"/")
-					if sourceRelPath == physicalPath && !strings.HasPrefix(physicalPath, "/") {
-						sourceRelPath = physicalPath
-					}
-					physicalTempPath := filepath.Join(tempDir, sourceRelPath)
-					sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", physicalTempPath))
-				}
-			}
 		}
 		sb.WriteString("\n")
 	}
@@ -382,24 +276,11 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 			if relPath == path && !strings.HasPrefix(path, "/") {
 				relPath = path
 			}
-			// Resolve physical source path (handles per-user mappings)
-			sourceRelPath := relPath
-			if iso.WritePathMappings != nil {
-				if physicalPath, ok := iso.WritePathMappings[path]; ok {
-					sourceRelPath = strings.TrimPrefix(physicalPath, baseDir+"/")
-					if sourceRelPath == physicalPath && !strings.HasPrefix(physicalPath, "/") {
-						sourceRelPath = physicalPath
-					}
-				}
-			}
-			tempPath := filepath.Join(tempDir, sourceRelPath)
+			tempPath := filepath.Join(tempDir, relPath)
 			absPath := path
 			if !strings.HasPrefix(path, "/") {
 				absPath = filepath.Join(baseDir, path)
 			}
-			// Ensure mount point exists in the tmpfs (step 4 may have skipped it if the
-			// directory didn't exist in the original workspace at the time of the check).
-			// mkdir -p is safe to run even when the mount point already exists.
 			sb.WriteString(fmt.Sprintf("if [ -e \"%s\" ]; then\n", tempPath))
 			sb.WriteString(fmt.Sprintf("  mkdir -p \"%s\"\n", absPath))
 			sb.WriteString(fmt.Sprintf("  mount --bind \"%s\" \"%s\"\n", tempPath, absPath))

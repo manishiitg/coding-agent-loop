@@ -38,7 +38,7 @@ real chat-mode folder guard wrapper, pointed at the REAL workspace API (Docker).
 
 Verifies:
   1. Shell commands execute through the bridge and return results
-  2. Folder guard blocks shell commands referencing _users/
+  2. Folder guard restricts shell write access
   3. Folder guard blocks shell commands referencing Workflow/
   4. Browser commands execute through the bridge
   5. (codex-cli) Shell tool is disabled — commands go through MCP bridge only
@@ -576,9 +576,9 @@ func buildShellScenarios() []shellScenario {
 
 	scenarios = append(scenarios,
 		shellScenario{
-			name:          "shell-users-blocked",
-			description:   "User tries to access protected system folder",
-			prompt:        `I want to see what's in the _users folder. Please list it for me.`,
+			name:          "shell-workflow-blocked",
+			description:   "User tries to write to protected Workflow folder",
+			prompt:        `Create a file called test.txt in the Workflow folder with content "hello".`,
 			expectSuccess: false,
 			expectKeyword: "denied",
 		},

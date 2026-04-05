@@ -154,8 +154,6 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.ServerNames = bo.GetSelectedServers()
 	config.SelectedTools = bo.GetSelectedTools()
 	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode()
-	config.UseToolSearchMode = bo.GetUseToolSearchMode()
-	config.PreDiscoveredTools = bo.GetPreDiscoveredTools()
 	config.Mode = agents.AgentMode(bo.GetAgentMode())
 	config.OutputFormat = outputFormat
 	config.MaxRetries = 3

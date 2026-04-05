@@ -2,7 +2,7 @@ import React from 'react'
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { CsvRenderer } from '../../ui/CsvRenderer'
-import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay, ToolSearchToolCallEndDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay } from './ToolCallSpecialRender'
 import { ImageGenToolCallEndDisplay } from './ToolCallSpecialRender/ImageGenToolCallEndDisplay'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
 import { TooltipProvider } from '../../ui/tooltip'
@@ -58,11 +58,6 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     return name === 'discover_code_structure' || name === 'discover_code_files' || name === 'write_code' || name === 'get_api_spec' || name === 'execute_shell_command'
   }
 
-  // Check if this is a tool search tool
-  const isToolSearchTool = (name: string): boolean => {
-    return name === 'search_tools' || name === 'add_tool'
-  }
-
   // Check if this is an image generation/editing tool
   const isImageGenTool = (name: string): boolean => {
     return name === 'workspace_image_gen' || name === 'workspace_image_edit'
@@ -77,12 +72,6 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   // If it's a code execution tool, use the specialized component
   if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
     const specializedDisplay = <CodeExecutionToolCallEndDisplay event={{ ...event, tool_name: normalizedToolName }} />
-    if (specializedDisplay) return specializedDisplay
-  }
-
-  // If it's a tool search tool, use the specialized component
-  if (normalizedToolName && isToolSearchTool(normalizedToolName)) {
-    const specializedDisplay = <ToolSearchToolCallEndDisplay event={event} />
     if (specializedDisplay) return specializedDisplay
   }
 

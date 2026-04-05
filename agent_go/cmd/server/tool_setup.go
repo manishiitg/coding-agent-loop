@@ -169,7 +169,7 @@ func extractRootCauseError(err error) string {
 }
 
 // collectVirtualToolNames extracts tool names from a list of llmtypes.Tool definitions.
-// Used to build PreDiscoveredTools so all virtual/custom tools stay visible in tool search mode.
+// Used by server.go for agent config setup.
 func collectVirtualToolNames(toolSets ...[]llmtypes.Tool) []string {
 	var names []string
 	for _, tools := range toolSets {

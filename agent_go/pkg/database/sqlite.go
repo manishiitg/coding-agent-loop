@@ -61,8 +61,6 @@ var allowedUpdateFields = map[string]bool{
 	"agent_mode":                   true,
 	"llm_config":                   true,
 	"use_code_execution_mode":      true,
-	"use_tool_search_mode":         true,
-	"pre_discovered_tools":         true,
 	"selected_skills":              true,
 	"selected_secrets":             true,
 	"selected_global_secret_names": true,
@@ -976,22 +974,6 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		useCodeExecutionModeInt = 1
 	}
 
-	// Convert use_tool_search_mode boolean to INTEGER (0/1) for SQLite
-	useToolSearchModeInt := 0
-	if req.UseToolSearchMode {
-		useToolSearchModeInt = 1
-	}
-
-	// Convert pre_discovered_tools to JSON
-	preDiscoveredToolsJSON := "[]"
-	if len(req.PreDiscoveredTools) > 0 {
-		toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
-		}
-		preDiscoveredToolsJSON = string(toolsJSON)
-	}
-
 	// Convert selected_skills to JSON
 	selectedSkillsJSON := "[]"
 	if len(req.SelectedSkills) > 0 {
@@ -1035,9 +1017,9 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	}
 
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
@@ -1046,14 +1028,12 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	var returnedUseCodeExecutionModeInt int
-	var returnedUseToolSearchModeInt int
-	var preDiscoveredToolsStr string
 	var selectedSkillsStr string
 	var selectedSecretsStr string
 	var selectedGlobalSecretNamesStr sql.NullString
 	var returnedEnableBrowserAccessInt int
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, useToolSearchModeInt, preDiscoveredToolsJSON, selectedSkillsJSON, selectedSecretsJSON, selectedGlobalSecretNamesParam, enableBrowserAccessInt, browserMode, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &returnedUseToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &returnedEnableBrowserAccessInt, &preset.BrowserMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, selectedSkillsJSON, selectedSecretsJSON, selectedGlobalSecretNamesParam, enableBrowserAccessInt, browserMode, req.IsPredefined, "user").Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &returnedEnableBrowserAccessInt, &preset.BrowserMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -1070,8 +1050,6 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	}
 	// Convert INTEGER to boolean
 	preset.UseCodeExecutionMode = returnedUseCodeExecutionModeInt != 0
-	preset.UseToolSearchMode = returnedUseToolSearchModeInt != 0
-	preset.PreDiscoveredTools = preDiscoveredToolsStr
 	preset.SelectedSkills = selectedSkillsStr
 	preset.SelectedSecrets = selectedSecretsStr
 	if selectedGlobalSecretNamesStr.Valid {
@@ -1085,7 +1063,7 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 // GetPresetQuery retrieves a preset query by ID
 func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = ?
 	`
@@ -1096,15 +1074,13 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	var useCodeExecutionModeInt int
-	var useToolSearchModeInt int
-	var preDiscoveredToolsStr sql.NullString
 	var selectedSkillsStr sql.NullString
 	var selectedSecretsStr sql.NullString
 	var selectedGlobalSecretNamesStr sql.NullString
 	var enableBrowserAccessInt sql.NullInt64
 	var browserModeStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &useToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeStr, &preset.IsPredefined, &preset.EmployeeID, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeStr, &preset.IsPredefined, &preset.EmployeeID, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1123,12 +1099,6 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	}
 	// Convert INTEGER to boolean
 	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
-	preset.UseToolSearchMode = useToolSearchModeInt != 0
-	if preDiscoveredToolsStr.Valid {
-		preset.PreDiscoveredTools = preDiscoveredToolsStr.String
-	} else {
-		preset.PreDiscoveredTools = "[]"
-	}
 	if selectedSkillsStr.Valid {
 		preset.SelectedSkills = selectedSkillsStr.String
 	} else {
@@ -1225,29 +1195,6 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		args = append(args, useCodeExecutionModeInt)
 	}
 
-	if req.UseToolSearchMode != nil {
-		// Convert boolean to INTEGER (0/1) for SQLite
-		useToolSearchModeInt := 0
-		if *req.UseToolSearchMode {
-			useToolSearchModeInt = 1
-		}
-		updateFields = append(updateFields, "use_tool_search_mode = ?")
-		args = append(args, useToolSearchModeInt)
-	}
-
-	if req.PreDiscoveredTools != nil {
-		preDiscoveredToolsJSON := "[]"
-		if len(req.PreDiscoveredTools) > 0 {
-			toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
-			}
-			preDiscoveredToolsJSON = string(toolsJSON)
-		}
-		updateFields = append(updateFields, "pre_discovered_tools = ?")
-		args = append(args, preDiscoveredToolsJSON)
-	}
-
 	if req.SelectedSkills != nil {
 		selectedSkillsJSON := "[]"
 		if len(req.SelectedSkills) > 0 {
@@ -1320,7 +1267,7 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		UPDATE preset_queries
 		SET %s
 		WHERE id = ?
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
 	`, strings.Join(updateFields, ", "))
 
 	var preset PresetQuery
@@ -1329,15 +1276,13 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	var useCodeExecutionModeInt int
-	var useToolSearchModeInt int
-	var preDiscoveredToolsStr sql.NullString
 	var selectedSkillsStr sql.NullString
 	var selectedSecretsStr sql.NullString
 	var selectedGlobalSecretNamesStr sql.NullString
 	var enableBrowserAccessInt sql.NullInt64
 	var browserModeNullStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &useToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1356,15 +1301,9 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	}
 	// Convert INTEGER to boolean
 	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
-	preset.UseToolSearchMode = useToolSearchModeInt != 0
 	preset.EnableBrowserAccess = enableBrowserAccessInt.Valid && enableBrowserAccessInt.Int64 != 0
 	if browserModeNullStr.Valid {
 		preset.BrowserMode = browserModeNullStr.String
-	}
-	if preDiscoveredToolsStr.Valid {
-		preset.PreDiscoveredTools = preDiscoveredToolsStr.String
-	} else {
-		preset.PreDiscoveredTools = "[]"
 	}
 	if selectedSkillsStr.Valid {
 		preset.SelectedSkills = selectedSkillsStr.String
@@ -1416,7 +1355,7 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 
 	// Get presets
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -1436,8 +1375,6 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		var selectedFolderStr sql.NullString
 		var llmConfigNullStr sql.NullString
 		var useCodeExecutionModeInt int
-		var useToolSearchModeInt int
-		var preDiscoveredToolsStr sql.NullString
 		var selectedSkillsStr sql.NullString
 		var selectedSecretsStr sql.NullString
 		var selectedGlobalSecretNamesStr sql.NullString
@@ -1445,7 +1382,7 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		var browserModeNullStr sql.NullString
 		var employeeIDStr sql.NullString
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &useToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -1461,15 +1398,9 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		preset.SelectedFolder = selectedFolderStr
 		// Convert INTEGER to boolean
 		preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
-		preset.UseToolSearchMode = useToolSearchModeInt != 0
 		preset.EnableBrowserAccess = enableBrowserAccessInt.Valid && enableBrowserAccessInt.Int64 != 0
 		if browserModeNullStr.Valid {
 			preset.BrowserMode = browserModeNullStr.String
-		}
-		if preDiscoveredToolsStr.Valid {
-			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
-		} else {
-			preset.PreDiscoveredTools = "[]"
 		}
 		if selectedSkillsStr.Valid {
 			preset.SelectedSkills = selectedSkillsStr.String
@@ -1813,23 +1744,9 @@ func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePre
 	if req.UseCodeExecutionMode {
 		useCodeExecutionModeInt = 1
 	}
-	useToolSearchModeInt := 0
-	if req.UseToolSearchMode {
-		useToolSearchModeInt = 1
-	}
 	enableBrowserAccessInt := 0
 	if req.EnableBrowserAccess {
 		enableBrowserAccessInt = 1
-	}
-
-	// Convert pre_discovered_tools to JSON
-	preDiscoveredToolsJSON := "[]"
-	if len(req.PreDiscoveredTools) > 0 {
-		toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
-		}
-		preDiscoveredToolsJSON = string(toolsJSON)
 	}
 
 	// Convert selected_skills to JSON
@@ -1871,9 +1788,9 @@ func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePre
 	}
 
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_by, user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_by, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
@@ -1882,8 +1799,6 @@ func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePre
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
 	var returnedUseCodeExecutionModeInt int
-	var returnedUseToolSearchModeInt int
-	var preDiscoveredToolsStr string
 	var selectedSkillsStr string
 	var selectedSecretsStr string
 	var selectedGlobalSecretNamesStr sql.NullString
@@ -1893,8 +1808,8 @@ func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePre
 	if browserModeWithUser == "" && req.EnableBrowserAccess {
 		browserModeWithUser = "headless"
 	}
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, useToolSearchModeInt, preDiscoveredToolsJSON, selectedSkillsJSON, selectedSecretsJSON, selectedGlobalSecretNamesParam, enableBrowserAccessInt, browserModeWithUser, req.IsPredefined, "user", userIDValue).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &returnedUseToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &returnedEnableBrowserAccessInt, &preset.BrowserMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, selectedSkillsJSON, selectedSecretsJSON, selectedGlobalSecretNamesParam, enableBrowserAccessInt, browserModeWithUser, req.IsPredefined, "user", userIDValue).Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &returnedEnableBrowserAccessInt, &preset.BrowserMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -1910,8 +1825,6 @@ func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePre
 		preset.LLMConfig = json.RawMessage("null")
 	}
 	preset.UseCodeExecutionMode = returnedUseCodeExecutionModeInt != 0
-	preset.UseToolSearchMode = returnedUseToolSearchModeInt != 0
-	preset.PreDiscoveredTools = preDiscoveredToolsStr
 	preset.SelectedSkills = selectedSkillsStr
 	preset.SelectedSecrets = selectedSecretsStr
 	if selectedGlobalSecretNamesStr.Valid {
@@ -2363,7 +2276,7 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 
 	// Get presets
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, browser_mode, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries` + whereClause + `
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
@@ -2385,8 +2298,6 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 		var selectedFolderStr sql.NullString
 		var llmConfigNullStr sql.NullString
 		var useCodeExecutionModeInt int
-		var useToolSearchModeInt int
-		var preDiscoveredToolsStr sql.NullString
 		var selectedSkillsStr sql.NullString
 		var selectedSecretsStr sql.NullString
 		var selectedGlobalSecretNamesStr sql.NullString
@@ -2394,7 +2305,7 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 		var browserModeNullStr sql.NullString
 		var employeeIDStr sql.NullString
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &useToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &enableBrowserAccessInt, &browserModeNullStr, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -2409,15 +2320,9 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 		}
 		preset.SelectedFolder = selectedFolderStr
 		preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
-		preset.UseToolSearchMode = useToolSearchModeInt != 0
 		preset.EnableBrowserAccess = enableBrowserAccessInt.Valid && enableBrowserAccessInt.Int64 != 0
 		if browserModeNullStr.Valid {
 			preset.BrowserMode = browserModeNullStr.String
-		}
-		if preDiscoveredToolsStr.Valid {
-			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
-		} else {
-			preset.PreDiscoveredTools = "[]"
 		}
 		if selectedSkillsStr.Valid {
 			preset.SelectedSkills = selectedSkillsStr.String

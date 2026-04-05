@@ -62,7 +62,6 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
 
   type AgentConfigsType = {
     use_code_execution_mode?: boolean
-    use_tool_search_mode?: boolean
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     lock_learnings?: boolean
@@ -80,16 +79,6 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
     : stepCodeExecSetting !== undefined
       ? stepCodeExecSetting === true
       : presetUseCodeExecutionMode
-
-  // Tool search mode
-  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
-  const overrideToolSearch = stepOverride?.use_tool_search_mode
-  const stepToolSearchSetting = stepConfig?.agent_configs?.use_tool_search_mode
-  const useToolSearchMode = overrideToolSearch !== undefined
-    ? overrideToolSearch === true
-    : stepToolSearchSetting !== undefined
-      ? stepToolSearchSetting === true
-      : presetUseToolSearchMode
 
   // Conditional LLM (for routing evaluation)
   const conditionalLLM = useMemo(() => {
@@ -233,7 +222,6 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
         {/* Config footer */}
         <NodeConfigFooter
           useCodeExecutionMode={useCodeExecutionMode}
-          useToolSearchMode={useToolSearchMode}
           evalLLM={conditionalLLM}
           lockLearnings={lockLearnings}
         />

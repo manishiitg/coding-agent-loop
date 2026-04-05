@@ -17,17 +17,12 @@ type PromptSections struct {
 	PreviousSteps string // Previous steps context section
 }
 
-// BuildCodeExecutionSection returns the code execution or tool search mode instructions.
-// This is the single source of truth for code execution/tool search prompt sections.
+// BuildCodeExecutionSection returns the code execution mode instructions.
 // isCodeExecution: agent uses code execution mode (HTTP API calls via shell)
-// isToolSearch: agent uses tool search mode (search_tools/add_tool/remove_tool)
 // workspacePath: absolute workspace path for code examples
-func BuildCodeExecutionSection(isCodeExecution bool, isToolSearch bool, workspacePath string) string {
+func BuildCodeExecutionSection(isCodeExecution bool, workspacePath string) string {
 	if isCodeExecution {
 		return prompt.GetCodeExecutionInstructions(workspacePath)
-	}
-	if isToolSearch {
-		return prompt.GetToolSearchInstructions()
 	}
 	return ""
 }

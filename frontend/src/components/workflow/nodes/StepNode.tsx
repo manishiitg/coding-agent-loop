@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, Lock, Search, Bot, Pause } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, Lock, Bot, Pause } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -132,7 +132,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
   const stepConfig = step as { agent_configs?: {
     use_code_execution_mode?: boolean
-    use_tool_search_mode?: boolean
     execution_llm?: { provider?: string; model_id?: string }
     execution_max_turns?: number
     learning_llm?: { provider?: string; model_id?: string }
@@ -143,7 +142,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    pre_discovered_tools?: string[]
     disable_parallel_tool_execution?: boolean
   } }
 
@@ -158,18 +156,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     : stepCodeExecSetting !== undefined
       ? stepCodeExecSetting === true
       : presetUseCodeExecutionMode
-
-  // Get preset's default tool search mode
-  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
-  
-  // Determine tool search mode: Priority - override > step config > preset default (matching backend logic)
-  const overrideToolSearch = stepOverride?.use_tool_search_mode
-  const stepToolSearchSetting = stepConfig?.agent_configs?.use_tool_search_mode
-  const useToolSearchMode = overrideToolSearch !== undefined
-    ? overrideToolSearch === true
-    : stepToolSearchSetting !== undefined
-      ? stepToolSearchSetting === true
-      : presetUseToolSearchMode
 
   const contextInputs = useMemo(() => step.context_dependencies || [], [step.context_dependencies])
   const contextOutputs = useMemo(() => {
@@ -553,12 +539,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
                 label: 'Code Execution Mode',
                 color: 'text-amber-600 dark:text-amber-400',
               })
-            } else if (useToolSearchMode) {
-              flags.push({
-                icon: <Search className="w-3 h-3" />,
-                label: 'Tool Search Mode',
-                color: 'text-yellow-600 dark:text-yellow-400',
-              })
             } else {
               flags.push({
                 icon: <Code className="w-3 h-3" />,
@@ -669,8 +649,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         hasHumanTools={hasHumanTools}
         hasLargeOutput={hasLargeOutput}
         useCodeExecutionMode={useCodeExecutionMode}
-        useToolSearchMode={useToolSearchMode}
-        preDiscoveredTools={stepConfig?.agent_configs?.pre_discovered_tools}
       />
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />

@@ -650,7 +650,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode
   const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
-  const useToolSearchMode = useMemo(() => isCLIProvider ? false : (tabConfig?.useToolSearchMode ?? false), [isCLIProvider, tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableImageGeneration = useMemo(() => tabConfig?.enableImageGeneration ?? false, [tabConfig?.enableImageGeneration])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'none', [tabConfig?.browserMode])
@@ -761,11 +760,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
 
-  const setUseToolSearchMode = useCallback((enabled: boolean) => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { useToolSearchMode: enabled })
-    }
-  }, [activeTabId, setTabConfig])
 
   const {
     toolList: mcpToolList,
@@ -1126,17 +1120,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig, setChatSelectedServers])
 
-  // Auto-enable tool search mode in multi-agent mode when more than 2 MCP servers are selected
-  useEffect(() => {
-    if (selectedModeCategory !== 'multi-agent' || !activeTabId) return
-    const realServers = manualSelectedServers.filter(s => s !== 'NO_SERVERS')
-    const totalTools = mcpToolList
-      .filter(t => t.status === 'ok' && t.server && realServers.includes(t.server))
-      .reduce((sum, t) => sum + (t.toolsEnabled || 0), 0)
-    if (totalTools >= 10 && !useToolSearchMode) {
-      setTabConfig(activeTabId, { useToolSearchMode: true })
-    }
-  }, [manualSelectedServers, mcpToolList, selectedModeCategory, activeTabId, useToolSearchMode, setTabConfig])
 
   // Use tab-specific skills - memoize to prevent re-renders
   const selectedSkills = useMemo(() => tabConfig?.selectedSkills || [], [tabConfig?.selectedSkills])
@@ -1245,7 +1228,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       // CLI providers always require code execution mode
       if (llm.provider === 'claude-code' || llm.provider === 'gemini-cli' || llm.provider === 'codex-cli') {
-        setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true, useToolSearchMode: false })
+        setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true })
       } else {
         setTabConfig(activeTabId, { llmConfig: newConfig })
       }

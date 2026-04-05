@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { X, Settings, ChevronDown, ChevronUp, Sparkles, Code2, Search, Loader2 } from 'lucide-react'
+import { X, Settings, ChevronDown, ChevronUp, Sparkles, Code2, Loader2 } from 'lucide-react'
 import LLMSelectionDropdown from '../../LLMSelectionDropdown'
 import { ToolSelectionSection } from '../../ToolSelectionSection'
 import { Button } from '../../ui/Button'
@@ -124,7 +124,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
         execution_max_turns: configs.execution_max_turns,
         disable_learning: configs.disable_learning,
         use_code_execution_mode: configs.use_code_execution_mode,
-        use_tool_search_mode: configs.use_tool_search_mode,
         learning_detail_level: configs.learning_detail_level,
         enable_context_offloading: configs.enable_context_offloading,
         disable_parallel_tool_execution: configs.disable_parallel_tool_execution,
@@ -433,8 +432,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
 
     let mode = 'Simple'
     if (effectiveCodeExecMode) mode = 'Code Exec'
-    if (agentConfigs.use_tool_search_mode) mode = 'Tool Search'
-
     return `${mode} mode • ${selectedStepIds.length} steps selected`
   }
 
@@ -528,9 +525,9 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                           <TooltipTrigger asChild>
                             <button
                               type="button"
-                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: false, use_tool_search_mode: false }))}
+                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: false }))}
                               className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                !agentConfigs.use_tool_search_mode && (agentConfigs.use_code_execution_mode === false || (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode))
+                                (agentConfigs.use_code_execution_mode === false || (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode))
                                   ? 'bg-blue-500 text-white'
                                   : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
                               }`}
@@ -546,9 +543,9 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                           <TooltipTrigger asChild>
                             <button
                               type="button"
-                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: true, use_tool_search_mode: false, disable_learning: false }))}
-                              className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                !agentConfigs.use_tool_search_mode && (agentConfigs.use_code_execution_mode === true || (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode))
+                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: true, disable_learning: false }))}
+                              className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                (agentConfigs.use_code_execution_mode === true || (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode))
                                   ? 'bg-green-500 text-white'
                                   : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
                               }`}
@@ -560,23 +557,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                           <TooltipContent><p>Code Exec mode - MCP tools via generated Go code</p></TooltipContent>
                         </Tooltip>
 
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: false, use_tool_search_mode: true }))}
-                              className={`px-2 py-1 text-xs font-medium transition-colors ${
-                                agentConfigs.use_tool_search_mode === true
-                                  ? 'bg-purple-500 text-white'
-                                  : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
-                              }`}
-                            >
-                              <Search className="w-3 h-3 inline mr-1" />
-                              Tool Search
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent><p>Tool Search mode - Dynamic tool discovery</p></TooltipContent>
-                        </Tooltip>
                       </TooltipProvider>
                     </div>
                   </div>

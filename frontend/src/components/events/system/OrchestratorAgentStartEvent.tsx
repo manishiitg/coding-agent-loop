@@ -26,7 +26,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const modelMetadataCatalog = useLLMStore(state => state.modelMetadataCatalog)
   const modeFlags = event as OrchestratorAgentStartEvent & {
     use_code_execution_mode?: boolean
-    use_tool_search_mode?: boolean
     use_learn_code_mode?: boolean
   }
 
@@ -208,7 +207,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                 {getLabel()} Started: {event.agent_name}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
                   {modeFlags.use_learn_code_mode ? ' | Learn Code' : modeFlags.use_code_execution_mode ? ' | Code Exec' : null}
-                  {modeFlags.use_tool_search_mode && ' | Tool Search'}
                   {workshopMeta
                     ? ` | ${workshopMeta}`
                     : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}

@@ -150,13 +150,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating decision step output with question: %s", decisionStep.DecisionEvaluationQuestion))
 
 	// Read learnings for the decision step
-	decisionAgentConfigs := getAgentConfigs(step)
 	var learningHistory string
-	if isGlobalLearningEnabled(decisionAgentConfigs) {
-		learningHistory, _ = hcpo.LoadGlobalLearningHistory(ctx)
-	} else {
-		learningHistory, _ = hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, decisionStepPath, "decision")
-	}
+	learningHistory, _ = hcpo.LoadGlobalLearningHistory(ctx)
 
 	// Code execution mode is determined by createConditionalAgent's 3-rule priority:
 	// Rule 1: CLI providers (claude-code, gemini-cli) always use code execution

@@ -142,13 +142,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
 		metadata.SuccessfulRuns++
-		// Track per-step contributions for global learning
-		if learningPathIdentifier == GlobalLearningID && step != nil {
-			if metadata.StepContributions == nil {
-				metadata.StepContributions = make(map[string]int)
-			}
-			metadata.StepContributions[step.GetID()]++
-		}
 		// Sync successful run count to step_config.json so it's visible alongside optimized flag
 		if step != nil {
 			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRuns)
@@ -267,13 +260,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 				return nil
 			}
 		}
-	}
-
-	// 3. Log suggestion if tool search or code execution mode is active but no pre-discovered tools set
-	isToolSearch := stepConfig.AgentConfigs.UseToolSearchMode != nil && *stepConfig.AgentConfigs.UseToolSearchMode
-	isCodeExec := stepConfig.AgentConfigs.UseCodeExecutionMode != nil && *stepConfig.AgentConfigs.UseCodeExecutionMode
-	if (isToolSearch || isCodeExec) && len(stepConfig.AgentConfigs.PreDiscoveredTools) == 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step %s auto-locked without pre_discovered_tools — consider adding them for efficiency", stepID))
 	}
 
 	// Set LockLearnings = true AND Optimized = true together

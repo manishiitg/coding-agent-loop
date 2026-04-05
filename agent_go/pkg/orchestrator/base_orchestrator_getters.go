@@ -143,16 +143,6 @@ func (bo *BaseOrchestrator) SetUseCodeExecutionMode(enabled bool) {
 	bo.useCodeExecutionMode = enabled
 }
 
-// GetUseToolSearchMode returns the tool search mode setting
-func (bo *BaseOrchestrator) GetUseToolSearchMode() bool {
-	return bo.useToolSearchMode
-}
-
-// SetUseToolSearchMode updates the tool search mode setting
-func (bo *BaseOrchestrator) SetUseToolSearchMode(enabled bool) {
-	bo.useToolSearchMode = enabled
-}
-
 // SetSelectedServers updates the selected MCP servers list
 func (bo *BaseOrchestrator) SetSelectedServers(servers []string) {
 	bo.selectedServers = servers
@@ -161,16 +151,6 @@ func (bo *BaseOrchestrator) SetSelectedServers(servers []string) {
 // SetSelectedTools updates the selected tools list
 func (bo *BaseOrchestrator) SetSelectedTools(tools []string) {
 	bo.selectedTools = tools
-}
-
-// SetPreDiscoveredTools updates the pre-discovered tools list
-func (bo *BaseOrchestrator) SetPreDiscoveredTools(tools []string) {
-	bo.preDiscoveredTools = tools
-}
-
-// GetPreDiscoveredTools returns the pre-discovered tools list
-func (bo *BaseOrchestrator) GetPreDiscoveredTools() []string {
-	return bo.preDiscoveredTools
 }
 
 // GetLLMConfig returns the LLM configuration

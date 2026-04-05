@@ -152,7 +152,7 @@ func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templat
 		"LearningHistory":      templateVars["LearningHistory"],
 		"VariableNames":        templateVars["VariableNames"],
 		"VariableValues":       templateVars["VariableValues"],
-		"CodeExecutionSection": BuildCodeExecutionSection(isCodeExecutionMode, false, ""),
+		"CodeExecutionSection": BuildCodeExecutionSection(isCodeExecutionMode, ""),
 	}
 
 	var result strings.Builder

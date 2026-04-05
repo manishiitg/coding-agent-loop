@@ -143,34 +143,27 @@ func computeDescriptionHash(description string) string {
 }
 
 func canonicalDeclaredExecutionMode(mode string) string {
-	mode = strings.TrimSpace(mode)
-	if mode == "learn_code" {
-		return "code_exec"
-	}
-	return mode
+	return strings.TrimSpace(mode)
 }
 
+// isScriptedExecutionModeConfig returns true when the step is in learn_code mode
+// (persistent scripted code path where main.py is saved and reused across runs).
+// code_exec steps also use code execution but do NOT write persistent scripts.
 func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	if cfg == nil {
 		return false
 	}
-	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
-		return false
-	}
-	return cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode
+	return cfg.DeclaredExecutionMode == "learn_code"
 }
 
 func deriveExecutionModeFromConfig(cfg *AgentConfigs) string {
 	if cfg == nil {
-		return "simple"
-	}
-	if isScriptedExecutionModeConfig(cfg) {
 		return "code_exec"
 	}
-	if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
-		return "tool_search"
+	if cfg.DeclaredExecutionMode == "learn_code" {
+		return "learn_code"
 	}
-	return "simple"
+	return "code_exec"
 }
 
 func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
@@ -181,21 +174,12 @@ func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 	switch canonicalDeclaredExecutionMode(cfg.DeclaredExecutionMode) {
 	case "code_exec":
 		trueVal := true
-		falseVal := false
 		cfg.DeclaredExecutionMode = "code_exec"
 		cfg.UseCodeExecutionMode = &trueVal
-		cfg.UseToolSearchMode = &falseVal
-	case "tool_search":
+	case "learn_code":
 		trueVal := true
-		falseVal := false
-		cfg.DeclaredExecutionMode = "tool_search"
-		cfg.UseCodeExecutionMode = &falseVal
-		cfg.UseToolSearchMode = &trueVal
-	case "simple":
-		falseVal := false
-		cfg.DeclaredExecutionMode = "simple"
-		cfg.UseCodeExecutionMode = &falseVal
-		cfg.UseToolSearchMode = &falseVal
+		cfg.DeclaredExecutionMode = "learn_code"
+		cfg.UseCodeExecutionMode = &trueVal
 	}
 }
 
@@ -210,9 +194,8 @@ func validateExecutionModeDeclaration(cfg *AgentConfigs) []string {
 	}
 
 	validModes := map[string]bool{
-		"code_exec":   true,
-		"tool_search": true,
-		"simple":      true,
+		"code_exec":  true,
+		"learn_code": true,
 	}
 	if !validModes[mode] {
 		return []string{fmt.Sprintf("declared_execution_mode %q is invalid", mode)}
@@ -226,13 +209,6 @@ func validateExecutionModeDeclaration(cfg *AgentConfigs) []string {
 	if strings.TrimSpace(cfg.DeclaredExecutionModeReason) == "" {
 		issues = append(issues, "declared_execution_mode_reason missing")
 	}
-	if (mode == "tool_search" || mode == "simple") && strings.TrimSpace(cfg.CodeExecRejectionReason) == "" {
-		issues = append(issues, "code_exec_rejection_reason missing")
-	}
-	if mode == "simple" && strings.TrimSpace(cfg.ToolSearchRejectionReason) == "" {
-		issues = append(issues, "tool_search_rejection_reason missing")
-	}
-
 	return issues
 }
 
@@ -494,6 +470,45 @@ func (e *WorkshopStepExecution) Snapshot() WorkshopStepSnapshot {
 	}
 }
 
+// finalizeExecStatus sets the final status on a WorkshopStepExecution under lock,
+// with context-cancellation detection. Returns true if the execution was cancelled
+// (either externally via stop_step, or because the context was cancelled/timed out).
+//
+// Usage at the top of every background execution goroutine:
+//
+//	var result string
+//	var execErr error
+//	defer func() {
+//	    cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+//	    // ... eventBridge end event ...
+//	    if !cancelled && notifier != nil {
+//	        notifier.OnExecutionComplete(execID, name, result, meta, execErr)
+//	    }
+//	}()
+//
+// This guarantees OnExecutionComplete fires on every non-cancelled exit path,
+// preventing silent notification drops when goroutines return early.
+func finalizeExecStatus(exec *WorkshopStepExecution, ctx context.Context, result *string, execErr *error) (cancelled bool) {
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if exec.Status == WorkshopStepCancelled {
+		return true
+	}
+	if *execErr != nil {
+		if ctx.Err() != nil || errors.Is(*execErr, context.Canceled) || errors.Is(*execErr, context.DeadlineExceeded) {
+			exec.Status = WorkshopStepCancelled
+			exec.Err = *execErr
+			return true
+		}
+		exec.Status = WorkshopStepFailed
+		exec.Err = *execErr
+	} else {
+		exec.Status = WorkshopStepDone
+		exec.Result = *result
+	}
+	return false
+}
+
 // WorkshopStepRegistry tracks all background step executions for a workshop session
 type WorkshopStepRegistry struct {
 	mu         sync.RWMutex
@@ -680,7 +695,6 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 	caps["selected_global_secret_names"] = secretNames
 
 	caps["use_code_execution_mode"] = iwm.controller.GetUseCodeExecutionMode()
-	caps["use_tool_search_mode"] = iwm.controller.GetUseToolSearchMode()
 
 	manifest["capabilities"] = caps
 	manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
@@ -1128,7 +1142,6 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"PlanJSON":                planContent,
 		"StepConfigSummary":       stepConfigSummary,
 		"IsCodeExecutionMode":     fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
-		"UseToolSearchMode":       fmt.Sprintf("%v", getEffectiveToolSearchMode(agent.GetConfig())),
 		"WorkshopMode":            workshopMode,
 		"UnoptimizedSteps":        unoptimizedSteps,
 		"ProgressSummary":         progressSummary,
@@ -1198,8 +1211,6 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 	// Agent config
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("workflow-builder-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	// Tool search and code execution are mutually exclusive — don't show both
-	config.UseToolSearchMode = !config.UseCodeExecutionMode
 
 	// MCP Servers — use preset if available, else NoServers
 	selectedServers := iwm.controller.GetSelectedServers()
@@ -1288,12 +1299,9 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Do NOT mark steps as optimized or run harden_workflow — premature optimization wastes effort on steps that may be restructured
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
-**When creating or configuring each step, choose its execution mode (preference order):**
-1. **Code execution mode** (best): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
-2. **Tool search mode**: use when discovery is intrinsic to the task — the exact tools, resources, or paths genuinely are not known upfront, or the step is browser-heavy and likely to require many tool calls or repeated page-state inspection before deciding the next action → update_step_config(step_id, use_tool_search_mode=true)
-3. **Simple mode** (default): single tool call, no config needed
-
-When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? Stable logic → code_exec. Runtime discovery → tool_search. If the step is browser-heavy, depends on interactive page inspection, or will likely take many tool calls, start with tool_search unless the full flow can clearly be stabilized into one reusable script.
+**When creating or configuring each step, choose its execution mode:**
+1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
+2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. The LLM writes and runs code inline each time — no persistent script is saved.
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
@@ -1304,6 +1312,8 @@ When in doubt, ask: is the hard part **stable logic** or **runtime discovery**? 
 1. Verify the current foundation directly in `+"`planning/plan.json`"+`. Use targeted `+"`jq`"+` or `+"`cat`"+` to check the root `+"`objective`"+` and `+"`success_criteria`"+` fields.
 2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, ask the user: "What does success look like for this workflow?" Then save via `+"`set_workflow_objective(success_criteria=...)`"+`.{{end}}
 3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, run `+"`infer_objective`"+`, confirm with user before saving.{{end}}
+**Before starting any optimization, read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`). These contain what was tried before, what failed, what was improved, and what the user asked for. Use this context to avoid repeating failed approaches and to build on previous progress.
+
 **The core optimization loop is: run → eval → harden → repeat.**
 
 **harden_workflow** is the primary optimization tool. It reads evaluation reports and execution outputs from a real run, then for EVERY failing step:
@@ -1337,20 +1347,7 @@ This progressive approach is more efficient than running all groups at once beca
 
 For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_from_results`"+` which rewrites the plan from evidence. Use `+"`harden_workflow`"+` when the structure is right but steps need to be more reliable.
 
-**Step mode preference order:**
-
-**1. Code execution mode** (`+"`code_exec`"+`) ← try first for scripted steps
-- Controller tries saved main.py first. If it fails or does not exist, the LLM writes/repairs main.py.
-- **Future runs reuse the saved script, so stable steps often use 0 LLM tokens.**
-- Use for: data transforms, file processing, calculations, fixed API calls, extraction/normalization, stable browser automation with known selectors.
-- Not suitable for: highly reactive browser tasks, steps whose reasoning logic changes each run.
-
-**2. Tool search mode** (`+"`tool_search`"+`) ← fallback when code_exec cannot be stabilized
-- Use when exact tools aren't known upfront or vary at runtime, and for browser-heavy steps needing adaptive interaction.
-
-**3. Simple mode** ← only for tiny one-shot work
-
-**Browser automation guidance:** Use **code_exec** when the browser flow can be scripted with known selectors/navigation. Use **tool_search** when the browser work genuinely depends on runtime discovery or adaptive interaction. Keep **simple** only when the work is genuinely tiny.
+**Step mode preference**: Use `+"`learn_code`"+` (default) for stable scripted steps with reusable main.py. Use `+"`code_exec`"+` for adaptive work that varies between runs. See §7 Execution Modes for details.
 
 If structural changes are needed, use plan modification tools directly — same tools available as in Build mode.
 {{else if eq .WorkshopMode "debugger"}}
@@ -1372,7 +1369,7 @@ If structural changes are needed, use plan modification tools directly — same 
 2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
 3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files (step_1_credentials.json, step_3_login_status.json, etc.). Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
 4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-5. Choose the eval step mode by task shape, not habit. Use **code_exec** when the check can be expressed as stable deterministic Python over files, JSON, markdown, or structured outputs. Use **tool_search** when runtime discovery is genuinely part of the evaluation work. Use **simple** only for very small direct checks. Favor saved Python logic (`+"`main.py`"+`) whenever it makes scoring more reproducible and cheap, but do not force it when discovery is intrinsic.
+5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
 6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
    - `+"`declared_execution_mode`"+` + `+"`declared_execution_mode_reason`"+`
    - rejection reasons for other plausible modes not chosen
@@ -1403,8 +1400,7 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 1. Edit `+"`planning/output_plan.json`"+` directly using shell/file tools.
 2. Keep the file in the single-step report-plan shape — one `+"`step`"+` object, not a `+"`steps`"+` array.
 3. After editing, run **validate_report_plan** to confirm the JSON is valid and the report step shape is acceptable.
-4. Choose report-step mode by the kind of work being done. Use **code_exec** for stable report-prep logic: aggregating metrics, building tables, extracting evidence, preparing chart JSON, or composing repeatable markdown sections from structured data.
-5. Use **tool_search** when the report step genuinely depends on discovering which files, artifacts, or resources are relevant at runtime. The final narrative markdown-writing layer may intentionally stay **code_exec**, **simple**, or more open-ended if prose quality, emphasis, or judgment matters.
+4. Choose report-step mode by task shape. Prefer `+"`learn_code`"+` for stable report-prep logic, `+"`code_exec`"+` for adaptive narrative writing. See §7 Execution Modes.
 6. Use **pre_validation** on the report step when the final markdown must satisfy concrete file checks.
 7. Keep the report focused on human review: what happened, what succeeded, what failed, what was produced, and what should be reviewed later.
 8. If the user wants lightweight visuals in the markdown report, ask for fenced `+"`chart`"+` blocks with JSON data using supported types `+"`bar`"+` or `+"`line`"+`.
@@ -1645,20 +1641,13 @@ After a step runs successfully, always check: could a stale/fake output file pas
 - **Complex steps** that have run successfully a few times: suggest **lock_learnings: true** — freezes existing learnings, skips the learning agent, but still uses accumulated knowledge
 - Only keep learning enabled + unlocked for steps that are actively being iterated on
 - **Wait for maturity**: Don't suggest locking learnings or disabling learning until the step has had several successful runs. Premature optimization can hurt quality.
-- **Global Learning Mode** (`+"`use_global_learning: true`"+` in workflow.json execution_defaults): When a workflow benefits from accumulated domain knowledge shared across ALL steps (e.g., QA testing a website, stock trading, data pipelines), enable global learning. All steps contribute to and read from a single shared skill at 'learnings/_global/' instead of per-step skills. The skill structure follows the Anthropic skill-creator guide (SKILL.md + references/ + scripts/). Global learning never auto-locks — the user decides when to lock via the UI.
-  - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): When enabling global learning, always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
-  - **Locking global learning**: Edit workflow.json to set `+"`lock_global_learning: true`"+` in execution_defaults (use diff_patch_workspace_file). This is a workflow-level lock, not per-step. Review the global skill first with `+"`cat learnings/_global/SKILL.md`"+` before deciding to lock.
-  - Use global learning when:
-    - Steps interact with the same target system (website, API, database) and need shared knowledge about it
-    - Per-step learning would just repeat the same domain facts in each step's skill
-    - The workflow needs holistic knowledge (page structure, auth flows, common selectors, API patterns)
-  - Do NOT use global learning when:
-    - Steps are independent with different tools/servers
-    - Each step has unique, complex tool sequences that benefit from step-specific replay instructions
-  - **Disable learning for irrelevant steps**: When enabling global learning, review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should have learning disabled via `+"`update_step_config(step_id, disable_learning=true)`"+`. This saves tokens and prevents noise in the global skill. Only steps that interact with the target system (the subject of the skill objective) should contribute.
+- **Global Learning**: All steps contribute to and read from a single shared skill at 'learnings/_global/' instead of per-step skills. The skill structure follows the Anthropic skill-creator guide (SKILL.md + references/ + scripts/).
+  - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): Always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
+  - **Locking learnings**: Use `+"`lock_learnings: true`"+` in step config to freeze learnings for a step. Review the global skill first with `+"`cat learnings/_global/SKILL.md`"+` before deciding to lock.
+  - **Disable learning for irrelevant steps**: Review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should have learning disabled via `+"`update_step_config(step_id, disable_learning=true)`"+`. This saves tokens and prevents noise in the global skill. Only steps that interact with the target system (the subject of the skill objective) should contribute.
 
 ### 3. Managing Learnings
-Learnings are stored as SKILL.md files in the workspace at 'learnings/{step-id}/SKILL.md' (or 'learnings/_global/SKILL.md' when global learning is enabled). Each learning file MUST use YAML frontmatter format:
+Learnings are stored as SKILL.md files in the workspace at 'learnings/_global/SKILL.md'. Each learning file MUST use YAML frontmatter format:
 `+"```"+`
 ---
 name: <step title>
@@ -1735,34 +1724,25 @@ After running a step, review it for optimization — but follow this priority or
 
 When the user runs a step, briefly note the highest-priority improvement needed. Don't dump all dimensions at once — focus on what matters most right now.
 
-### 7. Execution Modes: Simple vs Code Exec vs Tool Search
+### 7. Execution Modes: Code Exec vs Learn Code
 
-Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
+Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="learn_code"|"code_exec")**:
 
-- **Simple mode** (all false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
-- **Code Execution mode** (use_code_execution_mode=true): Agent writes reusable Python code that calls MCP tools programmatically via mcpbridge. The saved main.py is tried first on future runs, and if it fails the LLM repairs it. **Use this when**:
+- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `+"`main.py`"+` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Use this for most steps** — it is the default and preferred mode:
   - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
   - Stable browser automation with known selectors, predictable navigation, and a reusable scripted flow
-  - The user explicitly asks for code execution mode
-- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools, resources, or paths genuinely are not known upfront and discovery is part of the task itself.
-- Prefer **Tool Search mode** over **Code Execution mode** for browser-heavy steps that require many tool calls, repeated page-state checks, or adaptive action selection, unless the full browser flow can clearly be stabilized into one reusable script.
-
-Choose the mode that best matches the work. `+"`code_exec`"+` is not automatically better than `+"`tool_search`"+` — if discovery is intrinsic, `+"`tool_search`"+` is the correct answer. Likewise, `+"`simple`"+` is often best for tiny direct tasks where scripting or discovery would add overhead.
+- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning (e.g., exploratory browser automation on dynamic pages).
 
 **Mode declaration is required**: Every optimized step must also store:
 - `+"`declared_execution_mode`"+`
 - `+"`declared_execution_mode_reason`"+`
-- rejection reasons for the other modes that were not chosen:
-  - not `+"`code_exec`"+` → `+"`code_exec_rejection_reason`"+`
-  - not `+"`tool_search`"+` → `+"`tool_search_rejection_reason`"+`
 
-This is deliberate: it forces you to think through why this mode fits better than the alternatives. Do not mark a step optimized until these fields are filled in.
+Do not mark a step optimized until these fields are filled in.
 
 When the user asks to enable scripted execution for a step, use: update_step_config(step_id, use_code_execution_mode=true)
-If the user explicitly mentions legacy learn_code mode, you may still accept it, but normalize it to code_exec behavior.
 
 **Workshop agent behavior for code-exec steps**: When you (the workshop agent) are asked to explore, investigate, or do manual work related to a step marked with code execution mode, you should also adopt the code-exec approach — use **execute_shell_command** to write and run Python/shell scripts that combine multiple MCP tool calls together, rather than making individual tool calls one by one. This mirrors how the step's execution agent works and helps you build reusable scripts and patterns that can inform the step's learnings.
 
@@ -1778,7 +1758,6 @@ If the user explicitly mentions legacy learn_code mode, you may still accept it,
 2. **Pre-validation schema** — A validation_schema is defined with file checks and/or JSON path rules. This catches structural errors without an LLM validation pass.
 3. **Successful execution** — The step has passed at least once with the current config, learnings, and validation.
 4. **No wasted tool calls** — Review the execution: the agent should not have wasted turns on failed tool searches, wrong server names, retried API calls, or unnecessary exploration. If the agent spent turns searching for tools that don't exist, reading files that aren't there, or trying approaches that the learnings should have prevented — the step is NOT optimized yet. Fix the learnings or description first, re-run to confirm clean execution, then mark optimized.
-5. *(Optional)* **Pre-discovered tools** — For tool-search steps, adding explicit tool filtering speeds up execution but is not required for optimization.
 
 **After running harden_workflow and reviewing the changes:**
 - If all failing steps were fixed and no significant structural changes needed, mark passing steps as optimized: update_step_config(step_id, optimized=true).
@@ -1821,7 +1800,7 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 **Workflow:**
 1. Edit `+"`evaluation/evaluation_plan.json`"+` directly with shell/file tools
 2. Default to **one eval step** when a single coherent deterministic check can cover the outcome. Split into multiple eval steps only for genuinely separate concerns.
-3. Choose each eval step's mode by task shape. Use `+"`code_exec`"+` for stable deterministic checks, `+"`tool_search`"+` when runtime discovery is intrinsic to the evaluation, and `+"`simple`"+` for very small direct checks. Favor saved Python when it genuinely improves reproducibility and cost.
+3. Choose each eval step's mode by task shape — prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
 4. Use `+"`update_step_config`"+` to record each eval step's declared mode, why the other plausible modes were not chosen, and whether the description is optimized and free of secrets. In eval mode this persists to `+"`evaluation/step_config.json`"+`.
 5. Run **validate_evaluation_plan** after editing
 6. Run **run_full_evaluation(target_run_folder)** to score against an execution run. Eval execution itself uses the internal `+"`iteration-0`"+` sandbox under `+"`evaluation/runs/`"+`.
@@ -2027,7 +2006,7 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 | Path | Contents |
 |------|----------|
 | learnings/{step-id}/main.py | **Code exec steps**: saved Python script — executed on each run via fast path |
-| learnings/{step-id}/SKILL.md | Prose learnings for tool_search/simple steps |
+| learnings/{step-id}/SKILL.md | Prose learnings for steps |
 | learnings/{step-id}/script_metadata.json | Script version, run counts, success/failure stats |
 
 ### Evaluation
@@ -2109,7 +2088,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		return "", nil, err
 	}
 
-	// Append code execution or tool search instructions from mcpagent library
+	// Append code execution instructions from mcpagent library
 	// These include the {{TOOL_STRUCTURE}} placeholder (replaced by SetSystemPrompt with actual tool index)
 	if agent.GetConfig().UseCodeExecutionMode {
 		codeExecInstructions := prompt.GetCodeExecutionInstructions(workspacePath)
@@ -2117,13 +2096,6 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 			systemPrompt.WriteString("\n\n")
 			systemPrompt.WriteString(codeExecInstructions)
 			logger.Info("Added code execution instructions with tool structure to workshop agent")
-		}
-	} else if agent.GetConfig().UseToolSearchMode {
-		toolSearchInstructions := prompt.GetToolSearchInstructions()
-		if toolSearchInstructions != "" {
-			systemPrompt.WriteString("\n\n")
-			systemPrompt.WriteString(toolSearchInstructions)
-			logger.Info("Added tool search instructions to workshop agent")
 		}
 	}
 
@@ -2546,6 +2518,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				var result string
+				var execErr error
+
 				// Inject tier override into context if specified (concurrent-safe via context, not shared field)
 				if execOpts.Tier >= 1 && execOpts.Tier <= 3 {
 					execCtx = context.WithValue(execCtx, WorkshopTierOverrideKey, execOpts.Tier)
@@ -2566,8 +2541,72 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: stepDisplayName, Cancel: cancel})
 				}
 
-				// Emit orchestrator_agent_start so the frontend creates a grouping card
+				// Variables captured after execution for metadata
+				var isOptimized bool
+				var workshopModeForMeta string
+
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-step-execution",
+							AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
+							Success:       execErr == nil,
+							InputData:     map[string]string{},
+						}
+						if execOpts != nil && execOpts.RunFolder != "" {
+							endEvent.InputData["run_folder"] = execOpts.RunFolder
+						}
+						if isOptimized {
+							endEvent.InputData["step_optimized"] = "true"
+						}
+						// Include workshop mode so frontend can tailor notification messages
+						if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
+							wMode, _ := detectWorkshopMode(iwm.controller.approvedPlan, configs)
+							endEvent.InputData["workshop_mode"] = wMode
+						}
+						// Include step type so frontend can skip notifications for human_input steps
+						if stepType != "" {
+							endEvent.InputData["step_type"] = stepType
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						execMeta := map[string]string{
+							"iteration": iteration,
+							"group_id":  groupID,
+						}
+						if isOptimized {
+							execMeta["step_optimized"] = "true"
+						}
+						// Use frontend-selected mode if available, else fall back to auto-detection
+						if iwm.workshopModeOverride != "" {
+							execMeta["workshop_mode"] = iwm.workshopModeOverride
+						} else if workshopModeForMeta != "" {
+							execMeta["workshop_mode"] = workshopModeForMeta
+						}
+						iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, execMeta, execErr)
+					}
+				}()
+
+				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				if eventBridge != nil {
 					inputData := map[string]string{}
 					if execOpts != nil {
@@ -2599,11 +2638,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
+				result, execErr = iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
 
 				// Check if step is marked as optimized in step config; also capture workshop mode.
-				isOptimized := false
-				workshopModeForMeta := ""
 				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
 					for _, sc := range configs {
 						if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
@@ -2612,90 +2649,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
-				}
-
-				// Update status BEFORE emitting event so query_step sees the final state
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				// Don't overwrite "cancelled" status — stop_step may have already set it
-				if !alreadyCancelled {
-					if err != nil {
-						// Check if this is a context cancellation (user stop, session timeout, etc.)
-						// — treat as cancelled, not failed. Only real failures (validation, execution errors)
-						// should be reported to the agent for debugging.
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
-						Success:       err == nil,
-						InputData:     map[string]string{},
-					}
-					if execOpts != nil && execOpts.RunFolder != "" {
-						endEvent.InputData["run_folder"] = execOpts.RunFolder
-					}
-					if isOptimized {
-						endEvent.InputData["step_optimized"] = "true"
-					}
-					// Include workshop mode so frontend can tailor notification messages
-					if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
-						wMode, _ := detectWorkshopMode(iwm.controller.approvedPlan, configs)
-						endEvent.InputData["workshop_mode"] = wMode
-					}
-					// Include step type so frontend can skip notifications for human_input steps
-					if stepType != "" {
-						endEvent.InputData["step_type"] = stepType
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Notify server layer so bgAgentRegistry marks this execution as done.
-				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					execMeta := map[string]string{
-						"iteration": iteration,
-						"group_id":  groupID,
-					}
-					if isOptimized {
-						execMeta["step_optimized"] = "true"
-					}
-					// Use frontend-selected mode if available, else fall back to auto-detection
-					if iwm.workshopModeOverride != "" {
-						execMeta["workshop_mode"] = iwm.workshopModeOverride
-					} else if workshopModeForMeta != "" {
-						execMeta["workshop_mode"] = workshopModeForMeta
-					}
-					iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, execMeta, err)
 				}
 			}()
 
@@ -2822,6 +2775,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				var result string
+				var execErr error
+
 				stepDisplayName := stepID
 				stepType := ""
 				if iwm.controller.approvedPlan != nil {
@@ -2836,7 +2792,60 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: notifierName, Cancel: cancel})
 				}
 
+				var workshopModeForMeta string
+
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-saved-main-py",
+							AgentName:     notifierName,
+							Success:       execErr == nil,
+							InputData: map[string]string{
+								"saved_script_only": "true",
+							},
+						}
+						if execOpts.RunFolder != "" {
+							endEvent.InputData["run_folder"] = execOpts.RunFolder
+						}
+						if workshopModeForMeta != "" {
+							endEvent.InputData["workshop_mode"] = workshopModeForMeta
+						}
+						if stepType != "" {
+							endEvent.InputData["step_type"] = stepType
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						execMeta := map[string]string{
+							"saved_script_only": "true",
+						}
+						if iwm.workshopModeOverride != "" {
+							execMeta["workshop_mode"] = iwm.workshopModeOverride
+						} else if workshopModeForMeta != "" {
+							execMeta["workshop_mode"] = workshopModeForMeta
+						}
+						iwm.executionNotifier.OnExecutionComplete(execID, notifierName, result, execMeta, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					inputData := map[string]string{
 						"saved_script_only": "true",
@@ -2868,78 +2877,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
+				result, execErr = iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
 
-				workshopModeForMeta := ""
 				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
 					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
-				}
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-saved-main-py",
-						AgentName:     notifierName,
-						Success:       err == nil,
-						InputData: map[string]string{
-							"saved_script_only": "true",
-						},
-					}
-					if execOpts.RunFolder != "" {
-						endEvent.InputData["run_folder"] = execOpts.RunFolder
-					}
-					if workshopModeForMeta != "" {
-						endEvent.InputData["workshop_mode"] = workshopModeForMeta
-					}
-					if stepType != "" {
-						endEvent.InputData["step_type"] = stepType
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					execMeta := map[string]string{
-						"saved_script_only": "true",
-					}
-					if iwm.workshopModeOverride != "" {
-						execMeta["workshop_mode"] = iwm.workshopModeOverride
-					} else if workshopModeForMeta != "" {
-						execMeta["workshop_mode"] = workshopModeForMeta
-					}
-					iwm.executionNotifier.OnExecutionComplete(execID, notifierName, result, execMeta, err)
 				}
 			}()
 
@@ -3036,8 +2977,41 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
-				// Emit orchestrator_agent_start so the frontend creates a grouping card
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-background-task",
+							AgentName:     fmt.Sprintf("Background: %s", name),
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, name, result, nil, execErr)
+					}
+				}()
+
+				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -3052,63 +3026,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				var result string
-				var err error
 				if agentType == "orchestrator" {
-					result, err = iwm.runBackgroundTodoTaskAgent(execCtx, name, instruction)
+					result, execErr = iwm.runBackgroundTodoTaskAgent(execCtx, name, instruction)
 				} else {
-					result, err = iwm.runBackgroundTaskAgent(execCtx, name, instruction)
-				}
-
-				// Update status BEFORE emitting event so query_step sees the final state
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-background-task",
-						AgentName:     fmt.Sprintf("Background: %s", name),
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Notify server layer so bgAgentRegistry marks this execution as done.
-				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, name, result, nil, err)
+					result, execErr = iwm.runBackgroundTaskAgent(execCtx, name, instruction)
 				}
 			}()
 
@@ -3608,11 +3529,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_pdf), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
-				"pre_discovered_tools": map[string]interface{}{
-					"type":        "array",
-					"items":       map[string]interface{}{"type": "string"},
-					"description": "Tool names always available in Tool Search mode without calling search_tools. Use raw tool names (e.g., 'read_sheet', 'list_files'), not server:tool format.",
-				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
@@ -3626,26 +3542,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, enable code execution mode — the agent writes and executes Python/shell code via mcpbridge to interact with MCP tools, rather than calling them directly. Useful for complex data processing or programmatic control over MCP tools. If false, explicitly disables code execution. Omit to inherit the preset default.",
 				},
-				"use_tool_search_mode": map[string]interface{}{
-					"type":        "boolean",
-					"description": "If true, enable tool search mode — the agent dynamically discovers available tools at runtime using search_tools before calling them. Useful when the exact tools needed are not known upfront. If false, tools are provided directly without search. Omit to inherit the preset default.",
-				},
 				"declared_execution_mode": map[string]interface{}{
 					"type":        "string",
-					"enum":        []interface{}{"code_exec", "tool_search", "simple"},
+					"enum":        []interface{}{"code_exec", "learn_code"},
 					"description": "Required mode declaration for this step. Always set this intentionally so the optimizer records the final decision explicitly.",
 				},
 				"declared_execution_mode_reason": map[string]interface{}{
 					"type":        "string",
 					"description": "Required explanation for why the chosen execution mode is the best fit for this step.",
-				},
-				"code_exec_rejection_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Required when declared_execution_mode is 'tool_search' or 'simple'. Explain why code_exec is not appropriate.",
-				},
-				"tool_search_rejection_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Required when declared_execution_mode is 'simple'. Explain why tool_search is unnecessary.",
 				},
 				"description_optimized": map[string]interface{}{
 					"type":        "boolean",
@@ -3832,17 +3736,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.EnabledCustomTools = customTools
 				}
 			}
-			if val, ok := args["pre_discovered_tools"]; ok && val != nil {
-				if arr, ok := val.([]interface{}); ok {
-					pdTools := make([]string, 0, len(arr))
-					for _, v := range arr {
-						if s, ok := v.(string); ok {
-							pdTools = append(pdTools, s)
-						}
-					}
-					targetConfig.AgentConfigs.PreDiscoveredTools = pdTools
-				}
-			}
 			if val, ok := args["enabled_skills"]; ok && val != nil {
 				if arr, ok := val.([]interface{}); ok {
 					enabledSkills := make([]string, 0, len(arr))
@@ -3884,7 +3777,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 											scriptedSuccessRuns = meta.SuccessfulRuns["learn_code"]
 										}
 										if scriptedSuccessRuns < 3 {
-											missing = append(missing, fmt.Sprintf("scripted code successful runs (%d/3) — run the step at least 3 more times in code_exec mode to confirm the script is stable before locking", scriptedSuccessRuns))
+											missing = append(missing, fmt.Sprintf("scripted code successful runs (%d/3) — run the step at least 3 more times in learn_code mode to confirm the script is stable before locking", scriptedSuccessRuns))
 										}
 									}
 								} else {
@@ -3919,13 +3812,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							return sb.String(), nil
 						}
 
-						// Optional suggestion: pre-discovered tools (not blocking)
-						if len(targetConfig.AgentConfigs.PreDiscoveredTools) == 0 && len(targetConfig.AgentConfigs.SelectedTools) == 0 {
-							isToolSearch := targetConfig.AgentConfigs.UseToolSearchMode != nil && *targetConfig.AgentConfigs.UseToolSearchMode
-							if isToolSearch {
-								iwm.controller.GetLogger().Info(fmt.Sprintf("ℹ️ Step %q marked optimized without pre_discovered_tools — consider adding them for tool search efficiency", stepID))
-							}
-						}
 					}
 					targetConfig.AgentConfigs.Optimized = &b
 					// Sync: optimized and lock_learnings move together
@@ -3937,11 +3823,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.UseCodeExecutionMode = &b
 				}
 			}
-			if val, ok := args["use_tool_search_mode"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					targetConfig.AgentConfigs.UseToolSearchMode = &b
-				}
-			}
 			if val, ok := args["declared_execution_mode"]; ok && val != nil {
 				if s, ok := val.(string); ok && s != "" {
 					targetConfig.AgentConfigs.DeclaredExecutionMode = s
@@ -3950,16 +3831,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["declared_execution_mode_reason"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					targetConfig.AgentConfigs.DeclaredExecutionModeReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["code_exec_rejection_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.CodeExecRejectionReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["tool_search_rejection_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.ToolSearchRejectionReason = strings.TrimSpace(s)
 				}
 			}
 			if val, ok := args["description_optimized"]; ok && val != nil {
@@ -3996,8 +3867,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			for _, key := range []string{
 				"declared_execution_mode",
 				"declared_execution_mode_reason",
-				"code_exec_rejection_reason",
-				"tool_search_rejection_reason",
 				"description_optimized",
 				"description_optimization_reason",
 				"description_learnings_alignment_reason",
@@ -4532,48 +4401,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// === 3. Execution Mode Check ===
 			result.WriteString("### Execution Mode\n")
 			isCodeExec := false
-			isToolSearch := false
-			preDiscoveredTools := []string{}
 			if stepCfg != nil {
 				if stepCfg.UseCodeExecutionMode != nil && *stepCfg.UseCodeExecutionMode {
 					isCodeExec = true
 				}
-				if stepCfg.UseToolSearchMode != nil && *stepCfg.UseToolSearchMode {
-					isToolSearch = true
-				}
-				preDiscoveredTools = stepCfg.PreDiscoveredTools
 			}
 			// Check orchestrator defaults if step doesn't override
 			if !isCodeExec && (stepCfg == nil || stepCfg.UseCodeExecutionMode == nil) {
 				isCodeExec = iwm.controller.GetUseCodeExecutionMode()
 			}
-			// Only inherit preset tool search if code exec is NOT enabled
-			// (they are mutually exclusive — don't show both)
-			if !isToolSearch && (stepCfg == nil || stepCfg.UseToolSearchMode == nil) && !isCodeExec {
-				isToolSearch = iwm.controller.GetUseToolSearchMode()
-			}
 
 			if isCodeExec {
 				result.WriteString("Mode: **Code Execution** (CLI-based, tools via code)\n")
 				result.WriteString("   ℹ️ In code execution mode, tool optimization applies differently — the agent calls tools via generated code rather than direct tool calls.\n")
-				if isToolSearch {
-					result.WriteString("   Tool Search: enabled")
-					if len(preDiscoveredTools) > 0 {
-						result.WriteString(fmt.Sprintf(" (pre-discovered: %v)", preDiscoveredTools))
-					}
-					result.WriteString("\n")
-				}
-			} else if isToolSearch {
-				result.WriteString("Mode: **Tool Search** (dynamic tool discovery)\n")
-				if len(preDiscoveredTools) > 0 {
-					result.WriteString(fmt.Sprintf("   Pre-discovered tools (always available): %v\n", preDiscoveredTools))
-				} else {
-					suggestions++
-					result.WriteString("   ⚠️ No `pre_discovered_tools` set. After successful runs, extract frequently used tool names from logs and set them as pre-discovered to skip search overhead.\n")
-				}
 			} else {
-				result.WriteString("Mode: **Simple** (all configured tools loaded upfront)\n")
-				result.WriteString("   ℹ️ Consider converting to Tool Search Mode after successful runs — it loads only needed tools, reducing context size.\n")
+				result.WriteString("Mode: **Code Execution** (default)\n")
 			}
 			result.WriteString("\n")
 
@@ -4645,15 +4487,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							wsList = append(wsList, t)
 						}
 						result.WriteString(fmt.Sprintf("   Workspace/custom: %s\n", strings.Join(wsList, ", ")))
-					}
-
-					// === Pre-discovered Tools Suggestion (Tool Search mode only) ===
-					if isToolSearch && len(preDiscoveredTools) == 0 && len(usedMCPToolNames) > 0 {
-						suggestions++
-						result.WriteString(fmt.Sprintf("\n**Pre-discovered Tools (tool search optimization):**\n"))
-						result.WriteString("⚠️ Tool Search mode is active but no `pre_discovered_tools` set.\n")
-						result.WriteString(fmt.Sprintf("   Based on usage, suggest: `pre_discovered_tools: %v`\n", usedMCPToolNames))
-						result.WriteString("   This makes these tools immediately available without calling `search_tools`.\n")
 					}
 
 					// === MCP Server/Tool Suggestions ===
@@ -4947,13 +4780,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Determine code execution mode — use already-extracted agentConfigs to avoid redundant scan
 			isCodeExecMode := isCodeExecutionModeEnabled(agentConfigs, iwm.controller.GetUseCodeExecutionMode())
 
-			// Read existing learnings — use step ID or _global depending on mode
-			var learningsPathID string
-			if isGlobalLearningEnabled(agentConfigs) {
-				learningsPathID = GlobalLearningID
-			} else {
-				learningsPathID = resolvedID
-			}
+			// Read existing learnings from global learning folder
+			learningsPathID := GlobalLearningID
 			learningsPath := getLearningFolderPathByStepID("", learningsPathID, "", iwm.controller.isEvaluationMode)
 			_ = iwm.controller.ensureStepLearningsFolderExists(ctx, learningsPath)
 			existingLearningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
@@ -4962,11 +4790,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				existingLearningsContent, _ = iwm.controller.formatStepLearningFilesAsHistory(existingLearningFiles)
 			}
 
-			// learningPathIdentifier = step's own ID, or _global if global learning is enabled
-			learningPathIdentifier := resolvedID
-			if isGlobalLearningEnabled(agentConfigs) {
-				learningPathIdentifier = GlobalLearningID
-			}
+			// Always use global learning path
+			learningPathIdentifier := GlobalLearningID
 			resolvedTitle := ResolveVariables(targetStep.GetTitle(), iwm.controller.variableValues)
 			sanitizedTitle := iwm.controller.sanitizeTitleForAgentName(resolvedTitle)
 			agentName := fmt.Sprintf("%s-skill-generation-%s", learningPathIdentifier, sanitizedTitle)
@@ -5071,19 +4896,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"ExistingLearningsContent": existingLearningsContent,
 			}
 
-			// Global learning mode: add template vars for global skill
-			if learningPathIdentifier == GlobalLearningID {
-				templateVars["UseGlobalLearning"] = "true"
-				templateVars["ContributingStepID"] = resolvedID
-				templateVars["ContributingStepTitle"] = targetStep.GetTitle()
-				if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
-					templateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
-				}
-				// Code exec + global: scripts go to per-step folder
-				if isCodeExecMode {
-					docsRoot := GetPromptDocsRoot()
-					templateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, iwm.controller.GetWorkspacePath(), resolvedID)
-				}
+			// Global learning: add template vars for global skill
+			templateVars["UseGlobalLearning"] = "true"
+			templateVars["ContributingStepID"] = resolvedID
+			templateVars["ContributingStepTitle"] = targetStep.GetTitle()
+			if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
+				templateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+			}
+			// Code exec: scripts go to per-step folder
+			if isCodeExecMode {
+				docsRoot := GetPromptDocsRoot()
+				templateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, iwm.controller.GetWorkspacePath(), resolvedID)
 			}
 
 			// Add context dependencies
@@ -5127,6 +4950,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
+
 				// Resolve step title for display
 				learningDisplayName := resolvedID
 				if iwm.controller.approvedPlan != nil {
@@ -5135,8 +4961,39 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 
-				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-step-learning",
+							AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, nil, execErr)
+					}
+				}()
+
+				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -5159,37 +5016,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				)
 				if createErr != nil {
 					logger.Warn(fmt.Sprintf("⚠️ Failed to create learning agent for step %q: %v", resolvedID, createErr))
-					exec.mu.Lock()
-					exec.Status = WorkshopStepFailed
-					exec.Err = createErr
-					exec.mu.Unlock()
-					// Emit end event for failed creation
-					if eventBridge != nil {
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-step-learning",
-							AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
-							Success:       false,
-							Result:        fmt.Sprintf("Failed to create learning agent: %v", createErr),
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), "", nil, createErr)
-					}
+					execErr = createErr
 					return
 				}
 
 				logger.Info(fmt.Sprintf("🧠 Workshop: generating learnings for step %q (guidance: %q, inner=%v)", resolvedID, guidance, stepNum < 1))
-				learningResult, _, execErr := learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
+				var learningResult string
+				learningResult, _, execErr = learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
 
 				// Build result string and update metadata
-				var result string
 				if execErr == nil {
 					updatedFiles, _ := iwm.controller.readStepLearningFiles(execCtx, learningsPath)
 
@@ -5212,56 +5047,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					sb.WriteString(fmt.Sprintf("\nAgent output:\n%s", learningResult))
 					result = sb.String()
-				}
-
-				// Update status BEFORE emitting event so query_step sees the final state
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if execErr != nil {
-						if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = execErr
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = execErr
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
-						Success:       execErr == nil,
-					}
-					if execErr != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Notify server layer so bgAgentRegistry marks this execution as done.
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, nil, execErr)
 				}
 			}()
 
@@ -5303,11 +5088,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
 
-			// Check if global learning is actually enabled
+			// Read execution_defaults for skill objective
 			stepOverrides, _ := iwm.controller.ReadStepOverrides(ctx)
-			if !isGlobalLearningEnabled(stepOverrides) {
-				return "Global learning is not enabled. Set use_global_learning: true in workflow.json execution_defaults first.", nil
-			}
 
 			// Read existing global learnings
 			globalLearningsPath := iwm.controller.getLearningsBasePath() + "/" + GlobalLearningID
@@ -5389,7 +5171,40 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-organize-learnings",
+							AgentName:     "Organize Global Learnings",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -5412,34 +5227,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				)
 				if createErr != nil {
 					logger.Warn(fmt.Sprintf("⚠️ Failed to create organize agent: %v", createErr))
-					exec.mu.Lock()
-					exec.Status = WorkshopStepFailed
-					exec.Err = createErr
-					exec.mu.Unlock()
-					if eventBridge != nil {
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-organize-learnings",
-							AgentName:     "Organize Global Learnings",
-							Success:       false,
-							Result:        fmt.Sprintf("Failed: %v", createErr),
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", "", nil, createErr)
-					}
+					execErr = createErr
 					return
 				}
 
-				organizeResult, _, execErr := learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
+				var organizeResult string
+				organizeResult, _, execErr = learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
 
-				var result string
 				if execErr == nil {
 					updatedFiles, _ := iwm.controller.readStepLearningFiles(execCtx, globalLearningsPath)
 					var sb strings.Builder
@@ -5450,51 +5244,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					sb.WriteString(fmt.Sprintf("\nAgent output:\n%s", organizeResult))
 					result = sb.String()
-				}
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if execErr != nil {
-						if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = execErr
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = execErr
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-organize-learnings",
-						AgentName:     "Organize Global Learnings",
-						Success:       execErr == nil && !isCancelled,
-					}
-					if isCancelled {
-						endEvent.Result = "Cancelled"
-					} else if execErr != nil {
-						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Organize Global Learnings", result, nil, execErr)
 				}
 			}()
 
@@ -5513,7 +5262,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b: optimize_step — background optimization agent
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_step",
-		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It decides whether the step is fundamentally best served by code_exec, tool_search, or simple mode based on real evidence — without assuming code_exec is always better. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
+		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It decides whether the step is fundamentally best served by code_exec or learn_code mode based on real evidence. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5612,6 +5361,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
+
 				// Resolve step title for display
 				debugDisplayName := stepID
 				if iwm.controller.approvedPlan != nil {
@@ -5620,8 +5372,39 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 
-				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-step-debug",
+							AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, nil, execErr)
+					}
+				}()
+
+				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -5636,57 +5419,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runOptimizeStepAgent(execCtx, stepID, focus)
-
-				// Update status BEFORE emitting event so query_step sees the final state
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Notify server layer so bgAgentRegistry marks this execution as done.
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, nil, err)
-				}
+				result, execErr = iwm.runOptimizeStepAgent(execCtx, stepID, focus)
 			}()
 
 			focusInfo := ""
@@ -5826,6 +5559,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
+
 				debugDisplayName := stepID
 				if iwm.controller.approvedPlan != nil {
 					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
@@ -5834,6 +5570,61 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-eval-step-debug",
+							AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder),
+							Success:       execErr == nil,
+							InputData:     map[string]string{},
+						}
+						if targetRunFolder != "" {
+							endEvent.InputData["run_folder"] = targetRunFolder
+						}
+						if iterationName != "" {
+							endEvent.InputData["iteration"] = iterationName
+						}
+						if groupName != "" {
+							endEvent.InputData["group_id"] = groupName
+							endEvent.InputData["group_display_name"] = groupName
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						execMeta := map[string]string{
+							"workshop_mode": "eval",
+						}
+						if targetRunFolder != "" {
+							execMeta["run_folder"] = targetRunFolder
+						}
+						if iterationName != "" {
+							execMeta["iteration"] = iterationName
+						}
+						if groupName != "" {
+							execMeta["group_id"] = groupName
+							execMeta["group_display_name"] = groupName
+						}
+						iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder), result, execMeta, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -5859,78 +5650,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runOptimizeEvalStepAgent(execCtx, stepID, targetRunFolder, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-eval-step-debug",
-						AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder),
-						Success:       err == nil,
-						InputData:     map[string]string{},
-					}
-					if targetRunFolder != "" {
-						endEvent.InputData["run_folder"] = targetRunFolder
-					}
-					if iterationName != "" {
-						endEvent.InputData["iteration"] = iterationName
-					}
-					if groupName != "" {
-						endEvent.InputData["group_id"] = groupName
-						endEvent.InputData["group_display_name"] = groupName
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					execMeta := map[string]string{
-						"workshop_mode": "eval",
-					}
-					if targetRunFolder != "" {
-						execMeta["run_folder"] = targetRunFolder
-					}
-					if iterationName != "" {
-						execMeta["iteration"] = iterationName
-					}
-					if groupName != "" {
-						execMeta["group_id"] = groupName
-						execMeta["group_display_name"] = groupName
-					}
-					iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder), result, execMeta, err)
-				}
+				result, execErr = iwm.runOptimizeEvalStepAgent(execCtx, stepID, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -6041,7 +5761,64 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-report-step-debug",
+							AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Report: %s", stepID), targetRunFolder),
+							Success:       execErr == nil,
+							InputData:     map[string]string{},
+						}
+						if targetRunFolder != "" {
+							endEvent.InputData["run_folder"] = targetRunFolder
+						}
+						if iterationName != "" {
+							endEvent.InputData["iteration"] = iterationName
+						}
+						if groupName != "" {
+							endEvent.InputData["group_id"] = groupName
+							endEvent.InputData["group_display_name"] = groupName
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						execMeta := map[string]string{
+							"workshop_mode": "output",
+						}
+						if targetRunFolder != "" {
+							execMeta["run_folder"] = targetRunFolder
+						}
+						if iterationName != "" {
+							execMeta["iteration"] = iterationName
+						}
+						if groupName != "" {
+							execMeta["group_id"] = groupName
+							execMeta["group_display_name"] = groupName
+						}
+						iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Report: %s", stepID), targetRunFolder), result, execMeta, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6067,78 +5844,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runOptimizeReportStepAgent(execCtx, stepID, targetRunFolder, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-							exec.Err = err
-						} else {
-							exec.Status = WorkshopStepFailed
-							exec.Err = err
-						}
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-report-step-debug",
-						AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Report: %s", stepID), targetRunFolder),
-						Success:       err == nil,
-						InputData:     map[string]string{},
-					}
-					if targetRunFolder != "" {
-						endEvent.InputData["run_folder"] = targetRunFolder
-					}
-					if iterationName != "" {
-						endEvent.InputData["iteration"] = iterationName
-					}
-					if groupName != "" {
-						endEvent.InputData["group_id"] = groupName
-						endEvent.InputData["group_display_name"] = groupName
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					execMeta := map[string]string{
-						"workshop_mode": "output",
-					}
-					if targetRunFolder != "" {
-						execMeta["run_folder"] = targetRunFolder
-					}
-					if iterationName != "" {
-						execMeta["iteration"] = iterationName
-					}
-					if groupName != "" {
-						execMeta["group_id"] = groupName
-						execMeta["group_display_name"] = groupName
-					}
-					iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Report: %s", stepID), targetRunFolder), result, execMeta, err)
-				}
+				result, execErr = iwm.runOptimizeReportStepAgent(execCtx, stepID, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -6211,7 +5917,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-infer-objective",
+							AgentName:     "Infer Objective",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Infer Objective", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6224,51 +5961,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runInferObjectiveAgent(execCtx, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-						} else {
-							exec.Status = WorkshopStepFailed
-						}
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-infer-objective",
-						AgentName:     "Infer Objective",
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-						Data: endEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Infer Objective", result, nil, err)
-				}
+				result, execErr = iwm.runInferObjectiveAgent(execCtx, focus)
 			}()
 
 			logger.Info(fmt.Sprintf("🔍 Workshop: infer_objective agent started in background, execution_id=%q", execID))
@@ -6401,7 +6094,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-optimize-workflow",
+							AgentName:     "Optimize Workflow Structure",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Optimize Workflow Structure", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6414,51 +6138,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runOptimizeWorkflowAgent(execCtx, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-						} else {
-							exec.Status = WorkshopStepFailed
-						}
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-optimize-workflow",
-						AgentName:     "Optimize Workflow Structure",
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-						Data: endEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Optimize Workflow Structure", result, nil, err)
-				}
+				result, execErr = iwm.runOptimizeWorkflowAgent(execCtx, focus)
 			}()
 
 			focusInfo := ""
@@ -6541,7 +6221,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-review-plan",
+							AgentName:     "Review Workflow Plan",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Plan", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6554,51 +6265,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runReviewPlanAgent(execCtx, targetRunFolder, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-						} else {
-							exec.Status = WorkshopStepFailed
-						}
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-review-plan",
-						AgentName:     "Review Workflow Plan",
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-						Data: endEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Plan", result, nil, err)
-				}
+				result, execErr = iwm.runReviewPlanAgent(execCtx, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -6688,7 +6355,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-replan-workflow",
+							AgentName:     "Replan Workflow From Results",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Replan Workflow From Results", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6701,51 +6399,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runReplanWorkflowFromResultsAgent(execCtx, targetRunFolder, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-						} else {
-							exec.Status = WorkshopStepFailed
-						}
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-replan-workflow",
-						AgentName:     "Replan Workflow From Results",
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-						Data: endEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Replan Workflow From Results", result, nil, err)
-				}
+				result, execErr = iwm.runReplanWorkflowFromResultsAgent(execCtx, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -6823,7 +6477,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := cancelled || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-harden-workflow",
+							AgentName:     "Harden Workflow",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Harden Workflow", result, nil, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -6836,51 +6521,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runHardenWorkflowAgent(execCtx, targetRunFolder, focus)
-
-				exec.mu.Lock()
-				alreadyCancelled := exec.Status == WorkshopStepCancelled
-				if !alreadyCancelled {
-					if err != nil {
-						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-							exec.Status = WorkshopStepCancelled
-						} else {
-							exec.Status = WorkshopStepFailed
-						}
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepDone
-						exec.Result = result
-					}
-				}
-				exec.mu.Unlock()
-
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-harden-workflow",
-						AgentName:     "Harden Workflow",
-						Success:       err == nil,
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-						Data: endEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, "Harden Workflow", result, nil, err)
-				}
+				result, execErr = iwm.runHardenWorkflowAgent(execCtx, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -6898,7 +6539,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7h: mark_workflow_optimized — code-based readiness check, no LLM
 	if err := mcpAgent.RegisterCustomTool(
 		"mark_workflow_optimized",
-		"Run a code-based readiness check and mark the workflow as optimized if all criteria pass. Checks: all executable steps are optimized, learnings exist for each step, pre-discovered tools set for tool-search steps, evaluation plan exists, output plan is configured, no orphan learnings or skill references. Writes workflow_optimized=true to plan.json only when every check passes. Returns a detailed checklist either way.",
+		"Run a code-based readiness check and mark the workflow as optimized if all criteria pass. Checks: all executable steps are optimized, learnings exist for each step, evaluation plan exists, output plan is configured, no orphan learnings or skill references. Writes workflow_optimized=true to plan.json only when every check passes. Returns a detailed checklist either way.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -8852,9 +8493,8 @@ You are a read-only step optimization analyst. You analyze execution logs, outpu
 
 ## ROLE
 Perform deep analysis of a step's observed executions and produce a comprehensive optimization report. Optimize by **discovery from real runs**, not by speculation. Your job is to determine whether the step is fundamentally best served by:
-1. `+"`code_exec`"+` for stable logic with known tools
-2. `+"`tool_search`"+` when runtime discovery is intrinsic to the task
-3. `+"`simple`"+` when the step is tiny and direct
+1. `+"`learn_code`"+` for stable reusable scripts (default — see §7 Execution Modes)
+2. `+"`code_exec`"+` for adaptive work that varies between runs
 
 You are **read-only** — you do NOT modify any files, plans, or configurations.
 
@@ -8863,7 +8503,7 @@ You are **read-only** — you do NOT modify any files, plans, or configurations.
 2. **Be Specific**: Reference exact file paths, line numbers, field names, and values in your analysis.
 3. **Be Actionable**: Every recommendation must be something the user can act on immediately.
 4. **Prioritize by Impact**: Rank recommendations by how much they'd improve the step's reliability and output quality.
-5. **Compare modes by fit, not dogma**: Evaluate both `+"`code_exec`"+` and `+"`tool_search`"+` explicitly from the observed run. Do not assume `+"`code_exec`"+` is superior by default. Choose `+"`tool_search`"+` when discovery is genuinely part of the task, not just a symptom of vague instructions or bad config.
+5. **Compare modes by fit, not dogma**: Choose based on observed evidence — see §7 Execution Modes for criteria.
 
 ## STEP CONTEXT
 
@@ -8914,9 +8554,8 @@ All paths relative to workspace root:
 1. **Read execution logs first** — Treat the latest successful or failing run as the main evidence. Check the conversation history for tool calls, retries, dead ends, and whether the agent behaved deterministically or reactively.
 2. **Read actual output files** — Compare output against success criteria and validation schema.
 3. **Discover the best-fit execution mode** — Evaluate:
-   - `+"`code_exec`"+`: Could the observed behavior be captured as a stable Python script with fixed inputs, env vars, deterministic outputs, and a reusable saved `+"`main.py`"+`?
-   - `+"`tool_search`"+`: Did the observed run genuinely need runtime discovery of the right tool/resource/path, such that pre-scripting would be brittle or misleading?
-   - `+"`simple`"+`: Is the step truly tiny and direct, with little value from either scripting or discovery?
+   - `+"`learn_code`"+`: Could the observed work be captured as a stable reusable script?
+   - `+"`code_exec`"+`: Does the work vary too much between runs for a stable script?
    For each mode considered, cite the concrete evidence from the run.
 4. **Review learning artifacts** — For regular steps, inspect SKILL.md and related learning files. For scripted code steps, inspect saved Python scripts, optional SKILL.md notes, and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
 5. **Analyze tool/server usage** — Are there unused servers? Missing tools? Did the run reveal that the step boundary should move so more work can be done in Python?
@@ -8952,23 +8591,21 @@ For each hardcoded value found, recommend the specific variable placeholder to u
 - What patterns are missing that should be captured more clearly in the learning artifact for this mode?
 
 ### Execution Mode Discovery
-- Evaluate `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` as competing fits for the task.
+- Evaluate `+"`code_exec`"+` and `+"`learn_code`"+` as competing fits for the task.
 - For each mode considered, say:
   - **Can it work?** yes / no
   - **Evidence from the observed run**: what in the logs/output supports that conclusion
   - **Why not**: if rejected, what specifically blocks it
 - End with:
   - **Recommended mode now**
-  - **What evidence makes this a better fit than the alternatives**
-  - **What step-description, learning, config, or boundary change would make another mode a better fit later**
+  - **What evidence makes this a better fit than the alternative**
 
 ### Config Recommendations
 - Tool/server scoping: should servers be added or removed?
 - LLM tier: is the current model appropriate for this step's complexity?
 - **Execution mode**: choose the mode that best matches the observed work:
-  1. **Code execution mode** (`+"`use_code_execution_mode=true`"+`): Best when the run evidence shows stable logic with known tools/inputs that can be scripted and reused.
-  2. **Tool search mode** (`+"`use_tool_search_mode=true`"+`): Best when the run evidence shows discovery is genuinely intrinsic to the task, not merely caused by weak config or vague instructions.
-  3. **Simple mode**: Best only when the step is genuinely tiny and direct.
+  1. **Learn code mode** (`+"`learn_code`"+`): Default — saves persistent main.py, 0 LLM tokens when stable.
+  2. **Code execution mode** (`+"`code_exec`"+`): Fresh LLM each run, no saved script.
 - Learning config: should learning be disabled, locked, or detail level changed?
 - **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise. If it WAS used, check whether it could be automated.
 
@@ -9036,10 +8673,10 @@ If this is a todo_task step with sub-agents, analyze tier usage from the routing
 
 ### Priority Actions
 Ranked list of the top 3-5 most impactful changes, with specific instructions for each.
-The first action should usually be the next highest-confidence improvement from the observed run evidence, whether that means stabilizing into `+"`code_exec`"+`, keeping/cleaning `+"`tool_search`"+`, or simplifying the step.
+The first action should usually be the next highest-confidence improvement from the observed run evidence, whether that means stabilizing into `+"`code_exec`"+` or continuing with `+"`learn_code`"+`.
 `)
 
-var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Decide whether code_exec, tool_search, or simple is the best fit from evidence, without assuming code_exec is always superior.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Decide whether code_exec or learn_code is the best fit from evidence.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var evalOptimizationAgentSystemTemplate = MustRegisterTemplate("evalOptimizationAgentSystem", `# Evaluation Step Optimization Agent
 
@@ -9060,8 +8697,7 @@ You are **read-only** — do not modify files.
 2. Prefer deterministic checks first:
    - `+"`pre_validation`"+`
    - `+"`code_exec`"+`
-   - `+"`tool_search`"+`
-   - `+"`simple`"+`
+   - `+"`learn_code`"+`
 3. Prefer a **single eval step** when one coherent deterministic check can cover the outcome. Recommend splitting into multiple eval steps only when there are clearly independent concerns that benefit from separate scoring or validation.
 4. Be specific about exact files, fields, missing checks, overlap, and why a stronger mode is or is not viable.
 5. Do NOT recommend changing the main workflow execution here unless clearly necessary; keep recommendations scoped to `+"`evaluation/`"+` unless you must call out an execution-side blocker.
@@ -9112,7 +8748,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 3. If a target run is provided, use the actual eval step output and the evaluation report entry as primary evidence.
 4. Check whether the step is redundant with common checks like file existence, shape validation, or another eval step.
 5. Decide whether this concern should remain a single eval step or be split into multiple steps. Default to staying single-step unless there is strong evidence for separation.
-6. Decide the best-fit execution mode for the eval step itself based on the actual work required. Prefer saved deterministic Python when it truly fits, but choose `+"`tool_search`"+` when runtime discovery is intrinsic and `+"`simple`"+` when the check is tiny and direct.
+6. Choose the eval step's execution mode based on observed work — prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning.
 7. **Prefer outcome-based evaluation over intermediate file checks.** Ideally, eval steps should verify that the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Checking intermediate execution artifacts (step_1_credentials.json, step_3_login_status.json, etc.) is fragile and redundant with the workflow's own pre-validation. Focus on what the workflow was supposed to *achieve*, not what files it produced along the way.
 
 ## REPORT FORMAT
@@ -9137,7 +8773,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 - Should this concern stay as **one eval step**, or is there a strong reason to split it into multiple eval steps?
 
 ### Execution Mode Recommendation
-- Compare `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` by fit.
+- Compare `+"`code_exec`"+` and `+"`learn_code`"+` by fit.
 - For each rejected alternative, cite concrete evidence.
 - End with:
   - **Single-step or split recommendation**
@@ -9166,8 +8802,8 @@ You are **read-only** — do not modify files.
 
 ## RULES
 1. Base recommendations on the configured report instructions, the completed run artifacts, and any generated markdown report.
-2. Prefer `+"`code_exec`"+` for stable deterministic prep/report-assembly logic, but do not force it when the report work genuinely depends on runtime discovery.
-3. Allow the final narrative markdown step to remain `+"`code_exec`"+`, `+"`simple`"+`, or more open-ended when prose quality and judgment matter.
+2. Prefer `+"`learn_code`"+` for stable deterministic prep/report-assembly logic.
+3. Allow the final narrative markdown step to remain `+"`learn_code`"+` or `+"`code_exec`"+` depending on stability.
 4. Be explicit about what should be moved into deterministic prep versus what should remain narrative.
 5. Do not recommend changing the main workflow unless the report is impossible without a missing upstream artifact.
 
@@ -9219,7 +8855,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 - Would a split into two steps improve reliability?
 
 ### Execution Mode Recommendation
-- Compare `+"`code_exec`"+`, `+"`tool_search`"+`, and `+"`simple`"+` by fit.
+- Compare `+"`code_exec`"+` and `+"`learn_code`"+` by fit.
 - For each rejected alternative, cite concrete evidence.
 - Explicitly answer:
   - **Can this report step itself be `+"`code_exec`"+`?**
@@ -9283,7 +8919,7 @@ var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflow
 
 You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective and success criteria, and produce a structured report that the builder can act on immediately.
 
-Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to create clearer mode fit: `+"`code_exec`"+` for stable scripted logic, `+"`tool_search`"+` when runtime discovery is genuinely part of the work, and `+"`simple`"+` for tiny direct steps.
+Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to create clearer mode fit: `+"`learn_code`"+` for stable scripted logic, `+"`code_exec`"+` for adaptive work. See §7 Execution Modes for details.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files.
@@ -9292,7 +8928,7 @@ Your primary job is structural optimization, but you must also flag plan-level p
 4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
 5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
 6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
-7. **Prefer correct mode fit**: When recommending structure changes, prefer designs that make the intended execution mode obvious. Use `+"`code_exec`"+` for stable scripted logic, `+"`tool_search`"+` when discovery is intrinsic, and `+"`simple`"+` for tiny direct steps.
+7. **Prefer correct mode fit**: `+"`learn_code`"+` for stable scripted logic, `+"`code_exec`"+` for adaptive work. See §7 Execution Modes.
 8. **Check portability hazards**: If plan-visible text contains hardcoded secrets, user-specific values, absolute paths, or run-folder-specific paths, flag them even if they are not yet causing a failure.
 
 ## CONTEXT
@@ -9341,8 +8977,8 @@ Work through these checks in order:
 2. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
 3. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective or success criteria requires is unhandled.
 4. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
-5. **Execution mode fit** — For each step, decide whether the current structure makes `+"`code_exec`"+`, `+"`tool_search`"+`, or `+"`simple`"+` the right mode. If the current structure forces the wrong mode, explain what structural change would unlock a better fit.
-6. **Granularity for mode optimization** — Any step too coarse (multiple distinct outputs, mixed deterministic and discovery-heavy work, should be split)? Any two steps that should be merged because they share the same stable transform and splitting them adds unnecessary handoff overhead? Optimize for clearer mode fit, not just "more code_exec".
+5. **Execution mode fit** — For each step, decide whether the current structure makes `+"`code_exec`"+` or `+"`learn_code`"+` the right mode. If the current structure forces the wrong mode, explain what structural change would unlock a better fit.
+6. **Granularity for mode optimization** — Any step too coarse (multiple distinct outputs, mixed work, should be split)? Any two steps that should be merged because they share the same stable transform and splitting them adds unnecessary handoff overhead?
 7. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
 8. **Redundancy** — Any two steps or routes doing the same work?
 9. **Portability / hardcoded values** — Scan plan-visible fields for hardcoded values that will break reuse across users/groups/environments:
@@ -9368,15 +9004,12 @@ For each problematic step:
 
 ### Execution Mode & Granularity
 For each step where the current design is preventing the best mode:
-- **[actual-step-id]**: current mode=`+"`simple|code_exec|tool_search|unknown`"+` → recommended mode=`+"`code_exec|tool_search|simple`"+`
-- **Why**: <deterministic transform, runtime browser/tool interaction, dynamic tool discovery, etc.>
+- **[actual-step-id]**: current mode=`+"`code_exec|learn_code|unknown`"+` → recommended mode=`+"`code_exec|learn_code`"+`
+- **Why**: <deterministic transform, needs iterative learning, etc.>
 - **Structural fix**: <split before/after [step-id] | merge with [step-id] | keep as-is but rewrite step boundaries>
 
 Use these rules:
-- Prefer `+"`code_exec`"+` for deterministic transforms, extraction, normalization, calculations, and fixed API calls with known tools.
-- Prefer `+"`tool_search`"+` when selecting/discovering the right tool, resource, or path is intrinsic to the work itself.
-- If a step uses `+"`tool_search`"+` only because the step description/config is weak, recommend restructuring toward `+"`code_exec`"+`.
-- If a step mixes deterministic work with exploratory/browser/tool-discovery work, recommend splitting it so each part can use the right mode.
+- Choose `+"`learn_code`"+` for deterministic scripted logic, `+"`code_exec`"+` for adaptive work (see §7 Execution Modes).
 - If two adjacent deterministic steps only exist because of an artificial file handoff and would be cleaner as one stable transform, recommend merging them.
 
 ### Missing Steps / Routes
@@ -9482,7 +9115,7 @@ Review the plan through these lenses:
 1. **Decision justification** — Does each important design choice have a clear reason, or does it look accidental?
 2. **Step boundaries** — Are steps split or merged in a way that makes execution harder, more ambiguous, or more fragile?
 3. **Step type choice** — Is each step using the right type for the actual job?
-4. **Execution mode choice** — Do declared/current modes fit the work, or are they cargo-cult choices? Is `+"`tool_search`"+` being used where discovery is not intrinsic? Is `+"`code_exec`"+` being used where runtime discovery is the real work?
+4. **Execution mode choice** — Does the declared mode fit the observed work? See §7 Execution Modes.
 5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
 6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
@@ -9526,7 +9159,7 @@ This tool is **evidence-driven and mutating**:
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
-6. **Prefer the mode that matches the work**: When restructuring, choose `+"`code_exec`"+` for stable deterministic logic, `+"`tool_search`"+` when runtime discovery is intrinsic, and `+"`simple`"+` for tiny direct steps. Do not maximize `+"`code_exec`"+` blindly.
+6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable logic, `+"`code_exec`"+` for adaptive work.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
 
@@ -9579,7 +9212,7 @@ Prioritize this area while replanning: **{{.Focus}}**
    - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` / `+"`decision`"+` when the results show hidden branching
 4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
 5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
-6. If step configs obviously need mode changes because of the new structure, update them too. Prefer `+"`code_exec`"+` whenever the run evidence shows a stable Python path.
+6. Update step execution modes if the new structure changes the best fit. Prefer `+"`learn_code`"+` for stable paths, `+"`code_exec`"+` for adaptive work.
 7. End with a concise summary of what you changed, why, and what should be run next to verify the new plan.
 
 ## OUTPUT FORMAT
@@ -9622,7 +9255,7 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 3. **Three fix types per failing step** (apply all that are relevant):
    a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
    b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (update_regular_step, update_todo_task_route, etc.).
-   c. **Code/learning fixes** — If the step uses code_exec (has learnings/{step-id}/main.py), patch the script directly with diff_patch_workspace_file. If it uses tool_search, update learnings/{step-id}/SKILL.md.
+   c. **Code/learning fixes** — If the step uses code_exec (has learnings/{step-id}/main.py), patch the script directly with diff_patch_workspace_file. Update learnings/{step-id}/SKILL.md for supplemental notes.
 4. **Do not change step structure** — Do not add, remove, or reorder steps. Use replan_workflow_from_results for structural changes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
 6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true and lock_learnings=true.
@@ -9677,7 +9310,7 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 | Path | Contents |
 |------|----------|
 | `+"`learnings/{step-id}/main.py`"+` | Saved Python script for code_exec steps — **this is what gets executed on each run** |
-| `+"`learnings/{step-id}/SKILL.md`"+` | Prose learnings for tool_search steps |
+| `+"`learnings/{step-id}/SKILL.md`"+` | Prose learnings and supplemental notes |
 | `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, success/failure stats |
 
 ### Plan and config
@@ -10199,7 +9832,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("optimization-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Workspace shell for file reading
@@ -10378,7 +10010,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeEvalStepAgent(ctx context.Cont
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("eval-optimization-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
@@ -10492,7 +10123,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeReportStepAgent(ctx context.Co
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("report-optimization-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
@@ -10563,7 +10193,6 @@ func (iwm *InteractiveWorkshopManager) runInferObjectiveAgent(ctx context.Contex
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("infer-objective-agent", 20, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
@@ -10611,7 +10240,7 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
 			optimized := false
-			mode := "simple"
+			mode := "code_exec"
 			declaredMode := ""
 			lockLearnings := false
 			disableLearning := false
@@ -10623,8 +10252,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
 					mode = "code_exec"
-				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
-					mode = "tool_search"
 				}
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
@@ -10680,7 +10307,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("optimize-workflow-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
@@ -10732,7 +10358,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
 			optimized := false
-			mode := "simple"
+			mode := "code_exec"
 			declaredMode := ""
 			lockLearnings := false
 			disableLearning := false
@@ -10744,8 +10370,6 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 				}
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
 					mode = "code_exec"
-				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
-					mode = "tool_search"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.LockLearnings != nil {
@@ -10799,7 +10423,6 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-plan-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
@@ -10849,7 +10472,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
 			optimized := false
-			mode := "simple"
+			mode := "code_exec"
 			declaredMode := ""
 			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
 				optimized = *sc.AgentConfigs.Optimized
@@ -10857,8 +10480,6 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
 					mode = "code_exec"
-				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
-					mode = "tool_search"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 			}
@@ -10903,7 +10524,6 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("replan-workflow-from-results-agent", 90, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	allowedToolNames := []string{
@@ -10965,7 +10585,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		var sb strings.Builder
 		for _, sc := range stepConfigs {
 			optimized := false
-			mode := "simple"
+			mode := "code_exec"
 			declaredMode := ""
 			successfulRuns := 0
 			locked := false
@@ -10975,8 +10595,6 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 			if sc.AgentConfigs != nil {
 				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
 					mode = "code_exec"
-				} else if sc.AgentConfigs.UseToolSearchMode != nil && *sc.AgentConfigs.UseToolSearchMode {
-					mode = "tool_search"
 				}
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.SuccessfulRuns != nil {
@@ -11027,7 +10645,6 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("harden-workflow-agent", 120, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = false
-	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	allowedToolNames := []string{
@@ -11211,15 +10828,6 @@ func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Cont
 			}
 			if !hasMDLearnings {
 				stepIssues = append(stepIssues, "no learnings")
-			}
-		}
-
-		// 2e. Pre-discovered tools for tool-search steps
-		useToolSearch := agentCfg != nil && agentCfg.UseToolSearchMode != nil && *agentCfg.UseToolSearchMode
-		if useToolSearch {
-			hasPreDiscovered := agentCfg != nil && len(agentCfg.PreDiscoveredTools) > 0
-			if !hasPreDiscovered {
-				stepIssues = append(stepIssues, "tool-search mode but no pre-discovered tools")
 			}
 		}
 
@@ -11558,7 +11166,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	config := iwm.controller.CreateStandardAgentConfigWithLLM(fmt.Sprintf("Background: %s", name), 80, agents.OutputFormatStructured, llmConfigToUse)
 	isCodeExecMode := iwm.controller.GetUseCodeExecutionMode()
 	config.UseCodeExecutionMode = isCodeExecMode
-	config.UseToolSearchMode = iwm.controller.GetUseToolSearchMode()
 	config.EnableParallelToolExecution = true
 
 	// --- Tools: same as default execution agent (all workspace tools) ---

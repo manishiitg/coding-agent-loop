@@ -124,7 +124,6 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         newLLMConfig,
         activePreset.useCodeExecutionMode,
         activePreset.enableContextSummarization,
-        activePreset.useToolSearchMode,
         activePreset.enableBrowserAccess,
         activePreset.enableContextEditing,
         activePreset.selectedSecrets,

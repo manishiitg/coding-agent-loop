@@ -229,7 +229,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 // buildCodeExecBestPractices returns the Python best practices section for code_exec mode.
 // Returns "" when not in code execution mode or no variables/inputs present.
 func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
-	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" || templateVars["UseToolSearchMode"] == "true" {
+	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" {
 		return ""
 	}
 	var varMappingLines []string
@@ -267,21 +267,6 @@ func sanitizeLearnCodeDescription(desc string) string {
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
-func buildBridgeBackedToolSearchSection() string {
-	return `## Bridge-Backed Tool Search Mode
-
-This step is logically in **tool_search** mode, but this provider session reaches MCP tools through the HTTP bridge.
-
-{{TOOL_STRUCTURE}}
-
-**How to work in this mode:**
-1. Inspect the available servers and tools in the tool index above.
-2. If you need the exact schema for a tool, call ` + "`" + `get_api_spec(server_name="...", tool_name="...")` + "`" + `.
-3. Use ` + "`" + `execute_shell_command` + "`" + ` to call tools via ` + "`" + `MCP_API_URL` + "`" + ` and ` + "`" + `MCP_API_TOKEN` + "`" + `.
-4. Focus on completing the current step with targeted calls. Do **not** create or rely on a reusable ` + "`" + `main.py` + "`" + ` unless the step is explicitly in scripted code mode.
-`
-}
-
 // executionOnlySystemPromptProcessor generates the system prompt for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
@@ -301,13 +286,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
-	// Build code execution or tool search section using common builder
-	useToolSearchMode := templateVars["UseToolSearchMode"] == "true"
-	useCodeStyleRules := isCodeExecutionMode && !useToolSearchMode
-	codeExecutionSection := BuildCodeExecutionSection(isCodeExecutionMode, useToolSearchMode, workspacePath)
-	if isCodeExecutionMode && useToolSearchMode {
-		codeExecutionSection = buildBridgeBackedToolSearchSection()
-	}
+	// Build code execution section using common builder
+	useCodeStyleRules := isCodeExecutionMode
+	codeExecutionSection := BuildCodeExecutionSection(isCodeExecutionMode, workspacePath)
 
 	// Learn code mode: append instructions to write main.py (added on top of code execution section)
 	isLearnCodeMode := templateVars["IsLearnCodeMode"] == "true"

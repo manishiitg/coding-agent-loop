@@ -117,8 +117,6 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.ServerNames,
 		boa.config.SelectedTools,
 		boa.config.UseCodeExecutionMode,
-		boa.config.UseToolSearchMode,
-		boa.config.PreDiscoveredTools,
 		boa.config.Mode,
 		boa.tracer,
 		traceID,
@@ -558,8 +556,6 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		}
 	}
 
-	effectiveToolSearchMode := boa.config.UseToolSearchMode || boa.config.LogicalUseToolSearchMode
-
 	eventData := &events.OrchestratorAgentStartEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp:     time.Now(),
@@ -573,7 +569,6 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		ServersCount:         len(boa.config.ServerNames),
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
-		UseToolSearchMode:    effectiveToolSearchMode,
 		SystemPrompt:         fullSystemPrompt,
 		UserMessage:          userMessage,
 	}

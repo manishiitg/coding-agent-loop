@@ -307,7 +307,6 @@ export const ModePresetBar: React.FC = () => {
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
     enableContextSummarization?: boolean,
-    useToolSearchMode?: boolean,
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
@@ -328,7 +327,6 @@ export const ModePresetBar: React.FC = () => {
         useCodeExecutionMode,
         editingPreset?.id,
         enableContextSummarization,
-        useToolSearchMode,
         enableBrowserAccess,
         undefined, // enableContextEditing
         selectedSecrets,

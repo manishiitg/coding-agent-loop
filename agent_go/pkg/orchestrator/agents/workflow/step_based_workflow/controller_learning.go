@@ -3,7 +3,6 @@ package step_based_workflow
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -62,12 +61,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// LOCK LEARNINGS: If learnings are locked, skip the entire learning phase (both success and failure)
 	// Locked means the learnings are considered final — no further learning needed
-	// For global learning: check lock_global_learning from execution_defaults
-	// For per-step learning: check lock_learnings from step config
 	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
-	if learningPathIdentifier == GlobalLearningID && agentConfigs != nil && agentConfigs.LockGlobalLearning != nil && *agentConfigs.LockGlobalLearning {
-		isLearningsLocked = true
-	}
 	if isLearningsLocked {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked for step %s - skipping success learning phase entirely", step.GetID()))
 		return nil
@@ -111,24 +105,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		return metadataErr
 	}
 
-	// LIMIT SUCCESS LEARNING: Check if we already have sufficient successful learnings (>= 3)
-	// If so, skip success learning but keep unlocked to allow failure learning
-	// Global learning: no auto-limit — human decides when to lock
-	metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-	if learningPathIdentifier != GlobalLearningID {
-		if err == nil && metadata != nil {
-			if metadata.SuccessfulRuns >= 3 {
-				hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRuns, learningPathIdentifier))
-				// Skip learning but record turnCount (without incrementing counters)
-				// This effectively "locks" success learning but keeps the step unlocked for failure learning
-				_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRuns))
-				return nil
-			}
-		} else if err != nil {
-			// Log warning but continue if metadata read fails (assume 0 learnings)
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning metadata for limit check: %v (continuing)", err))
-		}
-	}
+	// No auto-limit on learning — human decides when to lock via lock_learnings
 
 	// Skip learning if "none" is selected or learning is disabled
 	// CODE EXECUTION MODE: Force learning enabled regardless of step config
@@ -226,19 +203,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
 	}
 
-	// Global learning mode: pass flag, contributing step info, and skill objective
-	if learningPathIdentifier == GlobalLearningID {
-		successLearningTemplateVars["UseGlobalLearning"] = "true"
-		successLearningTemplateVars["ContributingStepID"] = step.GetID()
-		successLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
-		if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
-			successLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
-		}
-		// Code exec + global: scripts go to per-step folder, domain knowledge to global
-		if isCodeExecutionMode {
-			docsRoot := GetPromptDocsRoot()
-			successLearningTemplateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, hcpo.GetWorkspacePath(), step.GetID())
-		}
+	// Global learning: pass contributing step info and skill objective
+	successLearningTemplateVars["UseGlobalLearning"] = "true"
+	successLearningTemplateVars["ContributingStepID"] = step.GetID()
+	successLearningTemplateVars["ContributingStepTitle"] = step.GetTitle()
+	if agentConfigs != nil && agentConfigs.GlobalSkillObjective != "" {
+		successLearningTemplateVars["GlobalSkillObjective"] = agentConfigs.GlobalSkillObjective
+	}
+	// Code exec: scripts go to per-step folder, domain knowledge to global
+	if isCodeExecutionMode {
+		docsRoot := GetPromptDocsRoot()
+		successLearningTemplateVars["StepScriptsPath"] = fmt.Sprintf("%s/%s/learnings/%s/scripts", docsRoot, hcpo.GetWorkspacePath(), step.GetID())
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
@@ -456,29 +431,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Started tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
 
 	go func() {
-		bgErr := hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
-
-		result := fmt.Sprintf("Success learning completed for %s", stepLabel)
-		exec.mu.Lock()
-		alreadyCancelled := exec.Status == WorkshopStepCancelled
-		if !alreadyCancelled {
-			if bgErr != nil {
-				if execCtx.Err() != nil || errors.Is(bgErr, context.Canceled) || errors.Is(bgErr, context.DeadlineExceeded) {
-					exec.Status = WorkshopStepCancelled
-				} else {
-					exec.Status = WorkshopStepFailed
-				}
-				exec.Err = bgErr
-				result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, bgErr)
-			} else {
-				exec.Status = WorkshopStepDone
-				exec.Result = result
+		var result string
+		var execErr error
+		defer func() {
+			cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+			if !cancelled && hcpo.workshopExecutionNotifier != nil {
+				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, execErr)
 			}
-		}
-		exec.mu.Unlock()
+		}()
 
-		if hcpo.workshopExecutionNotifier != nil && !alreadyCancelled {
-			hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, bgErr)
+		execErr = hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+		if execErr != nil {
+			result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, execErr)
+		} else {
+			result = fmt.Sprintf("Success learning completed for %s", stepLabel)
 		}
 	}()
 

@@ -556,7 +556,6 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 		"selected_skills":         sctx.Capabilities.SelectedSkills,
 		"browser_mode":            sctx.Capabilities.BrowserMode,
 		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
-		"use_tool_search_mode":    sctx.Capabilities.UseToolSearchMode,
 	}
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
@@ -715,8 +714,6 @@ func (s *SchedulerService) generateWorkshopScheduleReport(ctx context.Context, s
 		workshopCfg.SelectedServers,
 		workshopCfg.SelectedTools,
 		workshopCfg.UseCodeExecutionMode,
-		workshopCfg.UseToolSearchMode,
-		workshopCfg.PreDiscoveredTools,
 		workshopCfg.MCPConfigPath,
 		workshopCfg.LLMConfig,
 		100,
@@ -808,7 +805,6 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"selected_skills":         sctx.Capabilities.SelectedSkills,
 		"browser_mode":            sctx.Capabilities.BrowserMode,
 		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
-		"use_tool_search_mode":    sctx.Capabilities.UseToolSearchMode,
 	}
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)

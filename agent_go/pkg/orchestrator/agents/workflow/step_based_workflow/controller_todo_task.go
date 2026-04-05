@@ -128,7 +128,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	isLearningDisabledStep := stepConfig != nil && stepConfig.DisableLearning != nil && *stepConfig.DisableLearning
 	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
 	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
-	learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
@@ -136,28 +135,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	default:
 	}
 
-	// Load orchestrator learnings — provide file path reference instead of full content
-	// Global learning mode: read from _global folder; otherwise check step-specific folder
+	// Load orchestrator learnings from global learning skill
 	var orchestratorLearningHistory string
 	if isLearningDisabled {
 		orchestratorLearningHistory = ""
-	} else if isGlobalLearningEnabled(stepConfig) {
-		// Global learning: read from shared workflow-level skill
-		orchestratorLearningHistory, _ = hcpo.readGlobalLearningHistory(ctx)
 	} else {
-		// Per-step: check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
-		docsRoot := GetPromptDocsRoot()
-		orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
-		_, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
-		if err != nil {
-			// Fall back to legacy format
-			orchestratorLearningFilePath = fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-			_, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
-		}
-		if err == nil {
-			absLearningPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), orchestratorLearningFilePath)
-			orchestratorLearningHistory = fmt.Sprintf("📚 **Orchestrator learnings available** at `%s`. Read this file with execute_shell_command before delegating sub-agents — it contains error recovery patterns, system behaviors, and validated sequences from previous runs.", absLearningPath)
-		}
+		orchestratorLearningHistory, _ = hcpo.readGlobalLearningHistory(ctx)
 	}
 
 	// Build template variables for orchestrator
@@ -571,9 +554,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		if agent.GetConfig().UseCodeExecutionMode {
 			templateVars["IsCodeExecutionMode"] = "true"
 		}
-		if getEffectiveToolSearchMode(agent.GetConfig()) {
-			templateVars["UseToolSearchMode"] = "true"
-		}
 		// Show tools reference section for CLI providers ONLY when NOT in code execution mode.
 		// In code exec mode, the {{TOOL_STRUCTURE}} JSON already provides the authoritative tool index.
 		provider := agent.GetConfig().LLMConfig.Primary.Provider
@@ -623,9 +603,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing generic agent for task: %s", taskTitle))
 
-	// TEMP: Force simple agent mode for generic sub-agents — always disable code execution and tool search
-	// TODO: Remove this override once todo task step supports tool_search/code_exec agent types properly
-	useToolSearchMode := boolPtr(false)
 	useCodeExecutionMode := boolPtr(false)
 
 	// Create a synthetic RegularPlanStep for the generic execution
@@ -650,7 +627,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 			}
 			return &AgentConfigs{
 				DisableLearning:              boolPtr(true), // No learning for generic agent
-				UseToolSearchMode:            useToolSearchMode,
 				UseCodeExecutionMode:         useCodeExecutionMode,
 				DisableParallelToolExecution: disableParallelToolExec, // inherit from parent
 			}

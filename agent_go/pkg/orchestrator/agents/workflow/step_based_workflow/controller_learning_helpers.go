@@ -79,57 +79,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterf
 	return nil
 }
 
-// LoadStepLearningHistory loads and formats learning history for a step.
-// Returns empty string if no learnings found or on error.
-// Uses stepID for learning folder identification (supports inner steps).
-func (hcpo *StepBasedWorkflowOrchestrator) LoadStepLearningHistory(
-	ctx context.Context,
-	stepID string,
-	stepIndex int,
-	stepPath string,
-	stepType string,
-) (string, error) {
-	if stepID == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Cannot load learnings: %s step has no ID", stepType))
-		return "", nil
-	}
-
-	// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
-	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
-
-	// Check if learnings folder exists and has files
-	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndex, stepPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if %s step learnings folder is empty for step %s: %v, proceeding without learnings", stepType, stepID, err))
-		// Continue anyway, readStepLearningFiles will handle non-existent folder
-	}
-
-	if learningsFolderEmpty {
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 %s step %s learnings folder is empty or does not exist: %s (proceeding without learnings)", stepType, stepID, stepLearningsPath))
-		return "", nil
-	}
-
-	// Read learning files from step folder
-	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s for %s step: %v - will proceed without learnings", stepLearningsPath, stepType, err))
-		return "", nil
-	}
-
-	if len(learningFiles) == 0 {
-		return "", nil
-	}
-
-	// Format learnings for system prompt
-	formattedLearnings, _ := hcpo.formatStepLearningFilesAsHistory(learningFiles)
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded %d learning file(s) for %s step agent system prompt", len(learningFiles), stepType))
-
-	return formattedLearnings, nil
-}
-
-// isGlobalLearningEnabled checks if global (workflow-level) learning is enabled for the given agent configs.
+// isGlobalLearningEnabled is kept for backward compatibility but always returns true.
+// Global learning is now the only learning mode — per-step learning has been deprecated.
 func isGlobalLearningEnabled(agentConfigs *AgentConfigs) bool {
-	return agentConfigs != nil && agentConfigs.UseGlobalLearning != nil && *agentConfigs.UseGlobalLearning
+	return true
 }
 
 // LoadGlobalLearningHistory loads and formats the global workflow-level learning history.

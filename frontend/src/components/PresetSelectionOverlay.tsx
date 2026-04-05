@@ -88,7 +88,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
     enableContextSummarization?: boolean,
-    useToolSearchMode?: boolean,
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
     _selectedGlobalSecretNames?: string[] | null,
@@ -106,7 +105,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     
     try {
       // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, undefined, selectedSecrets)
+      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, undefined, selectedSecrets)
       
       if (!newPreset) {
         console.error('Failed to create preset')

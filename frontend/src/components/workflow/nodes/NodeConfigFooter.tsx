@@ -38,8 +38,6 @@ interface NodeConfigFooterProps {
   hasLargeOutput?: boolean
   learningAfterLoopIteration?: boolean
   useCodeExecutionMode?: boolean
-  useToolSearchMode?: boolean
-  preDiscoveredTools?: string[]
 }
 
 export const NodeConfigFooter = memo(({
@@ -62,13 +60,11 @@ export const NodeConfigFooter = memo(({
   hasLargeOutput = false,
   learningAfterLoopIteration = false,
   useCodeExecutionMode = false,
-  useToolSearchMode = false,
-  preDiscoveredTools = []
 }: NodeConfigFooterProps) => {
   const [isExpanded, setIsExpanded] = useState(false)
 
-  // Determine mode: simple mode is neither code exec nor tool search
-  const isSimpleMode = !useCodeExecutionMode && !useToolSearchMode
+  // Determine mode: simple mode is not code exec
+  const isSimpleMode = !useCodeExecutionMode
   const hasConfig = description ||
     successCriteria ||
     routeName ||
@@ -79,8 +75,7 @@ export const NodeConfigFooter = memo(({
     hasWorkspaceTools ||
     hasHumanTools ||
     hasLargeOutput ||
-    learningAfterLoopIteration ||
-    preDiscoveredTools.length > 0
+    learningAfterLoopIteration
 
   if (!hasConfig) {
     return null
@@ -134,27 +129,6 @@ export const NodeConfigFooter = memo(({
           </span>
         ))}
 
-        {/* TOOL SEARCH MODE: Pre-discovered tools - yellow */}
-        {useToolSearchMode && preDiscoveredTools.length > 0 && (
-          <span
-            className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300"
-            title={`Pre-discovered tools: ${preDiscoveredTools.join(', ')}`}
-          >
-            {preDiscoveredTools.length <= 3
-              ? preDiscoveredTools.join(', ')
-              : `${preDiscoveredTools.slice(0, 2).join(', ')} +${preDiscoveredTools.length - 2} more`}
-          </span>
-        )}
-
-        {/* TOOL SEARCH MODE: De-emphasized server info - muted gray, smaller */}
-        {useToolSearchMode && effectiveServers.length > 0 && (
-          <span
-            className="px-1.5 py-0.5 rounded-md text-[9px] font-medium bg-gray-100 dark:bg-gray-800/40 text-gray-500 dark:text-gray-500"
-            title={`Searchable servers: ${effectiveServers.join(', ')}`}
-          >
-            {effectiveServers.length === 1 ? effectiveServers[0] : `${effectiveServers.length} servers`}
-          </span>
-        )}
         {hasWorkspaceTools && workspaceToolsInfo && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300" title={`Workspace tools: ${workspaceToolsInfo.enabled}/${workspaceToolsInfo.total}`}>
             WS: {workspaceToolsInfo.enabled}/{workspaceToolsInfo.total}

@@ -545,22 +545,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) addCompletedStepIndex(progress *StepP
 	hcpo.GetLogger().Debug(fmt.Sprintf("✅ Added step %d to completed list (total: %d)", stepIndex+1, len(progress.CompletedStepIndices)))
 }
 
-// getLearningPathIdentifier returns a unique identifier for learning folder based on step ID (NEW FORMAT)
-// For all steps (regular, branch, sub-agent): "{stepID}"
-// All steps have their own unique step IDs, so we just use the stepID directly
-func getLearningPathIdentifier(stepID string, stepPath string) string {
-	// All steps (regular, branch, sub-agent) have their own unique step IDs
-	// Just use the stepID directly without any suffix
-	return stepID
-}
-
-// getEffectiveLearningPathIdentifier returns the learning path identifier,
-// routing to the global learning folder when global learning is enabled.
+// getEffectiveLearningPathIdentifier returns the step ID for metadata tracking.
+// The learning agent always writes to the _global skill folder (controlled by the template),
+// but metadata is tracked per step for clarity.
 func getEffectiveLearningPathIdentifier(stepID string, stepPath string, agentConfigs *AgentConfigs) string {
-	if isGlobalLearningEnabled(agentConfigs) {
-		return GlobalLearningID
-	}
-	return getLearningPathIdentifier(stepID, stepPath)
+	return stepID
 }
 
 // executeConditionalStep is now in controller_conditional.go
@@ -951,7 +940,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in applyStepConfigToAgentConfig.
 		var isCodeExecutionMode bool
 		agentConfigs := getAgentConfigs(step)
-		if (agentConfigs == nil || (agentConfigs.UseCodeExecutionMode == nil && agentConfigs.UseToolSearchMode == nil)) && step.GetID() != "" {
+		if (agentConfigs == nil || agentConfigs.UseCodeExecutionMode == nil) && step.GetID() != "" {
 			if stepConfigs, err := hcpo.ReadStepConfigs(ctx); err == nil {
 				for _, sc := range stepConfigs {
 					if sc.ID == step.GetID() && sc.AgentConfigs != nil {
@@ -968,16 +957,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode: %v", isCodeExecutionMode))
 		}
-		// Determine tool search mode: Priority: step config > preset default
-		// Code execution mode and tool search mode are mutually exclusive
-		isToolSearchMode := hcpo.getToolSearchMode(agentConfigs)
-		if isCodeExecutionMode {
-			isToolSearchMode = false
-		}
 		// Scripted code mode implies code execution mode
 		if isLearnCodeMode {
 			isCodeExecutionMode = true
-			isToolSearchMode = false
 			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Persistent scripted mode enabled for step %d — forcing code execution mode", stepIndex+1))
 		}
 
@@ -1080,7 +1062,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"KnowledgebasePath":     toAbsPath(knowledgebasePath),                              // Absolute knowledgebase folder path
 			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                       // Whether knowledgebase is enabled
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                    // Code execution mode flag (step-specific or preset)
-			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),                       // Tool search mode flag (step-specific or preset)
 			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
 			"FolderGuardReadPaths":  strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),  // Absolute folder guard read paths
@@ -1154,12 +1135,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Add variable values only in tool search mode — tool search agents cannot read env vars,
 		// so they need values in the prompt. Code exec and learn_code agents read values via
 		// SECRET_<VAR> env vars and must NOT have values hardcoded in the prompt.
-		if isToolSearchMode {
-			if variableValues := FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues); variableValues != "" {
-				templateVars["VariableValues"] = variableValues
-			}
-		}
-
 		// Add decision evaluation question if this is a decision inner step
 		if isDecisionInnerStep && decisionEvaluationQuestion != "" {
 			templateVars["DecisionEvaluationQuestion"] = decisionEvaluationQuestion
@@ -1360,26 +1335,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				learningFilePaths = ""
 				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for step %d - skipping learning history reading (no learnings will be passed to execution agent)", stepIndex+1))
 			} else {
-				// Learning is enabled - read learning history
-				if isGlobalLearningEnabled(agentConfigs) {
-					// Global learning mode: read from shared workflow-level skill
-					formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
-					// Code exec + global: also include per-step scripts reference
-					if isCodeExecutionMode && formattedLearningHistory != "" {
-						stepScriptsHistory, _ := hcpo.readLearningHistory(ctx, stepIndex, step.GetID(), stepPath)
-						if stepScriptsHistory != "" {
-							formattedLearningHistory = formattedLearningHistory + "\n\n" + stepScriptsHistory
-						}
-					}
-				} else {
-					// Per-step learning mode: read from step-specific folder
-					formattedLearningHistory, err = hcpo.readLearningHistory(
-						ctx,
-						stepIndex,
-						step.GetID(),
-						stepPath,
-					)
-				}
+				// Learning is enabled - read from global learning skill
+				formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
 				}
@@ -1527,9 +1484,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				default:
 				}
 
-				// Sync only the transport-level code execution flag from the resolved agent config.
-				// Keep UseToolSearchMode from the step's logical config so a CLI-backed tool_search
-				// step does not get rewritten into scripted-code prompt semantics.
+				// Sync the transport-level code execution flag from the resolved agent config.
 				if executionAgent.GetConfig() != nil {
 					templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseCodeExecutionMode)
 				}
@@ -3239,8 +3194,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 		sort.Strings(fileList)
 
 		formattedLearningHistory = fmt.Sprintf(
-			"📚 **Global workflow skill files available** at `%s/` (%d files: %s). Read these files with execute_shell_command before starting — they contain accumulated domain knowledge from previous workflow runs.",
-			absLearningsPath, len(learningFiles), strings.Join(fileList, ", "))
+			"📚 **Workflow skill available** at `%s/`. Start by reading `SKILL.md` — it contains accumulated domain knowledge and references to detailed files. Navigate to references/ and scripts/ as needed.",
+			absLearningsPath)
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d global learning file(s) (path reference only)", len(learningFiles)))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No global learning files found: %s", globalLearningsPath))

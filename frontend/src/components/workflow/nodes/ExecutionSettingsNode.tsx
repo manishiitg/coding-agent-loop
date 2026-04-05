@@ -1,7 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { Settings, Zap, Archive } from 'lucide-react'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import { Settings, Zap } from 'lucide-react'
 
 export type ExecutionSettingsNodeData = Record<string, unknown>
 
@@ -11,10 +10,6 @@ interface ExecutionSettingsNodeProps {
 }
 
 export const ExecutionSettingsNode = memo(({ selected }: ExecutionSettingsNodeProps) => {
-  const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
-  const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
-  const isStateful = selectedExecutionMode === 'stateful'
-
   return (
     <div
       className={`
@@ -38,38 +33,15 @@ export const ExecutionSettingsNode = memo(({ selected }: ExecutionSettingsNodePr
       </div>
 
       <div className="px-3 py-3">
-        <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 p-0.5">
-          <button
-            type="button"
-            onClick={() => setExecutionMode('stateless')}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
-              !isStateful
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Manual runs use selected iteration. Scheduled runs always create a new iteration."
-          >
-            <Zap className="w-3 h-3" />
-            Stateless
-          </button>
-          <button
-            type="button"
-            onClick={() => setExecutionMode('stateful')}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
-              isStateful
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Reuse iteration-0, keep outputs across runs"
-          >
-            <Archive className="w-3 h-3" />
-            Stateful
-          </button>
+        <div
+          className="flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium text-foreground shadow-sm"
+          title="Manual runs use the selected iteration and clear outputs. Scheduled runs create a new iteration."
+        >
+          <Zap className="w-3 h-3" />
+          Stateless
         </div>
         <p className="mt-2 text-xs text-muted-foreground text-center">
-          {isStateful
-            ? 'Runs in iteration-0, outputs preserved'
-            : 'Manual: selected iteration. Scheduled: new iteration.'}
+          Manual: selected iteration with cleanup. Scheduled: new iteration.
         </p>
       </div>
 

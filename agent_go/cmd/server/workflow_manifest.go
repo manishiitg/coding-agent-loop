@@ -43,8 +43,6 @@ type WorkflowCapabilities struct {
 	SelectedGlobalSecretNames *[]string                `json:"selected_global_secret_names"` // nil = all, [] = none
 	BrowserMode              string                    `json:"browser_mode"`
 	UseCodeExecutionMode     bool                      `json:"use_code_execution_mode"`
-	UseToolSearchMode        bool                      `json:"use_tool_search_mode"`
-	PreDiscoveredTools       []string                  `json:"pre_discovered_tools"`
 	LLMConfig                *database.PresetLLMConfig `json:"llm_config,omitempty"`
 }
 
@@ -55,8 +53,6 @@ type WorkflowExecutionDefaults struct {
 	ExecutionMode               string   `json:"execution_mode,omitempty"` // "stateless" | "stateful"
 	// Global step overrides (replaces step_override.json)
 	DisableLearning              *bool    `json:"disable_learning,omitempty"`
-	UseGlobalLearning            *bool    `json:"use_global_learning,omitempty"`
-	LockGlobalLearning           *bool    `json:"lock_global_learning,omitempty"`
 	GlobalSkillObjective         string   `json:"global_skill_objective,omitempty"`
 	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
@@ -207,7 +203,6 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 			SelectedTools:      []string{},
 			SelectedSkills:     []string{},
 			SelectedSecrets:    []string{},
-			PreDiscoveredTools: []string{},
 			BrowserMode:        "none",
 		},
 		ExecutionDefs: WorkflowExecutionDefaults{},
@@ -315,12 +310,6 @@ func ManifestFromPreset(preset *database.PresetQuery) (*WorkflowManifest, error)
 			log.Printf("[WARN] ManifestFromPreset: failed to parse selected_secrets: %v", err)
 		}
 	}
-	if preset.PreDiscoveredTools != "" {
-		if err := json.Unmarshal([]byte(preset.PreDiscoveredTools), &m.Capabilities.PreDiscoveredTools); err != nil {
-			log.Printf("[WARN] ManifestFromPreset: failed to parse pre_discovered_tools: %v", err)
-		}
-	}
-
 	// Global secret names: NULL in DB = all selected (nil pointer); empty JSON array = none
 	if preset.SelectedGlobalSecretNames != "" && preset.SelectedGlobalSecretNames != "null" {
 		var names []string
@@ -338,7 +327,6 @@ func ManifestFromPreset(preset *database.PresetQuery) (*WorkflowManifest, error)
 		m.Capabilities.BrowserMode = "none"
 	}
 	m.Capabilities.UseCodeExecutionMode = preset.UseCodeExecutionMode
-	m.Capabilities.UseToolSearchMode = preset.UseToolSearchMode
 
 	// LLM config — clean up legacy fields when tiered mode is active
 	if len(preset.LLMConfig) > 0 {
@@ -404,9 +392,6 @@ func applyManifestDefaults(m *WorkflowManifest) {
 	}
 	if m.Capabilities.SelectedSecrets == nil {
 		m.Capabilities.SelectedSecrets = []string{}
-	}
-	if m.Capabilities.PreDiscoveredTools == nil {
-		m.Capabilities.PreDiscoveredTools = []string{}
 	}
 	if m.Schedules == nil {
 		m.Schedules = []WorkflowSchedule{}

@@ -220,13 +220,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView,
-    selectedExecutionMode,
-    setExecutionMode,
     layoutDirection,
     setLayoutDirection
   } = useWorkflowStore(useShallow(state => ({
     selectedRunFolder: state.selectedRunFolder,
-    selectedExecutionMode: state.selectedExecutionMode,
     selectedStartPoint: state.selectedStartPoint,
     selectedBranchStep: state.selectedBranchStep,
     selectedGroupIds: state.selectedGroupIds,
@@ -246,7 +243,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
-    setExecutionMode: state.setExecutionMode,
     layoutDirection: state.layoutDirection,
     setLayoutDirection: state.setLayoutDirection
   })))
@@ -1549,87 +1545,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </Tooltip>
             </TooltipProvider>
 
-            {/* Execution Mode: Stateless / Stateful */}
-            <TooltipProvider delayDuration={150}>
-              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 p-0.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExecutionMode('stateless')
-                        if (workspacePath) {
-                          const cur = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.execution_defaults
-                          useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
-                            execution_defaults: {
-                              always_use_same_run: false,
-                              skip_execution_cleanup: false,
-                              execution_mode: 'stateless',
-                              disable_learning: cur?.disable_learning,
-                              disable_parallel_tool_execution: cur?.disable_parallel_tool_execution,
-                              execution_max_turns: cur?.execution_max_turns,
-                              enabled_custom_tools: cur?.enabled_custom_tools,
-                            }
-                          }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
-                        }
-                      }}
-                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                        selectedExecutionMode === 'stateless'
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      Stateless
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-[220px] text-xs">
-                    <p className="font-medium mb-1">Stateless</p>
-                    <p>Manual runs always use iteration-0 and clear execution outputs before running. Scheduled runs still create a new iteration.</p>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExecutionMode('stateful')
-                        if (workspacePath) {
-                          const cur = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)?.manifest?.execution_defaults
-                          useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
-                            execution_defaults: {
-                              always_use_same_run: true,
-                              skip_execution_cleanup: true,
-                              execution_mode: 'stateful',
-                              disable_learning: cur?.disable_learning,
-                              disable_parallel_tool_execution: cur?.disable_parallel_tool_execution,
-                              execution_max_turns: cur?.execution_max_turns,
-                              enabled_custom_tools: cur?.enabled_custom_tools,
-                            }
-                          }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
-                        }
-                      }}
-                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                        selectedExecutionMode === 'stateful'
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      Stateful
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-[220px] text-xs">
-                    <p className="font-medium mb-1">Stateful</p>
-                    <p>Always runs in iteration-0. Outputs are preserved across runs.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            </TooltipProvider>
-
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
-                {/* Iteration Selector - only shown in stateless mode */}
-                {isExecutionWorkspace && selectedExecutionMode === 'stateless' && <div className="relative" ref={iterationDropdownRef}>
+                {/* Iteration Selector */}
+                {isExecutionWorkspace && <div className="relative" ref={iterationDropdownRef}>
                   <button
                     ref={iterationDropdownButtonRef}
                     onClick={(e) => {

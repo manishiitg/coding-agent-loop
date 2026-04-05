@@ -94,7 +94,7 @@ export default function BulkStepConfigModal({
   const saveOverrides = async (newOverrides: AgentConfigs | null) => {
     if (!workspacePath) return
 
-    // Read current execution_defaults from manifest to preserve stateless/stateful settings
+    // Read current execution_defaults from manifest to preserve execution defaults
     const currentWorkflow = useWorkflowManifestStore.getState().getWorkflowByPath(workspacePath)
     const currentDefaults = currentWorkflow?.manifest?.execution_defaults
 
@@ -104,14 +104,12 @@ export default function BulkStepConfigModal({
       execution_mode: currentDefaults?.execution_mode,
       ...(newOverrides ? {
         disable_learning: newOverrides.disable_learning ?? undefined,
-        use_global_learning: newOverrides.use_global_learning ?? undefined,
         global_skill_objective: newOverrides.global_skill_objective || undefined,
         disable_parallel_tool_execution: newOverrides.disable_parallel_tool_execution ?? undefined,
         execution_max_turns: newOverrides.execution_max_turns ?? undefined,
         enabled_custom_tools: newOverrides.enabled_custom_tools,
       } : {
         disable_learning: undefined,
-        use_global_learning: undefined,
         global_skill_objective: undefined,
         disable_parallel_tool_execution: undefined,
         execution_max_turns: undefined,
@@ -130,8 +128,6 @@ export default function BulkStepConfigModal({
   const overrideStatus = {
     learningDisabled: ov.disable_learning === true,
     hasLearningOverride: ov.disable_learning !== undefined,
-    globalLearningEnabled: ov.use_global_learning === true,
-    hasGlobalLearningOverride: ov.use_global_learning !== undefined,
     parallelToolExecDisabled: ov.disable_parallel_tool_execution === true,
     hasParallelToolExecOverride: ov.disable_parallel_tool_execution !== undefined,
     maxTurns: ov.execution_max_turns,
@@ -141,7 +137,6 @@ export default function BulkStepConfigModal({
   };
 
   const learningEnabled = overrideStatus.hasLearningOverride ? !overrideStatus.learningDisabled : true;
-  const globalLearningEnabled = overrideStatus.globalLearningEnabled;
   const parallelToolExecEnabled = !overrideStatus.parallelToolExecDisabled;
 
   const toolAccessSummary = (() => {
@@ -163,7 +158,6 @@ export default function BulkStepConfigModal({
   const handleAction = async (
     action:
       | "disable_learning" | "enable_learning"
-      | "enable_global_learning" | "disable_global_learning"
       | "set_global_skill_objective"
       | "disable_read_image_access" | "disable_read_pdf_access" | "disable_human_tools"
       | "set_execution_max_turns"
@@ -184,12 +178,6 @@ export default function BulkStepConfigModal({
           break;
         case "enable_learning":
           newOverrides.disable_learning = false;
-          break;
-        case "enable_global_learning":
-          newOverrides.use_global_learning = true;
-          break;
-        case "disable_global_learning":
-          newOverrides.use_global_learning = false;
           break;
         case "set_global_skill_objective":
           newOverrides.global_skill_objective = skillObjective || '';
@@ -322,31 +310,22 @@ export default function BulkStepConfigModal({
               disabled={isBusy}
               onToggle={() => handleAction(learningEnabled ? "disable_learning" : "enable_learning")}
             />
-            <ToggleRow
-              label="Global Learning"
-              enabled={globalLearningEnabled}
-              hasOverride={overrideStatus.hasGlobalLearningOverride}
-              disabled={isBusy}
-              onToggle={() => handleAction(globalLearningEnabled ? "disable_global_learning" : "enable_global_learning")}
-            />
-            {globalLearningEnabled && (
-              <div className="px-3 py-2">
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Skill Objective</label>
-                <textarea
-                  className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-                  rows={3}
-                  placeholder="What should this global skill capture? e.g., 'Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably'"
-                  defaultValue={ov.global_skill_objective || ''}
-                  disabled={isBusy}
-                  onBlur={(e) => {
-                    const val = e.target.value.trim()
-                    if (val !== (ov.global_skill_objective || '')) {
-                      handleAction("set_global_skill_objective", undefined, val)
-                    }
-                  }}
-                />
-              </div>
-            )}
+            <div className="px-3 py-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Skill Objective</label>
+              <textarea
+                className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                rows={3}
+                placeholder="What should this global skill capture? e.g., 'Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably'"
+                defaultValue={ov.global_skill_objective || ''}
+                disabled={isBusy}
+                onBlur={(e) => {
+                  const val = e.target.value.trim()
+                  if (val !== (ov.global_skill_objective || '')) {
+                    handleAction("set_global_skill_objective", undefined, val)
+                  }
+                }}
+              />
+            </div>
             <ToggleRow
               label="Parallel Tool Execution"
               enabled={parallelToolExecEnabled}

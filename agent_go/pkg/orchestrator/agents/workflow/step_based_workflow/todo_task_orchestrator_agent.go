@@ -320,7 +320,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
 		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
 		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",
-		"CodeExecutionSection":       BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["UseToolSearchMode"] == "true", templateVars["WorkspacePath"]),
+		"CodeExecutionSection":       BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["WorkspacePath"]),
 		"PreviousStepsSummary":       templateVars["PreviousStepsSummary"],
 		"StepTitle":                  templateVars["StepTitle"],
 		"StepDescription":            templateVars["StepDescription"],

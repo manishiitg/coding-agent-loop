@@ -265,8 +265,6 @@ type PresetQuery struct {
 	AgentMode                 string          `json:"agent_mode" db:"agent_mode"`                                     // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig                 json.RawMessage `json:"llm_config" db:"llm_config"`                                     // JSON configuration for LLM settings
 	UseCodeExecutionMode      bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"`           // MCP code execution mode
-	UseToolSearchMode         bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`                 // Tool search mode
-	PreDiscoveredTools        string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`                 // JSON array of pre-discovered tools
 	SelectedSkills            string          `json:"selected_skills" db:"selected_skills"`                           // JSON array of skill folder names
 	SelectedSecrets           string          `json:"selected_secrets" db:"selected_secrets"`                         // JSON array of secret IDs
 	SelectedGlobalSecretNames string          `json:"selected_global_secret_names" db:"selected_global_secret_names"` // JSON array of global secret names (NULL=all)
@@ -291,8 +289,6 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		AgentMode                 string          `json:"agent_mode"`
 		LLMConfig                 json.RawMessage `json:"llm_config"`
 		UseCodeExecutionMode      bool            `json:"use_code_execution_mode"`
-		UseToolSearchMode         bool            `json:"use_tool_search_mode"`
-		PreDiscoveredTools        string          `json:"pre_discovered_tools"`
 		SelectedSkills            string          `json:"selected_skills"`
 		SelectedSecrets           string          `json:"selected_secrets"`
 		SelectedGlobalSecretNames *string         `json:"selected_global_secret_names,omitempty"`
@@ -312,8 +308,6 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		AgentMode:            p.AgentMode,
 		LLMConfig:            p.LLMConfig,
 		UseCodeExecutionMode: p.UseCodeExecutionMode,
-		UseToolSearchMode:    p.UseToolSearchMode,
-		PreDiscoveredTools:   p.PreDiscoveredTools,
 		SelectedSkills:       p.SelectedSkills,
 		SelectedSecrets:      p.SelectedSecrets,
 		EnableBrowserAccess:  p.EnableBrowserAccess,
@@ -350,8 +344,6 @@ type CreatePresetQueryRequest struct {
 	AgentMode                 string           `json:"agent_mode,omitempty"`                   // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig                 *PresetLLMConfig `json:"llm_config,omitempty"`                   // LLM configuration for this preset
 	UseCodeExecutionMode      bool             `json:"use_code_execution_mode,omitempty"`      // MCP code execution mode
-	UseToolSearchMode         bool             `json:"use_tool_search_mode,omitempty"`         // Tool search mode
-	PreDiscoveredTools        []string         `json:"pre_discovered_tools,omitempty"`         // Tools always available without searching
 	SelectedSkills            []string         `json:"selected_skills,omitempty"`              // Skill folder names for workflow
 	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`             // Secret IDs for workflow
 	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"` // Global secret names (nil=all, []=none)
@@ -496,8 +488,6 @@ type UpdatePresetQueryRequest struct {
 	AgentMode                 string           `json:"agent_mode,omitempty"`                   // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig                 *PresetLLMConfig `json:"llm_config,omitempty"`                   // LLM configuration for this preset
 	UseCodeExecutionMode      *bool            `json:"use_code_execution_mode,omitempty"`      // MCP code execution mode (pointer to allow false value)
-	UseToolSearchMode         *bool            `json:"use_tool_search_mode,omitempty"`         // Tool search mode (pointer to allow false value)
-	PreDiscoveredTools        []string         `json:"pre_discovered_tools,omitempty"`         // Tools always available without searching
 	SelectedSkills            []string         `json:"selected_skills,omitempty"`              // Skill folder names for workflow
 	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`             // Secret names for workflow
 	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"` // Global secret names (nil=all, []=none)

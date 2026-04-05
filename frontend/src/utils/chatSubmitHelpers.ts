@@ -24,7 +24,7 @@ export function isChatCompatiblePhase(phaseId: string | undefined): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 1a. determineModeFlag — deduplicate useCodeExecutionMode / useToolSearchMode
+// 1a. determineModeFlag — deduplicate useCodeExecutionMode
 // ---------------------------------------------------------------------------
 
 export function determineModeFlag(params: {
@@ -81,7 +81,6 @@ export function buildQueryRequestPayload(params: {
   effectiveLLMConfig: ExtendedLLMConfiguration
   llmConfigWithApiKeys: ExtendedLLMConfiguration & { api_keys: Record<string, unknown> }
   useCodeExecutionMode: boolean | undefined
-  useToolSearchMode: boolean | undefined
   executionOptions: unknown | undefined
   workflowPresetId: string | null
   chatPresetId: string | null
@@ -94,7 +93,7 @@ export function buildQueryRequestPayload(params: {
   const {
     queryWithContext, correctAgentMode, selectedModeCategory,
     enabledTools, effectiveServers, currentTab, effectiveLLMConfig,
-    llmConfigWithApiKeys, useCodeExecutionMode, useToolSearchMode,
+    llmConfigWithApiKeys, useCodeExecutionMode,
     executionOptions, workflowPresetId, chatPresetId,
     filteredPresetTools, hasActivePreset, effectivePlanPhase, decryptedSecrets,
     selectedGlobalSecrets,
@@ -164,7 +163,6 @@ export function buildQueryRequestPayload(params: {
     llm_config: llmConfigWithApiKeys as AgentQueryRequest['llm_config'],
     preset_query_id: workflowPresetId || chatPresetId || undefined,
     use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
-    use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
     execution_options: executionOptions as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,

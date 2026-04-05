@@ -39,9 +39,9 @@ interface GlobalPresetState {
 
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => Promise<CustomPreset | null>
+  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -181,16 +181,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               llmConfig = undefined
             }
 
-            // Parse pre-discovered tools safely
-            let preDiscoveredTools: string[] = []
-            try {
-              if (preset.pre_discovered_tools) {
-                preDiscoveredTools = JSON.parse(preset.pre_discovered_tools)
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing pre-discovered tools:', error)
-            }
-            
             // Parse selected_secrets (stored as names in DB, resolve to local IDs)
             let selectedSecrets: string[] = []
             try {
@@ -241,8 +231,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedFolder,
               llmConfig,
               useCodeExecutionMode: preset.use_code_execution_mode,
-              useToolSearchMode: preset.use_tool_search_mode,
-              preDiscoveredTools,
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
               enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
               enableBrowserAccess: preset.enable_browser_access ?? false,
@@ -316,35 +304,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
-        // Apply workflow-specific default for tool search mode
-        // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
-        const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
-
+      addPreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
         try {
-          // Logic for Tool Search Mode:
-          // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
-          // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
-          let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-          let preDiscoveredTools: string[] = []
-
-          if (effectiveToolSearchMode) {
-            // Extract tool names from "server:tool" format
-            preDiscoveredTools = toolsForBackend.map(t => {
-              const parts = t.split(':')
-              return parts.length > 1 ? parts[1] : t
-            })
-            // Clear selected_tools to allow searching all tools
-            toolsForBackend = []
-          }
+          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
 
           console.log('[PRESET_SAVE] Before filtering:', {
             selectedServers,
             selectedTools,
             selectedSkills,
             toolsForBackend,
-            preDiscoveredTools,
-            effectiveToolSearchMode,
             label
           });
 
@@ -352,12 +320,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             label,
             query: query || '',
             selected_servers: selectedServers,
-            selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
+            selected_tools: toolsForBackend,
             selected_skills: selectedSkills, // Skill folder names for workflow
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath,
-            use_tool_search_mode: effectiveToolSearchMode,
-            pre_discovered_tools: preDiscoveredTools
           }
           
           // Include LLM config if provided
@@ -409,8 +375,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedFolder,
             llmConfig,
             useCodeExecutionMode,
-            useToolSearchMode: effectiveToolSearchMode,
-            preDiscoveredTools,
             enableContextSummarization,
             enableContextEditing,
             enableBrowserAccess
@@ -427,82 +391,23 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      updatePreset: async (id, label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
-        // CRITICAL: Log ALL arguments using rest parameters to see what's actually passed
-        console.error('[code_execution] [PRESET_STORE] ========== updatePreset CALLED ==========')
-        console.error('[code_execution] [PRESET_STORE] Arguments received:', {
-          'arg1-id': id,
-          'arg2-label': label,
-          'arg3-query': query?.substring(0, 30),
-          'arg4-selectedServers': selectedServers,
-          'arg5-selectedTools': selectedTools,
-          'arg6-agentMode': agentMode,
-          'arg7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
-          'arg8-llmConfig': llmConfig ? 'defined' : 'undefined',
-          'arg9-useCodeExecutionMode': useCodeExecutionMode,
-          'arg9-type': typeof useCodeExecutionMode,
-          'arg10-useToolSearchMode': useToolSearchMode
-        })
-        
+      updatePreset: async (id, label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
         console.log('[code_execution] [PRESET_STORE] updatePreset called')
         console.log('[code_execution] [PRESET_STORE] id:', id)
         console.log('[code_execution] [PRESET_STORE] label:', label)
-        console.log('[code_execution] [PRESET_STORE] param8 (useCodeExecutionMode):', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
-        console.log('[code_execution] [PRESET_STORE] param10 (useToolSearchMode):', useToolSearchMode)
-        console.log('[code_execution] [PRESET_STORE] All params:', {
-          'param1-id': id,
-          'param2-label': label,
-          'param3-query': query?.substring(0, 50) + '...',
-          'param4-selectedServers': selectedServers,
-          'param5-selectedTools': selectedTools,
-          'param6-agentMode': agentMode,
-          'param7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
-          'param8-llmConfig': llmConfig ? 'defined' : 'undefined',
-          'param9-useCodeExecutionMode': useCodeExecutionMode,
-          'param9-type': typeof useCodeExecutionMode,
-          'param10-useToolSearchMode': useToolSearchMode
-        })
-        
-        // Check if maybe parameters are shifted
-        console.log('[code_execution] [PRESET_STORE] Parameter count check - function expects 10 params, checking each:')
-        console.log('[code_execution] [PRESET_STORE] 1. id:', id)
-        console.log('[code_execution] [PRESET_STORE] 2. label:', label)
-        console.log('[code_execution] [PRESET_STORE] 3. query:', query?.substring(0, 30))
-        console.log('[code_execution] [PRESET_STORE] 4. selectedServers:', selectedServers)
-        console.log('[code_execution] [PRESET_STORE] 5. selectedTools:', selectedTools)
-        console.log('[code_execution] [PRESET_STORE] 6. agentMode:', agentMode)
-        console.log('[code_execution] [PRESET_STORE] 7. selectedFolder:', selectedFolder ? 'defined' : 'undefined')
-        console.log('[code_execution] [PRESET_STORE] 8. llmConfig:', llmConfig ? 'defined' : 'undefined')
-        console.log('[code_execution] [PRESET_STORE] 9. useCodeExecutionMode:', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
-        console.log('[code_execution] [PRESET_STORE] 10. useToolSearchMode:', useToolSearchMode)
-        
-        try {
-          // Logic for Tool Search Mode:
-          // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
-          // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
-          let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-          let preDiscoveredTools: string[] = []
+        console.log('[code_execution] [PRESET_STORE] useCodeExecutionMode:', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
 
-          if (useToolSearchMode) {
-            // Extract tool names from "server:tool" format
-            preDiscoveredTools = toolsForBackend.map(t => {
-              const parts = t.split(':')
-              return parts.length > 1 ? parts[1] : t
-            })
-            // Clear selected_tools to allow searching all tools
-            toolsForBackend = []
-          }
-          
+        try {
+          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+
           const request: UpdatePresetQueryRequest = {
             label,
             query: query || '',
             selected_servers: selectedServers,
-            selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
+            selected_tools: toolsForBackend,
             selected_skills: selectedSkills, // Skill folder names for workflow
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath,
-            use_tool_search_mode: useToolSearchMode,
-            pre_discovered_tools: preDiscoveredTools
           }
 
           // Include LLM config if provided
@@ -553,8 +458,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selectedFolder,
                     llmConfig,
                     useCodeExecutionMode,
-                    useToolSearchMode,
-                    preDiscoveredTools,
                     enableContextSummarization,
                     enableContextEditing,
                     enableBrowserAccess
@@ -568,26 +471,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded, browserMode) => {
-        // Apply workflow-specific default for tool search mode
-        // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
-        const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
-
-        // Logic for Tool Search Mode (shared):
-        // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
-        // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
-        let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-        let preDiscoveredTools: string[] = []
-
-        if (effectiveToolSearchMode) {
-          // Extract tool names from "server:tool" format
-          preDiscoveredTools = toolsForBackend.map(t => {
-            const parts = t.split(':')
-            return parts.length > 1 ? parts[1] : t
-          })
-          // Clear selected_tools to allow searching all tools
-          toolsForBackend = []
-        }
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded, browserMode) => {
+        const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
 
         // Convert secret IDs to names for backend persistence (names are device-independent)
         // useSecretsStore imported at top level
@@ -608,21 +493,19 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
-              use_tool_search_mode: effectiveToolSearchMode,
-              pre_discovered_tools: preDiscoveredTools
             }
-            
+
             // Include LLM config if provided
             if (llmConfig) {
               request.llm_config = llmConfig
             }
-            
+
             // Include code execution mode if provided
             if (useCodeExecutionMode !== undefined) {
               request.use_code_execution_mode = useCodeExecutionMode
               console.log('[code_execution] [PRESET_STORE] Including code execution mode in update request:', useCodeExecutionMode)
             }
-            
+
             // Include context summarization if provided
             if (enableContextSummarization !== undefined) {
               request.enable_context_summarization = enableContextSummarization
@@ -659,8 +542,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selected_global_secret_names: selectedGlobalSecretNames ?? null,
                     browser_mode: browserMode || 'none',
                     use_code_execution_mode: useCodeExecutionMode ?? false,
-                    use_tool_search_mode: effectiveToolSearchMode,
-                    pre_discovered_tools: preDiscoveredTools,
                     llm_config: llmConfig || undefined,
                   },
                 })
@@ -686,8 +567,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       selectedFolder,
                       llmConfig,
                       useCodeExecutionMode,
-                      useToolSearchMode: effectiveToolSearchMode,
-                      preDiscoveredTools,
                       enableContextSummarization,
                       enableContextEditing,
                       enableBrowserAccess,
@@ -724,8 +603,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
-              use_tool_search_mode: effectiveToolSearchMode,
-              pre_discovered_tools: preDiscoveredTools
             }
 
             // Include LLM config if provided
@@ -780,8 +657,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selected_global_secret_names: selectedGlobalSecretNames ?? null,
                     browser_mode: browserMode || 'none',
                     use_code_execution_mode: useCodeExecutionMode ?? false,
-                    use_tool_search_mode: effectiveToolSearchMode,
-                    pre_discovered_tools: preDiscoveredTools,
                     llm_config: llmConfig || undefined,
                   },
                 })
@@ -805,8 +680,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedFolder,
               llmConfig,
               useCodeExecutionMode,
-              useToolSearchMode: effectiveToolSearchMode,
-              preDiscoveredTools,
               enableContextSummarization,
               enableContextEditing,
               enableBrowserAccess,
@@ -988,7 +861,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             originalPreset.useCodeExecutionMode,
             undefined, // id (new preset)
             undefined, // enableContextSummarization
-            undefined, // useToolSearchMode
             undefined, // enableBrowserAccess
             undefined, // enableContextEditing
             originalPreset.selectedSecrets, // Copy secret selections

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,9 +61,16 @@ type BackgroundAgent struct {
 }
 
 // SetResult updates the agent result and status atomically
+// SetResult marks the agent as completed with the given result.
+// If the agent was already canceled (e.g. parent workflow stopped), the status is preserved
+// to prevent stale completion notifications from racing with CancelAll.
 func (a *BackgroundAgent) SetResult(result string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.Status == BGAgentCanceled {
+		log.Printf("[BG AGENT] SetResult skipped for canceled agent %s", a.ID)
+		return
+	}
 	a.Result = result
 	a.Status = BGAgentCompleted
 	now := time.Now()
@@ -70,9 +78,16 @@ func (a *BackgroundAgent) SetResult(result string) {
 }
 
 // SetError updates the agent error and status atomically
+// SetError marks the agent as failed with the given error message.
+// If the agent was already canceled, the status is preserved to prevent
+// stale error notifications from racing with CancelAll.
 func (a *BackgroundAgent) SetError(errMsg string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.Status == BGAgentCanceled {
+		log.Printf("[BG AGENT] SetError skipped for canceled agent %s", a.ID)
+		return
+	}
 	a.Error = errMsg
 	a.Status = BGAgentFailed
 	now := time.Now()

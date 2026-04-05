@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronUp, Settings, Sparkles, Code2, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
@@ -70,7 +70,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       stepId: step.id,
       step_agent_configs: step.agent_configs,
       disable_learning: configs.disable_learning,
-      use_tool_search_mode: configs.use_tool_search_mode,
       configs,
     });
     
@@ -617,31 +616,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.selected_tools = undefined;
     }
 
-    // Handle Tool Search Mode logic
-    if (agentConfigs.use_tool_search_mode) {
-      // Enable Tool Search Mode
-      finalConfigs.use_tool_search_mode = true;
-      
-      // Map currently selected tools to pre-discovered tools
-      if (selectedTools.length > 0) {
-        // Extract tool names (remove "server:" prefix)
-        const toolNames = selectedTools.map(t => {
-          const parts = t.split(':');
-          return parts.length > 1 ? parts[1] : t;
-        }).filter(t => t !== '*'); // Exclude wildcards
-        
-        // Save as pre-discovered tools
-        finalConfigs.pre_discovered_tools = toolNames;
-        
-        // Clear selected_tools to allow dynamic search (defaults to all tools from selected servers)
-        // This effectively "unlocks" other tools for searching while keeping known ones ready
-        finalConfigs.selected_tools = undefined;
-      }
-    } else {
-      // Disable Tool Search Mode
-      delete finalConfigs.use_tool_search_mode;
-      delete finalConfigs.pre_discovered_tools;
-    }
+    // Clean up any legacy tool search mode fields
+    delete finalConfigs.use_tool_search_mode;
+    delete finalConfigs.pre_discovered_tools;
 
     // Handle custom tools in unified format: "category:tool" or "category:*"
     if (enabledCustomTools.length === 0) {
@@ -720,8 +697,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         selected_tools: finalConfigs.selected_tools,
         disable_learning: finalConfigs.disable_learning,
         use_code_execution_mode: finalConfigs.use_code_execution_mode,
-        use_tool_search_mode: finalConfigs.use_tool_search_mode,
-        pre_discovered_tools: finalConfigs.pre_discovered_tools
       },
     });
 
@@ -754,7 +729,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (execLLM) {
       let codeExecLabel = 'Simple';
       if (effectiveCodeExecMode) codeExecLabel = 'Code Exec';
-      if (agentConfigs.use_tool_search_mode) codeExecLabel = 'Tool Search';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
     }
     if (learnLLM && !agentConfigs.disable_learning) {
@@ -786,19 +760,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     
     // Tool details
-    if (agentConfigs.use_tool_search_mode) {
-      parts.push('Tool Search');
-      if (agentConfigs.pre_discovered_tools && agentConfigs.pre_discovered_tools.length > 0) {
-        const tools = agentConfigs.pre_discovered_tools;
-        if (tools.length <= 3) {
-          // Show actual names for small lists
-          parts.push(`Pre-discovered: ${tools.join(', ')}`);
-        } else {
-          // Show first 2 names + count for larger lists
-          parts.push(`Pre-discovered: ${tools.slice(0, 2).join(', ')} +${tools.length - 2} more`);
-        }
-      }
-    } else if (selectedTools.length > 0) {
+    if (selectedTools.length > 0) {
       const allToolsServers = selectedTools.filter(t => t.endsWith(':*')).map(t => t.replace(':*', ''));
       const specificTools = selectedTools.filter(t => !t.endsWith(':*'));
       
@@ -1192,12 +1154,10 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                             setAgentConfigs((prev) => ({
                               ...prev,
                               use_code_execution_mode: false,
-                              use_tool_search_mode: false,
                             }));
                           }}
                           className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                            !agentConfigs.use_tool_search_mode &&
-                            (agentConfigs.use_code_execution_mode === false || 
+                            (agentConfigs.use_code_execution_mode === false ||
                             (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode))
                               ? 'agent-mode-selected rounded-l-md rounded-r-none'
                               : 'agent-mode-unselected rounded-none'
@@ -1221,18 +1181,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                             setAgentConfigs((prev) => ({
                               ...prev,
                               use_code_execution_mode: true,
-                              use_tool_search_mode: false,
                               // Auto-enable learning when code exec is enabled
                               disable_learning: false,
                               // Auto-set learning detail level to 'exact' for code exec mode
                               learning_detail_level: 'exact',
                             }));
                           }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                            !agentConfigs.use_tool_search_mode &&
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
                             (agentConfigs.use_code_execution_mode === true ||
                             (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode))
-                              ? 'agent-mode-selected rounded-none'
+                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
                               : 'agent-mode-unselected rounded-none'
                           }`}
                         >
@@ -1245,32 +1203,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                       </TooltipContent>
                     </Tooltip>
 
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            console.log('[StepEditPanel] Setting mode to Tool Search');
-                            setAgentConfigs((prev) => ({
-                              ...prev,
-                              use_code_execution_mode: false,
-                              use_tool_search_mode: true,
-                            }));
-                          }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors ${
-                            agentConfigs.use_tool_search_mode === true
-                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
-                              : 'agent-mode-unselected rounded-none'
-                          }`}
-                        >
-                          <Search className="w-3 h-3 inline mr-1" />
-                          Tool Search
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Tool Search mode - Dynamic tool discovery</p>
-                      </TooltipContent>
-                    </Tooltip>
                   </TooltipProvider>
                 </div>
               </div>
@@ -1730,25 +1662,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     />
                   )}
 
-                  {/* Pre-discovered Tools Display - show when Tool Search Mode is enabled */}
-                  {agentConfigs.use_tool_search_mode && agentConfigs.pre_discovered_tools && agentConfigs.pre_discovered_tools.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" />
-                        Pre-discovered Tools ({agentConfigs.pre_discovered_tools.length})
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {agentConfigs.pre_discovered_tools.map((tool, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                          >
-                            {tool}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </>
             )}

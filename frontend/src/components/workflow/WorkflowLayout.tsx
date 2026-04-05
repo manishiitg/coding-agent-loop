@@ -386,14 +386,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const defaults = response?.manifest?.execution_defaults
         if (!defaults) return
         const store = useWorkflowStore.getState()
-        // Prefer explicit execution_mode; fall back to deriving from legacy flags
-        if (defaults.execution_mode === 'stateless' || defaults.execution_mode === 'stateful') {
-          store.setExecutionMode(defaults.execution_mode)
-        } else if (defaults.always_use_same_run) {
-          store.setExecutionMode('stateful')
-        } else {
-          store.setExecutionMode('stateless')
-        }
+        // Execution uses a single stateless mode. Ignore legacy stateful flags
+        // while continuing to load the rest of execution_defaults.
+        store.setExecutionMode('stateless')
         // Load global step overrides from execution_defaults
         const hasOverrides = defaults.disable_learning !== undefined ||
           defaults.disable_parallel_tool_execution !== undefined ||

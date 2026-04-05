@@ -28,7 +28,6 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 		"ShowToolsSection":           "false",
 		"UseKnowledgebase":           "true",
 		"IsCodeExecutionMode":        "true",
-		"UseToolSearchMode":          "false",
 		"PreviousStepsSummary":       "",
 		"StepTitle":                  "QA Scenario: No Redlines",
 		"StepDescription":            "Run the no-redlines scenario.",

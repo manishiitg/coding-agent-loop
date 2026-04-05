@@ -101,9 +101,6 @@ export interface AgentQueryRequest {
   // Code execution mode: When enabled, only virtual tools are added to LLM
   // MCP tools are accessed via generated Go code using discover_code_files and write_code
   use_code_execution_mode?: boolean
-  // Tool search mode: When enabled, agents discover tools on-demand via search_tools
-  use_tool_search_mode?: boolean
-  pre_discovered_tools?: string[] // Tools always available without searching
   // Execution options from frontend (for workflow execution phase)
   execution_options?: ExecutionOptions
   // Context summarization configuration
@@ -655,8 +652,6 @@ export interface ChatSessionConfig {
   selected_servers?: string[];
   enabled_servers?: string[];
   use_code_execution_mode?: boolean;
-  use_tool_search_mode?: boolean;
-  pre_discovered_tools?: string[];
   enable_context_summarization?: boolean;
   llm_config?: {
     provider?: string;
@@ -813,8 +808,6 @@ export interface PresetQuery {
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
   use_code_execution_mode?: boolean;
-  use_tool_search_mode?: boolean;
-  pre_discovered_tools?: string; // JSON string of tools array
   selected_skills?: string; // JSON string of skill folder names
   selected_secrets?: string; // JSON string of secret names
   selected_global_secret_names?: string; // JSON string of global secret names (null=all)
@@ -838,8 +831,6 @@ export interface CreatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
-  use_tool_search_mode?: boolean; // Tool search mode
-  pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   selected_secrets?: string[]; // Secret names for workflow
   selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
@@ -859,8 +850,6 @@ export interface UpdatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
-  use_tool_search_mode?: boolean; // Tool search mode
-  pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   selected_secrets?: string[]; // Secret names for workflow
   selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
@@ -1802,8 +1791,6 @@ export interface WorkflowCapabilities {
   selected_global_secret_names: string[] | null // null = all, [] = none
   browser_mode: string
   use_code_execution_mode: boolean
-  use_tool_search_mode: boolean
-  pre_discovered_tools: string[]
   llm_config?: PresetLLMConfig
 }
 
@@ -1813,8 +1800,6 @@ export interface WorkflowExecutionDefaults {
   execution_mode?: 'stateless' | 'stateful'
   // Global step overrides (replaces step_override.json)
   disable_learning?: boolean
-  use_global_learning?: boolean
-  lock_global_learning?: boolean
   global_skill_objective?: string
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number

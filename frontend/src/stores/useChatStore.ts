@@ -171,7 +171,6 @@ export interface TabSessionStatus {
 export interface ChatTabConfig {
   inputText: string  // Chat input text
   useCodeExecutionMode: boolean  // Code execution mode toggle
-  useToolSearchMode: boolean  // Tool search mode toggle (discover tools on-demand)
   selectedServers: string[]  // Selected MCP servers
   selectedSkills: string[]  // Selected skills to include in chat
   selectedSecrets: string[]  // Selected secret IDs to inject into chat
@@ -261,8 +260,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     inputText: '',
     // Default to false (simple mode) - user can toggle to true (code exec mode) via ChatInput
     useCodeExecutionMode: false,
-    // Default to false - user can toggle to true (tool search mode) via ChatInput
-    useToolSearchMode: false,
     selectedServers,
     selectedSecrets: [],
     workflowContext: [],

@@ -97,7 +97,6 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
 		templateData["WorkflowObjective"] = templateVars["WorkflowObjective"]
 		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
-		templateData["UseToolSearchMode"] = templateVars["UseToolSearchMode"]
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
 		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
 		wsPath := templateVars["WorkspacePath"]
@@ -254,8 +253,6 @@ type WorkshopConfig struct {
 	SelectedServers      []string
 	SelectedTools        []string
 	UseCodeExecutionMode bool
-	UseToolSearchMode    bool
-	PreDiscoveredTools   []string
 	CustomTools          []llmtypes.Tool
 	CustomToolExecutors  map[string]interface{}
 	ToolCategories       map[string]string
@@ -305,9 +302,9 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	logger := cfg.Logger
 	logger.Info(fmt.Sprintf("[WORKSHOP] NewWorkshopChatSession: workspace=%s, runFolder=%s, servers=%v",
 		cfg.WorkspacePath, cfg.RunFolder, cfg.SelectedServers))
-	logger.Info(fmt.Sprintf("[WORKSHOP] Config: tools=%d, executors=%d, categories=%d, codeExec=%v, toolSearch=%v, knowledgebase=%v, llmMode=%s",
+	logger.Info(fmt.Sprintf("[WORKSHOP] Config: tools=%d, executors=%d, categories=%d, codeExec=%v, knowledgebase=%v, llmMode=%s",
 		len(cfg.CustomTools), len(cfg.CustomToolExecutors), len(cfg.ToolCategories),
-		cfg.UseCodeExecutionMode, cfg.UseToolSearchMode, cfg.UseKnowledgebase, cfg.LLMAllocationMode))
+		cfg.UseCodeExecutionMode, cfg.UseKnowledgebase, cfg.LLMAllocationMode))
 	if cfg.PresetPhaseLLM != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetPhaseLLM=%s/%s", cfg.PresetPhaseLLM.Provider, cfg.PresetPhaseLLM.ModelID))
 	}
@@ -337,8 +334,6 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.SelectedServers,
 		cfg.SelectedTools,
 		cfg.UseCodeExecutionMode,
-		cfg.UseToolSearchMode,
-		cfg.PreDiscoveredTools,
 		cfg.MCPConfigPath,
 		cfg.LLMConfig,
 		100, // maxTurns
@@ -538,8 +533,6 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 	selectedServers []string,
 	selectedTools []string, toolsParsed bool,
 	useCodeExecutionMode bool,
-	useToolSearchMode bool,
-	preDiscoveredTools []string, preDiscoveredParsed bool,
 	useKnowledgebase bool,
 	selectedSkills []string, skillsParsed bool,
 	secrets []orchestrator.SecretEntry,
@@ -549,10 +542,6 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 		s.controller.SetSelectedTools(selectedTools)
 	}
 	s.controller.SetUseCodeExecutionMode(useCodeExecutionMode)
-	s.controller.SetUseToolSearchMode(useToolSearchMode)
-	if preDiscoveredParsed {
-		s.controller.SetPreDiscoveredTools(preDiscoveredTools)
-	}
 	s.controller.useKnowledgebase = useKnowledgebase
 	if skillsParsed {
 		s.controller.SetSelectedSkills(selectedSkills)
@@ -567,10 +556,6 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 			s.config.SelectedTools = selectedTools
 		}
 		s.config.UseCodeExecutionMode = useCodeExecutionMode
-		s.config.UseToolSearchMode = useToolSearchMode
-		if preDiscoveredParsed {
-			s.config.PreDiscoveredTools = preDiscoveredTools
-		}
 		s.config.UseKnowledgebase = useKnowledgebase
 		s.config.Secrets = append([]orchestrator.SecretEntry(nil), secrets...)
 	}
@@ -713,6 +698,27 @@ func RegisterRunFullEvaluationTool(
 			}
 
 			go func() {
+				var result string
+				var execErr error
+				execMeta := map[string]string{
+					"workshop_mode":  "eval",
+					"execution_type": "full-evaluation",
+					"run_folder":     targetRunFolder,
+				}
+				if iterationName != "" {
+					execMeta["iteration"] = iterationName
+				}
+				if groupName != "" {
+					execMeta["group_id"] = groupName
+					execMeta["group_display_name"] = groupName
+				}
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if !cancelled && session.executionNotifier != nil {
+						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
+					}
+				}()
+
 				// Create a fresh controller for the full evaluation run
 				evalController, err := NewStepBasedWorkflowOrchestrator(
 					execCtx,
@@ -720,8 +726,6 @@ func RegisterRunFullEvaluationTool(
 					cfg.SelectedServers,
 					cfg.SelectedTools,
 					cfg.UseCodeExecutionMode,
-					cfg.UseToolSearchMode,
-					cfg.PreDiscoveredTools,
 					cfg.MCPConfigPath,
 					cfg.LLMConfig,
 					100,
@@ -736,10 +740,7 @@ func RegisterRunFullEvaluationTool(
 					cfg.TieredConfig,
 				)
 				if err != nil {
-					exec.mu.Lock()
-					exec.Status = WorkshopStepFailed
-					exec.Err = fmt.Errorf("failed to create evaluation controller: %w", err)
-					exec.mu.Unlock()
+					execErr = fmt.Errorf("failed to create evaluation controller: %w", err)
 					return
 				}
 
@@ -761,40 +762,12 @@ func RegisterRunFullEvaluationTool(
 					evalController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
 				}
 
-				result, execErr := evalController.ExecuteEvaluationOnly(
+				result, execErr = evalController.ExecuteEvaluationOnly(
 					execCtx,
 					session.controller.GetObjective(),
 					cfg.WorkspacePath,
 					targetRunFolder,
 				)
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if execErr != nil {
-					exec.Status = WorkshopStepFailed
-					exec.Err = execErr
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
-				}
-				if session.executionNotifier != nil {
-					execMeta := map[string]string{
-						"workshop_mode":  "eval",
-						"execution_type": "full-evaluation",
-						"run_folder":     targetRunFolder,
-					}
-					if iterationName != "" {
-						execMeta["iteration"] = iterationName
-					}
-					if groupName != "" {
-						execMeta["group_id"] = groupName
-						execMeta["group_display_name"] = groupName
-					}
-					session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
-				}
 			}()
 
 			return fmt.Sprintf("Full evaluation started for run %q.\nexecution_id: %q\nThis will execute all evaluation steps and generate a scoring report.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
@@ -868,7 +841,63 @@ func RegisterRunFullReportTool(
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := session.controller.GetContextAwareBridge()
+				execMeta := map[string]string{
+					"workshop_mode":  "output",
+					"execution_type": "full-report",
+					"run_folder":     targetRunFolder,
+				}
+				if iterationName != "" {
+					execMeta["iteration"] = iterationName
+				}
+				if groupName != "" {
+					execMeta["group_id"] = groupName
+					execMeta["group_display_name"] = groupName
+				}
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-report-execution",
+							AgentName:     displayName,
+							Success:       execErr == nil && !cancelled,
+							InputData: map[string]string{
+								"run_folder":     targetRunFolder,
+								"workshop_mode":  "output",
+								"execution_type": "report",
+							},
+						}
+						if iterationName != "" {
+							endEvent.InputData["iteration"] = iterationName
+						}
+						if groupName != "" {
+							endEvent.InputData["group_id"] = groupName
+							endEvent.InputData["group_display_name"] = groupName
+						}
+						if execErr != nil {
+							if cancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = firstNonEmpty(result, "Report generated successfully.")
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && session.executionNotifier != nil {
+						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -901,8 +930,6 @@ func RegisterRunFullReportTool(
 					cfg.SelectedServers,
 					cfg.SelectedTools,
 					cfg.UseCodeExecutionMode,
-					cfg.UseToolSearchMode,
-					cfg.PreDiscoveredTools,
 					cfg.MCPConfigPath,
 					cfg.LLMConfig,
 					100,
@@ -917,10 +944,7 @@ func RegisterRunFullReportTool(
 					cfg.TieredConfig,
 				)
 				if err != nil {
-					exec.mu.Lock()
-					exec.Status = WorkshopStepFailed
-					exec.Err = fmt.Errorf("failed to create report controller: %w", err)
-					exec.mu.Unlock()
+					execErr = fmt.Errorf("failed to create report controller: %w", err)
 					return
 				}
 
@@ -941,74 +965,13 @@ func RegisterRunFullReportTool(
 				}
 				reportController.SetExecutionOptions(session.controller.GetExecutionOptions())
 
-				resultText, execErr := reportController.ExecuteFinalOutputOnly(
+				result, execErr = reportController.ExecuteFinalOutputOnly(
 					execCtx,
 					session.controller.GetObjective(),
 					cfg.WorkspacePath,
 					targetRunFolder,
 				)
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if execErr != nil {
-					exec.Status = WorkshopStepFailed
-					exec.Err = execErr
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = firstNonEmpty(strings.TrimSpace(resultText), "Report generated successfully.")
-				}
-				if session.executionNotifier != nil {
-					execMeta := map[string]string{
-						"workshop_mode":  "output",
-						"execution_type": "full-report",
-						"run_folder":     targetRunFolder,
-					}
-					if iterationName != "" {
-						execMeta["iteration"] = iterationName
-					}
-					if groupName != "" {
-						execMeta["group_id"] = groupName
-						execMeta["group_display_name"] = groupName
-					}
-					session.executionNotifier.OnExecutionComplete(execID, displayName, resultText, execMeta, execErr)
-				}
-
-				if eventBridge != nil {
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-report-execution",
-						AgentName:     displayName,
-						Success:       execErr == nil,
-						InputData: map[string]string{
-							"run_folder":     targetRunFolder,
-							"workshop_mode":  "output",
-							"execution_type": "report",
-						},
-					}
-					if iterationName != "" {
-						endEvent.InputData["iteration"] = iterationName
-					}
-					if groupName != "" {
-						endEvent.InputData["group_id"] = groupName
-						endEvent.InputData["group_display_name"] = groupName
-					}
-					if execErr != nil {
-						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-					} else if exec.Result != "" {
-						endEvent.Result = exec.Result
-					} else {
-						endEvent.Result = "Report generated successfully."
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
+				result = firstNonEmpty(strings.TrimSpace(result), "Report generated successfully.")
 			}()
 
 			return fmt.Sprintf("Full report generation started for run %q.\nexecution_id: %q\nThis will regenerate the report artifact for that run.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
@@ -1228,7 +1191,54 @@ func RegisterRunFullWorkflowTool(
 			}
 
 			go func() {
+				var result string
+				var execErr error
 				eventBridge := session.controller.GetContextAwareBridge()
+				execMeta := map[string]string{
+					"workshop_mode":  "runner",
+					"execution_type": "full-workflow",
+				}
+				if iteration != "" {
+					execMeta["iteration"] = iteration
+				}
+				if len(enabledGroupIDs) > 0 {
+					execMeta["group_id"] = enabledGroupIDs[0]
+					execMeta["group_display_name"] = enabledGroupIDs[0]
+				}
+				defer func() {
+					cancelled := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-workflow-execution",
+							AgentName:     "Full Workflow Execution",
+							Success:       execErr == nil && !cancelled,
+							InputData: map[string]string{
+								"execution_strategy": strategy,
+								"execution_type":     "full-workflow",
+							},
+						}
+						if execErr != nil {
+							if cancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = firstNonEmpty(result, "Workflow execution completed successfully.")
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type:          orchestrator_events.OrchestratorAgentEnd,
+							Timestamp:     time.Now(),
+							Data:          endEvent,
+							CorrelationID: agentSessionID,
+						})
+					}
+					if !cancelled && session.executionNotifier != nil {
+						session.executionNotifier.OnExecutionComplete(execID, "Full Workflow Execution", result, execMeta, execErr)
+					}
+				}()
+
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
@@ -1261,8 +1271,6 @@ func RegisterRunFullWorkflowTool(
 					cfg.SelectedServers,
 					cfg.SelectedTools,
 					cfg.UseCodeExecutionMode,
-					cfg.UseToolSearchMode,
-					cfg.PreDiscoveredTools,
 					cfg.MCPConfigPath,
 					cfg.LLMConfig,
 					100,
@@ -1277,10 +1285,7 @@ func RegisterRunFullWorkflowTool(
 					cfg.TieredConfig,
 				)
 				if err != nil {
-					exec.mu.Lock()
-					exec.Status = WorkshopStepFailed
-					exec.Err = fmt.Errorf("failed to create workflow controller: %w", err)
-					exec.mu.Unlock()
+					execErr = fmt.Errorf("failed to create workflow controller: %w", err)
 					return
 				}
 
@@ -1311,50 +1316,12 @@ func RegisterRunFullWorkflowTool(
 				}
 				workflowController.SetExecutionOptions(execOpts)
 
-				resultText, execErr := workflowController.CreateTodoList(
+				result, execErr = workflowController.CreateTodoList(
 					execCtx,
 					session.controller.GetObjective(),
 					cfg.WorkspacePath,
 				)
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if execErr != nil {
-					exec.Status = WorkshopStepFailed
-					exec.Err = execErr
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = firstNonEmpty(strings.TrimSpace(resultText), "Workflow execution completed successfully.")
-				}
-
-				if eventBridge != nil {
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-workflow-execution",
-						AgentName:     "Full Workflow Execution",
-						Success:       execErr == nil,
-						InputData: map[string]string{
-							"execution_strategy": strategy,
-							"execution_type":     "full-workflow",
-						},
-					}
-					if execErr != nil {
-						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-					} else if exec.Result != "" {
-						endEvent.Result = exec.Result
-					} else {
-						endEvent.Result = "Workflow execution completed successfully."
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
+				result = firstNonEmpty(strings.TrimSpace(result), "Workflow execution completed successfully.")
 			}()
 
 			groupInfo := ""

@@ -24,7 +24,6 @@ interface LearningMetadata {
   total_iterations?: number
   // Fields from step_config.json (merged by backend API)
   use_code_execution_mode?: boolean
-  use_tool_search_mode?: boolean
   learning_detail_level?: string
   lock_learnings?: boolean
   // Global learning: per-step contribution counts
@@ -154,7 +153,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
     ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
     : null
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
-  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Fetch learnings when popup opens (API now includes step config data merged in)
   useEffect(() => {
@@ -714,10 +712,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   ? metadata.use_code_execution_mode
                   : presetUseCodeExecutionMode
                 
-                const effectiveUseToolSearchMode = metadata?.use_tool_search_mode !== undefined
-                  ? metadata.use_tool_search_mode
-                  : presetUseToolSearchMode
-
                 return (
                   <div
                     key={stepId}
@@ -830,19 +824,12 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                 <span className={`text-xs px-2 py-1 rounded font-medium border flex items-center gap-1.5 ${
                                   effectiveUseCodeExecutionMode
                                     ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800'
-                                    : effectiveUseToolSearchMode
-                                    ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
                                     : 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700'
                                 }`}>
                                   {effectiveUseCodeExecutionMode ? (
                                     <>
                                       <Terminal className="w-3.5 h-3.5" />
                                       Agent Mode
-                                    </>
-                                  ) : effectiveUseToolSearchMode ? (
-                                    <>
-                                      <Search className="w-3.5 h-3.5" />
-                                      Tool Search
                                     </>
                                   ) : (
                                     <>

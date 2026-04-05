@@ -8,7 +8,8 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-// Execution mode: stateless = new iteration + clear outputs each run; stateful = reuse iteration-0 + preserve outputs
+// Execution currently uses a single stateless mode. The legacy 'stateful' value
+// is still accepted in some types for backward compatibility with older data.
 export type ExecutionModeType = 'stateless' | 'stateful'
 export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
@@ -1072,8 +1073,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
 
-      setExecutionMode: (mode: ExecutionModeType) => {
-        set({ selectedExecutionMode: mode })
+      setExecutionMode: (_mode: ExecutionModeType) => {
+        // Execution now uses a single stateless mode. Keep the setter for
+        // compatibility with existing callers, but always normalize to stateless.
+        set({ selectedExecutionMode: 'stateless' })
       },
 
       setStartPoint: (step: number | string) => {
@@ -1105,10 +1108,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const executionStrategy: string = (isResuming || isResumingBranch)
           ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
           : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-        const isStateful = state.selectedExecutionMode === 'stateful'
-        // UI execution now always runs on iteration-0 for both modes.
-        // The difference between stateless/stateful is cleanup behavior:
-        // stateless clears execution outputs, stateful preserves them.
+        // Execution uses a single stateless mode:
+        // manual runs reuse the user-selected iteration and clear outputs,
+        // scheduled runs create a new iteration in the scheduler.
         const shouldUseSameRun = true
 
         console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
@@ -1276,7 +1278,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.enable_context_summarization = false
         }
 
-        options.skip_execution_cleanup = isStateful
+        options.skip_execution_cleanup = false
 
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
           execution_strategy: options.execution_strategy,
@@ -2121,8 +2123,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // startPoint is always 0 - will be calculated from progress via loadProgress
           // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
           // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
-          // NOTE: selectedExecutionMode (stateless/stateful) is NOT restored here —
-          // it is loaded from workflow.json execution_defaults in WorkflowLayout.
+          // NOTE: selectedExecutionMode is not restored here. WorkflowLayout
+          // normalizes execution mode to stateless when the manifest is loaded.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
             selectedStartPoint: 0,  // Always start fresh - calculated from progress

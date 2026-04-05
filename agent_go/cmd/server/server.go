@@ -211,8 +211,10 @@ type StreamingAPI struct {
 	pendingMu          sync.RWMutex
 
 	// Last query request per session — used to construct synthetic turns
-	lastQueryRequests map[string]QueryRequest
-	lastQueryMu       sync.RWMutex
+	lastQueryRequests      map[string]QueryRequest
+	lastQueryMu            sync.RWMutex
+	sessionWorkspaceFolders map[string]string // sessionID → resolved workflowPhaseFolder (for builder log persistence in synthetic turns)
+	sessionWorkspaceMu      sync.RWMutex
 
 	// Stored agent instances for synthetic turns (plan mode only)
 	// Reused directly via StreamWithEvents() instead of re-creating agents per synthetic turn
@@ -291,8 +293,6 @@ type QueryRequest struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
-	// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
-	UseToolSearchMode bool `json:"use_tool_search_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
@@ -728,7 +728,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		bgAgentRegistry:       NewBackgroundAgentRegistry(),
 		sessionBusy:           make(map[string]bool),
 		pendingCompletions:    make(map[string][]string),
-		lastQueryRequests:     make(map[string]QueryRequest),
+		lastQueryRequests:       make(map[string]QueryRequest),
+		sessionWorkspaceFolders: make(map[string]string),
 		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:         make(map[string]*mcpagent.Agent),
 		completionLoopStarted: make(map[string]bool),
@@ -2369,8 +2370,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools, code execution mode, tool search mode, skills, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
-		var useToolSearchMode bool
-		var preDiscoveredTools []string
 		var selectedSkills []string
 		var presetLLMConfig *database.PresetLLMConfig
 
@@ -2393,7 +2392,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				manifestLoaded = true
 				log.Printf("[MANIFEST] Loaded workflow config from manifest at %s", manifestWorkspacePath)
 				selectedTools = caps.SelectedTools
-				preDiscoveredTools = caps.PreDiscoveredTools
 				selectedSkills = caps.SelectedSkills
 				presetLLMConfig = caps.LLMConfig
 
@@ -2573,16 +2571,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Auto-determine execution mode from browser selection (overrides manifest setting):
-		// - Browser active → tool_search mode
+		// - Browser active → learn_code mode (no code execution)
 		// - No browser → code_exec mode
 		// NOTE: Per-agent code execution override for claude-code/gemini-cli providers happens at the agent layer.
 		if workflowBrowserMode != "" && workflowBrowserMode != "none" {
 			useCodeExecutionMode = false
-			useToolSearchMode = true
-			log.Printf("[TOOL_SEARCH] Tool search mode auto-enabled based on browser_mode=%s", workflowBrowserMode)
+			log.Printf("[LEARN_CODE] Learn code mode auto-enabled based on browser_mode=%s", workflowBrowserMode)
 		} else {
 			useCodeExecutionMode = true
-			useToolSearchMode = false
 			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
 		}
 
@@ -2608,8 +2604,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			selectedServers,      // selectedServers
 			selectedTools,        // NEW: selectedTools
 			useCodeExecutionMode, // NEW: code execution mode
-			useToolSearchMode,    // NEW: tool search mode
-			preDiscoveredTools,   // NEW: pre-discovered tools
 			allTools,             // customTools
 			allExecutors,         // customToolExecutors
 			workflowLLMConfig,    // llmConfig (with merged API keys)
@@ -3297,7 +3291,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
-		var useToolSearchMode bool
 
 		// Load selected tools from manifest (no DB dependency)
 		{
@@ -3330,11 +3323,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Auto-determine execution mode from browser selection:
-		// - Browser active (not none/empty) → tool_search mode (agent can discover tools on-demand)
+		// - Browser active (not none/empty) → learn_code mode (no code execution)
 		// - No browser → code_exec mode (agent calls tools via HTTP code)
 		if req.BrowserMode != "" && req.BrowserMode != "none" {
-			useToolSearchMode = true
-			log.Printf("[TOOL_SEARCH] Tool search mode auto-enabled based on browser_mode=%s", req.BrowserMode)
+			log.Printf("[LEARN_CODE] Learn code mode auto-enabled based on browser_mode=%s", req.BrowserMode)
 		} else {
 			useCodeExecutionMode = true
 			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
@@ -3345,7 +3337,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// which requires code execution mode to expose per-tool API endpoints.
 		if req.Provider == "claude-code" {
 			useCodeExecutionMode = true
-			useToolSearchMode = false
 			log.Printf("[CLAUDE CODE] Code execution mode enforced for MCP tool access via bridge")
 		}
 
@@ -3354,7 +3345,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// which requires code execution mode to expose per-tool API endpoints.
 		if req.Provider == "gemini-cli" {
 			useCodeExecutionMode = true
-			useToolSearchMode = false
 			log.Printf("[GEMINI CLI] Code execution mode enforced for MCP tool access via bridge")
 		}
 
@@ -3363,7 +3353,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// which requires code execution mode to expose per-tool API endpoints.
 		if req.Provider == "codex-cli" {
 			useCodeExecutionMode = true
-			useToolSearchMode = false
 			log.Printf("[CODEX CLI] Code execution mode enforced for MCP tool access via bridge")
 		}
 
@@ -3371,40 +3360,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// UNLESS the provider is claude-code (which requires it for MCP bridge tool access).
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
-		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
-		// so the orchestrator can efficiently discover tools for research.
 		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
-			}
-			// Count total tools across selected servers to decide on tool search mode
-			api.toolStatusMux.RLock()
-			totalToolCount := 0
-			for _, s := range selectedServers {
-				if s != "all" && s != mcpclient.NoServers {
-					if status, ok := api.toolStatus[s]; ok {
-						totalToolCount += status.ToolsEnabled
-					}
-				}
-			}
-			api.toolStatusMux.RUnlock()
-			if totalToolCount >= 10 && !useToolSearchMode {
-				log.Printf("[TOOL_SEARCH] Auto-enabling tool search mode for orchestrator — %d tools across selected servers (>=10)", totalToolCount)
-				useToolSearchMode = true
-			} else if useToolSearchMode && totalToolCount < 10 {
-				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator — only %d tools across selected servers (<10)", totalToolCount)
-				useToolSearchMode = false
-			}
-		}
-
-		// Workflow phase agents with many custom tools always use tool search mode —
-		// they get 21+ workshop tools registered after agent creation, which aren't counted in
-		// the MCP tool count above. Force tool search mode so these tools are discoverable.
-		if isWorkflowPhase && workflowPhaseID == "workflow-builder" {
-			if !useToolSearchMode {
-				log.Printf("[TOOL_SEARCH] Forcing tool search mode for %s phase (21+ workshop tools)", workflowPhaseID)
-				useToolSearchMode = true
 			}
 		}
 
@@ -3427,7 +3386,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
-		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v, UseToolSearchMode: %v", serverList, useCodeExecutionMode, useToolSearchMode)
+		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
 		agentConfig := agent.LLMAgentConfig{
 			Name:               "chat-agent",
 			ServerName:         serverList, // Use full server list, not just first one
@@ -3457,27 +3416,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,
-			// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
-			UseToolSearchMode: useToolSearchMode,
-			// Pre-discovered tools: all virtual/custom tools stay visible in tool search mode
-			// Only MCP server tools require discovery via search_tools
-			PreDiscoveredTools: func() []string {
-				if !useToolSearchMode {
-					return nil
-				}
-				// Collect all virtual tool names so they're never hidden behind search
-				preDiscovered := collectVirtualToolNames(
-					virtualtools.CreateWorkspaceAdvancedTools(),
-				)
-				if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents", "create_delegation_plan")
-				}
-				if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
-					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
-				}
-				return preDiscovered
-			}(),
-			APIKeys: mergedAPIKeys,
+			APIKeys:              mergedAPIKeys,
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
@@ -4639,13 +4578,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// all others default to tool search mode for the workshop agent.
 				// This mirrors the logic in interactive_workshop_manager.go:730-732.
 				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
-				phaseIsToolSearch := !phaseIsCodeExec
-				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v, isToolSearch=%v", finalProvider, phaseIsCodeExec, phaseIsToolSearch)
+				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v", finalProvider, phaseIsCodeExec)
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
 					"WorkspacePath":       phaseWorkspacePath,
 					"IsCodeExecutionMode": fmt.Sprintf("%v", phaseIsCodeExec),
-					"UseToolSearchMode":   fmt.Sprintf("%v", phaseIsToolSearch),
 				}
 
 				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below)
@@ -4760,9 +4697,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if phaseIsCodeExec {
 					codeExecInstructions := prompt.GetCodeExecutionInstructions(phaseWorkspacePath)
 					phaseSystemPrompt += "\n\n" + codeExecInstructions
-				} else if phaseIsToolSearch {
-					toolSearchInstructions := prompt.GetToolSearchInstructions()
-					phaseSystemPrompt += "\n\n" + toolSearchInstructions
 				}
 
 				// Override the agent's system prompt — use SetSystemPrompt to properly set tracking flags
@@ -4934,8 +4868,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 								refreshedTools := caps.SelectedTools
 								toolsParsed := true
-								refreshedPreDiscovered := caps.PreDiscoveredTools
-								preDiscoveredParsed := true
 								refreshedSkills := caps.SelectedSkills
 								skillsParsed := true
 
@@ -4993,15 +4925,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									selectedServers,
 									refreshedTools, toolsParsed,
 									caps.UseCodeExecutionMode,
-									caps.UseToolSearchMode,
-									refreshedPreDiscovered, preDiscoveredParsed,
 									refreshedKnowledgebase,
 									refreshedSkills, skillsParsed,
 									secretEntries,
 								)
-								log.Printf("[WORKFLOW_PHASE] Refreshed settings from manifest: servers=%d tools=%d codeExec=%v toolSearch=%v kb=%v skills=%d secrets=%d",
+								log.Printf("[WORKFLOW_PHASE] Refreshed settings from manifest: servers=%d tools=%d codeExec=%v kb=%v skills=%d secrets=%d",
 									len(selectedServers), len(refreshedTools), caps.UseCodeExecutionMode,
-									caps.UseToolSearchMode, refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
+									refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
 							}
 						}
 					} else {
@@ -5460,6 +5390,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
+		if isWorkflowPhase && workflowPhaseFolder != "" {
+			api.sessionWorkspaceMu.Lock()
+			api.sessionWorkspaceFolders[sessionID] = workflowPhaseFolder
+			api.sessionWorkspaceMu.Unlock()
+		}
+
 		// Save builder conversation log + token_usage.json for workflow phase sessions.
 		// One file per session — overwrites on each follow-up with the full cumulative history.
 		// Resolve workspace-docs root so files are visible in the UI.
@@ -5477,6 +5414,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"updated_at":           time.Now().Format(time.RFC3339),
 				}
 				if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
+					// One file per session, overwritten on each turn with cumulative history.
+					// Uses session ID in filename for stable overwrites within a session.
 					logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
 					if err := os.WriteFile(logPath, convJSON, 0644); err != nil {
 						log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
@@ -5742,6 +5681,10 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	api.lastQueryMu.Lock()
 	delete(api.lastQueryRequests, sessionID)
 	api.lastQueryMu.Unlock()
+
+	api.sessionWorkspaceMu.Lock()
+	delete(api.sessionWorkspaceFolders, sessionID)
+	api.sessionWorkspaceMu.Unlock()
 
 	api.sessionAgentsMux.Lock()
 	delete(api.sessionAgents, sessionID)
@@ -7550,23 +7493,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		serversList = parentReq.Servers
 	}
 
-	// Auto-enable tool search mode for sub-agents with many MCP servers (>3)
-	// This prevents overwhelming the LLM with too many tool definitions
-	useToolSearch := toolMode == "tool_search"
 	useCodeExec := toolMode == "code_execution"
-	if !useToolSearch && !useCodeExec {
-		realServerCount := 0
-		for _, s := range serversList {
-			if s != "all" && s != mcpclient.NoServers {
-				realServerCount++
-			}
-		}
-		if realServerCount > 3 {
-			useToolSearch = true
-			toolMode = "tool_search"
-			log.Printf("[DELEGATION] Auto-enabling tool search mode for sub-agent — %d MCP servers (>3)", realServerCount)
-		}
-	}
 
 	// Extract background agent ID if this delegation was spawned by a background agent
 	backgroundAgentID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
@@ -7623,22 +7550,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}(),
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
 		UseCodeExecutionMode: useCodeExec,
-		UseToolSearchMode:    useToolSearch,
-		// Pre-discovered tools: all virtual/custom tools stay visible in tool search mode
-		// Only MCP server tools require discovery via search_tools
-		PreDiscoveredTools: func() []string {
-			if !useToolSearch {
-				return nil
-			}
-			preDiscovered := collectVirtualToolNames(
-				virtualtools.CreateWorkspaceAdvancedTools(),
-			)
-			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
-				preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
-			}
-			return preDiscovered
-		}(),
-		APIKeys:   apiKeys,
+		APIKeys:              apiKeys,
 		Fallbacks: tierFallbacks,
 		SessionID: subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
 		UserID:    subAgentUserID,    // Per-user OAuth token isolation
@@ -9016,10 +8928,41 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		}
 
 		// Final save of conversation history
+		finalHistory := llmAgent.GetHistory()
 		api.conversationMux.Lock()
-		api.conversationHistory[sessionID] = llmAgent.GetHistory()
+		api.conversationHistory[sessionID] = finalHistory
 		api.conversationMux.Unlock()
-		log.Printf("[BG AGENT] Synthetic turn completed for session %s, history: %d messages", sessionID, len(llmAgent.GetHistory()))
+		log.Printf("[BG AGENT] Synthetic turn completed for session %s, history: %d messages", sessionID, len(finalHistory))
+
+		// Persist conversation to builder/ folder on disk (same as handleQuery defer)
+		// Without this, auto-notification responses are only in memory and lost on restart.
+		api.sessionWorkspaceMu.RLock()
+		workflowPhaseFolder, hasFolderForSession := api.sessionWorkspaceFolders[sessionID]
+		api.sessionWorkspaceMu.RUnlock()
+		if hasFolderForSession && workflowPhaseFolder != "" && len(finalHistory) > 0 {
+			wsRoot := filepath.Join("..", "workspace-docs")
+			builderDir := filepath.Join(wsRoot, workflowPhaseFolder, "builder")
+			if err := os.MkdirAll(builderDir, 0755); err == nil {
+				phaseID := ""
+				if hasReq {
+					phaseID = req.PhaseID
+				}
+				convData := map[string]interface{}{
+					"session_id":           sessionID,
+					"phase_id":             phaseID,
+					"conversation_history": finalHistory,
+					"updated_at":           time.Now().Format(time.RFC3339),
+				}
+				if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
+					logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
+					if err := os.WriteFile(logPath, convJSON, 0644); err != nil {
+						log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
+					} else {
+						log.Printf("[BG AGENT] Persisted builder conversation after synthetic turn (%d messages) to %s", len(finalHistory), logPath)
+					}
+				}
+			}
+		}
 
 		// Update stored agent (it now has the latest history from this turn)
 		api.sessionAgentsMux.Lock()
@@ -9778,8 +9721,6 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			cfg.SelectedServers = append([]string(nil), caps.SelectedServers...)
 			cfg.SelectedTools = caps.SelectedTools
 			cfg.UseCodeExecutionMode = caps.UseCodeExecutionMode
-			cfg.UseToolSearchMode = caps.UseToolSearchMode
-			cfg.PreDiscoveredTools = caps.PreDiscoveredTools
 			cfg.SelectedSkills = caps.SelectedSkills
 
 			// Global secrets

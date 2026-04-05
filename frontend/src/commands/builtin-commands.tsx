@@ -1,12 +1,82 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, Search, Sparkles, CheckCircle2, Wrench, AlertTriangle } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, CheckCircle2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
   {
-    command: 'review-plan',
-    description: 'Critically review the current workflow plan decisions',
-    icon: <Search className="w-4 h-4" />,
+    command: 'harden-loop',
+    description: 'Create a schedule that runs → evals → hardens all groups progressively',
+    icon: <RefreshCw className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
+      ctx.onSubmit(`Create a scheduled progressive hardening loop for this workflow. Use create_schedule with these settings:
+
+- name: "Progressive Hardening"
+- cron_expression: "0 2 * * *" (daily at 2 AM, adjust if needed)
+- timezone: "Asia/Kolkata"
+- group_ids: read variables.json to get ALL enabled group IDs
+- mode: "workshop"
+- workshop_mode: "optimizer"
+
+The message should instruct the optimizer agent to run this autonomous loop. CRITICAL: This runs unattended in non-interactive mode. The agent MUST NOT ask for user input, confirmation, or clarification at any point. Make all decisions autonomously. If something is unclear, use the best judgment and proceed.
+
+PHASE 0 — CONTEXT & CONTINUITY
+- Read the latest 2-3 builder conversation files from builder/ folder (ls -t builder/*.json | head -3). These contain what previous optimization runs tried, what failed, what was improved, and what scores were achieved. Use this to avoid repeating failed approaches and build on progress.
+- Read planning/plan.json for objective and success_criteria
+- Read evaluation/evaluation_plan.json
+- Read variables.json for all group IDs
+- Check existing runs: ls runs/ to see what iterations exist. For each recent iteration, check if all groups ran and what scores they got (read evaluation/runs/{iter}/{group}/evaluation_report.json). If the last iteration has incomplete groups or low scores, consider reusing it instead of creating a new one. If all groups scored well, create the next iteration number.
+
+PHASE 1 — PROGRESSIVE EXECUTION + EVAL + HARDEN
+For each group (one at a time, sequentially):
+  1. run_full_workflow(iteration="{iter}", group_id="{group}")
+  2. Wait for completion
+  3. run_full_evaluation(iteration="{iter}", group_id="{group}")
+  4. Wait for completion
+  5. harden_workflow(iteration="{iter}") — fixes benefit subsequent groups
+  6. Wait for completion
+
+TIP: If a specific step keeps failing across groups, you can run just that step in isolation using execute_step(step_id, iteration, group_id) to debug and fix it before continuing the full workflow. This is faster than re-running the entire workflow for a single broken step.
+
+PHASE 2 — STRUCTURAL REVIEW (after all groups)
+- Read all evaluation_report.json files for this iteration
+- If any group scored < 5/10: run replan_workflow_from_results(iteration="{iter}") for structural fixes
+- If all groups scored >= 8/10: skip structural changes — workflow is converging
+
+PHASE 3 — EVAL EVOLUTION
+- Check if eval plan has gaps: are there failure modes from this run that eval didn't catch?
+- Edit evaluation/evaluation_plan.json via shell to add missing deterministic checks
+- Validate with validate_evaluation_plan
+
+PHASE 4 — SECOND PASS (only if Phase 2 made structural changes)
+- Re-run all groups on a new iteration with the structural fixes applied
+- Re-eval and re-harden
+- Skip this phase if no structural changes were needed
+
+PHASE 5 — CONVERGENCE CHECK
+After all phases complete, run mark_workflow_optimized. If it passes — all steps optimized, learnings exist, eval plan present — the workflow is done. Disable this schedule (update_schedule with enabled=false) and log the final state.
+If it fails, log which checklist items remain. The next scheduled run will pick up from here.
+
+RULES:
+- NON-INTERACTIVE: Do not ask for user input or confirmation. Make all decisions autonomously.
+- THE END GOAL: Get mark_workflow_optimized to pass. Every action should move toward this.
+- Max 2 full iteration cycles per schedule run
+- If total scores don't improve between iterations, stop and log why
+- Never retry the same step more than 2 times within one iteration
+- Always proceed to the next group/phase even if one group fails${focusText}
+
+Read variables.json now and create the schedule with all group IDs.`)
+    }
+  },
+  {
+    command: 'harden',
+    description: 'Harden the workflow from the latest run\'s eval results',
+    icon: <Shield className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
@@ -14,37 +84,40 @@ export const builtinCommands: CommandDefinition[] = [
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
       const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      const runText = runFolder ? ` Use target_run_folder="${runFolder}" if run evidence would help.` : ''
-      ctx.onSubmit(`Run review_plan now.${runText}${focusText} Return findings first.`)
+      const focusText = focus ? ` focus="${focus}"` : ''
+      if (runFolder) {
+        // Extract iteration from run folder (e.g., "iteration-28/saurabh" → "iteration-28")
+        const iteration = runFolder.split('/')[0]
+        ctx.onSubmit(`Run harden_workflow(iteration="${iteration}"${focusText}) now. Analyze all group eval reports, fix every failing step, and summarize what changed.`)
+      } else {
+        ctx.onSubmit(`Read runs/ to find the latest iteration, then run harden_workflow on it.${focusText ? ` Focus: ${focus}` : ''} Analyze all group eval reports, fix every failing step, and summarize what changed.`)
+      }
     }
   },
   {
-    command: 'optimize-workflow',
-    description: 'Analyze the workflow structure against the objective',
-    icon: <Sparkles className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Run optimize_workflow now.${focusText} Then summarize the top structural changes to make.`)
-    }
-  },
-  {
-    command: 'optimize-step',
-    description: 'Optimize one workflow step by step id',
+    command: 'tune-step',
+    description: 'Run a step, evaluate it, and fix any issues',
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
-    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /optimize-step <step-id>',
+    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
     source: 'builtin',
     execute: (ctx) => {
       const stepId = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Run optimize_step(step_id="${stepId}") now and summarize the highest-priority fixes for that step.`)
+      ctx.onSubmit(`Tune step "${stepId}". Do all of this autonomously without pausing for confirmation:
+
+1. Read variables.json to get a group ID. Find the latest iteration from runs/.
+2. Run execute_step(step_id="${stepId}", group_id=<group>, iteration=<iter>). Wait for completion.
+3. Check the result. If it failed, read the execution logs (learn_code_fast_path.json or conversation log) to understand why.
+4. Read the step's current description, validation_schema, and learnings (main.py or SKILL.md).
+5. Fix any issues found:
+   - If main.py has a bug → patch it with diff_patch_workspace_file
+   - If description is vague → tighten it with update_regular_step or update_todo_task_route
+   - If validation_schema is missing checks → add them with update_validation_schema
+   - If step config is wrong (wrong mode, missing servers) → fix with update_step_config
+6. Re-run the step to verify the fix works.
+7. Give a final summary of what was wrong and what changed.`)
     }
   },
   {
@@ -54,37 +127,17 @@ export const builtinCommands: CommandDefinition[] = [
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
-    validate: (ctx) => ctx.getWorkflowStore().selectedRunFolder ? null : 'Select a workflow run folder before using /replan-results',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
       const focus = ctx.beforeSlash.trim()
       const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Run replan_workflow_from_results(target_run_folder="${runFolder}") now.${focusText} Rewrite the plan from actual results and summarize what changed.`)
-    }
-  },
-  {
-    command: 'tune-step',
-    description: 'Run a step, audit its mode/learnings/tools, then optimize',
-    icon: <Wrench className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
-    source: 'builtin',
-    execute: (ctx) => {
-      const stepId = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Do a full tune of step "${stepId}". Run all steps below autonomously without pausing for confirmation — only stop at the very end to give a final summary.
-
-1. **Execute**: Run execute_step(step_id="${stepId}") and wait for completion. Note what it produced and whether it succeeded.
-2. **Read step definition**: Read plan.json for this step. Check the description — is it specific, actionable, and unambiguous for the execution agent? Check the validation_schema — does it enforce the right output shape? Are required fields correct and types precise?
-3. **Best practices audit**: Does the step follow best practices? Flag any of: vague description, missing validation_schema, hardcoded values that should be variables, missing context dependencies, wrong step type for the task, or instructions that would confuse a junior agent.
-4. **Check mode**: Read step_config.json. Is the current execution mode (code_exec / tool_search / simple) the right choice? Stable reusable logic → code_exec. Runtime discovery or browser-heavy → tool_search. Single known tool call → simple.
-5. **Check learnings**: Read any learnings saved for this step. Are they accurate, complete, and still relevant?
-6. **Check pre-discovered tools**: Are pre_discovered_tools correct for this step's needs? Missing tools slow it down; wrong tools waste context.
-7. **Optimize**: Run optimize_step(step_id="${stepId}") passing your findings from steps 2–6 as the focus.
-
-Do not wait for my input between steps. Once all 7 steps are done, give a single summary of what changed and what the step's final state is.`)
+      if (runFolder) {
+        const iteration = runFolder.split('/')[0]
+        ctx.onSubmit(`Run replan_workflow_from_results(iteration="${iteration}") now.${focusText} Rewrite the plan from actual results and summarize what changed.`)
+      } else {
+        ctx.onSubmit(`Read runs/ to find the latest iteration, then run replan_workflow_from_results on it.${focusText} Rewrite the plan from actual results and summarize what changed.`)
+      }
     }
   },
   {

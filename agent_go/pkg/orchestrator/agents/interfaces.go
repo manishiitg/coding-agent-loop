@@ -109,11 +109,6 @@ type OrchestratorAgentConfig struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
-	// Tool search mode: When enabled, tools are discovered on-demand via search_tools
-	UseToolSearchMode  bool     `json:"use_tool_search_mode,omitempty"`
-	// Logical tool search mode: preserves step semantics when CLI providers force code-exec transport
-	LogicalUseToolSearchMode bool     `json:"logical_use_tool_search_mode,omitempty"`
-	PreDiscoveredTools []string `json:"pre_discovered_tools,omitempty"` // Tools always available without searching
 	// Context offloading configuration
 	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)
 	LargeOutputThreshold    int   `json:"large_output_threshold,omitempty"`    // Token threshold for context offloading (0 = use default: 10000)

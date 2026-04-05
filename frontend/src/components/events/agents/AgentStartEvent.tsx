@@ -41,7 +41,6 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
               {isMetaExpanded && (
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.use_code_execution_mode && ' | Code Exec'}
-                  {event.use_tool_search_mode && ' | Tool Search'}
                   {' | Model: '}{modelDisplayName}
                   {' | Provider: '}{event.provider || 'Unknown'}
                   {(event.metadata?.max_turns !== undefined) &&

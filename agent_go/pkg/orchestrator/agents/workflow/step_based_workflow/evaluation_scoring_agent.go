@@ -41,7 +41,7 @@ func (a *WorkflowEvaluationScoringAgent) Execute(ctx context.Context, templateVa
 	// Append code execution instructions so the LLM knows to use get_api_spec + execute_shell_command
 	// to call submit_score via HTTP API (same pattern as other agents via {{.CodeExecutionSection}})
 	if a.GetConfig() != nil && a.GetConfig().UseCodeExecutionMode {
-		codeExecSection := BuildCodeExecutionSection(true, false, "")
+		codeExecSection := BuildCodeExecutionSection(true, "")
 		if codeExecSection != "" {
 			systemPrompt += "\n\n" + codeExecSection
 		}

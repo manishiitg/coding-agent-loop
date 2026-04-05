@@ -582,8 +582,6 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 		return "Browsing the web"
 	case strings.HasPrefix(parsed.ToolName, "git_"):
 		return "Working with git"
-	case parsed.ToolName == "search_tools" || parsed.ToolName == "add_tool" || parsed.ToolName == "show_all_tools":
-		return "" // internal meta tools — skip
 	default:
 		// For MCP/unknown tools, humanize the name
 		return "Using " + strings.ReplaceAll(parsed.ToolName, "_", " ")

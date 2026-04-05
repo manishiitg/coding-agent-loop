@@ -551,7 +551,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildFinalOutputExecutionStep(
 	disableLearning := true
 	disableTempLLM := true
 	executionMaxTurns := 30
-	useToolSearchMode := false
 	selectedServers := []string{mcpclient.NoServers}
 	stepID := outputStep.ID
 	if stepID == "" {
@@ -599,11 +598,9 @@ Rules:
 			ExecutionMaxTurns:    &executionMaxTurns,
 			DisableLearning:      &disableLearning,
 			DisableTempLLM:       &disableTempLLM,
-			UseToolSearchMode:    &useToolSearchMode,
 			SelectedServers:      selectedServers,
 			EnabledCustomTools:   []string{"workspace_advanced:execute_shell_command"},
 			SelectedTools:        []string{},
-			PreDiscoveredTools:   []string{},
 			DisableKnowledgebase: finalOutputBoolPtr(true),
 		},
 	}

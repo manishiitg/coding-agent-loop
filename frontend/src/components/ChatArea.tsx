@@ -2361,13 +2361,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         presetValue: activePreset?.useCodeExecutionMode,
         tabConfigValue: currentTab?.config?.useCodeExecutionMode,
       })
-      const useToolSearchMode = determineModeFlag({
-        correctAgentMode,
-        selectedModeCategory: selectedModeCategory || '',
-        presetValue: activePreset?.useToolSearchMode,
-        tabConfigValue: currentTab?.config?.useToolSearchMode,
-      })
-
       // Build LLM config
       const isMultiAgentMode = selectedModeCategory === 'multi-agent'
       const llmStore = useLLMStore.getState()
@@ -2441,7 +2434,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         effectiveLLMConfig,
         llmConfigWithApiKeys,
         useCodeExecutionMode,
-        useToolSearchMode,
         executionOptions: executionOptionsRef.current,
         workflowPresetId,
         chatPresetId,

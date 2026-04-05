@@ -175,8 +175,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 			DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution"`
 			ExecutionMaxTurns            *int     `json:"execution_max_turns"`
 			EnabledCustomTools           []string `json:"enabled_custom_tools"`
-			UseGlobalLearning            *bool    `json:"use_global_learning"`
-			LockGlobalLearning           *bool    `json:"lock_global_learning"`
 			GlobalSkillObjective         string   `json:"global_skill_objective"`
 		} `json:"execution_defaults"`
 	}
@@ -185,7 +183,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 	}
 
 	ed := manifest.ExecutionDefaults
-	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 && ed.UseGlobalLearning == nil && ed.LockGlobalLearning == nil && ed.GlobalSkillObjective == "" {
+	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 && ed.GlobalSkillObjective == "" {
 		return nil, nil
 	}
 
@@ -195,8 +193,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 		DisableParallelToolExecution: ed.DisableParallelToolExecution,
 		ExecutionMaxTurns:            ed.ExecutionMaxTurns,
 		EnabledCustomTools:           ed.EnabledCustomTools,
-		UseGlobalLearning:            ed.UseGlobalLearning,
-		LockGlobalLearning:          ed.LockGlobalLearning,
 		GlobalSkillObjective:         ed.GlobalSkillObjective,
 	}, nil
 }
@@ -311,9 +307,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 		target.EnabledCustomTools = source.EnabledCustomTools
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - enabled_custom_tools: %v", stepID, source.EnabledCustomTools))
 	}
-	if source.EnabledCustomToolCategories != nil {
-		target.EnabledCustomToolCategories = source.EnabledCustomToolCategories
-	}
 	if source.EnabledSkills != nil {
 		target.EnabledSkills = source.EnabledSkills
 	}
@@ -338,12 +331,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.DeclaredExecutionModeReason != "" {
 		target.DeclaredExecutionModeReason = source.DeclaredExecutionModeReason
 	}
-	if source.CodeExecRejectionReason != "" {
-		target.CodeExecRejectionReason = source.CodeExecRejectionReason
-	}
-	if source.ToolSearchRejectionReason != "" {
-		target.ToolSearchRejectionReason = source.ToolSearchRejectionReason
-	}
 	if source.DescriptionHash != "" {
 		target.DescriptionHash = source.DescriptionHash
 	}
@@ -361,12 +348,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	}
 	if source.DescriptionSecretsReviewReason != "" {
 		target.DescriptionSecretsReviewReason = source.DescriptionSecretsReviewReason
-	}
-	if source.UseGlobalLearning != nil {
-		target.UseGlobalLearning = source.UseGlobalLearning
-	}
-	if source.LockGlobalLearning != nil {
-		target.LockGlobalLearning = source.LockGlobalLearning
 	}
 	if source.GlobalSkillObjective != "" {
 		target.GlobalSkillObjective = source.GlobalSkillObjective
@@ -392,45 +373,45 @@ func ApplyStepConfigFromFile(
 	}
 
 	matchedConfig := MatchStepConfigByID(step.GetID(), stepConfigs)
-	if matchedConfig == nil {
-		return nil // No matched config, use defaults
-	}
-
-	// Initialize AgentConfigs if not present
-	agentConfigs := getAgentConfigs(step)
-	if agentConfigs == nil {
-		// Need to set AgentConfigs on the step - this requires type assertion
-		switch s := step.(type) {
-		case *RegularPlanStep:
-			s.AgentConfigs = matchedConfig
-		case *ConditionalPlanStep:
-			s.AgentConfigs = matchedConfig
-		case *DecisionPlanStep:
-			s.AgentConfigs = matchedConfig
-		case *TodoTaskPlanStep:
-			s.AgentConfigs = matchedConfig
-		case *HumanInputPlanStep:
-			s.AgentConfigs = matchedConfig
-		case *EvaluationStep:
-			s.AgentConfigs = matchedConfig
-		case *RoutingPlanStep:
-			s.AgentConfigs = matchedConfig
-		default:
-			return fmt.Errorf("unknown step type: %T", step)
+	if matchedConfig != nil {
+		// Initialize AgentConfigs if not present
+		agentConfigs := getAgentConfigs(step)
+		if agentConfigs == nil {
+			// Need to set AgentConfigs on the step - this requires type assertion
+			switch s := step.(type) {
+			case *RegularPlanStep:
+				s.AgentConfigs = matchedConfig
+			case *ConditionalPlanStep:
+				s.AgentConfigs = matchedConfig
+			case *DecisionPlanStep:
+				s.AgentConfigs = matchedConfig
+			case *TodoTaskPlanStep:
+				s.AgentConfigs = matchedConfig
+			case *HumanInputPlanStep:
+				s.AgentConfigs = matchedConfig
+			case *EvaluationStep:
+				s.AgentConfigs = matchedConfig
+			case *RoutingPlanStep:
+				s.AgentConfigs = matchedConfig
+			default:
+				return fmt.Errorf("unknown step type: %T", step)
+			}
+			orchestrator.GetLogger().Info(fmt.Sprintf("✅ Applied full config for step %s (ID: %s)", step.GetTitle(), step.GetID()))
+		} else {
+			// Merge matched config into existing config
+			MergeAgentConfigFields(agentConfigs, matchedConfig, step.GetID(), orchestrator.GetLogger())
 		}
-		orchestrator.GetLogger().Info(fmt.Sprintf("✅ Applied full config for step %s (ID: %s)", step.GetTitle(), step.GetID()))
-	} else {
-		// Merge matched config into existing config
-		MergeAgentConfigFields(agentConfigs, matchedConfig, step.GetID(), orchestrator.GetLogger())
+
+		// Sync declared_execution_mode to boolean flags (use_code_execution_mode, etc.)
+		// This ensures configs written manually or by older tools still set the right flags.
+		if finalConfigs := getAgentConfigs(step); finalConfigs != nil {
+			syncDeclaredExecutionModeConfig(finalConfigs)
+		}
 	}
 
-	// Sync declared_execution_mode to boolean flags (use_code_execution_mode, etc.)
-	// This ensures configs written manually or by older tools still set the right flags.
-	if finalConfigs := getAgentConfigs(step); finalConfigs != nil {
-		syncDeclaredExecutionModeConfig(finalConfigs)
-	}
-
-	// Apply global overrides from step_override.json (highest priority)
+	// Apply global overrides from workflow.json execution_defaults (highest priority)
+	// This must run even when no step_config.json match exists, since execution_defaults
+	// (e.g., global_skill_objective, disable_learning) apply to ALL steps regardless of per-step config.
 	overrides, err := orchestrator.ReadStepOverrides(ctx)
 	if err != nil {
 		orchestrator.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_override.json in ApplyStepConfigFromFile: %v", err))

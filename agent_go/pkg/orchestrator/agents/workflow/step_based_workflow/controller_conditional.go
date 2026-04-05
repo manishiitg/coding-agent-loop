@@ -102,11 +102,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
 	agentConfigs := getAgentConfigs(step)
 	var learningHistory string
-	if isGlobalLearningEnabled(agentConfigs) {
-		learningHistory, _ = hcpo.LoadGlobalLearningHistory(ctx)
-	} else {
-		learningHistory, _ = hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
-	}
+	learningHistory, _ = hcpo.LoadGlobalLearningHistory(ctx)
 
 	// Determine code execution mode: step config > workflow/preset default
 	// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in createConditionalAgent.

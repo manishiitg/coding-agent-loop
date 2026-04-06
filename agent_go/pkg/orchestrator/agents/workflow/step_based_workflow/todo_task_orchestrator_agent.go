@@ -145,8 +145,9 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 {{if .VariableNames}}
 ## Variables
 {{.VariableNames}}
-{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
-{{end}}
+{{if .IsCodeExecutionMode}}**Handling**: Variables are injected as env vars (VAR_ prefix for config, SECRET_ prefix for credentials). Never hardcode variable values.
+{{else}}{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
+{{end}}{{end}}
 
 {{if .PreviousStepsSummary}}
 {{.PreviousStepsSummary}}
@@ -163,14 +164,14 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 
 Path: ` + "`" + `{{.LearningsPath}}/` + "`" + `
 
-This folder contains sub-agent learnings from previous runs. Sub-agents read and update their own learnings automatically — you do NOT need to read or pass these routinely.
+This folder contains the global skill file and sub-agent saved scripts from previous runs. Sub-agents read and update their skills automatically — you do NOT need to read or pass these routinely.
 
 **Only access this folder when**:
 - Debugging a sub-agent failure and you need to understand what it learned previously
 - Doing work yourself and you want to check for known pitfalls{{if .IsCodeExecutionMode}}
 - Inspecting a saved ` + "`" + `main.py` + "`" + ` script to understand how a sub-agent executes its task{{end}}
 
-Structure: ` + "`" + `{route-id}/SKILL.md` + "`" + ` (per-route learnings){{if .IsCodeExecutionMode}}, ` + "`" + `{route-id}/main.py` + "`" + ` (saved scripts){{end}}
+Structure: ` + "`" + `_global/SKILL.md` + "`" + ` (global skill){{if .IsCodeExecutionMode}}, ` + "`" + `{step-id}/main.py` + "`" + ` (saved scripts per step){{end}}
 {{end}}
 
 {{if .LearningHistory}}
@@ -258,6 +259,7 @@ type TodoTaskOrchestratorTemplate struct {
 	EnableGenericAgent      bool   // Whether generic agent is available
 	VariableNames           string
 	VariableValues          string
+	IsCodeExecutionMode     bool
 	LearningHistory         string
 }
 

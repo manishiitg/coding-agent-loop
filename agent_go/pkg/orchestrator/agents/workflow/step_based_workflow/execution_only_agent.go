@@ -23,8 +23,6 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 
 ## Role & Responsibility
 - **Identity**: Step Execution Agent.
-- **Goal**: Complete the task described in the Step Description using the tools available to you.
-{{if .LearningHistory}}- **Context**: Skill files available from previous runs (read-only reference).{{end}}
 
 {{if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
@@ -83,7 +81,7 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 {{.LearningHistory}}
 {{end}}
 
-{{if .ValidationSchema}}
+{{if and .ValidationSchema (ne .IsLearnCodeMode "true")}}
 ## Validation Schema (Output Requirement)
 Your '{{.StepContextOutput}}' MUST match this structure:
 {{printf "%s" .ValidationSchema}}
@@ -157,7 +155,8 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 - **Inputs**: {{.StepContextDependencies}}
 - **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
 
-### Execution Checklist
+{{if .LearnCodePriorContext}}{{.LearnCodePriorContext}}
+{{end}}### Execution Checklist
 1. Read all **Inputs** listed above before starting.
 {{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
@@ -188,6 +187,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	OrchestratorInstructions   string // Orchestrator instructions (split from description)
 	HasSkill                   string // "true" if skill files are available
 	IsLearnCodeMode            string // "true" when learn_code mode is enabled
+	LearnCodePriorContext      string // Prior script context (failed script + error, or existing script for update)
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -356,6 +356,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"], // Skip cleanup mode flag
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag
+		"IsLearnCodeMode":            templateVars["IsLearnCodeMode"],      // Learn code mode flag (validation schema shown in learn_code section instead)
 		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display
 	})
 	if err != nil {
@@ -403,6 +404,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),
+		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"]),
 	}
 
 	// Execute the pre-parsed template

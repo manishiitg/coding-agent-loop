@@ -1219,6 +1219,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					ExecutionStatus:      "COMPLETED",
 					Reasoning:            "learn_code: saved script executed and validated (0 LLM tokens)",
 				}
+				// If the script in execution/code/ differs from learnings (e.g., LLM-fixed version
+				// from a previous attempt), save the working version back to learnings.
+				learnCodeScriptNeedsSaving = true
 				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Fast path succeeded for step %d — skipping execution loop", stepIndex+1))
 			} else if fastResult.RanScript {
 				// Script ran but failed — fall through to LLM for relearn
@@ -1320,9 +1323,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
 			// Check if learning is disabled - if so, skip reading learnings entirely
-			// Learning is disabled if explicitly set via step config, or if this is a routing step.
-			// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
-			isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
+			// Learning is disabled if explicitly set via step config, if this is a routing step,
+			// or if running in evaluation mode (eval/report steps don't produce learnable outcomes).
+			isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step) || hcpo.isEvaluationMode
 			isLearningDetailLevelNone := false
 			if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 				isLearningDetailLevelNone = true
@@ -1508,26 +1511,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
 				}
 
-				// Learn code mode: clean and pre-create the code/ subdirectory via workspace API.
-				// Deleting all files ensures stale helpers from a previous LLM attempt don't accumulate.
+				// Learn code mode: ensure code/ subdirectory exists (don't clean — LLM's
+				// previous fix may be there and will be overwritten only if the LLM writes a new version).
 				if isLearnCodeMode {
 					codeDirRelPath := stepExecutionPath + "/code"
-					// Delete all existing files in code/ (LLM may have written stale files on a prior attempt)
-					if codeFiles, listErr := hcpo.ListWorkspaceFiles(ctx, codeDirRelPath); listErr == nil {
-						for _, f := range codeFiles {
-							fName := filepath.Base(f)
-							if fName == "" || fName == "." {
-								continue
-							}
-							if delErr := hcpo.DeleteWorkspaceFile(ctx, codeDirRelPath+"/"+fName); delErr != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to delete old %s from code/: %v", fName, delErr))
-							}
-						}
-					}
 					if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
-					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Pre-created code/ dir for step %d: %s", stepIndex+1, codeDirRelPath))
 					}
 				}
 
@@ -1591,24 +1580,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					learnCodeRepairSystemPrompt := ""
 
 					var lastLcResult *LearnCodeFastPathResult
-					if selfRun := detectSuccessfulLLMLearnCodeSelfRun(executionConversationHistory, mainPyPath); selfRun != nil {
-						preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionPath, hcpo.BaseOrchestrator)
-						if preValResults != nil && preValResults.OverallPass {
-							learnCodePreValidationResultsOverride = preValResults
-							lastLcResult = &LearnCodeFastPathResult{
-								RanScript: true,
-								Success:   true,
-								ExitCode:  selfRun.ExitCode,
-								Output:    selfRun.Output,
-							}
-							hcpo.GetLogger().Info(fmt.Sprintf("♻️ [learn_code] Reusing successful LLM self-test for step %d — skipping duplicate controller rerun", stepIndex+1))
-							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
-								mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
-						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] LLM self-test detected for step %d, but current outputs did not pass pre-validation — running controller execution", stepIndex+1))
+					// Check if pre-validation already passes (LLM may have run main.py or produced outputs).
+					// If outputs are valid AND main.py exists, skip the fix loop — no need to re-run.
+					preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionPath, hcpo.BaseOrchestrator)
+					mainPyRelPath := stepExecutionPath + "/code/main.py"
+					_, mainPyExistsErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
+					if preValResults != nil && preValResults.OverallPass && mainPyExistsErr == nil {
+						learnCodePreValidationResultsOverride = preValResults
+						// Try to get exit code from LLM self-run detection (optional — for logging)
+						var exitCode int
+						var output string
+						if selfRun := detectSuccessfulLLMLearnCodeSelfRun(executionConversationHistory, mainPyPath); selfRun != nil {
+							exitCode = selfRun.ExitCode
+							output = selfRun.Output
 						}
+						lastLcResult = &LearnCodeFastPathResult{
+							RanScript: true,
+							Success:   true,
+							ExitCode:  exitCode,
+							Output:    output,
+						}
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed and main.py exists for step %d — skipping fix loop", stepIndex+1))
+						hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+							mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
+					} else if preValResults != nil && preValResults.OverallPass {
+						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] Pre-validation passed but main.py not found for step %d — entering fix loop to generate script", stepIndex+1))
 					}
 
+					// Fix loop: check pre-validation after each LLM turn.
+					// The LLM writes and runs main.py itself — the controller only checks if
+					// the outputs are valid. If not, feed validation errors back and let the LLM fix.
 					for fixIter := 0; fixIter <= maxFixIter && (lastLcResult == nil || !lastLcResult.Success); fixIter++ {
 						// Check for context cancellation before each fix iteration
 						select {
@@ -1618,42 +1619,74 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						default:
 						}
 
-						lastLcResult = hcpo.runLearnCodeMainPyFromExecution(ctx, step, stepIndex, stepPath, allSteps, stepExecutionPath, executionWorkspacePath)
+						// Check pre-validation — did the LLM produce valid outputs?
+						fixPreValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionPath, hcpo.BaseOrchestrator)
+						mainPyRelPath := stepExecutionPath + "/code/main.py"
+						_, mainPyErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
 
-						// Emit UI event only when a script was actually executed (not when main.py is simply absent).
-						// The nil case (main.py not yet written) is internal control-flow — emitting a ✗ failed
-						// event for it is misleading when the LLM writes the script on the next iteration.
-						if lastLcResult != nil {
+						if fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
+							// Outputs valid + main.py exists → success
+							lastLcResult = &LearnCodeFastPathResult{RanScript: true, Success: true}
 							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
-								mainPyPath, lastLcResult.Success, lastLcResult.ExitCode, lastLcResult.Output, lastLcResult.Error,
-								fixIter, false)
+								mainPyPath, true, 0, "", "", fixIter, false)
+							hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Pre-validation passed for step %d on fix iteration %d", stepIndex+1, fixIter))
+							learnCodePreValidationResultsOverride = fixPreValResults
+							break
 						}
 
-						if lastLcResult != nil && lastLcResult.Success {
-							break // script passed
-						}
 						if fixIter == maxFixIter {
+							// Record the failure for the outer loop
+							var errMsg string
+							if mainPyErr != nil {
+								errMsg = "main.py was not written"
+							} else if fixPreValResults != nil {
+								errMsg = formatWorkspaceResults(fixPreValResults)
+							} else {
+								errMsg = "pre-validation could not run"
+							}
+							lastLcResult = &LearnCodeFastPathResult{RanScript: mainPyErr == nil, Success: false, Error: errMsg}
+							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
+								mainPyPath, false, 1, "", errMsg, fixIter, false)
 							break // exhausted fix attempts
 						}
 
-						// Build feedback user message with the exact error
+						// Build feedback message with validation errors
 						var feedbackMsg string
-						if lastLcResult == nil {
-							feedbackMsg = fmt.Sprintf(
-								"main.py was not found at %s/main.py.\n\nWrite the complete solution to main.py there. You may run it yourself to test, but the system will also execute it automatically after your turn.",
-								codeDirAbsPath,
-							)
+						stepDesc := templateVars["StepDescription"]
+						var sb strings.Builder
+						sb.WriteString(fmt.Sprintf("## Task\n%s\n\n", stepDesc))
+
+						if mainPyErr != nil {
+							// main.py not written yet
+							if priorCtx := BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"]); priorCtx != "" {
+								sb.WriteString(priorCtx)
+								sb.WriteString("\n")
+							}
+							sb.WriteString(fmt.Sprintf("main.py was not found at %s/main.py.\n\n", codeDirAbsPath))
+							sb.WriteString("Write the complete solution to main.py there, run it, and ensure the output files are produced.")
 						} else {
-							feedbackMsg = fmt.Sprintf(
-								"Your script failed (fix attempt %d/%d):\n```\n%s\n```\n\nFix the bug and rewrite main.py at %s/main.py.",
-								fixIter+1, maxFixIter, lastLcResult.Error, codeDirAbsPath,
-							)
+							// main.py exists but outputs are invalid
+							if actualScript, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); readErr == nil && actualScript != "" {
+								sb.WriteString("### Your Script\n\n```python\n")
+								sb.WriteString(actualScript)
+								sb.WriteString("\n```\n\n")
+							}
+							if fixPreValResults != nil {
+								sb.WriteString(fmt.Sprintf("**Output validation failed (attempt %d/%d):**\n```\n%s\n```\n\n", fixIter+1, maxFixIter, formatWorkspaceResults(fixPreValResults)))
+							} else {
+								sb.WriteString(fmt.Sprintf("**Output validation failed (attempt %d/%d):** pre-validation could not run\n\n", fixIter+1, maxFixIter))
+							}
+							sb.WriteString("Fix main.py, run it again, and ensure all required output files are produced correctly.")
 						}
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] main.py failed for step %d (fix attempt %d/%d) — continuing conversation with error", stepIndex+1, fixIter+1, maxFixIter))
+						feedbackMsg = sb.String()
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] validation failed for step %d (fix attempt %d/%d) — continuing conversation with feedback", stepIndex+1, fixIter+1, maxFixIter))
 
 						if !learnCodeRepairAgentUpgraded {
 							repairAgentName := fmt.Sprintf("%s-fix-%d-high", executionAgentName, fixIter+1)
-							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
+							// Force Tier 1 (High) for repair agents — they need to fix a failure,
+							// so they should use at least the same tier as the original execution.
+							repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
+							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
 							if repairErr != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to upgrade repair agent for step %d: %v", stepIndex+1, repairErr))
 							} else {
@@ -1672,7 +1705,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 						}
 
-						// Continue the same conversation: inject error as a user turn
+						// Continue the same conversation: inject validation feedback as a user turn
 						if ba := executionAgent.GetBaseAgent(); ba != nil {
 							systemPrompt := ""
 							if learnCodeRepairSystemPrompt != "" {
@@ -1689,6 +1722,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 
+					// The saved learnings script already failed — any LLM-produced script is a
+					// newer attempt and likely better. Save it to learnings regardless of success
+					// so the next run starts from the latest version, not the known-broken one.
+					if mainPyRelCheck := stepExecutionPath + "/code/main.py"; true {
+						if _, checkErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelCheck); checkErr == nil {
+							hcpo.saveLearnCodeScriptToLearnings(step, toAbsPath(stepExecutionPath))
+							hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved LLM-produced main.py to learnings for step %d (replaces known-broken version)", stepIndex+1))
+							learnCodeScriptNeedsSaving = false // already saved, don't duplicate later
+						}
+					}
+
 					if lastLcResult == nil || !lastLcResult.Success {
 						var errMsg string
 						if lastLcResult == nil {
@@ -1697,6 +1741,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							errMsg = fmt.Sprintf("main.py still failing after %d fix attempts:\n%s", maxFixIter, lastLcResult.Error)
 						}
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] step %d failed after fix loop: %s", stepIndex+1, errMsg))
+						// Fallback: disable learn_code mode for remaining retries.
+						// The LLM couldn't write a working main.py — let it use tools
+						// directly in normal code_exec mode to complete the task.
+						isLearnCodeMode = false
+						templateVars["IsLearnCodeMode"] = "false"
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 [learn_code] Switching step %d to normal code_exec mode for remaining retries", stepIndex+1))
 						validationResponse = &ValidationResponse{
 							IsSuccessCriteriaMet: false,
 							ExecutionStatus:      "FAILED",
@@ -1784,17 +1834,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// LEARNING DISABLED: Skip learning agents entirely
 				// Check step-specific learning detail level
 				agentConfigs = getAgentConfigs(step)
-				// Learning is disabled if explicitly set via step config, or if this is a routing step.
-				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
-				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
+				// Learning is disabled if explicitly set via step config, if this is a routing step,
+				// or if running in evaluation mode (eval/report steps don't produce learnable outcomes).
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step) || hcpo.isEvaluationMode
 				isLearningDetailLevelNone := false
 				if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 					isLearningDetailLevelNone = true
 				}
 				isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
-				// CODE EXECUTION MODE: Force learning enabled regardless of step config
-				// Use step-level code execution mode (already computed above)
-				if isCodeExecutionMode && isLearningDisabled {
+				// CODE EXECUTION MODE: Force learning enabled regardless of step config (but not in eval mode)
+				if isCodeExecutionMode && isLearningDisabled && !hcpo.isEvaluationMode {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1))
 					isLearningDisabled = false
 				}

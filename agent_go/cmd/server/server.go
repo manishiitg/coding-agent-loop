@@ -5746,6 +5746,13 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	api.sessionQueryIDMux.Unlock()
 
 	if len(queryIDs) > 0 {
+		// Cancel all background agents BEFORE canceling workflow contexts.
+		// When workflow contexts are canceled, sub-agent goroutines will eventually
+		// fail with "context canceled" and call OnExecutionComplete. Without marking
+		// them as canceled first, they'd fire stale AUTO-NOTIFICATION synthetic turns.
+		api.bgAgentRegistry.CancelAll(sessionID)
+		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s (workflow stop)", sessionID)
+
 		api.workflowOrchestratorContextMux.Lock()
 		for _, qid := range queryIDs {
 			if cancelFunc, exists := api.workflowOrchestratorContexts[qid]; exists {
@@ -8261,6 +8268,26 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
 	if agent == nil {
+		return
+	}
+
+	// If agent was already canceled (by CancelAll during workflow stop), treat as
+	// terminated — don't emit completion events or trigger notification.
+	if agent.GetStatus() == BGAgentCanceled {
+		log.Printf("[BG AGENT] OnExecutionComplete skipped for already-canceled agent %s", execID)
+		return
+	}
+
+	// Context-canceled errors indicate the parent workflow was stopped.
+	// Treat these as cancellations even if CancelAll hasn't marked this specific
+	// agent yet (e.g. it was registered after CancelAll ran).
+	if err != nil && (strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")) {
+		agent.SetCanceled()
+		log.Printf("[BG AGENT] OnExecutionComplete treating context-canceled agent %s as terminated", execID)
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+		})
 		return
 	}
 

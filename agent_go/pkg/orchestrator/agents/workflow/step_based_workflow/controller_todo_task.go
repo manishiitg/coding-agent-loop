@@ -311,7 +311,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
 	docsRoot := GetPromptDocsRoot()
 	fgExecPath := hcpo.getTodoTaskExecutionWorkspacePath()
-	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
+	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings")
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgKnowledgebasePath}
 	fgWritePaths := []string{fgExecPath, fgKnowledgebasePath, fgLearningsPath}

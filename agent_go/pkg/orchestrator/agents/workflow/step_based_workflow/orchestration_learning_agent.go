@@ -21,7 +21,7 @@ Expert agent extracting routing decisions, success criteria evaluations, and del
 
 ## 🚨 CRITICAL PRINCIPLES
 - Only capture learnings specific to **orchestrator decision-making**.
-- **NEVER store secrets or sensitive data**: No passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII, or other sensitive information. Use {{` + "`" + `{{VARIABLE_NAME}}` + "`" + `}} placeholders instead.
+- **NEVER store secrets or sensitive data**: No passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII, or other sensitive information. Use VARIABLE_NAME placeholders instead (e.g. wrap values in double curly braces).
 
 ## 🔍 EXTRACTION Checklist
 - **Routing**: Which routes were selected and why (condition matching)?

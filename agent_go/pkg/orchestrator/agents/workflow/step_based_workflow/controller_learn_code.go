@@ -433,6 +433,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	extraEnv := map[string]string{
 		"STEP_OUTPUT_DIR":         stepOutputAbsPath,
 		"PYTHONDONTWRITEBYTECODE": "1",
+		"SCRIPT_VERBOSE":          "1", // Enable verbose logging in scripts — stdout is only read on failure
 	}
 	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
 		for k, v := range envRef {
@@ -563,12 +564,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Executing saved script for step %d (%s) — 0 LLM tokens", stepIndex+1, stepID))
 
 	// Read existing script content for relearn context (if script fails).
-	scriptRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+	learnDirRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode)
+	scriptRelPath := learnDirRelPath + "/main.py"
 	existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
 
-	scriptAbsPath := getLearnCodeScriptAbsPath(docsRoot, hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
 	stepExecutionAbsPath := filepath.Join(docsRoot, stepExecutionRelPath)
-	learnDirAbsPath := filepath.Dir(scriptAbsPath) // learnings/{step-id}/ — workDir for saved script
+	codeDirRelPath := stepExecutionRelPath + "/code"
+	codeDirAbsPath := filepath.Join(docsRoot, codeDirRelPath)
+	mainPyAbsPath := filepath.Join(codeDirAbsPath, "main.py")
 
 	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
 
@@ -580,9 +583,50 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	hcpo.primeBrowserServerConfigsForSavedScript(ctx, getAgentConfigs(step))
 
 	// Clean previous output files before running saved script — fresh slate for this execution.
-	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath)
+	// Preserve code/ — it may contain an LLM-fixed main.py from a previous attempt.
+	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath, "code")
 
-	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, scriptAbsPath, inputArgs, stepExecutionAbsPath, learnDirAbsPath, stepExecutionRelPath)
+	// Copy saved script from learnings/ to execution/code/ — but only if execution/code/main.py
+	// doesn't already exist. A previous LLM fix attempt may have written a newer version there,
+	// and blindly overwriting it with the old saved script would discard the fix.
+	execMainPyRelPath := codeDirRelPath + "/main.py"
+	if _, existsErr := hcpo.ReadWorkspaceFile(ctx, execMainPyRelPath); existsErr != nil {
+		// No main.py in execution/code/ — copy from learnings/
+		if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create code/ dir for saved script copy: %v", mkErr))
+		}
+		learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
+		if listErr != nil {
+			// Fallback: copy just main.py
+			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy main.py to code/: %v", writeErr))
+			}
+		} else {
+			for _, f := range learnFiles {
+				fileName := filepath.Base(f)
+				if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == ".learning_metadata.json" {
+					continue // skip metadata files, only copy script files
+				}
+				content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
+				if readErr != nil {
+					continue
+				}
+				if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy %s to code/: %v", fileName, writeErr))
+				}
+			}
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] main.py already exists in %s/ — using existing version (may be LLM-fixed)", codeDirRelPath))
+		// Update existingScript to the actual content in execution/code/ for relearn context
+		if execScript, readErr := hcpo.ReadWorkspaceFile(ctx, execMainPyRelPath); readErr == nil {
+			existingScript = execScript
+		}
+	}
+
+	// Run from execution/code/ — same location the LLM writes to
+	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, mainPyAbsPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
 	if execErr != nil || exitCode != 0 {
 		var execErrMsg string
 		if execErr != nil {
@@ -691,14 +735,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) runLearnCodeMainPyFromExecution(
 	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Running main.py from code/ folder for step %d (LLM phase)", stepIndex+1))
 	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, mainPyPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
 	if execErr != nil || exitCode != 0 {
-		var errMsg string
+		var execErrMsg string
 		if execErr != nil {
-			errMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
+			execErrMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
 		} else {
-			errMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
+			execErrMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
 		}
-		// Script failed — skip pre-validation and send the error directly to the LLM for fixing.
-		// Pre-validation will run after the fix loop succeeds, so no need to run it on every failure.
+		// Run pre-validation even on failure — the LLM needs feedback about both
+		// runtime errors AND missing/malformed output files to fix the script properly.
+		validationErrMsg := ""
+		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+		if preValResults != nil && !preValResults.OverallPass {
+			validationErrMsg = formatWorkspaceResults(preValResults)
+		}
+		errMsg := execErrMsg
+		if validationErrMsg != "" {
+			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
+		}
 		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg}
 	}
 	return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: 0, Output: output}
@@ -890,16 +943,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
 func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Code Execution Mode\n\n")
-	sb.WriteString("You are in **code execution mode**. Your ONLY job is to write a reusable Python solution.\n\n")
+	sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
 	sb.WriteString("**Your working directory (write all code files here):**\n")
 	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
 	sb.WriteString("**Rules:**\n")
 	sb.WriteString(fmt.Sprintf("- Write `main.py` (the entry point) to `%s/main.py`\n", codeDirAbsPath))
 	sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
 	sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
+	sb.WriteString("- Before writing main.py, you may call tools via the API to inspect the current state (e.g. take a browser snapshot, check page content, read files) to understand the system before coding your solution\n")
 	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
-	sb.WriteString("- The system will also execute it automatically after your turn ends\n")
+	sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
 	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n")
+	sb.WriteString("- **LOGGING**: Use `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'` and guard debug prints with `if VERBOSE:`. Log state before/after each major action. For browser automation: print the snapshot/page state after each navigation and interaction so failures show exactly what the page looked like. The only way to debug a failed script is through its stdout.\n")
 	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
 	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n\n")
@@ -962,25 +1017,36 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 		sb.WriteString("Write each required file to `STEP_OUTPUT_DIR` with the exact filename and structure shown.\n\n")
 	}
 
-	if isRelearn && priorScript != "" {
-		if priorError != "" {
-			// Script ran but failed — show error context for fix
-			sb.WriteString("### Previous Script (Failed)\n\n")
-			sb.WriteString("The previously saved script failed. Fix the bug and rewrite main.py:\n\n")
-			sb.WriteString("```python\n")
-			sb.WriteString(priorScript)
-			sb.WriteString("\n```\n")
-			sb.WriteString("\n**Error:**\n```\n")
-			sb.WriteString(priorError)
-			sb.WriteString("\n```\n")
-		} else {
-			sb.WriteString("### Existing Script (Update Required)\n\n")
-			sb.WriteString("A saved script already exists for this step. Adapt and improve this working script to match the current step description above. ")
-			sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change:\n\n")
-			sb.WriteString("```python\n")
-			sb.WriteString(priorScript)
-			sb.WriteString("\n```\n")
-		}
+	// NOTE: Prior script context (failed script + error, or existing script for update)
+	// is now included in the USER MESSAGE via BuildLearnCodePriorContext(), not in the
+	// system prompt. This ensures the LLM sees it with higher salience and it survives
+	// repair agent transitions where the system prompt is regenerated.
+	return sb.String()
+}
+
+// BuildLearnCodePriorContext generates the prior script context section for inclusion
+// in the user message. Returns empty string if no prior context is needed.
+func BuildLearnCodePriorContext(priorScript, priorError string) string {
+	if priorScript == "" {
+		return ""
+	}
+	var sb strings.Builder
+	if priorError != "" {
+		sb.WriteString("\n### Previous Script (Failed)\n\n")
+		sb.WriteString("The previously saved script failed. Fix the bug and rewrite main.py:\n\n")
+		sb.WriteString("```python\n")
+		sb.WriteString(priorScript)
+		sb.WriteString("\n```\n")
+		sb.WriteString("\n**Error:**\n```\n")
+		sb.WriteString(priorError)
+		sb.WriteString("\n```\n")
+	} else {
+		sb.WriteString("\n### Existing Script (Update Required)\n\n")
+		sb.WriteString("A saved script already exists for this step. Adapt and improve this working script to match the current step description above. ")
+		sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change:\n\n")
+		sb.WriteString("```python\n")
+		sb.WriteString(priorScript)
+		sb.WriteString("\n```\n")
 	}
 	return sb.String()
 }

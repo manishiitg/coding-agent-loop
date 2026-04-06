@@ -61,7 +61,9 @@ It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + a
    - Preserve all existing successful patterns.
    - Add failure avoidance guidance to the relevant file.
 {{end}}
-5. **Persist**:
+5. **Persist** (CRITICAL — organize into multiple files, do NOT dump everything into SKILL.md):
+   - SKILL.md should be a SHORT index/overview (under 100 lines) with links to reference files.
+   - Move detailed domain knowledge into ` + "`" + `references/` + "`" + ` files organized by topic (e.g. references/auth-flow.md, references/selectors.md, references/api-patterns.md).
    - SKILL.md MUST exist with YAML frontmatter:
    ` + "```" + `
    ---
@@ -77,7 +79,7 @@ It defines the correct anatomy of a skill (SKILL.md + references/ + scripts/ + a
    - ` + "`main.py`" + ` and helper scripts are STEP-SPECIFIC — save them to '{{.StepScriptsPath}}/' (NOT to the global skill folder).
    - Domain knowledge (selectors, API patterns, common issues) goes to the global skill at '{{.WritePath}}/'.
    - Reference the step scripts path from SKILL.md if relevant patterns were discovered.
-{{end}}7. **Clean Up**: Remove only legacy '*_learning.md' files. Do NOT remove reference files, scripts, or topic files.
+{{end}}
 
 ## FINAL ACTION
 After writing, list what was updated:

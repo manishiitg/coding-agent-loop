@@ -260,11 +260,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		successLearningTemplateVars["VariableNames"] = variableNames
 	}
 
-	// Note: Existing learnings are no longer inlined — the skill creation agent reads them from disk
-	if previousLearningsContent != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 Existing learnings available for skill creation agent to read from disk (%d chars)", len(previousLearningsContent)))
+	// Inline only SKILL.md (the index) so the agent sees the structure without bloating the prompt.
+	// Sub-files in references/, scripts/ etc. are read from disk by the agent as needed.
+	if skillContent, ok := previousLearningFiles["SKILL.md"]; ok && skillContent != "" {
+		var fileList []string
+		for filename := range previousLearningFiles {
+			if filename != "SKILL.md" {
+				fileList = append(fileList, filename)
+			}
+		}
+		sort.Strings(fileList)
+		inlined := fmt.Sprintf("### SKILL.md (pre-loaded)\n%s", skillContent)
+		if len(fileList) > 0 {
+			inlined += fmt.Sprintf("\n\n### Other files in skill folder (read from disk as needed):\n%s", strings.Join(fileList, ", "))
+		}
+		successLearningTemplateVars["ExistingLearningsContent"] = inlined
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 SKILL.md inlined into prompt (%d chars), %d other files available on disk", len(skillContent), len(fileList)))
+	} else if previousLearningsContent != "" {
+		// No SKILL.md but other files exist — inline summary
+		successLearningTemplateVars["ExistingLearningsContent"] = previousLearningsContent
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Existing learnings inlined (no SKILL.md found, %d chars)", len(previousLearningsContent)))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learnings content to pass (first iteration)"))
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learnings content (first iteration)"))
 	}
 
 	// Execute extraction agent

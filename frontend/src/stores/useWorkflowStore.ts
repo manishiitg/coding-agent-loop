@@ -1264,11 +1264,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Read feature toggles from preset and include when disabled (backend defaults to enabled)
         const presetStore = useGlobalPresetStore.getState()
-        const activePresetId = presetStore.activePresetIds.workflow
-        const activePreset = activePresetId
-          ? presetStore.customPresets.find(p => p.id === activePresetId) ||
-            presetStore.predefinedPresets.find(p => p.id === activePresetId)
-          : null
+        const activePreset = presetStore.getActivePreset('workflow')
         const presetLLMConfig = activePreset?.llmConfig
 
         if (presetLLMConfig?.use_knowledgebase === false) {

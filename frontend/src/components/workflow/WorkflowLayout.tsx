@@ -354,21 +354,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Auto-expand chat when workspace is open (needs more space alongside workspace)
   const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
 
-  // Get active workflow preset
+  // Get active workflow preset (file-backed manifests, not DB presets)
+  const { getActivePreset } = useGlobalPresetStore()
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
-  const activeWorkflowPreset = useMemo(() => {
-    if (activePresetId) {
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [activePresetId, customPresets, predefinedPresets])
+  const activeWorkflowPreset = getActivePreset('workflow')
 
   // Get workspace path from active preset
   const workspacePath = useMemo(() => {
@@ -949,7 +938,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, customPresets, predefinedPresets, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern

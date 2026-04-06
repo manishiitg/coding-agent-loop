@@ -4,7 +4,7 @@ import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../hooks/useActiveWorkflowPreset'
 import type { PlannerFile } from '../../services/api-types'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
 
@@ -146,12 +146,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   const [searchTerm, setSearchTerm] = useState('')
 
   // Get preset default for code execution mode (fallback when step doesn't have explicit setting)
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  const activePreset = activePresetId
-    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
-    : null
+  const activePreset = useActiveWorkflowPreset()
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 
   // Fetch learnings when popup opens (API now includes step config data merged in)

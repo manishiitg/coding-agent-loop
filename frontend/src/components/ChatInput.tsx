@@ -909,7 +909,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [browserMode, camofoxHeaded])
 
   // Get preset info for multi-agent mode
-  const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
+  const { getActivePreset, activePresetIds } = usePresetApplication()
   
   // Get input text from tab config (source of truth for persistence)
   const storedInputText = tabConfig?.inputText || ''
@@ -1377,12 +1377,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Sync tab config inputText with preset query when preset is selected
   useEffect(() => {
     const activePresetId = activePresetIds['multi-agent']
-    
+
     if (activePresetId && activeTabId) {
-      // Find the preset
-      const preset = customPresets.find(p => p.id === activePresetId) || 
-                    predefinedPresets.find(p => p.id === activePresetId)
-      
+      const preset = getActivePreset('multi-agent')
+
       if (preset && preset.query) {
         // Sync tab config with preset query
         setTabConfig(activeTabId, { inputText: preset.query })
@@ -1391,7 +1389,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       // No preset active, clear input text
       setTabConfig(activeTabId, { inputText: '' })
     }
-  }, [activePresetIds, customPresets, predefinedPresets, activeTabId, setTabConfig])
+  }, [activePresetIds, getActivePreset, activeTabId, setTabConfig])
 
   // Sync ref with inputText when it changes externally (preset sync, programmatic clearing, etc.)
   useEffect(() => {

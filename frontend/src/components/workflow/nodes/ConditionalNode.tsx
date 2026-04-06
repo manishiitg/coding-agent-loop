@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, Lock, CheckCircle } from 'lucide-react'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
@@ -88,13 +88,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const processedConditionQuestion = processText(condition_question)
 
   // Get preset for config badges
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
-  const activePreset = activePresetId
-    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
-    : null
+  const activePreset = useActiveWorkflowPreset()
 
   const { availableLLMs } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()

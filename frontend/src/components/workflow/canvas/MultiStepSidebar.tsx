@@ -3,7 +3,8 @@ import { X, Settings, ChevronDown, ChevronUp, Sparkles, Code2, Loader2 } from 'l
 import LLMSelectionDropdown from '../../LLMSelectionDropdown'
 import { ToolSelectionSection } from '../../ToolSelectionSection'
 import { Button } from '../../ui/Button'
-import { useGlobalPresetStore, usePresetApplication } from '../../../stores/useGlobalPresetStore'
+import { usePresetApplication } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip'
@@ -39,20 +40,8 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   const [isExpanded, setIsExpanded] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Get preset information
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
-  const activePreset = useMemo(() => {
-    if (activePresetId) {
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [activePresetId, customPresets, predefinedPresets])
+  // Get active preset
+  const activePreset = useActiveWorkflowPreset()
 
   const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset])
   const presetLLMConfig = useMemo(() => activePreset?.llmConfig || null, [activePreset])

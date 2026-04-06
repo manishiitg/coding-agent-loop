@@ -10,6 +10,45 @@ import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
 import { useWorkflowStore } from './useWorkflowStore'
 import { useSecretsStore } from './useSecretsStore'
+import { useWorkflowManifestStore } from './useWorkflowManifestStore'
+
+// Build workflow presets from manifests
+function buildWorkflowPresetsFromManifests(): CustomPreset[] {
+  const workflows = useWorkflowManifestStore.getState().workflows || []
+  return workflows.map(wf => {
+    const caps = wf.manifest.capabilities
+    return {
+      id: wf.manifest.id || wf.workspace_path,
+      label: wf.manifest.label || wf.workspace_path.split('/').pop() || wf.workspace_path,
+      createdAt: new Date(wf.manifest.created_at || 0).getTime(),
+      agentMode: 'workflow' as const,
+      selectedFolder: {
+        filepath: wf.workspace_path,
+        content: '',
+        last_modified: wf.manifest.updated_at || '',
+        type: 'folder' as const,
+        children: []
+      },
+      selectedServers: caps?.selected_servers || [],
+      selectedTools: caps?.selected_tools || [],
+      selectedSkills: caps?.selected_skills || [],
+      selectedSecrets: caps?.selected_secrets || [],
+      selectedGlobalSecretNames: caps?.selected_global_secret_names ?? null,
+      browserMode: (caps?.browser_mode || 'none') as CustomPreset['browserMode'],
+      useCodeExecutionMode: caps?.use_code_execution_mode || false,
+      llmConfig: caps?.llm_config ? {
+        provider: caps.llm_config.provider,
+        model_id: caps.llm_config.model_id,
+        execution_llm: caps.llm_config.execution_llm,
+        learning_llm: caps.llm_config.learning_llm,
+        phase_llm: caps.llm_config.phase_llm,
+        use_knowledgebase: caps.llm_config.use_knowledgebase,
+        llm_allocation_mode: caps.llm_config.llm_allocation_mode,
+        tiered_config: caps.llm_config.tiered_config,
+      } : undefined,
+    }
+  })
+}
 
 export interface PresetApplicationResult {
   success: boolean
@@ -18,7 +57,10 @@ export interface PresetApplicationResult {
 }
 
 interface GlobalPresetState {
-  // Database presets
+  // File-backed workflow presets (from manifests)
+  workflowPresets: CustomPreset[]
+
+  // Database presets (multi-agent mode)
   customPresets: CustomPreset[]
   predefinedPresets: PredefinedPreset[]
   predefinedServerSelections: Record<string, string[]>
@@ -68,6 +110,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
   persist(
     (set, get) => ({
       // Initial state
+      workflowPresets: [],
       customPresets: [],
       predefinedPresets: [],
       predefinedServerSelections: {},
@@ -89,6 +132,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       refreshPresets: async () => {
         set({ loading: true, error: null })
         try {
+          // Refresh workflow manifests and rebuild workflow presets
+          await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
+          set({ workflowPresets: buildWorkflowPresetsFromManifests() })
+
           const [response, manifestResponse] = await Promise.all([
             agentApi.getPresetQueries(),
             sessionShareApi.listWorkflowManifests().catch(error => {
@@ -1087,17 +1134,21 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       getActivePreset: (modeCategory) => {
         const state = get()
         const presetId = state.activePresetIds[modeCategory]
-        
+
         if (!presetId) return null
-        
-        // Check custom presets first
+
+        // Workflow mode: file-backed manifests (zustand state)
+        if (modeCategory === 'workflow') {
+          return state.workflowPresets.find(p => p.id === presetId) ?? null
+        }
+
+        // Multi-agent mode: DB-backed presets
         const customPreset = state.customPresets.find(p => p.id === presetId)
         if (customPreset) return customPreset
-        
-        // Check predefined presets
+
         const predefinedPreset = state.predefinedPresets.find(p => p.id === presetId)
         if (predefinedPreset) return predefinedPreset
-        
+
         return null
       },
       
@@ -1142,17 +1193,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       // Helper actions
       getPresetsForMode: (modeCategory) => {
+        // Workflow mode: file-backed workflow manifests (stored in zustand state)
+        if (modeCategory === 'workflow') {
+          return get().workflowPresets
+        }
+
+        // Multi-agent mode: DB-backed presets
         const state = get()
         const allPresets = [...state.customPresets, ...state.predefinedPresets]
-        
-        return allPresets.filter(preset => {
-          if (modeCategory === 'multi-agent') {
-            return preset.agentMode === 'simple'
-          } else if (modeCategory === 'workflow') {
-            return preset.agentMode === 'workflow'
-          }
-          return false
-        })
+        return allPresets.filter(preset => preset.agentMode === 'simple')
       },
       
       isPresetActive: (presetId, modeCategory) => {

@@ -4,7 +4,7 @@ import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import type { ExecutionOptions, EvaluationStep } from '../../../services/api-types'
 import { ExecutionStrategy } from '../../../services/api-types'
 import { StepEditPanel } from '../../events/orchestrator/StepEditPanel'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
@@ -326,22 +326,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }, 200)
   }, [workspacePath, node, setWorkspaceMinimized, setSearchQuery, fetchFiles, setExpandedFolders, highlightFile, expandedFolders])
   
-  // Get preset information
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
   // Get active preset
-  const activePreset = useMemo(() => {
-    if (activePresetId) {
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-      
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [activePresetId, customPresets, predefinedPresets])
+  const activePreset = useActiveWorkflowPreset()
 
   // Get preset servers
   const presetServers = useMemo(() => {

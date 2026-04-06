@@ -259,12 +259,12 @@ export const ModePresetBar: React.FC = () => {
       const preset = presetModeCategory === null
         ? null
         : getActivePreset(presetModeCategory)
-      if (preset && customPresets.some(cp => cp.id === preset.id)) {
+      if (preset) {
         setEditingPreset(preset as CustomPreset)
         setShowPresetModal(true)
       }
     }
-  }, [showPresetSettings, presetModeCategory, getActivePreset, customPresets])
+  }, [showPresetSettings, presetModeCategory, getActivePreset])
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -314,14 +314,41 @@ export const ModePresetBar: React.FC = () => {
     browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
   ) => {
     try {
-      // Use consolidated savePreset function - pass id if editing, undefined if creating
+      const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
+
+      // Workflow mode: save to file-backed manifest (not DB)
+      if (effectiveMode === 'workflow' && editingPreset?.selectedFolder?.filepath) {
+        const workspacePath = editingPreset.selectedFolder.filepath
+        const payload = {
+          workspace_path: workspacePath,
+          label,
+          capabilities: {
+            selected_servers: selectedServers || [],
+            selected_tools: selectedTools || [],
+            selected_skills: selectedSkills || [],
+            selected_secrets: selectedSecrets || [],
+            selected_global_secret_names: selectedGlobalSecretNames ?? [],
+            browser_mode: browserMode || 'none',
+            use_code_execution_mode: useCodeExecutionMode || false,
+            llm_config: llmConfig || undefined,
+          },
+        }
+        await agentApi.updateWorkflowManifest(payload)
+        // Refresh manifests and rebuild workflow presets in zustand (triggers re-renders)
+        await refreshPresets()
+        setShowPresetModal(false)
+        setEditingPreset(null)
+        return
+      }
+
+      // Multi-agent mode: save to DB
       const savedPreset = await savePreset(
         label,
         query,
         selectedServers,
         selectedTools,
-        selectedSkills, // Skill folder names for workflow
-        editingPreset ? editingPreset.agentMode : agentMode,
+        selectedSkills,
+        effectiveMode,
         selectedFolder,
         llmConfig,
         useCodeExecutionMode,
@@ -514,7 +541,7 @@ export const ModePresetBar: React.FC = () => {
                         </button>
 
                         {/* Settings gear icon - separate clickable element */}
-                        {activePreset && customPresets.some(cp => cp.id === activePreset.id) && (
+                        {activePreset && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
@@ -594,8 +621,8 @@ export const ModePresetBar: React.FC = () => {
                                     </div>
                                   </button>
 
-                                  {/* Edit/Duplicate/Delete buttons - only show for custom presets */}
-                                  {customPresets.some(cp => cp.id === preset.id) && (
+                                  {/* Edit/Duplicate/Delete buttons */}
+                                  {(
                                     <div className="flex gap-1">
                                       {presetModeCategory !== null && isPresetActive(preset.id, presetModeCategory) && (
                                         <button

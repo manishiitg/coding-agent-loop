@@ -1,11 +1,12 @@
 services:
-  # Caddy Reverse Proxy
   caddy:
     image: caddy:2-alpine
     restart: always
     ports:
       - "80:80"
       - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -13,29 +14,21 @@ services:
     depends_on:
       - frontend
       - workspace-api
-      - agent
 
-  # Frontend Service
   frontend:
-    build:
-      context: ./src/frontend
-      dockerfile: Dockerfile.prod
-      args:
-        VITE_API_BASE_URL: ""
-        VITE_WORKSPACE_API_URL: /workspace
+    image: mcp-agent-frontend:latest
     restart: always
 
-  # Workspace API Service
   workspace-api:
-    build:
-      context: ./src
-      dockerfile: ../Dockerfile.workspace
-      args:
-        BASE_IMAGE: mcp-agent-base:latest
+    image: mcp-agent-workspace-api:latest
     restart: always
     privileged: true
     cap_add:
       - SYS_ADMIN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8080:8080"
     volumes:
       - /data/docs:/app/workspace-docs
       - /data/workspace-db:/app/data
@@ -44,29 +37,6 @@ services:
       - DOCS_DIR=/app/workspace-docs
       - DB_PATH=/app/data/workspace.db
       - ENABLE_SEMANTIC_SEARCH=false
-
-  # Agent Service
-  agent:
-    build:
-      context: ./src
-      dockerfile: ../Dockerfile.agent
-      args:
-        BASE_IMAGE: mcp-agent-base:latest
-    restart: always
-    volumes:
-      - /data/docs:/app/workspace-docs
-      - /data/logs:/app/logs
-      - /data/agent-db:/app/agent-data
-      - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - .env
-    environment:
-      - PORT=8000
-      - WORKSPACE_API_URL=http://workspace-api:8080
-      - LOG_LEVEL=debug
-    command: ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_clean_user.json", "--db-type", "${DB_TYPE:-sqlite}"]
-    depends_on:
-      - workspace-api
 
 volumes:
   caddy_data:

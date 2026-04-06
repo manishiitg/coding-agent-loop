@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Lock, ArrowDownToLine, ArrowUpFromLine, ListTodo, Bot } from 'lucide-react'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -117,13 +117,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
   // Get preset for config badges
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
-  const activePreset = activePresetId
-    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
-    : null
+  const activePreset = useActiveWorkflowPreset()
 
   const { availableLLMs } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()

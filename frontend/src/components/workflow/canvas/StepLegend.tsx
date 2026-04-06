@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code
 import type { WorkflowNode, StepNodeData, ConditionalNodeData, DecisionNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { agentApi } from '../../../services/api'
 import { WorkflowLegend } from './WorkflowLegend'
 
@@ -34,19 +34,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const [learningsExistCache, setLearningsExistCache] = useState<Map<string, boolean | null>>(new Map())
 
   // Get active preset for code execution mode default
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
-  const activePreset = useMemo(() => {
-    if (activePresetId) {
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [activePresetId, customPresets, predefinedPresets])
+  const activePreset = useActiveWorkflowPreset()
   
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 

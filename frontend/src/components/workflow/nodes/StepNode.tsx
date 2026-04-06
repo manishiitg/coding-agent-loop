@@ -1,7 +1,7 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, Lock, Bot, Pause } from 'lucide-react'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -122,13 +122,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     }
   }, [onOpenSidebar, id])
 
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
-  const activePreset = activePresetId
-    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
-    : null
+  const activePreset = useActiveWorkflowPreset()
 
   const stepConfig = step as { agent_configs?: {
     use_code_execution_mode?: boolean

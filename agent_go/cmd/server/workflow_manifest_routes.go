@@ -497,9 +497,21 @@ func (api *StreamingAPI) resolveWorkspacePathFromPreset(ctx context.Context, pre
 	if presetQueryID == "" {
 		return "", fmt.Errorf("preset_query_id is empty")
 	}
+
+	// Primary: look up workflow manifest by ID (file-backed, no DB dependency)
+	workflows, err := DiscoverWorkflowManifests(ctx)
+	if err == nil {
+		for _, wf := range workflows {
+			if wf.Manifest.ID == presetQueryID {
+				return wf.WorkspacePath, nil
+			}
+		}
+	}
+
+	// Fallback: try DB preset (for backward compatibility with non-workflow presets)
 	preset, err := api.chatDB.GetPresetQuery(ctx, presetQueryID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("preset %s not found in manifests or DB", presetQueryID)
 	}
 	if !preset.SelectedFolder.Valid || preset.SelectedFolder.String == "" {
 		return "", fmt.Errorf("preset %s has no selected_folder", presetQueryID)

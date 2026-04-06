@@ -7,7 +7,7 @@ import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import type { ExecutionSettingsNodeData } from '../nodes/ExecutionSettingsNode'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Callback type for running from a specific step
@@ -2051,19 +2051,7 @@ export function usePlanToFlow(
   } = options
 
   // Get preset for code execution mode default
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
-  const activePreset = useMemo(() => {
-    if (activePresetId) {
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [activePresetId, customPresets, predefinedPresets])
+  const activePreset = useActiveWorkflowPreset()
 
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 

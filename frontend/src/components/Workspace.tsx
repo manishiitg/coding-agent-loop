@@ -15,12 +15,12 @@ import ImportProgressDialog from './ui/ImportProgressDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
-import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../hooks/useActiveWorkflowPreset'
 import {
   collectFolderPaths,
   restoreExpandedFolders,
@@ -80,23 +80,7 @@ export default function Workspace({
   }, [selectedModeCategory, getActiveTab, setTabConfig])
 
   // Get active workflow preset to filter workspace to selected folder
-  // Subscribe directly to store state to make it reactive
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
-  const activeWorkflowPreset = useMemo(() => {
-    if (selectedModeCategory === 'workflow' && activePresetId) {
-      // Check custom presets first
-      const customPreset = customPresets.find(p => p.id === activePresetId)
-      if (customPreset) return customPreset
-      
-      // Check predefined presets
-      const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
-      if (predefinedPreset) return predefinedPreset
-    }
-    return null
-  }, [selectedModeCategory, activePresetId, customPresets, predefinedPresets])
+  const activeWorkflowPreset = useActiveWorkflowPreset()
 
 
   // Export/Import backup state

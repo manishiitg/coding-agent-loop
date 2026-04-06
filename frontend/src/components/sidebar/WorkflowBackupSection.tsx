@@ -2,9 +2,9 @@ import { useState, useRef } from 'react'
 import { Download, Upload, Loader2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { agentApi } from '../../services/api'
-import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import { useActiveWorkflowPreset } from '../../hooks/useActiveWorkflowPreset'
 import ImportProgressDialog from '../ui/ImportProgressDialog'
 
 interface WorkflowBackupSectionProps {
@@ -15,11 +15,9 @@ export default function WorkflowBackupSection({
   minimized = false,
 }: WorkflowBackupSectionProps) {
   const { selectedModeCategory } = useModeStore()
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
+  const activeWorkflowPreset = useActiveWorkflowPreset()
   const { fetchFiles } = useWorkspaceStore()
-  
+
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -28,10 +26,6 @@ export default function WorkflowBackupSection({
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Get active workflow preset
-  const activeWorkflowPreset = customPresets.find(p => p.id === activePresetId) ||
-    predefinedPresets.find(p => p.id === activePresetId)
 
   // Only show in workflow mode with an active preset
   if (selectedModeCategory !== 'workflow' || !activeWorkflowPreset?.selectedFolder?.filepath) {

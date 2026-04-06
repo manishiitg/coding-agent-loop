@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Route } from 'lucide-react'
-import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { NodeConfigFooter } from './NodeConfigFooter'
@@ -45,13 +45,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
   const { id, title, routing_question, routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
 
   // Get preset for config badges
-  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
-  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-
-  const activePreset = activePresetId
-    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
-    : null
+  const activePreset = useActiveWorkflowPreset()
 
   const { availableLLMs } = useLLMStore()
   const stepOverride = useWorkflowStore(state => state.stepOverride)

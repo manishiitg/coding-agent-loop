@@ -1435,9 +1435,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					executionAgentName = fmt.Sprintf("%s-val-%d", executionAgentName, retryAttempt)
 				}
 				// Add learning history to template vars for execution-only agent (reused for all retry attempts)
-				templateVars["LearningHistory"] = formattedLearningHistory
+				// If a saved main.py exists for this step, append a reference so the LLM knows to read it
+				stepLearningHistory := formattedLearningHistory
+				stepMainPyRelPath := getLearnCodeDirRelPath(step.GetID(), hcpo.isEvaluationMode) + "/main.py"
+				if _, mainPyReadErr := hcpo.ReadWorkspaceFile(ctx, stepMainPyRelPath); mainPyReadErr == nil {
+					docsRoot := GetPromptDocsRoot()
+					absMainPyPath := filepath.Join(docsRoot, stepMainPyRelPath)
+					if stepLearningHistory != "" {
+						stepLearningHistory += "\n\n"
+					}
+					stepLearningHistory += fmt.Sprintf("📜 **Saved script available** at `%s` — this is a working implementation from a previous run. Read it before starting to understand the approach, selectors, and patterns used.", absMainPyPath)
+				}
+				templateVars["LearningHistory"] = stepLearningHistory
 				// Set HasLearnings flag to explicitly indicate whether learnings exist (prevents agent from searching)
-				templateVars["HasLearnings"] = fmt.Sprintf("%t", formattedLearningHistory != "")
+				templateVars["HasLearnings"] = fmt.Sprintf("%t", stepLearningHistory != "")
 
 				templateVars["KeepLearningFull"] = fmt.Sprintf("%t", keepLearningFull)
 				templateVars["LearningFilePaths"] = learningFilePaths // Set file paths for user message when KeepLearningFull is false

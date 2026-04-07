@@ -3,17 +3,31 @@ package handlers
 import (
 	"fmt"
 	"log"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// MaxBrowserSessionsPerChat is the max concurrent headless browser sessions per chat/workflow session.
-const MaxBrowserSessionsPerChat = 1
+// Default limits — overridden by env vars at init time.
+var (
+	// MaxBrowserSessionsPerChat is the max concurrent headless browser sessions per chat/workflow session.
+	MaxBrowserSessionsPerChat = 1
 
-// MaxBrowserSessionsGlobal is the absolute max across all sessions.
-const MaxBrowserSessionsGlobal = 8
+	// MaxBrowserSessionsGlobal is the absolute max across all sessions.
+	MaxBrowserSessionsGlobal = 8
+)
+
+func init() {
+	if v, err := strconv.Atoi(os.Getenv("MAX_BROWSER_SESSIONS_PER_AGENT")); err == nil && v > 0 {
+		MaxBrowserSessionsPerChat = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("MAX_BROWSER_SESSIONS_GLOBAL")); err == nil && v > 0 {
+		MaxBrowserSessionsGlobal = v
+	}
+}
 
 type browserSessionEntry struct {
 	browserSession string

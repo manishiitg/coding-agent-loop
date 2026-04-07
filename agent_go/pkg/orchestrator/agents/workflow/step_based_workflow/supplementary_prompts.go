@@ -56,6 +56,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 
 	// 4. Browser instructions (mode-specific)
 	browserCfg := hcpo.resolveBrowserConfig(config.ServerNames, effectiveSkills)
+	browserCfg.IsIsolated = isolatedSessionID != ""
 	if browserPrompt := browserinstructions.BuildBrowserInstructions(browserCfg); browserPrompt != "" {
 		mcpAgent.AppendSystemPrompt(browserPrompt)
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",

@@ -9,6 +9,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -66,11 +67,12 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 ## Sub-Agent Tools
 
 ### call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
-Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session, preventing them from interfering with each other.{{end}}
+Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session (separate Playwright/Camofox connection AND separate agent-browser process), preventing them from interfering with each other.
+**Browser session limits:** Max **{{.MaxBrowserSessionsPerWorkflow}}** concurrent isolated browser sessions per workflow (applies to all browser types — agent-browser, Playwright, Camofox). If you need more than {{.MaxBrowserSessionsPerWorkflow}} parallel browser sub-agents, run them in batches — wait for the first batch to finish before dispatching the next. Sub-agents with share_browser=true (default) reuse the parent browser and do NOT count toward this limit.{{end}}
 
 {{if .EnableGenericAgent}}
 ### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
-Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Set share_browser=false for parallel browsing.{{end}}
+Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Same browser session limits apply: max {{.MaxBrowserSessionsPerWorkflow}} concurrent isolated sessions.{{end}}
 
 Do NOT use call_generic_agent to patch or normalize the declared output file of a predefined route that already succeeded and validated. Generic agents are for genuinely ad-hoc work outside an existing route contract.
 {{end}}
@@ -327,8 +329,9 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepTitle":                  templateVars["StepTitle"],
 		"StepDescription":            templateVars["StepDescription"],
 		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
-		"HasBrowserAccess":           templateVars["HasBrowserAccess"] == "true",
-		"LearningsPath":              templateVars["LearningsPath"],
+		"HasBrowserAccess":              templateVars["HasBrowserAccess"] == "true",
+		"MaxBrowserSessionsPerWorkflow": browser.MaxBrowserSessionsPerWorkflow,
+		"LearningsPath":                 templateVars["LearningsPath"],
 	}
 
 	var result strings.Builder

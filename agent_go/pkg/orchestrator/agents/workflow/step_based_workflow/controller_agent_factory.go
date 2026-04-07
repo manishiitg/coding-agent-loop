@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -1996,8 +1997,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
+				// Close the MCP session (Playwright/Camofox connection)
 				mcpagent.CloseSession(isolatedSessionID)
-				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s", isolatedSessionID))
+				// Close agent-browser processes and remove from tracker
+				tracker := browser.GetSessionTracker()
+				workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+				if workspaceAPIURL == "" {
+					workspaceAPIURL = "http://localhost:8081"
+				}
+				browserClient := browser.NewClient(workspaceAPIURL)
+				// Close all browser sessions tracked under this isolated agent ID
+				sessions := tracker.SessionsForAgent(isolatedSessionID)
+				for _, s := range sessions {
+					tracker.CloseSession(s, browserClient)
+				}
+				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s (cleaned %d browser processes)", isolatedSessionID, len(sessions)))
 			}()
 		}
 
@@ -2090,8 +2104,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
+				// Close the MCP session (Playwright/Camofox connection)
 				mcpagent.CloseSession(isolatedSessionID)
-				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s", isolatedSessionID))
+				// Close agent-browser processes and remove from tracker
+				tracker := browser.GetSessionTracker()
+				workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+				if workspaceAPIURL == "" {
+					workspaceAPIURL = "http://localhost:8081"
+				}
+				browserClient := browser.NewClient(workspaceAPIURL)
+				// Close all browser sessions tracked under this isolated agent ID
+				sessions := tracker.SessionsForAgent(isolatedSessionID)
+				for _, s := range sessions {
+					tracker.CloseSession(s, browserClient)
+				}
+				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s (cleaned %d browser processes)", isolatedSessionID, len(sessions)))
 			}()
 		}
 

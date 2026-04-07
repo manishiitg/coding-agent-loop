@@ -14,7 +14,8 @@ interface BrowserProcess {
 
 interface BrowserSessionTracking {
   browser_session: string
-  chat_session: string
+  agent_session: string
+  workflow_session: string
   age: string
   idle: string
 }
@@ -223,7 +224,7 @@ export default function BrowserProcesses() {
                             </div>
                             {trackInfo && (
                               <div className="text-blue-500 dark:text-blue-400 mt-0.5">
-                                chat: {trackInfo.chat_session.slice(0, 8)}... | age: {trackInfo.age} | idle: {trackInfo.idle}
+                                agent: {trackInfo.agent_session.slice(0, 8)}... | age: {trackInfo.age} | idle: {trackInfo.idle}
                               </div>
                             )}
                             {!trackInfo && (
@@ -254,7 +255,7 @@ export default function BrowserProcesses() {
                     <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400 mb-1">Tracked but no process:</div>
                     {tracking.filter(t => !Object.keys(sessions).some(s => s.split('/').pop() === t.browser_session)).map(t => (
                       <div key={t.browser_session} className="text-[10px] text-gray-500 pl-2">
-                        {t.browser_session} → chat: {t.chat_session.slice(0, 8)}... (age: {t.age})
+                        {t.browser_session} → chat: {t.agent_session.slice(0, 8)}... (age: {t.age})
                       </div>
                     ))}
                   </div>

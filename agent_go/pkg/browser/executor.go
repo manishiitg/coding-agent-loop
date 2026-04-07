@@ -63,16 +63,29 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return "", fmt.Errorf("session is required")
 	}
 
-	// Get chat/workflow session ID from context (if available)
-	chatSessionID := ""
+	// Get agent-level and workflow-level session IDs from context.
+	// agentSessionID = isolated ID for share_browser=false, parent ID for share_browser=true.
+	// workflowSessionID = always the parent/root workflow session ID.
+	agentSessionID := ""
 	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok {
-		chatSessionID = sid
+		agentSessionID = sid
 	}
-	resolvedSession := common.ResolveBrowserSessionID(chatSessionID, session)
+	workflowSessionID := ""
+	if wid, ok := ctx.Value(common.WorkflowSessionIDKey).(string); ok {
+		workflowSessionID = wid
+	}
+	// Fallback: if no workflow session set, use agent session (non-workflow/chat mode)
+	if workflowSessionID == "" {
+		workflowSessionID = agentSessionID
+	}
+
+	resolvedSession := common.ResolveBrowserSessionID(agentSessionID, session)
 	if resolvedSession != "" && resolvedSession != session {
-		log.Printf("[BROWSER] remapped session %q -> %q for chat/session %q", session, resolvedSession, chatSessionID)
+		log.Printf("[BROWSER] remapped session %q -> %q for agent=%q", session, resolvedSession, agentSessionID)
 		session = resolvedSession
 	}
+
+	log.Printf("[BROWSER] session=%q agent=%q workflow=%q command=%q", session, agentSessionID, workflowSessionID, command)
 
 	// Track headless browser sessions to prevent unbounded growth.
 	// CDP mode connects to user's real browser — no tracking needed.
@@ -83,10 +96,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		isOpenCommand := command == "open" || command == "goto" || command == "navigate"
 
 		if isOpenCommand {
-			// Check per-chat session limit — return error if exceeded
-			if limitMsg := tracker.CheckLimits(session, chatSessionID); limitMsg != "" {
-				log.Printf("[BROWSER_TRACKER] LIMIT EXCEEDED: browser=%q chat=%q command=%q active=%d global=%d",
-					session, chatSessionID, command, tracker.CountForChat(chatSessionID), tracker.Count())
+			// Check per-agent and per-workflow limits — return error if exceeded
+			if limitMsg := tracker.CheckLimits(session, agentSessionID, workflowSessionID); limitMsg != "" {
+				log.Printf("[BROWSER_TRACKER] LIMIT EXCEEDED: browser=%q agent=%q workflow=%q command=%q agent_count=%d wf_count=%d global=%d",
+					session, agentSessionID, workflowSessionID, command,
+					tracker.CountForAgent(agentSessionID), tracker.CountForWorkflow(workflowSessionID), tracker.Count())
 				return limitMsg, nil // Return as tool output, not error — LLM can read and react
 			}
 
@@ -107,20 +121,28 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				}
 			}
 
-			log.Printf("[BROWSER_TRACKER] Opening browser: browser=%q chat=%q (chat_count=%d, global=%d)",
-				session, chatSessionID, tracker.CountForChat(chatSessionID), tracker.Count())
+			log.Printf("[BROWSER_TRACKER] Opening browser: browser=%q agent=%q workflow=%q (agent_count=%d, wf_count=%d, global=%d)",
+				session, agentSessionID, workflowSessionID,
+				tracker.CountForAgent(agentSessionID), tracker.CountForWorkflow(workflowSessionID), tracker.Count())
 		}
 
-		// Track the session
-		tracker.Touch(session, chatSessionID)
+		// Track the session: only register new sessions on open commands.
+		// Non-open commands only update lastUsed if already tracked (prevents
+		// non-open commands from bypassing limits by pre-registering sessions).
+		if isOpenCommand {
+			tracker.Touch(session, agentSessionID, workflowSessionID)
+		} else {
+			tracker.TouchExisting(session)
+		}
 
 		// Log every command for debugging
-		log.Printf("[BROWSER_TRACKER] Command: browser=%q chat=%q cmd=%q (chat_count=%d, global=%d)",
-			session, chatSessionID, command, tracker.CountForChat(chatSessionID), tracker.Count())
+		log.Printf("[BROWSER_TRACKER] Command: browser=%q agent=%q cmd=%q (agent_count=%d, wf_count=%d, global=%d)",
+			session, agentSessionID, command,
+			tracker.CountForAgent(agentSessionID), tracker.CountForWorkflow(workflowSessionID), tracker.Count())
 
 		// If closing, remove from tracker
 		if command == "close" || command == "quit" || command == "exit" {
-			log.Printf("[BROWSER_TRACKER] Closing browser: browser=%q chat=%q", session, chatSessionID)
+			log.Printf("[BROWSER_TRACKER] Closing browser: browser=%q agent=%q", session, agentSessionID)
 			defer tracker.Remove(session)
 		}
 	}
@@ -176,8 +198,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	// Look up per-session config (working dir + folder guard)
 	var sessionCfg *common.SessionShellConfig
-	if chatSessionID != "" {
-		sessionCfg = common.GetSessionShellConfig(chatSessionID)
+	if agentSessionID != "" {
+		sessionCfg = common.GetSessionShellConfig(agentSessionID)
+	}
+	// Fallback: try workflow session if agent session didn't have config
+	if sessionCfg == nil && workflowSessionID != "" && workflowSessionID != agentSessionID {
+		sessionCfg = common.GetSessionShellConfig(workflowSessionID)
 	}
 
 	// Working directory priority: browser downloads path > session config > default

@@ -1,5 +1,11 @@
 package instructions
 
+import (
+	"fmt"
+
+	"mcp-agent-builder-go/agent_go/pkg/browser"
+)
+
 // BrowserConfig holds the resolved browser state for prompt generation.
 type BrowserConfig struct {
 	HasPlaywright   bool
@@ -7,6 +13,7 @@ type BrowserConfig struct {
 	HasAgentBrowser bool
 	CdpPort         int    // >0 means CDP mode, 0 means headless (legacy, use Mode when set)
 	Mode            string // "cdp", "headless", "playwright", "stealth", "" (empty = fallback to CdpPort)
+	IsIsolated      bool   // true when running in a share_browser=false sub-agent
 }
 
 // BuildBrowserInstructions returns the complete browser system prompt
@@ -31,6 +38,21 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		result += "\n" + GetCdpBrowserInstructions()
 	} else {
 		result += "\n" + GetHeadlessBrowserInstructions()
+	}
+
+	// Add session limits — applies to all browser types
+	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
+		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
+		"- **Per workflow:** max %d concurrent browser sessions across all agents.\n"+
+		"- **Global:** max %d concurrent browser sessions across all workflows.\n"+
+		"- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot.",
+		browser.MaxBrowserSessionsPerAgent,
+		browser.MaxBrowserSessionsPerWorkflow,
+		browser.MaxBrowserSessionsGlobal,
+	)
+
+	if cfg.IsIsolated {
+		result += "\n- You have an **isolated** browser session. Close it when finished to free the slot for other agents."
 	}
 
 	return result

@@ -2,6 +2,7 @@ package virtualtools
 
 import (
 	"context"
+	"log"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
@@ -37,10 +38,21 @@ func CreateWorkspaceBrowserToolExecutorsWithSession(sessionID string, cdpPort ..
 	}
 	browserExecutor := browser.NewExecutor(browserClient, opts...)
 
-	// Wrap executor to inject chat session ID into context
+	// Wrap executor to inject session IDs into context.
+	// - ChatSessionIDKey = agent-level ID (isolated for share_browser=false, parent otherwise)
+	// - WorkflowSessionIDKey = always the parent workflow session ID
 	executors["agent_browser"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		if sessionID != "" {
+		// If the context already has an isolated session ID (set by share_browser=false),
+		// use it as the agent-level session. Otherwise use the parent sessionID.
+		if isolatedID, ok := ctx.Value(SubAgentIsolatedSessionIDKey).(string); ok && isolatedID != "" {
+			ctx = context.WithValue(ctx, common.ChatSessionIDKey, isolatedID)
+			log.Printf("[BROWSER_TOOLS] Using isolated agent session: %s (parent workflow: %s)", isolatedID, sessionID)
+		} else if sessionID != "" {
 			ctx = context.WithValue(ctx, common.ChatSessionIDKey, sessionID)
+		}
+		// Always set the workflow-level session to the parent (for per-workflow limits)
+		if sessionID != "" {
+			ctx = context.WithValue(ctx, common.WorkflowSessionIDKey, sessionID)
 		}
 		return browserExecutor.HandleAgentBrowser(ctx, args)
 	}

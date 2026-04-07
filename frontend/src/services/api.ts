@@ -426,11 +426,12 @@ export const agentApi = {
     return response.data;
   },
 
-  // Get tracked browser sessions from agent_go (includes chat session ID, age, idle time)
+  // Get tracked browser sessions from agent_go (includes session IDs, age, idle time)
   getBrowserSessionTracking: async (): Promise<{
     sessions: Array<{
       browser_session: string;
-      chat_session: string;
+      agent_session: string;
+      workflow_session: string;
       age: string;
       idle: string;
     }>;

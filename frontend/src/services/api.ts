@@ -44,6 +44,7 @@ import type {
   WorkflowFinalOutputConfigResponse,
   WorkflowFinalOutputResponse,
   TokenUsageFile,
+  WorkflowCostsResponse,
   WorkspaceStateResponse,
   CapabilitiesResponse,
   UserCostsResponse,
@@ -1119,10 +1120,10 @@ export const agentApi = {
     return response.data
   },
 
-  // Get cost data (token usage) for a workflow run
-  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile; evaluation_token_usage?: TokenUsageFile }> => {
+  // Get workspace-scoped cost data (phase + all run costs) for a workflow
+  getCosts: async (workspacePath: string): Promise<WorkflowCostsResponse> => {
     const response = await api.get('/api/workflow/costs', {
-      params: { workspace_path: workspacePath, run_folder: runFolder }
+      params: { workspace_path: workspacePath }
     })
     return response.data
   },

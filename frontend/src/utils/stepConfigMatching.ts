@@ -22,8 +22,11 @@ export interface AgentConfigs {
   selected_servers?: string[];
   selected_tools?: string[];
   enabled_custom_tools?: string[];
+  enabled_custom_tool_categories?: string[];  // Legacy format kept for transitional frontend compatibility
   enable_context_offloading?: boolean;
   use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;             // Legacy field still cleaned up by older editor flows
+  pre_discovered_tools?: string[];            // Legacy field still cleaned up by older editor flows
   keep_learning_full?: boolean;
   disable_temp_llm?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
@@ -285,4 +288,3 @@ export function isTodoTaskStep(step: PlanStep): step is TodoTaskPlanStep {
 export function isRoutingStep(step: PlanStep): step is RoutingPlanStep {
   return step.type === 'routing';
 }
-

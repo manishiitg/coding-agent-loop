@@ -211,8 +211,8 @@ type StreamingAPI struct {
 	pendingMu          sync.RWMutex
 
 	// Last query request per session — used to construct synthetic turns
-	lastQueryRequests      map[string]QueryRequest
-	lastQueryMu            sync.RWMutex
+	lastQueryRequests       map[string]QueryRequest
+	lastQueryMu             sync.RWMutex
 	sessionWorkspaceFolders map[string]string // sessionID → resolved workflowPhaseFolder (for builder log persistence in synthetic turns)
 	sessionWorkspaceMu      sync.RWMutex
 
@@ -725,18 +725,18 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize workflow step ID storage
 		workflowStepIDs: make(map[string]string),
 		// Initialize background agent infrastructure
-		bgAgentRegistry:       NewBackgroundAgentRegistry(),
-		sessionBusy:           make(map[string]bool),
-		pendingCompletions:    make(map[string][]string),
+		bgAgentRegistry:         NewBackgroundAgentRegistry(),
+		sessionBusy:             make(map[string]bool),
+		pendingCompletions:      make(map[string][]string),
 		lastQueryRequests:       make(map[string]QueryRequest),
 		sessionWorkspaceFolders: make(map[string]string),
-		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
-		runningAgents:         make(map[string]*mcpagent.Agent),
-		completionLoopStarted: make(map[string]bool),
-		claudeCodeSessionIDs:  make(map[string]string),
-		geminiSessionIDs:      make(map[string]string),
-		geminiProjectDirIDs:   make(map[string]string),
-		stoppedSessions:       make(map[string]bool),
+		sessionAgents:           make(map[string]*agent.LLMAgentWrapper),
+		runningAgents:           make(map[string]*mcpagent.Agent),
+		completionLoopStarted:   make(map[string]bool),
+		claudeCodeSessionIDs:    make(map[string]string),
+		geminiSessionIDs:        make(map[string]string),
+		geminiProjectDirIDs:     make(map[string]string),
+		stoppedSessions:         make(map[string]bool),
 	}
 
 	// Kill any orphaned browser processes from a previous run.
@@ -5452,9 +5452,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// 2. Update {workflowFolder}/token_usage.json (same PhaseTokenUsageFile format used by execution)
-				// This adds builder costs alongside execution phase costs in the same file,
-				// keyed as "builder" phase so it appears in the existing cost popup.
+				// 2. Update costs/phase/token_usage.json for workflow phase sessions.
 				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
 					promptTokens, completionTokens, _, cacheTokens, reasoningTokens, llmCallCount, _,
 						inputCost, outputCost, reasoningCost, cacheCost, totalCost, _ := underlying.GetTokenUsageWithPricing()
@@ -5482,66 +5480,52 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						TotalCost:        totalCost,
 					}
 
-					tokenFilePath := filepath.Join(wsRoot, workflowPhaseFolder, "token_usage.json")
+					workflowRoot := filepath.Join(wsRoot, workflowPhaseFolder)
+					legacyTokenFilePath := filepath.Join(workflowRoot, "token_usage.json")
+					tokenFilePath := orchestrator.ResolvePhaseTokenUsagePath(workflowRoot)
+					if err := os.MkdirAll(filepath.Dir(tokenFilePath), 0755); err != nil {
+						log.Printf("[BUILDER LOG] Failed to create phase costs dir %s: %v", filepath.Dir(tokenFilePath), err)
+						return
+					}
 					var tokenFile orchestrator.PhaseTokenUsageFile
 					if existingData, err := os.ReadFile(tokenFilePath); err == nil {
 						json.Unmarshal(existingData, &tokenFile)
+					} else if existingData, err := os.ReadFile(legacyTokenFilePath); err == nil {
+						json.Unmarshal(existingData, &tokenFile)
 					}
-					if tokenFile.ByPhaseAndModel == nil {
-						tokenFile.ByPhaseAndModel = make(map[string]map[string]*orchestrator.ModelTokenUsage)
-						tokenFile.ByModel = make(map[string]*orchestrator.ModelTokenUsage)
-						tokenFile.CreatedAt = time.Now()
-					}
-					tokenFile.UpdatedAt = time.Now()
-
-					// Add/accumulate per-phase entry
-					if tokenFile.ByPhaseAndModel[phaseKey] == nil {
-						tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*orchestrator.ModelTokenUsage)
-					}
-					if existing, ok := tokenFile.ByPhaseAndModel[phaseKey][underlying.ModelID]; ok {
-						existing.InputTokens += promptTokens
-						existing.OutputTokens += completionTokens
-						existing.CacheTokens += cacheTokens
-						existing.ReasoningTokens += reasoningTokens
-						existing.LLMCallCount += llmCallCount
-						existing.InputTokensM = fmtM(existing.InputTokens)
-						existing.OutputTokensM = fmtM(existing.OutputTokens)
-						existing.CacheTokensM = fmtM(existing.CacheTokens)
-						existing.ReasoningTokensM = fmtM(existing.ReasoningTokens)
-						existing.InputCost += inputCost
-						existing.OutputCost += outputCost
-						existing.ReasoningCost += reasoningCost
-						existing.CacheCost += cacheCost
-						existing.TotalCost += totalCost
-					} else {
-						tokenFile.ByPhaseAndModel[phaseKey][underlying.ModelID] = modelUsage
-					}
-
-					// Update aggregate by_model
-					if existing, ok := tokenFile.ByModel[underlying.ModelID]; ok {
-						existing.InputTokens += promptTokens
-						existing.OutputTokens += completionTokens
-						existing.CacheTokens += cacheTokens
-						existing.ReasoningTokens += reasoningTokens
-						existing.LLMCallCount += llmCallCount
-						existing.InputTokensM = fmtM(existing.InputTokens)
-						existing.OutputTokensM = fmtM(existing.OutputTokens)
-						existing.CacheTokensM = fmtM(existing.CacheTokens)
-						existing.ReasoningTokensM = fmtM(existing.ReasoningTokens)
-						existing.InputCost += inputCost
-						existing.OutputCost += outputCost
-						existing.ReasoningCost += reasoningCost
-						existing.CacheCost += cacheCost
-						existing.TotalCost += totalCost
-					} else {
-						tokenFile.ByModel[underlying.ModelID] = modelUsage
-					}
+					now := time.Now()
+					orchestrator.ApplyModelUsageToPhaseTokenUsageFile(&tokenFile, phaseKey, underlying.ModelID, modelUsage, now)
 
 					if tokenJSON, err := json.MarshalIndent(tokenFile, "", "  "); err == nil {
 						if err := os.WriteFile(tokenFilePath, tokenJSON, 0644); err != nil {
-							log.Printf("[BUILDER LOG] Failed to write token_usage.json: %v", err)
+							log.Printf("[BUILDER LOG] Failed to write phase token usage: %v", err)
 						} else {
-							log.Printf("[BUILDER LOG] Updated %s/token_usage.json (phase=%s, $%.4f this turn)", workflowPhaseFolder, phaseKey, totalCost)
+							if err := os.Remove(legacyTokenFilePath); err != nil && !os.IsNotExist(err) {
+								log.Printf("[BUILDER LOG] Failed to delete legacy token_usage.json: %v", err)
+							}
+							log.Printf("[BUILDER LOG] Updated %s (phase=%s, $%.4f this turn)", tokenFilePath, phaseKey, totalCost)
+						}
+					}
+
+					dailyTokenFilePath := orchestrator.ResolveDailyPhaseTokenUsagePath(workflowRoot, now)
+					if err := os.MkdirAll(filepath.Dir(dailyTokenFilePath), 0755); err != nil {
+						log.Printf("[BUILDER LOG] Failed to create daily phase costs dir %s: %v", filepath.Dir(dailyTokenFilePath), err)
+						return
+					}
+					var dailyTokenFile orchestrator.DailyPhaseTokenUsageFile
+					if existingData, err := os.ReadFile(dailyTokenFilePath); err == nil {
+						json.Unmarshal(existingData, &dailyTokenFile)
+					}
+					dailyTokenFile.Date = orchestrator.CostDateKey(now)
+					dailyTokenFile.UpdatedAt = now
+					if dailyTokenFile.TokenUsage == nil {
+						dailyTokenFile.TokenUsage = &orchestrator.PhaseTokenUsageFile{}
+					}
+					orchestrator.ApplyModelUsageToPhaseTokenUsageFile(dailyTokenFile.TokenUsage, phaseKey, underlying.ModelID, modelUsage, now)
+
+					if dailyTokenJSON, err := json.MarshalIndent(dailyTokenFile, "", "  "); err == nil {
+						if err := os.WriteFile(dailyTokenFilePath, dailyTokenJSON, 0644); err != nil {
+							log.Printf("[BUILDER LOG] Failed to write daily phase token usage: %v", err)
 						}
 					}
 				}
@@ -7586,9 +7570,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
 		UseCodeExecutionMode: useCodeExec,
 		APIKeys:              apiKeys,
-		Fallbacks: tierFallbacks,
-		SessionID: subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
-		UserID:    subAgentUserID,    // Per-user OAuth token isolation
+		Fallbacks:            tierFallbacks,
+		SessionID:            subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
+		UserID:               subAgentUserID,    // Per-user OAuth token isolation
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
 			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {

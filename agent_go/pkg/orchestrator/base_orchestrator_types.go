@@ -78,23 +78,23 @@ type StepTokenData struct {
 
 // ModelTokenData represents token data for a model to be persisted
 type ModelTokenData struct {
-	ModelID         string
-	Provider        string
-	InputTokens     int
-	OutputTokens    int
-	CacheTokens     int // Total cache tokens (read + write) - kept for backward compatibility
+	ModelID          string
+	Provider         string
+	InputTokens      int
+	OutputTokens     int
+	CacheTokens      int // Total cache tokens (read + write) - kept for backward compatibility
 	CacheReadTokens  int // Tokens read from cache (charged at discount rate)
 	CacheWriteTokens int // Tokens written to cache (charged at premium rate, 1.25x)
-	ReasoningTokens int
-	LLMCallCount    int
+	ReasoningTokens  int
+	LLMCallCount     int
 	// Pricing fields (calculated from model metadata)
-	InputCost     float64
-	OutputCost    float64
-	ReasoningCost float64
-	CacheCost     float64 // Total cache cost (read + write) - kept for backward compatibility
+	InputCost      float64
+	OutputCost     float64
+	ReasoningCost  float64
+	CacheCost      float64 // Total cache cost (read + write) - kept for backward compatibility
 	CacheReadCost  float64 // Cost for cache reads (discounted)
 	CacheWriteCost float64 // Cost for cache writes (premium)
-	TotalCost     float64
+	TotalCost      float64
 	// Context window tracking
 	ContextWindowUsage int // Current tokens used in context window
 	ModelContextWindow int // Model's context window size
@@ -120,20 +120,20 @@ type TokenUsageSummary struct {
 // ModelTokenUsage represents token usage for a specific model (JSON format)
 // Stores both raw integers and string-formatted millions (with "M" suffix)
 type ModelTokenUsage struct {
-	Provider         string `json:"provider"`
-	InputTokens      int    `json:"input_tokens"`       // raw count
-	OutputTokens     int    `json:"output_tokens"`      // raw count
-	InputTokensM     string `json:"input_tokens_m"`     // formatted as "17.016M"
-	OutputTokensM    string `json:"output_tokens_m"`    // formatted as "0.116M"
-	CacheTokens      int    `json:"cache_tokens"`       // raw count (total = read + write)
-	CacheTokensM     string `json:"cache_tokens_m"`     // formatted as "4.546M"
-	CacheReadTokens   int    `json:"cache_read_tokens"`   // tokens read from cache (discounted)
-	CacheReadTokensM  string `json:"cache_read_tokens_m"` // formatted
-	CacheWriteTokens  int    `json:"cache_write_tokens"`  // tokens written to cache (premium)
+	Provider          string `json:"provider"`
+	InputTokens       int    `json:"input_tokens"`         // raw count
+	OutputTokens      int    `json:"output_tokens"`        // raw count
+	InputTokensM      string `json:"input_tokens_m"`       // formatted as "17.016M"
+	OutputTokensM     string `json:"output_tokens_m"`      // formatted as "0.116M"
+	CacheTokens       int    `json:"cache_tokens"`         // raw count (total = read + write)
+	CacheTokensM      string `json:"cache_tokens_m"`       // formatted as "4.546M"
+	CacheReadTokens   int    `json:"cache_read_tokens"`    // tokens read from cache (discounted)
+	CacheReadTokensM  string `json:"cache_read_tokens_m"`  // formatted
+	CacheWriteTokens  int    `json:"cache_write_tokens"`   // tokens written to cache (premium)
 	CacheWriteTokensM string `json:"cache_write_tokens_m"` // formatted
-	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
-	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
-	LLMCallCount     int    `json:"llm_call_count"`     // count
+	ReasoningTokens   int    `json:"reasoning_tokens"`     // raw count
+	ReasoningTokensM  string `json:"reasoning_tokens_m"`   // formatted as "0.000M"
+	LLMCallCount      int    `json:"llm_call_count"`       // count
 	// Pricing fields (in USD)
 	InputCost      float64 `json:"input_cost_usd,omitempty"`
 	OutputCost     float64 `json:"output_cost_usd,omitempty"`
@@ -191,7 +191,7 @@ type PhaseTokenData struct {
 	LLMCallCount     int
 }
 
-// PhaseTokenUsageFile represents persisted token usage data per phase (stored in main workspace folder)
+// PhaseTokenUsageFile represents persisted token usage data per phase under costs/phase/token_usage.json.
 type PhaseTokenUsageFile struct {
 	CreatedAt       time.Time                              `json:"created_at"`
 	UpdatedAt       time.Time                              `json:"updated_at"`

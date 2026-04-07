@@ -421,29 +421,30 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const runFolderInfoMap = new Map<string, RunFolderInfo>(
       (runFoldersResp?.folders || []).map(folder => [folder.name, folder])
     )
-    const results = await Promise.allSettled(
-      batch.map(folder => agentApi.getCosts(workspacePath, folder))
+    const workspaceCosts = await agentApi.getCosts(workspacePath).catch(() => null)
+    const costByRunFolder = new Map(
+      (workspaceCosts?.runs || []).map(entry => [entry.run_folder, entry])
     )
 
     const newCosts: Record<string, RunCostData | null> = {}
-    batch.forEach((folder, i) => {
-      const result = results[i]
-      if (result.status === 'fulfilled' && result.value.token_usage?.by_model) {
+    batch.forEach((folder) => {
+      const result = costByRunFolder.get(folder)
+      if (result?.token_usage?.by_model) {
         let totalCost = 0
         let totalTokens = 0
-        for (const model of Object.values(result.value.token_usage.by_model)) {
+        for (const model of Object.values(result.token_usage.by_model)) {
           totalCost += model.total_cost_usd ?? 0
           totalTokens += (model.input_tokens ?? 0) + (model.output_tokens ?? 0)
         }
         // Also add evaluation costs if present
-        if (result.value.evaluation_token_usage?.by_model) {
-          for (const model of Object.values(result.value.evaluation_token_usage.by_model)) {
+        if (result.evaluation_token_usage?.by_model) {
+          for (const model of Object.values(result.evaluation_token_usage.by_model)) {
             totalCost += model.total_cost_usd ?? 0
             totalTokens += (model.input_tokens ?? 0) + (model.output_tokens ?? 0)
           }
         }
         const tierTokens = calculateTierTokenBreakdown(
-          result.value.token_usage,
+          result.token_usage,
           runFolderInfoMap.get(folder)?.metadata?.models
         )
         newCosts[folder] = {

@@ -1251,6 +1251,31 @@ export interface TokenUsageFile {
   by_step_and_model?: Record<string, Record<string, ModelTokenUsage>>;
 }
 
+export interface PhaseTokenUsageFile {
+  created_at: string;
+  updated_at: string;
+  by_model: Record<string, ModelTokenUsage>;
+  by_phase_and_model?: Record<string, Record<string, ModelTokenUsage>>;
+}
+
+export interface WorkflowRunCostsEntry {
+  run_folder: string;
+  token_usage?: TokenUsageFile;
+  evaluation_token_usage?: TokenUsageFile;
+}
+
+export interface WorkflowPhaseDailyCostsEntry {
+  date: string;
+  token_usage?: PhaseTokenUsageFile;
+}
+
+export interface WorkflowCostsResponse {
+  success: boolean;
+  phase_token_usage?: PhaseTokenUsageFile;
+  phase_daily_costs: WorkflowPhaseDailyCostsEntry[];
+  runs: WorkflowRunCostsEntry[];
+}
+
 export interface ExecutionLogsResponse {
   success: boolean;
   steps: Record<string, StepExecutionLogs>; // key is step ID or name (e.g. "step-1")
@@ -1797,7 +1822,6 @@ export interface WorkflowCapabilities {
 export interface WorkflowExecutionDefaults {
   always_use_same_run: boolean
   skip_execution_cleanup: boolean
-  execution_mode?: 'stateless' | 'stateful'
   // Global step overrides (replaces step_override.json)
   disable_learning?: boolean
   global_skill_objective?: string

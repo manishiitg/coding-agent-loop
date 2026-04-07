@@ -66,7 +66,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   // Get execution options directly from workflow store (single source of truth)
   // This fixes the issue where globalExecutionOptions prop might be null/stale
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   
   // Workspace store for viewing learnings
   const { setWorkspaceMinimized } = useAppStore()
@@ -155,7 +154,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     console.log('[StepSidebar] Running single step with options:', {
       selectedRunFolder,
-      selectedExecutionMode,
       executionOptions
     })
     
@@ -164,7 +162,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     const workflowMode = useWorkflowStore.getState().workflowMode
     const phaseId = workflowMode === 'eval' ? 'evaluation-execution' : 'execution'
     onStartPhase(phaseId, executionOptions)
-  }, [onStartPhase, node, selectedRunFolder, selectedExecutionMode, stepIndex])
+  }, [onStartPhase, node, selectedRunFolder, stepIndex])
 
   // Handle delete learnings for this step
   const handleDeleteLearnings = useCallback(async () => {

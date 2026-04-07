@@ -8,9 +8,6 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-// Execution currently uses a single stateless mode. The legacy 'stateful' value
-// is still accepted in some types for backward compatibility with older data.
-export type ExecutionModeType = 'stateless' | 'stateful'
 export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
 // Layout direction for workflow canvas
@@ -76,7 +73,6 @@ export interface PresetWorkflowState {
     remainingCount: number
     startTime: number | null
   } | null
-  selectedExecutionMode: ExecutionModeType
   selectedStartPoint: number
   selectedBranchStep: {
     parentStepIndex: number
@@ -102,7 +98,6 @@ function createDefaultPresetState(): PresetWorkflowState {
     currentStepId: null,
     stepStatusMap: new Map(),
     batchProgress: null,
-    selectedExecutionMode: 'stateless',
     selectedStartPoint: 0,
     selectedBranchStep: null,
   }
@@ -126,7 +121,6 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     currentStepId: state.currentStepId,
     stepStatusMap: new Map(state.stepStatusMap),
     batchProgress: state.batchProgress,
-    selectedExecutionMode: state.selectedExecutionMode,
     selectedStartPoint: state.selectedStartPoint,
     selectedBranchStep: state.selectedBranchStep,
   }
@@ -152,14 +146,13 @@ interface WorkflowStore {
   stepProgressFolder: string | null // Track which folder the current progress belongs to
   isLoadingProgress: boolean
 
-      // Execution options
-      selectedExecutionMode: ExecutionModeType
-      selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
-      selectedBranchStep: {  // For resuming from branch steps
-        parentStepIndex: number;  // 0-based index of conditional step
-        branchType: 'if_true' | 'if_false';  // Which branch
-        branchStepIndex: number;  // 0-based index within the branch
-      } | null
+  // Execution options
+  selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
+  selectedBranchStep: {  // For resuming from branch steps
+    parentStepIndex: number;  // 0-based index of conditional step
+    branchType: 'if_true' | 'if_false';  // Which branch
+    branchStepIndex: number;  // 0-based index within the branch
+  } | null
   
       // Temporary LLM overrides (persists across page refreshes via localStorage)
       // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
@@ -251,7 +244,6 @@ interface WorkflowStore {
   updateStepProgressFromEvent: (progress: StepProgress) => void
 
   // Execution options
-  setExecutionMode: (mode: ExecutionModeType) => void
   setStartPoint: (step: number) => void
   setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => void
   buildExecutionOptions: () => ExecutionOptions
@@ -382,7 +374,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       isLoadingProgress: false,
 
       // Execution options
-      selectedExecutionMode: 'stateless',
       selectedStartPoint: 0,
       selectedBranchStep: null,
 
@@ -1073,12 +1064,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
 
-      setExecutionMode: (_mode: ExecutionModeType) => {
-        // Execution now uses a single stateless mode. Keep the setter for
-        // compatibility with existing callers, but always normalize to stateless.
-        set({ selectedExecutionMode: 'stateless' })
-      },
-
       setStartPoint: (step: number | string) => {
         // Use normalization utility to ensure canonical format
         const normalized = normalizeStartPoint(step)
@@ -1099,7 +1084,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         console.log('[RESUME_DEBUG] buildExecutionOptions called:', {
           selectedStartPoint: state.selectedStartPoint,
           selectedBranchStep: state.selectedBranchStep,
-          selectedExecutionMode: state.selectedExecutionMode,
           isResuming,
           isResumingBranch
         })
@@ -1108,8 +1092,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const executionStrategy: string = (isResuming || isResumingBranch)
           ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
           : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-        // Execution uses a single stateless mode:
-        // manual runs reuse the user-selected iteration and clear outputs,
+        // Manual runs reuse the user-selected iteration and clear outputs;
         // scheduled runs create a new iteration in the scheduler.
         const shouldUseSameRun = true
 
@@ -2119,8 +2102,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // startPoint is always 0 - will be calculated from progress via loadProgress
           // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
           // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
-          // NOTE: selectedExecutionMode is not restored here. WorkflowLayout
-          // normalizes execution mode to stateless when the manifest is loaded.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
             selectedStartPoint: 0,  // Always start fresh - calculated from progress
@@ -2230,7 +2211,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             currentStepId: restored.currentStepId,
             stepStatusMap: new Map(restored.stepStatusMap),
             batchProgress: restored.batchProgress,
-            selectedExecutionMode: restored.selectedExecutionMode,
             selectedStartPoint: restored.selectedStartPoint,
             selectedBranchStep: restored.selectedBranchStep,
             _currentPresetId: presetId
@@ -2262,7 +2242,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           runFolders: [],
           selectedRunFolder: 'new',
           stepProgress: null,
-          selectedExecutionMode: 'stateless',
           selectedStartPoint: 0,
           selectedBranchStep: null,
           variablesManifest: null,

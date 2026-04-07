@@ -345,6 +345,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
+  const setStepOverride = useWorkflowStore(state => state.setStepOverride)
   const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
@@ -374,28 +375,24 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       .then(response => {
         const defaults = response?.manifest?.execution_defaults
         if (!defaults) return
-        const store = useWorkflowStore.getState()
-        // Execution uses a single stateless mode. Ignore legacy stateful flags
-        // while continuing to load the rest of execution_defaults.
-        store.setExecutionMode('stateless')
         // Load global step overrides from execution_defaults
         const hasOverrides = defaults.disable_learning !== undefined ||
           defaults.disable_parallel_tool_execution !== undefined ||
           defaults.execution_max_turns !== undefined ||
           (defaults.enabled_custom_tools && defaults.enabled_custom_tools.length > 0)
         if (hasOverrides) {
-          store.setStepOverride({
+          setStepOverride({
             disable_learning: defaults.disable_learning !== undefined ? defaults.disable_learning : undefined,
             disable_parallel_tool_execution: defaults.disable_parallel_tool_execution !== undefined ? defaults.disable_parallel_tool_execution : undefined,
             execution_max_turns: defaults.execution_max_turns,
             enabled_custom_tools: defaults.enabled_custom_tools,
           })
         } else {
-          store.setStepOverride(null)
+          setStepOverride(null)
         }
       })
       .catch(() => { /* manifest may not exist yet, use defaults */ })
-  }, [workspacePath])
+  }, [workspacePath, setStepOverride])
 
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {

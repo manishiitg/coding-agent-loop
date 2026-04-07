@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
 )
@@ -46,27 +46,65 @@ func calculateCostFromTokens(tokenCount int, costPer1MTokens float64) float64 {
 
 // getModelMetadata retrieves model metadata based on provider and modelID
 func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error) {
-	switch strings.ToLower(provider) {
+	resolvedProvider, resolvedModelID := resolvePricingProviderAndModel(provider, modelID)
+
+	switch resolvedProvider {
 	case "openai", "openrouter":
 		// Check if it's an OpenRouter model (contains "/")
-		if strings.Contains(modelID, "/") {
-			return openai.GetOpenRouterModelMetadata(modelID)
+		if strings.Contains(resolvedModelID, "/") {
+			return openai.GetOpenRouterModelMetadata(resolvedModelID)
 		}
-		return openai.GetOpenAIModelMetadata(modelID)
+		return openai.GetOpenAIModelMetadata(resolvedModelID)
 	case "anthropic":
-		return anthropic.GetAnthropicModelMetadata(modelID)
+		return anthropic.GetAnthropicModelMetadata(resolvedModelID)
 	case "vertex":
 		// Vertex supports both Gemini and Anthropic models
-		if strings.Contains(modelID, "claude") || strings.Contains(modelID, "anthropic") {
-			return anthropic.GetAnthropicModelMetadata(modelID)
+		if strings.Contains(resolvedModelID, "claude") || strings.Contains(resolvedModelID, "anthropic") {
+			return anthropic.GetAnthropicModelMetadata(resolvedModelID)
 		}
-		return vertex.GetVertexGeminiModelMetadata(modelID)
+		return vertex.GetVertexGeminiModelMetadata(resolvedModelID)
 	case "bedrock":
-		return bedrock.GetBedrockModelMetadata(modelID)
+		return bedrock.GetBedrockModelMetadata(resolvedModelID)
 	case "azure":
-		return azure.GetAzureModelMetadata(modelID)
+		return azure.GetAzureModelMetadata(resolvedModelID)
+	case "codex-cli":
+		return codexcli.NewCodexCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func resolvePricingProviderAndModel(provider, modelID string) (string, string) {
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	normalizedModelID := strings.TrimSpace(modelID)
+	normalizedModelLower := strings.ToLower(normalizedModelID)
+
+	switch normalizedProvider {
+	case "claude-code":
+		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "claude-code" {
+			return "anthropic", anthropic.ModelClaudeOpus46
+		}
+		return "anthropic", normalizedModelID
+	case "codex-cli":
+		if normalizedModelLower == "" || normalizedModelLower == "auto" || normalizedModelLower == "codex-cli" {
+			return "codex-cli", openai.ModelGPT54
+		}
+		return "codex-cli", normalizedModelID
+	case "gemini-cli":
+		switch normalizedModelLower {
+		case "", "auto", "gemini-cli":
+			return "vertex", vertex.ModelGemini31ProPreview
+		case "pro":
+			return "vertex", vertex.ModelGemini25Pro
+		case "flash":
+			return "vertex", vertex.ModelGemini25Flash
+		case "flash-lite":
+			return "vertex", vertex.ModelGemini25FlashLite
+		default:
+			return "vertex", normalizedModelID
+		}
+	default:
+		return normalizedProvider, normalizedModelID
 	}
 }
 
@@ -161,18 +199,7 @@ func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int, stepID str
 	}
 
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return &StepTokenUsage{}
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return &StepTokenUsage{}
-	}
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
 
 	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
 	var stepKey string
@@ -219,19 +246,10 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 		return
 	}
 
-	// Read token usage from file
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
+	// Read token usage from today's cost bucket for the current run folder.
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
+	if tokenFile == nil || len(tokenFile.ByModel) == 0 && len(tokenFile.ByStepAndModel) == 0 {
 		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage file found for step %s:%s", phase, stepID))
-		return
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse token usage file: %v", err))
 		return
 	}
 
@@ -307,18 +325,7 @@ func (bo *BaseOrchestrator) GetModelTokenUsage(modelID string) *ModelTokenUsage 
 	}
 
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return &ModelTokenUsage{}
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return &ModelTokenUsage{}
-	}
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
 
 	usage, exists := tokenFile.ByModel[modelID]
 	if !exists {
@@ -335,20 +342,13 @@ func (bo *BaseOrchestrator) GetAllModelTokenUsage() map[string]*ModelTokenUsage 
 	}
 
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return make(map[string]*ModelTokenUsage)
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return make(map[string]*ModelTokenUsage)
-	}
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
 
 	return tokenFile.ByModel
+}
+
+func (bo *BaseOrchestrator) GetCurrentRunTokenUsageFile() *TokenUsageFile {
+	return newBaseOrchestratorTokenUsageStore(bo).readRun(context.Background(), bo.iterationFolder)
 }
 
 // GetStepModelTokenUsage reads token usage from file for a specific step and model
@@ -358,18 +358,7 @@ func (bo *BaseOrchestrator) GetStepModelTokenUsage(phase string, step int, stepI
 	}
 
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return &ModelTokenUsage{}
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return &ModelTokenUsage{}
-	}
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
 
 	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
 	var stepKey string
@@ -402,18 +391,7 @@ func (bo *BaseOrchestrator) GetStepModels(phase string, step int, stepID string)
 	}
 
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", bo.iterationFolder, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return make(map[string]*ModelTokenUsage)
-	}
-
-	var tokenFile *TokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return make(map[string]*ModelTokenUsage)
-	}
+	tokenFile := newBaseOrchestratorTokenUsageStore(bo).readRun(ctx, bo.iterationFolder)
 
 	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
 	var stepKey string
@@ -459,12 +437,9 @@ func (bo *BaseOrchestrator) GetStepModels(phase string, step int, stepID string)
 	return result
 }
 
-// PersistTokenUsage saves token usage directly to token_usage.json in the iteration folder
-// It reads existing token data from the file, merges the new token data, and writes back.
-// The file is the single source of truth - no in-memory accumulation.
-// Note: TokenUsageEvent is only emitted once per conversation (at end) with cumulative totals,
-// so there's no duplicate counting. However, multiple conversations/steps could complete concurrently,
-// so we use a mutex to protect file read/write operations.
+// PersistTokenUsage saves token usage into the daily group cost bucket under costs/.
+// The daily file is keyed by scope + group + UTC date, and contains one aggregate
+// TokenUsageFile per run folder for that date.
 func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFolder string,
 	stepTokenData *StepTokenData, modelTokenData *ModelTokenData) error {
 	if iterationFolder == "" {
@@ -476,184 +451,66 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 	tokenFileMutex.Lock()
 	defer tokenFileMutex.Unlock()
 
-	// Build file path: runs/{iterationFolder}/token_usage.json
+	store := newBaseOrchestratorTokenUsageStore(bo)
+	store.ensureRunMigrated(ctx, iterationFolder)
+
+	scope, runFolder := NormalizeCostScopeAndRunFolder(iterationFolder)
+	if runFolder == "" {
+		return nil
+	}
+
 	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "runs", iterationFolder, "token_usage.json")
+	now := time.Now().UTC()
+	filePath := ResolveDailyGroupTokenUsagePath(workspacePath, scope, runFolder, now)
 
 	bo.GetLogger().Debug(fmt.Sprintf("💾 Persisting token usage to: %s", filePath))
 
-	// Read existing token usage file if it exists
-	var existingFile *TokenUsageFile
+	// Read the existing daily bucket if it exists.
+	dailyFile := &DailyGroupTokenUsageFile{
+		Date:        CostDateKey(now),
+		GroupFolder: ExtractGroupFolderFromRunFolder(runFolder),
+		UpdatedAt:   now,
+		RunFolders:  make(map[string]*TokenUsageFile),
+	}
 	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
 	if err == nil && existingContent != "" {
-		// File exists, try to parse it
-		if err := json.Unmarshal([]byte(existingContent), &existingFile); err != nil {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing token_usage.json: %v (will create new file)", err))
-			existingFile = nil
+		if parsedDaily, parseErr := store.parseDailyGroupTokenUsageFile(existingContent); parseErr == nil {
+			dailyFile = parsedDaily
+			dailyFile.Date = CostDateKey(now)
+			dailyFile.GroupFolder = ExtractGroupFolderFromRunFolder(runFolder)
+			dailyFile.UpdatedAt = now
+		} else {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing daily token usage file: %v (will create new file)", parseErr))
 		}
 	} else if err != nil {
-		// File doesn't exist or error reading - this is expected for new files
-		// Only log if it's not a "file not found" type error
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			// Removed verbose logging
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read daily token usage file %s: %v", filePath, err))
 		}
-		existingFile = nil
 	}
 
-	// Build the token usage file structure
-	// Start with existing data if available, otherwise create new
-	tokenFile := &TokenUsageFile{
-		UpdatedAt:      time.Now(),
-		ByModel:        make(map[string]*ModelTokenUsage),
-		ByStepAndModel: make(map[string]map[string]*ModelTokenUsage),
-	}
-
-	// Preserve CreatedAt from existing file, or set to now if new file
-	if existingFile != nil {
-		tokenFile.CreatedAt = existingFile.CreatedAt
-		// Copy existing data
-		if existingFile.ByModel != nil {
-			for k, v := range existingFile.ByModel {
-				tokenFile.ByModel[k] = &ModelTokenUsage{
-					Provider:            v.Provider,
-					InputTokens:         v.InputTokens,
-					OutputTokens:        v.OutputTokens,
-					InputTokensM:        v.InputTokensM,
-					OutputTokensM:       v.OutputTokensM,
-					CacheTokens:         v.CacheTokens,
-					CacheTokensM:        v.CacheTokensM,
-					ReasoningTokens:     v.ReasoningTokens,
-					ReasoningTokensM:    v.ReasoningTokensM,
-					LLMCallCount:        v.LLMCallCount,
-					InputCost:           v.InputCost,
-					OutputCost:          v.OutputCost,
-					ReasoningCost:       v.ReasoningCost,
-					CacheCost:           v.CacheCost,
-					TotalCost:           v.TotalCost,
-					ContextWindowUsage:  v.ContextWindowUsage,
-					ModelContextWindow:  v.ModelContextWindow,
-					ContextUsagePercent: v.ContextUsagePercent,
-				}
-			}
+	// Start from the existing aggregate for this run folder inside the daily file.
+	tokenFile := CloneTokenUsageFile(dailyFile.RunFolders[runFolder])
+	if tokenFile == nil {
+		tokenFile = &TokenUsageFile{
+			CreatedAt:      now,
+			ByModel:        make(map[string]*ModelTokenUsage),
+			ByStepAndModel: make(map[string]map[string]*ModelTokenUsage),
 		}
-		// Copy existing ByStepAndModel data if it exists (backward compatibility)
-		if existingFile.ByStepAndModel != nil {
-			for stepKey, modelMap := range existingFile.ByStepAndModel {
-				tokenFile.ByStepAndModel[stepKey] = make(map[string]*ModelTokenUsage)
-				for modelID, v := range modelMap {
-					tokenFile.ByStepAndModel[stepKey][modelID] = &ModelTokenUsage{
-						Provider:            v.Provider,
-						InputTokens:         v.InputTokens,
-						OutputTokens:        v.OutputTokens,
-						InputTokensM:        v.InputTokensM,
-						OutputTokensM:       v.OutputTokensM,
-						CacheTokens:         v.CacheTokens,
-						CacheTokensM:        v.CacheTokensM,
-						ReasoningTokens:     v.ReasoningTokens,
-						ReasoningTokensM:    v.ReasoningTokensM,
-						LLMCallCount:        v.LLMCallCount,
-						InputCost:           v.InputCost,
-						OutputCost:          v.OutputCost,
-						ReasoningCost:       v.ReasoningCost,
-						CacheCost:           v.CacheCost,
-						TotalCost:           v.TotalCost,
-						ContextWindowUsage:  v.ContextWindowUsage,
-						ModelContextWindow:  v.ModelContextWindow,
-						ContextUsagePercent: v.ContextUsagePercent,
-					}
-				}
-			}
-		}
-	} else {
-		// New file - set CreatedAt to now
-		tokenFile.CreatedAt = time.Now()
 	}
+	if tokenFile.ByModel == nil {
+		tokenFile.ByModel = make(map[string]*ModelTokenUsage)
+	}
+	if tokenFile.ByStepAndModel == nil {
+		tokenFile.ByStepAndModel = make(map[string]map[string]*ModelTokenUsage)
+	}
+	if tokenFile.CreatedAt.IsZero() {
+		tokenFile.CreatedAt = now
+	}
+	tokenFile.UpdatedAt = now
 
 	// Merge new model token data if provided
 	if modelTokenData != nil {
-		// Calculate pricing for this model data
-		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
-
-		// Calculate context window usage percentage
-		var contextUsagePercent float64
-		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-		if contextWindow > 0 {
-			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
-			if contextUsagePercent > 100.0 {
-				contextUsagePercent = 100.0
-			}
-		}
-
-		if existing, exists := tokenFile.ByModel[modelTokenData.ModelID]; exists {
-			// Merge with existing data (add raw integers)
-			existing.InputTokens += modelTokenData.InputTokens
-			existing.OutputTokens += modelTokenData.OutputTokens
-			existing.CacheTokens += modelTokenData.CacheTokens
-			existing.CacheReadTokens += modelTokenData.CacheReadTokens
-			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
-			existing.ReasoningTokens += modelTokenData.ReasoningTokens
-			existing.LLMCallCount += modelTokenData.LLMCallCount
-			// Recalculate formatted strings
-			existing.InputTokensM = formatTokensM(existing.InputTokens)
-			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
-			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
-			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
-			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
-			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
-			// Accumulate pricing
-			existing.InputCost += inputCost
-			existing.OutputCost += outputCost
-			existing.ReasoningCost += reasoningCost
-			existing.CacheCost += cacheCost
-			existing.CacheReadCost += modelTokenData.CacheReadCost
-			existing.CacheWriteCost += modelTokenData.CacheWriteCost
-			existing.TotalCost += totalCost
-			// Update context window tracking
-			// Use per-call tokens (not cumulative) to reflect actual context window usage
-			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
-			// which don't represent actual context window usage per call
-			if contextWindow > 0 {
-				existing.ModelContextWindow = contextWindow
-				if modelTokenData.LLMCallCount <= 1 {
-					// Per-call event: use this call's tokens as actual context usage
-					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-					existing.ContextWindowUsage = currentCallTokens
-					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
-					if currentPercent > 100.0 {
-						currentPercent = 100.0
-					}
-					existing.ContextUsagePercent = currentPercent
-				}
-			}
-		} else {
-			// New model - create entry
-			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:          modelTokenData.Provider,
-				InputTokens:       modelTokenData.InputTokens,
-				OutputTokens:      modelTokenData.OutputTokens,
-				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:       modelTokenData.CacheTokens,
-				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
-				CacheReadTokens:   modelTokenData.CacheReadTokens,
-				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
-				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
-				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
-				ReasoningTokens:   modelTokenData.ReasoningTokens,
-				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:      modelTokenData.LLMCallCount,
-				InputCost:         inputCost,
-				OutputCost:        outputCost,
-				ReasoningCost:     reasoningCost,
-				CacheCost:         cacheCost,
-				CacheReadCost:     modelTokenData.CacheReadCost,
-				CacheWriteCost:    modelTokenData.CacheWriteCost,
-				TotalCost:         totalCost,
-				ContextWindowUsage:  totalTokens,
-				ModelContextWindow:  contextWindow,
-				ContextUsagePercent: contextUsagePercent,
-			}
-		}
+		tokenFile.ByModel[modelTokenData.ModelID] = ApplyModelTokenData(tokenFile.ByModel[modelTokenData.ModelID], modelTokenData)
 	}
 
 	// Store step+model token data if both stepTokenData and modelTokenData are provided
@@ -671,95 +528,14 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		if tokenFile.ByStepAndModel[stepKey] == nil {
 			tokenFile.ByStepAndModel[stepKey] = make(map[string]*ModelTokenUsage)
 		}
-
-		// Calculate pricing for this model data
-		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
-
-		// Calculate context window usage percentage
-		var contextUsagePercent float64
-		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-		if contextWindow > 0 {
-			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
-			if contextUsagePercent > 100.0 {
-				contextUsagePercent = 100.0
-			}
-		}
-
-		// Merge with existing model data for this step if it exists
-		if existing, exists := tokenFile.ByStepAndModel[stepKey][modelID]; exists {
-			// Merge with existing data (add raw integers)
-			existing.InputTokens += modelTokenData.InputTokens
-			existing.OutputTokens += modelTokenData.OutputTokens
-			existing.CacheTokens += modelTokenData.CacheTokens
-			existing.CacheReadTokens += modelTokenData.CacheReadTokens
-			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
-			existing.ReasoningTokens += modelTokenData.ReasoningTokens
-			existing.LLMCallCount += modelTokenData.LLMCallCount
-			// Recalculate formatted strings
-			existing.InputTokensM = formatTokensM(existing.InputTokens)
-			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
-			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
-			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
-			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
-			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
-			// Accumulate pricing
-			existing.InputCost += inputCost
-			existing.OutputCost += outputCost
-			existing.ReasoningCost += reasoningCost
-			existing.CacheCost += cacheCost
-			existing.CacheReadCost += modelTokenData.CacheReadCost
-			existing.CacheWriteCost += modelTokenData.CacheWriteCost
-			existing.TotalCost += totalCost
-			// Update context window tracking
-			// Use per-call tokens (not cumulative) to reflect actual context window usage
-			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
-			// which don't represent actual context window usage per call
-			if contextWindow > 0 {
-				existing.ModelContextWindow = contextWindow
-				if modelTokenData.LLMCallCount <= 1 {
-					// Per-call event: use this call's tokens as actual context usage
-					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-					existing.ContextWindowUsage = currentCallTokens
-					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
-					if currentPercent > 100.0 {
-						currentPercent = 100.0
-					}
-					existing.ContextUsagePercent = currentPercent
-				}
-			}
-		} else {
-			// New model for this step - create entry
-			tokenFile.ByStepAndModel[stepKey][modelID] = &ModelTokenUsage{
-				Provider:          modelTokenData.Provider,
-				InputTokens:       modelTokenData.InputTokens,
-				OutputTokens:      modelTokenData.OutputTokens,
-				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:       modelTokenData.CacheTokens,
-				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
-				CacheReadTokens:   modelTokenData.CacheReadTokens,
-				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
-				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
-				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
-				ReasoningTokens:   modelTokenData.ReasoningTokens,
-				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:      modelTokenData.LLMCallCount,
-				InputCost:         inputCost,
-				OutputCost:        outputCost,
-				ReasoningCost:     reasoningCost,
-				CacheCost:         cacheCost,
-				CacheReadCost:     modelTokenData.CacheReadCost,
-				CacheWriteCost:    modelTokenData.CacheWriteCost,
-				TotalCost:         totalCost,
-				ContextWindowUsage:  totalTokens,
-				ModelContextWindow:  contextWindow,
-				ContextUsagePercent: contextUsagePercent,
-			}
-		}
+		tokenFile.ByStepAndModel[stepKey][modelID] = ApplyModelTokenData(tokenFile.ByStepAndModel[stepKey][modelID], modelTokenData)
 	}
 
+	dailyFile.UpdatedAt = now
+	dailyFile.RunFolders[runFolder] = tokenFile
+
 	// Marshal to JSON
-	jsonData, err := json.MarshalIndent(tokenFile, "", "  ")
+	jsonData, err := json.MarshalIndent(dailyFile, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal token usage data: %w", err)
 	}
@@ -774,7 +550,7 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 	return nil
 }
 
-// phaseTokenFileMutex ensures thread-safe access to phase token_usage.json in main workspace folder
+// phaseTokenFileMutex ensures thread-safe access to phase token usage under costs/phase
 var phaseTokenFileMutex sync.Mutex
 
 // IsPhaseOnlyAgent checks if a phase is a phase-only agent (not step-based)
@@ -792,7 +568,7 @@ func IsPhaseOnlyAgent(phase string) bool {
 	return false
 }
 
-// PersistPhaseTokenUsage saves token usage directly to token_usage.json in the main workspace folder
+// PersistPhaseTokenUsage saves token usage directly to costs/phase/token_usage.json
 // It reads existing token data from the file, merges the new token data, and writes back.
 // The file is the single source of truth - no in-memory accumulation.
 // This is used for phase-only agents (planning, plan-improvement, etc.) that don't have iteration folders.
@@ -806,281 +582,18 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 	phaseTokenFileMutex.Lock()
 	defer phaseTokenFileMutex.Unlock()
 
-	// Build file path: workspace/token_usage.json (main workspace folder, not in runs/)
+	store := newBaseOrchestratorTokenUsageStore(bo)
+	store.ensurePhaseMigrated(ctx)
+
+	// Build file path under the dedicated phase costs folder.
 	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "token_usage.json")
+	filePath := ResolvePhaseTokenUsagePath(workspacePath)
 
 	bo.GetLogger().Debug(fmt.Sprintf("💾 Persisting phase token usage to: %s", filePath))
 
-	// Read existing token usage file if it exists
-	var existingFile *PhaseTokenUsageFile
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err == nil && existingContent != "" {
-		// File exists, try to parse it
-		if err := json.Unmarshal([]byte(existingContent), &existingFile); err != nil {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing phase token_usage.json: %v (will create new file)", err))
-			existingFile = nil
-		}
-	} else if err != nil {
-		// File doesn't exist or error reading - this is expected for new files
-		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
-			bo.GetLogger().Debug("📝 Phase token usage file doesn't exist yet, will create new one")
-		}
-		existingFile = nil
-	}
-
-	// Build the token usage file structure
-	// Start with existing data if available, otherwise create new
-	tokenFile := &PhaseTokenUsageFile{
-		UpdatedAt:       time.Now(),
-		ByPhaseAndModel: make(map[string]map[string]*ModelTokenUsage),
-		ByModel:         make(map[string]*ModelTokenUsage),
-	}
-
-	// Preserve CreatedAt from existing file, or set to now if new file
-	if existingFile != nil {
-		tokenFile.CreatedAt = existingFile.CreatedAt
-		// Copy existing ByPhaseAndModel data
-		if existingFile.ByPhaseAndModel != nil {
-			for phaseKey, modelMap := range existingFile.ByPhaseAndModel {
-				tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
-				for modelID, v := range modelMap {
-					tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
-						Provider:            v.Provider,
-						InputTokens:         v.InputTokens,
-						OutputTokens:        v.OutputTokens,
-						InputTokensM:        v.InputTokensM,
-						OutputTokensM:       v.OutputTokensM,
-						CacheTokens:         v.CacheTokens,
-						CacheTokensM:        v.CacheTokensM,
-						ReasoningTokens:     v.ReasoningTokens,
-						ReasoningTokensM:    v.ReasoningTokensM,
-						LLMCallCount:        v.LLMCallCount,
-						InputCost:           v.InputCost,
-						OutputCost:          v.OutputCost,
-						ReasoningCost:       v.ReasoningCost,
-						CacheCost:           v.CacheCost,
-						TotalCost:           v.TotalCost,
-						ContextWindowUsage:  v.ContextWindowUsage,
-						ModelContextWindow:  v.ModelContextWindow,
-						ContextUsagePercent: v.ContextUsagePercent,
-					}
-				}
-			}
-		}
-		// Copy existing ByModel data
-		if existingFile.ByModel != nil {
-			for k, v := range existingFile.ByModel {
-				tokenFile.ByModel[k] = &ModelTokenUsage{
-					Provider:            v.Provider,
-					InputTokens:         v.InputTokens,
-					OutputTokens:        v.OutputTokens,
-					InputTokensM:        v.InputTokensM,
-					OutputTokensM:       v.OutputTokensM,
-					CacheTokens:         v.CacheTokens,
-					CacheTokensM:        v.CacheTokensM,
-					ReasoningTokens:     v.ReasoningTokens,
-					ReasoningTokensM:    v.ReasoningTokensM,
-					LLMCallCount:        v.LLMCallCount,
-					InputCost:           v.InputCost,
-					OutputCost:          v.OutputCost,
-					ReasoningCost:       v.ReasoningCost,
-					CacheCost:           v.CacheCost,
-					TotalCost:           v.TotalCost,
-					ContextWindowUsage:  v.ContextWindowUsage,
-					ModelContextWindow:  v.ModelContextWindow,
-					ContextUsagePercent: v.ContextUsagePercent,
-				}
-			}
-		}
-	} else {
-		// New file - set CreatedAt to now
-		tokenFile.CreatedAt = time.Now()
-	}
-
-	// Merge new model token data if provided (aggregate across all phases)
-	if modelTokenData != nil {
-		// Calculate pricing for this model data
-		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
-
-		// Calculate context window usage percentage
-		var contextUsagePercent float64
-		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-		if contextWindow > 0 {
-			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
-			if contextUsagePercent > 100.0 {
-				contextUsagePercent = 100.0
-			}
-		}
-
-		if existing, exists := tokenFile.ByModel[modelTokenData.ModelID]; exists {
-			// Merge with existing data (add raw integers)
-			existing.InputTokens += modelTokenData.InputTokens
-			existing.OutputTokens += modelTokenData.OutputTokens
-			existing.CacheTokens += modelTokenData.CacheTokens
-			existing.CacheReadTokens += modelTokenData.CacheReadTokens
-			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
-			existing.ReasoningTokens += modelTokenData.ReasoningTokens
-			existing.LLMCallCount += modelTokenData.LLMCallCount
-			// Recalculate formatted strings
-			existing.InputTokensM = formatTokensM(existing.InputTokens)
-			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
-			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
-			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
-			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
-			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
-			// Accumulate pricing
-			existing.InputCost += inputCost
-			existing.OutputCost += outputCost
-			existing.ReasoningCost += reasoningCost
-			existing.CacheCost += cacheCost
-			existing.CacheReadCost += modelTokenData.CacheReadCost
-			existing.CacheWriteCost += modelTokenData.CacheWriteCost
-			existing.TotalCost += totalCost
-			// Update context window tracking
-			// Use per-call tokens (not cumulative) to reflect actual context window usage
-			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
-			// which don't represent actual context window usage per call
-			if contextWindow > 0 {
-				existing.ModelContextWindow = contextWindow
-				if modelTokenData.LLMCallCount <= 1 {
-					// Per-call event: use this call's tokens as actual context usage
-					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-					existing.ContextWindowUsage = currentCallTokens
-					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
-					if currentPercent > 100.0 {
-						currentPercent = 100.0
-					}
-					existing.ContextUsagePercent = currentPercent
-				}
-			}
-		} else {
-			// New model - create entry
-			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:          modelTokenData.Provider,
-				InputTokens:       modelTokenData.InputTokens,
-				OutputTokens:      modelTokenData.OutputTokens,
-				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:       modelTokenData.CacheTokens,
-				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
-				CacheReadTokens:   modelTokenData.CacheReadTokens,
-				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
-				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
-				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
-				ReasoningTokens:   modelTokenData.ReasoningTokens,
-				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:      modelTokenData.LLMCallCount,
-				InputCost:         inputCost,
-				OutputCost:        outputCost,
-				ReasoningCost:     reasoningCost,
-				CacheCost:         cacheCost,
-				CacheReadCost:     modelTokenData.CacheReadCost,
-				CacheWriteCost:    modelTokenData.CacheWriteCost,
-				TotalCost:         totalCost,
-				ContextWindowUsage:  totalTokens,
-				ModelContextWindow:  contextWindow,
-				ContextUsagePercent: contextUsagePercent,
-			}
-		}
-	}
-
-	// Store phase+model token data if modelTokenData is provided
-	// phaseTokenData is guaranteed to be non-nil (checked at function start)
-	if modelTokenData != nil {
-		phaseKey := phaseTokenData.Phase
-		modelID := modelTokenData.ModelID
-
-		// Initialize phase map if it doesn't exist
-		if tokenFile.ByPhaseAndModel[phaseKey] == nil {
-			tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*ModelTokenUsage)
-		}
-
-		// Calculate pricing for this model data
-		inputCost, outputCost, reasoningCost, cacheCost, totalCost, contextWindow := calculatePricingFromModelData(modelTokenData)
-
-		// Calculate context window usage percentage
-		var contextUsagePercent float64
-		totalTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-		if contextWindow > 0 {
-			contextUsagePercent = (float64(totalTokens) / float64(contextWindow)) * 100.0
-			if contextUsagePercent > 100.0 {
-				contextUsagePercent = 100.0
-			}
-		}
-
-		// Merge with existing model data for this phase if it exists
-		if existing, exists := tokenFile.ByPhaseAndModel[phaseKey][modelID]; exists {
-			// Merge with existing data (add raw integers)
-			existing.InputTokens += modelTokenData.InputTokens
-			existing.OutputTokens += modelTokenData.OutputTokens
-			existing.CacheTokens += modelTokenData.CacheTokens
-			existing.CacheReadTokens += modelTokenData.CacheReadTokens
-			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
-			existing.ReasoningTokens += modelTokenData.ReasoningTokens
-			existing.LLMCallCount += modelTokenData.LLMCallCount
-			// Recalculate formatted strings
-			existing.InputTokensM = formatTokensM(existing.InputTokens)
-			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
-			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
-			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
-			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
-			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
-			// Accumulate pricing
-			existing.InputCost += inputCost
-			existing.OutputCost += outputCost
-			existing.ReasoningCost += reasoningCost
-			existing.CacheCost += cacheCost
-			existing.CacheReadCost += modelTokenData.CacheReadCost
-			existing.CacheWriteCost += modelTokenData.CacheWriteCost
-			existing.TotalCost += totalCost
-			// Update context window tracking
-			// Use per-call tokens (not cumulative) to reflect actual context window usage
-			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
-			// which don't represent actual context window usage per call
-			if contextWindow > 0 {
-				existing.ModelContextWindow = contextWindow
-				if modelTokenData.LLMCallCount <= 1 {
-					// Per-call event: use this call's tokens as actual context usage
-					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
-					existing.ContextWindowUsage = currentCallTokens
-					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
-					if currentPercent > 100.0 {
-						currentPercent = 100.0
-					}
-					existing.ContextUsagePercent = currentPercent
-				}
-			}
-		} else {
-			// New model for this phase - create entry
-			tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
-				Provider:          modelTokenData.Provider,
-				InputTokens:       modelTokenData.InputTokens,
-				OutputTokens:      modelTokenData.OutputTokens,
-				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:       modelTokenData.CacheTokens,
-				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
-				CacheReadTokens:   modelTokenData.CacheReadTokens,
-				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
-				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
-				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
-				ReasoningTokens:   modelTokenData.ReasoningTokens,
-				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:      modelTokenData.LLMCallCount,
-				InputCost:         inputCost,
-				OutputCost:        outputCost,
-				ReasoningCost:     reasoningCost,
-				CacheCost:         cacheCost,
-				CacheReadCost:     modelTokenData.CacheReadCost,
-				CacheWriteCost:    modelTokenData.CacheWriteCost,
-				TotalCost:         totalCost,
-				ContextWindowUsage:  totalTokens,
-				ModelContextWindow:  contextWindow,
-				ContextUsagePercent: contextUsagePercent,
-			}
-		}
-	}
+	tokenFile := store.readPhase(ctx)
+	now := time.Now()
+	ApplyModelTokenDataToPhaseTokenUsageFile(tokenFile, phaseTokenData.Phase, modelTokenData, now)
 
 	// Marshal to JSON
 	jsonData, err := json.MarshalIndent(tokenFile, "", "  ")
@@ -1093,6 +606,22 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 		return fmt.Errorf("failed to write phase token usage file: %w", err)
 	}
 
+	dailyFile := store.readPhaseDaily(ctx, now)
+	if dailyFile.TokenUsage == nil {
+		dailyFile.TokenUsage = &PhaseTokenUsageFile{}
+	}
+	dailyFile.Date = CostDateKey(now)
+	dailyFile.UpdatedAt = now
+	ApplyModelTokenDataToPhaseTokenUsageFile(dailyFile.TokenUsage, phaseTokenData.Phase, modelTokenData, now)
+
+	dailyJSON, err := json.MarshalIndent(dailyFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal daily phase token usage data: %w", err)
+	}
+	if err := bo.WriteWorkspaceFile(ctx, ResolveDailyPhaseTokenUsagePath(workspacePath, now), string(dailyJSON)); err != nil {
+		return fmt.Errorf("failed to write daily phase token usage file: %w", err)
+	}
+
 	bo.GetLogger().Debug("✅ Persisted phase token usage to file")
 
 	return nil
@@ -1101,16 +630,9 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 // GetPhaseTokenUsage reads token usage from file for a specific phase (aggregated across all models)
 func (bo *BaseOrchestrator) GetPhaseTokenUsage(phase string) *StepTokenUsage {
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return &StepTokenUsage{}
-	}
-
-	var tokenFile *PhaseTokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
+	store := newBaseOrchestratorTokenUsageStore(bo)
+	tokenFile := store.readPhase(ctx)
+	if len(tokenFile.ByPhaseAndModel) == 0 && len(tokenFile.ByModel) == 0 {
 		return &StepTokenUsage{}
 	}
 
@@ -1147,16 +669,9 @@ func (bo *BaseOrchestrator) GetPhaseTokenUsage(phase string) *StepTokenUsage {
 // GetPhaseModelTokenUsage reads token usage from file for a specific phase and model
 func (bo *BaseOrchestrator) GetPhaseModelTokenUsage(phase string, modelID string) *ModelTokenUsage {
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return &ModelTokenUsage{}
-	}
-
-	var tokenFile *PhaseTokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
+	store := newBaseOrchestratorTokenUsageStore(bo)
+	tokenFile := store.readPhase(ctx)
+	if len(tokenFile.ByPhaseAndModel) == 0 && len(tokenFile.ByModel) == 0 {
 		return &ModelTokenUsage{}
 	}
 
@@ -1180,18 +695,8 @@ func (bo *BaseOrchestrator) GetPhaseModelTokenUsage(phase string, modelID string
 // GetAllPhaseTokenUsage reads all phase token usage from file
 func (bo *BaseOrchestrator) GetAllPhaseTokenUsage() map[string]map[string]*ModelTokenUsage {
 	ctx := context.Background()
-	workspacePath := bo.GetWorkspacePath()
-	filePath := filepath.Join(workspacePath, "token_usage.json")
-
-	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
-	if err != nil || existingContent == "" {
-		return make(map[string]map[string]*ModelTokenUsage)
-	}
-
-	var tokenFile *PhaseTokenUsageFile
-	if err := json.Unmarshal([]byte(existingContent), &tokenFile); err != nil {
-		return make(map[string]map[string]*ModelTokenUsage)
-	}
+	store := newBaseOrchestratorTokenUsageStore(bo)
+	tokenFile := store.readPhase(ctx)
 
 	if tokenFile.ByPhaseAndModel == nil {
 		return make(map[string]map[string]*ModelTokenUsage)

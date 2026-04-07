@@ -36,21 +36,20 @@ type WorkflowManifest struct {
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
 type WorkflowCapabilities struct {
-	SelectedServers          []string                  `json:"selected_servers"`
-	SelectedTools            []string                  `json:"selected_tools"`
-	SelectedSkills           []string                  `json:"selected_skills"`
-	SelectedSecrets          []string                  `json:"selected_secrets"`
-	SelectedGlobalSecretNames *[]string                `json:"selected_global_secret_names"` // nil = all, [] = none
-	BrowserMode              string                    `json:"browser_mode"`
-	UseCodeExecutionMode     bool                      `json:"use_code_execution_mode"`
-	LLMConfig                *database.PresetLLMConfig `json:"llm_config,omitempty"`
+	SelectedServers           []string                  `json:"selected_servers"`
+	SelectedTools             []string                  `json:"selected_tools"`
+	SelectedSkills            []string                  `json:"selected_skills"`
+	SelectedSecrets           []string                  `json:"selected_secrets"`
+	SelectedGlobalSecretNames *[]string                 `json:"selected_global_secret_names"` // nil = all, [] = none
+	BrowserMode               string                    `json:"browser_mode"`
+	UseCodeExecutionMode      bool                      `json:"use_code_execution_mode"`
+	LLMConfig                 *database.PresetLLMConfig `json:"llm_config,omitempty"`
 }
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.
 type WorkflowExecutionDefaults struct {
-	AlwaysUseSameRun            bool     `json:"always_use_same_run"`
-	SkipExecutionCleanup        bool     `json:"skip_execution_cleanup"`
-	ExecutionMode               string   `json:"execution_mode,omitempty"` // "stateless" | "stateful"
+	AlwaysUseSameRun     bool `json:"always_use_same_run"`
+	SkipExecutionCleanup bool `json:"skip_execution_cleanup"`
 	// Global step overrides (replaces step_override.json)
 	DisableLearning              *bool    `json:"disable_learning,omitempty"`
 	GlobalSkillObjective         string   `json:"global_skill_objective,omitempty"`
@@ -199,11 +198,11 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 		ID:            "wf_" + uuid.New().String()[:8],
 		Label:         label,
 		Capabilities: WorkflowCapabilities{
-			SelectedServers:    []string{},
-			SelectedTools:      []string{},
-			SelectedSkills:     []string{},
-			SelectedSecrets:    []string{},
-			BrowserMode:        "none",
+			SelectedServers: []string{},
+			SelectedTools:   []string{},
+			SelectedSkills:  []string{},
+			SelectedSecrets: []string{},
+			BrowserMode:     "none",
 		},
 		ExecutionDefs: WorkflowExecutionDefaults{},
 		Ownership:     WorkflowOwnership{},

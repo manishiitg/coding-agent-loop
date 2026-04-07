@@ -219,31 +219,38 @@ function useWorkflowRows() {
     setRows(updated)
     setLoading(false)
 
-    // Fetch costs lazily per run folder
+    // Fetch costs lazily per workspace
     for (const row of updated) {
       if (!row.workspacePath || row.runFolders.length === 0) continue
       const wp = row.workspacePath
-      for (const rf of row.runFolders) {
-        agentApi.getCosts(wp, rf.folder.name)
-          .then(costResp => {
-            if (costResp.success && costResp.token_usage) {
-              let sum = 0
-              for (const model of Object.values(costResp.token_usage.by_model)) {
-                sum += model.total_cost_usd || 0
-              }
-              rf.costUsd = sum > 0 ? sum : null
-              // Use token_usage timestamps as fallback if no metadata
-              if (!rf.startedAt && costResp.token_usage.created_at) {
-                rf.startedAt = costResp.token_usage.created_at
-              }
-              if (!rf.completedAt && rf.status === 'completed' && costResp.token_usage.updated_at) {
-                rf.completedAt = costResp.token_usage.updated_at
-              }
-              setRows(prev => [...prev])
+      agentApi.getCosts(wp)
+        .then(costResp => {
+          if (!costResp.success) return
+
+          const costByRunFolder = new Map(
+            (costResp.runs || []).map(entry => [entry.run_folder, entry])
+          )
+
+          for (const rf of row.runFolders) {
+            const runCosts = costByRunFolder.get(rf.folder.name)
+            if (!runCosts?.token_usage) continue
+
+            let sum = 0
+            for (const model of Object.values(runCosts.token_usage.by_model)) {
+              sum += model.total_cost_usd || 0
             }
-          })
-          .catch(() => {})
-      }
+            rf.costUsd = sum > 0 ? sum : null
+            if (!rf.startedAt && runCosts.token_usage.created_at) {
+              rf.startedAt = runCosts.token_usage.created_at
+            }
+            if (!rf.completedAt && rf.status === 'completed' && runCosts.token_usage.updated_at) {
+              rf.completedAt = runCosts.token_usage.updated_at
+            }
+          }
+
+          setRows(prev => [...prev])
+        })
+        .catch(() => {})
     }
   }, [getPresetsForMode])
 

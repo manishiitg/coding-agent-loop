@@ -382,7 +382,7 @@ export const EmployeeDashboard: React.FC = () => {
     const [reportResult, evaluationResult, costResult] = await Promise.allSettled([
       agentApi.getFinalOutput(workspacePath, runFolder),
       agentApi.getEvaluationReports(workspacePath, runFolder),
-      agentApi.getCosts(workspacePath, runFolder),
+      agentApi.getCosts(workspacePath),
     ])
 
     let report: WorkflowFinalOutputResponse | null = null
@@ -415,8 +415,9 @@ export const EmployeeDashboard: React.FC = () => {
     let costError: string | null = null
     if (costResult.status === 'fulfilled') {
       if (costResult.value.success) {
-        tokenUsage = costResult.value.token_usage || null
-        evaluationTokenUsage = costResult.value.evaluation_token_usage || null
+        const runCosts = (costResult.value.runs || []).find(item => item.run_folder === runFolder) || null
+        tokenUsage = runCosts?.token_usage || null
+        evaluationTokenUsage = runCosts?.evaluation_token_usage || null
       } else {
         costError = 'Failed to load cost data'
       }

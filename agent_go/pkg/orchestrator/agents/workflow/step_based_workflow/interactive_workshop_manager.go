@@ -1114,20 +1114,15 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		workflowObjective = iwm.controller.approvedPlan.Objective
 		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
 	}
-	// Read execution_mode, objective, and success_criteria from workflow.json.
+	// Read objective and success_criteria from workflow.json.
 	// Objective/success_criteria from workflow.json are used as fallback when plan.json hasn't set them yet.
-	executionMode := ""
 	availableGroups := ""
 	if manifest, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
 		var wf struct {
 			Objective       string `json:"objective"`
 			SuccessCriteria string `json:"success_criteria"`
-			ExecutionDefs   struct {
-				ExecutionMode string `json:"execution_mode"`
-			} `json:"execution_defaults"`
 		}
 		if json.Unmarshal([]byte(manifest), &wf) == nil {
-			executionMode = wf.ExecutionDefs.ExecutionMode
 			if workflowObjective == "" {
 				workflowObjective = wf.Objective
 			}
@@ -1159,7 +1154,6 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"UseKnowledgebase":        useKB,
 		"WorkflowObjective":       workflowObjective,
 		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"ExecutionMode":           executionMode,
 		"AvailableGroups":         availableGroups,
 		"AbsWorkspacePath":        GetPromptDocsRoot() + "/" + workspacePath,
 		"AbsDocsRoot":             GetPromptDocsRoot(),
@@ -1561,16 +1555,14 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 ### Iterations & Groups
 **Iterations** are just output folders (e.g., iteration-0). In workshop builder mode, always use **iteration-0**. Do not choose or pass any other iteration. Every execute_step re-reads the **latest** plan.json — no caching or snapshotting.
 
-{{if eq .ExecutionMode "stateless"}}**This is a STATELESS workflow** — it runs independently for each group (user/account). Each group has its own isolated execution folder and data.
-Available groups: **{{.AvailableGroups}}**
+{{if .AvailableGroups}}Available groups: **{{.AvailableGroups}}**
+{{end}}
 
 When running a step or the full workflow:
-- **Always ask the user which group to run for** if they haven't specified one — do not assume or default silently.
-- Use execute_step with the explicit `+"`group_id`"+` parameter.
-- Scripts must read all user-specific values (user IDs, account numbers, etc.) from environment variables, not hardcode them. Check for this during optimization.
-- When testing code_exec steps, run across **at least 2 different groups** before locking — a script that works for one group but fails for another has hardcoded values.
-{{else}}**Groups**: Before running a step, read `+"`cat variables.json`"+` to find available group_ids. Call execute_step with the correct **group_id**. Never guess the group_id — always read variables.json.
-{{end}}
+- Before running anything, read `+"`cat variables.json`"+` to find available `+"`group_id`"+` values.
+- Always use execute_step with an explicit `+"`group_id`"+`. Never guess or silently default if multiple groups exist.
+- Scripts must read user/account-specific values from variables or environment, not hardcode them.
+- When testing code_exec steps that operate on group-specific data, verify them across more than one group before locking learnings.
 
 ### Execution Procedure
 1. User says "run step-X" → determine group → call **execute_step("step-id", group_id=group_id)** → get execution_id
@@ -1998,8 +1990,8 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 | runs/{iter}/{group}/execution/{step-id}/ | Step output files (*.json) |
 | runs/{iter}/{group}/execution/Downloads/ | Downloaded files (bank statements, etc.) |
 | runs/{iter}/{group}/execution/steps_done.json | Which steps completed |
-| runs/{iter}/token_usage.json | Per-step token usage |
-| token_usage.json | Aggregated token usage |
+| costs/execution/{group}/{YYYY-MM-DD}.json | Execution token usage ledger for that group/day |
+| costs/phase/token_usage.json | Aggregated phase-only token usage |
 
 ### Execution Logs (per run, per group, per step)
 | Path | Contents |
@@ -6573,15 +6565,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "no run folder selected", nil
 			}
 
-			tokenFilePath := fmt.Sprintf("runs/%s/token_usage.json", runFolder)
-			content, err := iwm.controller.ReadWorkspaceFile(ctx, tokenFilePath)
-			if err != nil {
-				return fmt.Sprintf("No token usage data found at %s", tokenFilePath), nil
-			}
-
-			var tokenFile orchestrator.TokenUsageFile
-			if err := json.Unmarshal([]byte(content), &tokenFile); err != nil {
-				return fmt.Sprintf("Failed to parse token_usage.json: %v", err), nil
+			tokenFile := iwm.controller.GetCurrentRunTokenUsageFile()
+			if tokenFile == nil || len(tokenFile.ByModel) == 0 && len(tokenFile.ByStepAndModel) == 0 {
+				return fmt.Sprintf("No token usage data found for %s in costs/", runFolder), nil
 			}
 
 			// Helper to default empty token strings to "0"
@@ -6656,7 +6642,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// Also check phase-level costs (planning, etc.)
-			phaseTokenPath := "token_usage.json"
+			phaseTokenPath := orchestrator.ResolvePhaseTokenUsagePath("")
 			phaseContent, phaseErr := iwm.controller.ReadWorkspaceFile(ctx, phaseTokenPath)
 			if phaseErr == nil {
 				var phaseFile orchestrator.PhaseTokenUsageFile
@@ -11101,8 +11087,8 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 	execCtx := &ExecutionContext{
 		SkipHumanInput:    true,
 		RunSingleStepOnly: false,
-		SingleStepTarget:   -1,
-		IsEvaluationMode:   false,
+		SingleStepTarget:  -1,
+		IsEvaluationMode:  false,
 	}
 
 	_, _, err := iwm.controller.executeTodoTaskStep(

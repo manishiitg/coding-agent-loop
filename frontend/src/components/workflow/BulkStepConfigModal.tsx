@@ -101,7 +101,6 @@ export default function BulkStepConfigModal({
     const updatedDefaults = {
       always_use_same_run: currentDefaults?.always_use_same_run ?? false,
       skip_execution_cleanup: currentDefaults?.skip_execution_cleanup ?? false,
-      execution_mode: currentDefaults?.execution_mode,
       ...(newOverrides ? {
         disable_learning: newOverrides.disable_learning ?? undefined,
         global_skill_objective: newOverrides.global_skill_objective || undefined,

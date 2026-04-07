@@ -446,7 +446,7 @@ func readRunMetadata(ctx context.Context, metadataFilePath string) (*RunMetadata
 }
 
 // inferRunMetadata creates metadata for legacy run folders that don't have run_metadata.json.
-// Uses token_usage.json created_at as start time, progress.LastUpdated for completion.
+// Uses the migrated costs store created_at as start time, progress.LastUpdated for completion.
 func inferRunMetadata(ctx context.Context, workspacePath, folderName string, progress *StepProgress) *RunMetadata {
 	if progress == nil {
 		return nil
@@ -457,30 +457,13 @@ func inferRunMetadata(ctx context.Context, workspacePath, folderName string, pro
 		TriggeredBy: "manual", // assume manual for legacy runs
 	}
 
-	// Try to get created_at from token_usage.json
-	tokenPaths := []string{
-		workspacePath + "/runs/" + folderName + "/token_usage.json",
-	}
-	for _, tp := range tokenPaths {
-		content, exists, err := readFileFromWorkspace(ctx, tp)
-		if err != nil || !exists {
-			continue
+	if executionCosts, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeExecution); err == nil {
+		if tokenUsage := executionCosts[folderName]; tokenUsage != nil && !tokenUsage.CreatedAt.IsZero() {
+			metadata.CreatedAt = tokenUsage.CreatedAt
 		}
-		var tokenFile struct {
-			CreatedAt string `json:"created_at"`
-			UpdatedAt string `json:"updated_at"`
-		}
-		if err := json.Unmarshal([]byte(content), &tokenFile); err == nil && tokenFile.CreatedAt != "" {
-			if t, err := time.Parse(time.RFC3339Nano, tokenFile.CreatedAt); err == nil {
-				metadata.CreatedAt = t
-			} else if t, err := time.Parse(time.RFC3339, tokenFile.CreatedAt); err == nil {
-				metadata.CreatedAt = t
-			}
-		}
-		break
 	}
 
-	// Fallback: use progress.LastUpdated as rough created_at if token_usage didn't work
+	// Fallback: use progress.LastUpdated as rough created_at if cost metadata didn't work
 	if metadata.CreatedAt.IsZero() {
 		metadata.CreatedAt = progress.LastUpdated
 	}
@@ -783,11 +766,11 @@ type BranchStepProgress struct {
 
 // ExecutionOptions represents user-selected execution options from frontend
 type ExecutionOptions struct {
-	RunMode                 string `json:"run_mode"`                             // "use_same_run" or "create_new_runs_always"
-	SelectedRunFolder       string `json:"selected_run_folder,omitempty"`        // If use_same_run and user selected specific folder
-	ExecutionStrategy       string `json:"execution_strategy"`                   // "start_from_beginning", etc.
-	ResumeFromStep          int    `json:"resume_from_step,omitempty"`           // 1-based step number to resume from
-	PlanChangeAction string `json:"plan_change_action,omitempty"` // "keep_old_progress" or "delete_old_progress"
+	RunMode           string `json:"run_mode"`                      // "use_same_run" or "create_new_runs_always"
+	SelectedRunFolder string `json:"selected_run_folder,omitempty"` // If use_same_run and user selected specific folder
+	ExecutionStrategy string `json:"execution_strategy"`            // "start_from_beginning", etc.
+	ResumeFromStep    int    `json:"resume_from_step,omitempty"`    // 1-based step number to resume from
+	PlanChangeAction  string `json:"plan_change_action,omitempty"`  // "keep_old_progress" or "delete_old_progress"
 
 	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
 	// Only applies to execution agents (not validation or learning agents)
@@ -4785,34 +4768,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 		processExecutionFolder(execListingResp.Data)
 	}
 
-	// 1. Direct path: runs/{runFolder}/token_usage.json (for single group or group-specific folder)
-	// 2. Group subfolders: runs/{runFolder}/{groupName}/token_usage.json (for parent iteration folder)
-	var tokenUsage interface{} = nil
-	tokenUsagePath := ""
-	if runFolder != "" && runFolder != "new" {
-		tokenUsagePath = fmt.Sprintf("%s/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
-	} else {
-		// Try root workspace if no run folder
-		tokenUsagePath = fmt.Sprintf("%s/token_usage.json", cleanedWorkspacePath)
-	}
-
-	if tokenUsagePath != "" {
-		content, exists, _ := readFileFromWorkspace(r.Context(), tokenUsagePath)
-		if exists {
-			if err := json.Unmarshal([]byte(content), &tokenUsage); err != nil {
-				fmt.Printf("Error unmarshalling token usage from %s: %v\n", tokenUsagePath, err)
-			}
-		} else if runFolder != "" && runFolder != "new" && !strings.Contains(runFolder, "/") {
-			// Token usage not found at direct path and runFolder is a parent iteration folder (no "/")
-			// Try to find and aggregate token_usage.json from group subfolders
-			runFolderPath := fmt.Sprintf("%s/runs/%s", cleanedWorkspacePath, runFolder)
-			aggregatedTokenUsage := aggregateGroupTokenUsage(r.Context(), runFolderPath)
-			if aggregatedTokenUsage != nil {
-				tokenUsage = aggregatedTokenUsage
-			}
-		}
-	}
-
 	response := map[string]interface{}{
 		"success": true,
 		"steps":   stepsLogs,
@@ -4852,64 +4807,29 @@ func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	runFolder := r.URL.Query().Get("run_folder")
-
-	// Validate run folder to prevent path traversal
-	if runFolder != "" && runFolder != "new" {
-		cleanedRunFolder := filepath.Clean(runFolder)
-		if strings.Contains(cleanedRunFolder, "..") {
-			http.Error(w, "Invalid run folder", http.StatusBadRequest)
-			return
-		}
-		runFolder = cleanedRunFolder
+	var phaseTokenUsage *orchestrator.PhaseTokenUsageFile
+	if phaseUsage, err := readPhaseTokenUsageFromCosts(r.Context(), cleanedWorkspacePath); err == nil {
+		phaseTokenUsage = phaseUsage
+	}
+	phaseDailyCosts, err := readAllPhaseTokenUsageFromCosts(r.Context(), cleanedWorkspacePath)
+	if err != nil {
+		phaseDailyCosts = []workflowPhaseDailyCostEntry{}
 	}
 
-	// Try to read token_usage.json for the run
-	// With group folders, token_usage.json may be in:
-	// 1. Direct path: runs/{runFolder}/token_usage.json (for single group or group-specific folder)
-	// 2. Group subfolders: runs/{runFolder}/{groupName}/token_usage.json (for parent iteration folder)
-	var tokenUsage interface{} = nil
-	tokenUsagePath := ""
-	if runFolder != "" && runFolder != "new" {
-		tokenUsagePath = fmt.Sprintf("%s/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
-	} else {
-		// Try root workspace if no run folder
-		tokenUsagePath = fmt.Sprintf("%s/token_usage.json", cleanedWorkspacePath)
+	executionCosts, err := readAllRunTokenUsageFromCosts(r.Context(), cleanedWorkspacePath, orchestrator.CostScopeExecution)
+	if err != nil {
+		executionCosts = map[string]*orchestrator.TokenUsageFile{}
 	}
-
-	if tokenUsagePath != "" {
-		content, exists, _ := readFileFromWorkspace(r.Context(), tokenUsagePath)
-		if exists {
-			if err := json.Unmarshal([]byte(content), &tokenUsage); err != nil {
-				fmt.Printf("Error unmarshalling token usage from %s: %v\n", tokenUsagePath, err)
-			}
-		} else if runFolder != "" && runFolder != "new" && !strings.Contains(runFolder, "/") {
-			// Token usage not found at direct path and runFolder is a parent iteration folder (no "/")
-			// Try to find and aggregate token_usage.json from group subfolders
-			runFolderPath := fmt.Sprintf("%s/runs/%s", cleanedWorkspacePath, runFolder)
-			aggregatedTokenUsage := aggregateGroupTokenUsage(r.Context(), runFolderPath)
-			if aggregatedTokenUsage != nil {
-				tokenUsage = aggregatedTokenUsage
-			}
-		}
-	}
-
-	// Also try to read evaluation token_usage.json
-	var evaluationTokenUsage interface{} = nil
-	if runFolder != "" && runFolder != "new" {
-		evalTokenUsagePath := fmt.Sprintf("%s/evaluation/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
-		content, exists, _ := readFileFromWorkspace(r.Context(), evalTokenUsagePath)
-		if exists {
-			if err := json.Unmarshal([]byte(content), &evaluationTokenUsage); err != nil {
-				fmt.Printf("Error unmarshalling evaluation token usage from %s: %v\n", evalTokenUsagePath, err)
-			}
-		}
+	evaluationCosts, err := readAllRunTokenUsageFromCosts(r.Context(), cleanedWorkspacePath, orchestrator.CostScopeEvaluation)
+	if err != nil {
+		evaluationCosts = map[string]*orchestrator.TokenUsageFile{}
 	}
 
 	response := map[string]interface{}{
-		"success":                true,
-		"token_usage":            tokenUsage,
-		"evaluation_token_usage": evaluationTokenUsage,
+		"success":           true,
+		"phase_token_usage": phaseTokenUsage,
+		"phase_daily_costs": phaseDailyCosts,
+		"runs":              buildWorkflowRunCostEntries(executionCosts, evaluationCosts),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

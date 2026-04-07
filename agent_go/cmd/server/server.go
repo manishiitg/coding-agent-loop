@@ -5027,6 +5027,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if evalSession != nil {
+						evalSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
+						evalSession.SetExecutionStateChecks(
+							func() bool {
+								api.pendingMu.RLock()
+								defer api.pendingMu.RUnlock()
+								return len(api.pendingCompletions[sessionID]) > 0
+							},
+							func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
+							func() { api.bgAgentRegistry.CancelAll(sessionID) },
+							func() []todo_creation_human.ServerAgentInfo {
+								agents := api.bgAgentRegistry.GetAll(sessionID)
+								result := make([]todo_creation_human.ServerAgentInfo, 0, len(agents))
+								for _, a := range agents {
+									result = append(result, todo_creation_human.ServerAgentInfo{
+										ID: a.ID, Name: a.Name, Status: string(a.GetStatus()),
+									})
+								}
+								return result
+							},
+						)
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in %s", workflowPhaseID)
 					}

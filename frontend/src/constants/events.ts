@@ -9,11 +9,11 @@
 // Maximum events per session in memory.
 // Lower = faster renders + less memory. "Load Older Events" handles history.
 // With parallel background agents, 300 was too aggressive for normal chat continuation.
-export const MAX_EVENTS_TO_PROCESS = 1000
+export const MAX_EVENTS_TO_PROCESS = 5000
 
 // Per-delegation child event budget.
 // SubAgentHierarchy renders 20 at a time; we keep extra for stats and follow-up continuity.
-export const MAX_CHILD_EVENTS_PER_DELEGATION = 60
+export const MAX_CHILD_EVENTS_PER_DELEGATION = 300
 
 // Cleanup threshold: start cleanup when events exceed this count
-export const CLEANUP_THRESHOLD = 1200
+export const CLEANUP_THRESHOLD = 6000

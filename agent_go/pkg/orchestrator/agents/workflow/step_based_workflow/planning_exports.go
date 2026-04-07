@@ -1312,6 +1312,13 @@ func RegisterRunFullWorkflowTool(
 					return
 				}
 
+				// Wire sub-agent tracking so generic/predefined sub-agents spawned by the
+				// runner controller appear in the session's stepRegistry and are visible
+				// via list_executions/query_step. Without this, hcpo.subAgentNotifier is
+				// nil inside controller_todo_task.go and sub-agent tracking is silently skipped.
+				workflowController.SetSubAgentNotifier(&workshopSubAgentNotifier{registry: session.StepRegistry})
+				workflowController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
+
 				// Propagate session context
 				if cfg.SessionID != "" {
 					workflowController.SetHTTPSessionID(cfg.SessionID)

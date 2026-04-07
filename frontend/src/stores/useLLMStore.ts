@@ -548,7 +548,10 @@ export const useLLMStore = create<LLMState>()(
 
         // Library management
         saveLLM: async (llm, name, modelName, authMethod, metadata) => {
-          const { savedLLMs, refreshAvailableLLMs } = get()
+          const { refreshAvailableLLMs } = get()
+          // Always fetch the current list from backend to avoid overwriting
+          // previously published LLMs when frontend state is stale/empty
+          const existingLLMs = await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs)
           const newSavedLLM = sanitizeSavedLLM({
             ...llm,
             id: crypto.randomUUID(),
@@ -563,7 +566,7 @@ export const useLLMStore = create<LLMState>()(
             cached_input_cost_write_per_1m: metadata?.cached_input_cost_write_per_1m,
             created_at: new Date().toISOString()
           })
-          const nextSavedLLMs = [...savedLLMs, newSavedLLM]
+          const nextSavedLLMs = [...(existingLLMs || []), newSavedLLM]
 
           await llmConfigService.savePublishedLLMs(nextSavedLLMs)
           set({ savedLLMs: nextSavedLLMs })
@@ -571,8 +574,10 @@ export const useLLMStore = create<LLMState>()(
         },
 
         deleteSavedLLM: async (id) => {
-          const { savedLLMs, refreshAvailableLLMs } = get()
-          const nextSavedLLMs = savedLLMs.filter(llm => llm.id !== id)
+          const { refreshAvailableLLMs } = get()
+          // Always fetch the current list from backend to avoid overwriting
+          const existingLLMs = await llmConfigService.getPublishedLLMs().catch(() => get().savedLLMs)
+          const nextSavedLLMs = (existingLLMs || []).filter(llm => llm.id !== id)
 
           await llmConfigService.savePublishedLLMs(nextSavedLLMs)
           set({ savedLLMs: nextSavedLLMs })

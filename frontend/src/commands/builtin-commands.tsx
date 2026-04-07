@@ -121,9 +121,9 @@ Read variables.json now and create the schedule with all group IDs.`)
     }
   },
   {
-    command: 'replan-results',
-    description: 'Rewrite the plan from actual run results',
-    icon: <Layers className="w-4 h-4" />,
+    command: 'auto-research-improve',
+    description: 'Analyze outputs, evals & success criteria to auto-improve the workflow',
+    icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'optimizer',
@@ -131,13 +131,55 @@ Read variables.json now and create the schedule with all group IDs.`)
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
       const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      if (runFolder) {
-        const iteration = runFolder.split('/')[0]
-        ctx.onSubmit(`Run replan_workflow_from_results(iteration="${iteration}") now.${focusText} Rewrite the plan from actual results and summarize what changed.`)
-      } else {
-        ctx.onSubmit(`Read runs/ to find the latest iteration, then run replan_workflow_from_results on it.${focusText} Rewrite the plan from actual results and summarize what changed.`)
-      }
+      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
+      const iterationHint = runFolder
+        ? `Use iteration "${runFolder.split('/')[0]}".`
+        : 'Read runs/ to find the latest iteration.'
+      ctx.onSubmit(`Your single goal: make this workflow achieve its success criteria as reliably as possible. Research what's going wrong, fix it, and verify the fix. Do all of this autonomously without pausing for confirmation. ${iterationHint}${focusText}
+
+PHASE 1 — UNDERSTAND THE GOAL
+1. Read planning/plan.json — extract the objective and success_criteria. These are your north star. Every change you make must move the workflow closer to meeting ALL success criteria.
+2. Read evaluation/evaluation_plan.json — understand what's being measured and how.
+3. Read variables.json to get all group IDs.
+
+PHASE 2 — RESEARCH WHAT'S FAILING AND WHY
+For each group in the latest iteration:
+- Read every step's execution output (runs/{iter}/{group}/step-*/output.json or context output files).
+- Read evaluation/runs/{iter}/{group}/evaluation_report.json for scores and failure reasons.
+- For failed/low-scoring steps, read the full execution logs to understand the root cause.
+
+Map every failure back to a specific success criterion that's not being met. Build a gap analysis:
+| Success Criterion | Met? | Blocking Step(s) | Root Cause |
+
+Prioritize by impact: fix the gaps that block the most success criteria first.
+
+PHASE 3 — FIX EVERYTHING (apply all fixes automatically)
+Work through the gap analysis top-down. For each issue, pick the right tool:
+
+- **Wrong plan structure** (missing steps, wrong order, steps that should be split/merged) → replan_workflow_from_results(iteration="{iter}")
+- **Bad step instructions** (step misunderstands the task, produces wrong output) → update_regular_step or update_todo_task_route — rewrite the description based on what the output SHOULD have been to satisfy the success criteria
+- **Weak validation** (bad output slips through uncaught) → update_validation_schema — add checks that would have caught the failure
+- **Repeated mistakes** (step keeps hitting the same issue) → harden_workflow(iteration="{iter}") — capture the fix as a durable learning
+- **Poor orchestration** (todo_task steps with bad delegation/routing) → rewrite orchestrator descriptions with clear objectives, routing criteria, and failure handling
+- **Missing or wrong tools/MCP servers on a step** → update_step_config to give the step what it needs
+
+After applying fixes, do a second pass: re-read the success criteria and ask "is there anything in the plan that still can't produce what the criteria require?" Fix any remaining gaps.
+
+PHASE 4 — VERIFY
+1. Pick one group and re-run: run_full_workflow(iteration=next_iter, group_id="{group}").
+2. Wait for completion, then evaluate: run_full_evaluation(iteration=next_iter, group_id="{group}").
+3. Compare the gap analysis from Phase 2 against the new results. For each success criterion, report: was it met before? Is it met now?
+4. If new failures appeared, fix them and re-verify (max 2 retry cycles).
+
+PHASE 5 — REPORT & SCHEDULE
+Produce a clear summary:
+- **Goal**: The success criteria from plan.json
+- **Before**: Which criteria were met/unmet, scores per group
+- **Changes made**: What you fixed and why
+- **After**: Which criteria are now met, new scores
+- **Remaining gaps**: What still needs work (if any)
+
+Then ask the user: "Would you like me to set up a recurring schedule to keep improving this workflow automatically? (e.g., daily at 2 AM). Each run will research the latest results, fix issues, and verify — continuously pushing toward 100% success criteria achievement." If yes, use create_schedule to set it up.`)
     }
   },
   {

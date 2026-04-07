@@ -1,6 +1,5 @@
 import React from 'react'
 import type { FallbackModelUsedEvent } from '../../../generated/events'
-import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 interface FallbackModelUsedEventDisplayProps {
   event: FallbackModelUsedEvent
@@ -39,13 +38,6 @@ export const FallbackModelUsedEventDisplay: React.FC<FallbackModelUsedEventDispl
         )}
       </div>
 
-      {/* Reason content - always visible with markdown rendering */}
-      {event.reason && (
-        <div className="mt-3">
-          <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Reason:</div>
-          <ConversationMarkdownRenderer content={event.reason} maxHeight="400px" />
-        </div>
-      )}
     </div>
   )
 }

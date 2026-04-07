@@ -1591,11 +1591,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // workflow would be permanently lost. UI side effects (workspace refresh, canvas updates,
     // auto-notifications) are still gated on isActivePresetTab above.
     if (tab && newEvents.length > 0) {
-      console.log('[EVENT_APPEND]', {
-        sessionId: actualSessionId,
-        count: newEvents.length,
-        events: newEvents.map(summarizeEventForDebug),
-      })
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) return
       addTabEvents(actualSessionId, newEvents)

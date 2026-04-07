@@ -624,8 +624,8 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       </div>
 
-      {/* Config Footer */}
-      <NodeConfigFooter
+      {/* Config Footer - only render when selected to reduce DOM nodes */}
+      {selected && <NodeConfigFooter
         description={step.description}
         successCriteria={step.success_criteria}
         routeName={routeName}
@@ -643,7 +643,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         hasHumanTools={hasHumanTools}
         hasLargeOutput={hasLargeOutput}
         useCodeExecutionMode={useCodeExecutionMode}
-      />
+      />}
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       

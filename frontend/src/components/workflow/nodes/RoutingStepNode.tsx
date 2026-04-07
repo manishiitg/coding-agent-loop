@@ -213,12 +213,12 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
           </div>
         )}
 
-        {/* Config footer */}
-        <NodeConfigFooter
+        {/* Config footer - only render when selected to reduce DOM nodes */}
+        {selected && <NodeConfigFooter
           useCodeExecutionMode={useCodeExecutionMode}
           evalLLM={conditionalLLM}
           lockLearnings={lockLearnings}
-        />
+        />}
       </div>
 
       {/* Output handles - one per route */}

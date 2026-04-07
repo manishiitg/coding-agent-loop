@@ -1365,7 +1365,7 @@ If structural changes are needed, use plan modification tools directly — same 
 - Use **harden_workflow(target_run_folder)** to analyze eval failures across all groups and apply targeted fixes (pre-validation rules, description patches, code fixes).
 - Use **debug_step(step_id)** for deeper analysis of a specific step.
 - Read execution output files directly: cat runs/{run_folder}/execution/{step}/output.json
-- Read learnings: cat learnings/{step-id}/SKILL.md
+- Read learnings: cat learnings/_global/SKILL.md
 - Check validation logs: cat runs/{run_folder}/logs/{step}/*.json
 
 **DO NOT run steps in debug mode.** Debug mode is for analysis only. If you need to re-run, ask the user to switch to Optimize or Build mode.
@@ -1666,10 +1666,10 @@ user-invocable: false
 (learning content here)
 `+"```"+`
 You can read, edit, and delete them using **execute_shell_command** and **diff_patch_workspace_file**:
-- **Read learnings**: 'cat learnings/{step-id}/SKILL.md' to read the learning file
+- **Read learnings**: 'cat learnings/_global/SKILL.md' to read the global learning file
 - **Read metadata**: 'cat learnings/{step-id}/.learning_metadata.json' for iteration counts, lock status, success history
-- **Edit learnings**: Use **diff_patch_workspace_file** to update SKILL.md. If learnings are locked, edits are used directly by the execution agent. If unlocked, the learning agent may overwrite on next run — suggest locking after manual edits.
-- **Delete learnings**: 'rm learnings/{step-id}/SKILL.md learnings/{step-id}/.learning_metadata.json' to reset. Then unlock learnings via update_step_config so fresh learnings are generated on next run.
+- **Edit learnings**: Use **diff_patch_workspace_file** to update learnings/_global/SKILL.md. If learnings are locked, edits are used directly by the execution agent. If unlocked, the learning agent may overwrite on next run — suggest locking after manual edits.
+- **Delete learnings**: 'rm learnings/_global/SKILL.md' to reset global learnings. Then unlock learnings via update_step_config so fresh learnings are generated on next run.
 - **Lock after editing**: Always suggest lock_learnings=true after manual edits to prevent the learning agent from overwriting.
 - **Legacy migration**: If you find '*_learning.md' files (old format) instead of SKILL.md, migrate their content into a new SKILL.md with proper frontmatter and delete the legacy files.
 
@@ -1703,11 +1703,10 @@ After running a step, review it for optimization — but follow this priority or
 **Priority 1 — Correctness (fix these first):**
 - **Step Description** — Is it precise enough? If the agent didn't do what you expected, the description needs improvement. This is the #1 lever.
 - **Pre-Validation Schema** — Does the schema catch bad output? Could a stale/fake file pass? Tighten field checks, add anti-staleness fields.
-- **Success Criteria** — Does it give the agent a clear "definition of done"? Vague criteria lead to vague output.
 - **Context I/O** — Are context_dependencies and context_output correct? Missing deps cause failures; incomplete outputs break downstream steps.
 
 **Priority 2 — Knowledge (fix after step works correctly):**
-- **Review learnings after every successful run** — call 'cat learnings/{step-id}/SKILL.md' to read the current learning file. Check:
+- **Review learnings after every successful run** — call 'cat learnings/_global/SKILL.md' to read the global learning file. Check:
   - Are they **specific and actionable**? Vague learnings like "be careful with the API" waste tokens. Good learnings describe exact patterns: "The /api/v2/data endpoint returns paginated results — always follow next_page_token until null."
   - Do they **contradict the step description**? If so, either update the description or delete the misleading learning.
   - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply (e.g., learning says "use server gws" but the step now uses "google_sheets", or learning references a tool that's been removed). Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
@@ -1965,7 +1964,7 @@ Use `+"`get_workflow_config`"+` to see selected skills and all available install
 When a step has learning_mode "human_assisted":
 1. Explore the task yourself first using execute_shell_command
 2. Discuss findings with the user
-3. Write SKILL.md to 'learnings/{step-id}/SKILL.md' with YAML frontmatter:
+3. Write SKILL.md to 'learnings/_global/SKILL.md' with YAML frontmatter:
    `+"```"+`
    ---
    name: <step title>
@@ -2014,7 +2013,7 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 | Path | Contents |
 |------|----------|
 | learnings/{step-id}/main.py | **Code exec steps**: saved Python script — executed on each run via fast path |
-| learnings/{step-id}/SKILL.md | Prose learnings for steps |
+| learnings/_global/SKILL.md | Global prose learnings shared across all steps |
 | learnings/{step-id}/script_metadata.json | Script version, run counts, success/failure stats |
 
 ### Evaluation
@@ -9263,7 +9262,7 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 3. **Three fix types per failing step** (apply all that are relevant):
    a. **Pre-validation rules** — Add json_checks to validation_schema that would have CAUGHT this failure before evaluation. Use update_validation_schema.
    b. **Description tightening** — Make the step description more explicit about what the agent must/must not do. Use plan modification tools (update_regular_step, update_todo_task_route, etc.).
-   c. **Code/learning fixes** — If the step uses code_exec (has learnings/{step-id}/main.py), patch the script directly with diff_patch_workspace_file. Update learnings/{step-id}/SKILL.md for supplemental notes.
+   c. **Code/learning fixes** — If the step uses code_exec (has learnings/{step-id}/main.py), patch the script directly with diff_patch_workspace_file. Update learnings/_global/SKILL.md for supplemental notes.
 4. **Do not change step structure** — Do not add, remove, or reorder steps. Use replan_workflow_from_results for structural changes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
 6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true and lock_learnings=true.
@@ -9318,7 +9317,7 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 | Path | Contents |
 |------|----------|
 | `+"`learnings/{step-id}/main.py`"+` | Saved Python script for code_exec steps — **this is what gets executed on each run** |
-| `+"`learnings/{step-id}/SKILL.md`"+` | Prose learnings and supplemental notes |
+| `+"`learnings/_global/SKILL.md`"+` | Global prose learnings shared across all steps |
 | `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, success/failure stats |
 
 ### Plan and config

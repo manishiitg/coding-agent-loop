@@ -539,8 +539,8 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         )
       })()}
 
-      {/* Config Footer - Show all configs including conditional LLM */}
-      <div className="mt-2 mx-4">
+      {/* Config Footer - only render when selected to reduce DOM nodes */}
+      {selected && <div className="mt-2 mx-4">
         <NodeConfigFooter
           description={step?.description}
           successCriteria={step?.success_criteria}
@@ -559,7 +559,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-      </div>
+      </div>}
     </div>
   )
 })

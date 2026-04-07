@@ -714,8 +714,8 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
         )}
       </div>
 
-      {/* Config Footer */}
-      <div className={`${isNestedTodoSubAgent ? 'mt-1 mx-2' : 'mt-2 mx-4'}`}>
+      {/* Config Footer - only render when selected to reduce DOM nodes */}
+      {selected && <div className={`${isNestedTodoSubAgent ? 'mt-1 mx-2' : 'mt-2 mx-4'}`}>
         <NodeConfigFooter
           description={step?.description}
           successCriteria={step?.success_criteria}
@@ -734,7 +734,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-      </div>
+      </div>}
     </div>
   )
 })

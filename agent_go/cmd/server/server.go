@@ -4613,6 +4613,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Extract workflow objective and success_criteria from plan.json for the system prompt
+				if existingPlanJSON != "" && workflowPhaseID == "workflow-builder" {
+					var planMeta struct {
+						Objective       string `json:"objective"`
+						SuccessCriteria string `json:"success_criteria"`
+					}
+					if err := json.Unmarshal([]byte(existingPlanJSON), &planMeta); err == nil {
+						if planMeta.Objective != "" {
+							phaseTemplateVars["WorkflowObjective"] = planMeta.Objective
+						}
+						if planMeta.SuccessCriteria != "" {
+							phaseTemplateVars["WorkflowSuccessCriteria"] = planMeta.SuccessCriteria
+						}
+					}
+				}
+
 				// Auto-detect workshop mode if not provided by frontend
 				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == "workflow-builder" {
 					stepConfigJSON, _ := phaseReadFile(setupCtx, phaseWorkspacePath+"/planning/step_config.json")

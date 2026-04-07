@@ -617,8 +617,8 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         />
       </div>
 
-      {/* Config Footer */}
-      <div className="mt-2 mx-4">
+      {/* Config Footer - only render when selected to reduce DOM nodes */}
+      {selected && <div className="mt-2 mx-4">
         <NodeConfigFooter
           description={step?.description}
           successCriteria={step?.success_criteria}
@@ -637,7 +637,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-      </div>
+      </div>}
     </div>
   )
 })

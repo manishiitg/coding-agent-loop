@@ -1080,8 +1080,9 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	// Check if path exists
+	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.APIResponse[any]{
 			Success: false,
 			Message: "Document not found",
@@ -1090,8 +1091,14 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// Delete file
-	if err := os.Remove(filePath); err != nil {
+	// Use RemoveAll for directories so non-empty dirs are deleted cleanly,
+	// and plain Remove for files (faster, no risk of accidentally nuking a tree).
+	if info.IsDir() {
+		err = os.RemoveAll(filePath)
+	} else {
+		err = os.Remove(filePath)
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to delete document",

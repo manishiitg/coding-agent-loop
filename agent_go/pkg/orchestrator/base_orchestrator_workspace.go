@@ -254,181 +254,21 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	return nil
 }
 
-// CleanupDirectory recursively deletes all files and directories in a directory using list_workspace_files
-// to enumerate files recursively, then deletes all files first, then directories (deepest first)
+// CleanupDirectory deletes all contents of a directory via the workspace API.
+// The workspace API uses os.RemoveAll for directories, so this is a single delete call.
+// NOTE: This deletes the directory itself. Callers that need the empty folder to remain
+// should re-create it afterwards.
 func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string, dirName string) error {
-	// Removed verbose logging
-
-	// Use list_workspace_files to enumerate all files in the directory recursively, then delete them
-	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
-	if !exists {
-		bo.GetLogger().Warn("⚠️ list_workspace_files executor not found, skipping directory cleanup")
-		return nil
-	}
-
-	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
-	if !ok {
-		bo.GetLogger().Warn("⚠️ list_workspace_files executor has wrong type, skipping directory cleanup")
-		return nil
-	}
-
-	// Inject event emitter into context before calling executor
-	ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
-
-	// Call list_workspace_files to get all files recursively (use high max_depth for recursive listing)
-	listArgs := map[string]interface{}{
-		"folder":    dirPath,
-		"max_depth": 100, // High depth to list all files and directories recursively
-	}
-
-	// Removed verbose logging
-	fileListJSON, err := listExecutor(ctx, listArgs)
-	if err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err))
-		return nil // Don't fail - directory may be empty or not exist
-	}
-
-	// Removed verbose logging
-
-	// Parse the JSON response using shared helper that handles all known formats
-	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(fileListJSON)
-	if parseErr != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, parseErr))
-		return nil
-	}
-
-	// Flatten nested workspace API response: the API returns a tree structure
-	// but CleanupDirectory needs a flat list of all files and folders at all depths
-	filesList = flattenWorkspaceFiles(filesList)
-
-	if len(filesList) == 0 {
-		bo.GetLogger().Info(fmt.Sprintf("ℹ️ No files found in %s directory (may be empty)", dirName))
-		return nil
-	}
-
-	// Separate files and directories for proper deletion order
-	var filesToDelete []string
-	var dirsToDelete []string
-
-	// Removed verbose logging
-
-	for _, fileInfo := range filesList {
-		filepath := fileInfo.FilePath
-		if filepath == "" {
-			// Removed verbose logging
-			continue
+	if err := bo.DeleteWorkspaceFile(ctx, dirPath); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+			bo.GetLogger().Info(fmt.Sprintf("ℹ️ Directory %s already deleted or doesn't exist", dirPath))
+			return nil
 		}
-
-		// Skip the root directory itself (normalize paths for comparison)
-		// Normalize both paths by removing trailing slashes and comparing
-		normalizedFilePath := strings.TrimRight(filepath, "/")
-		normalizedDirPath := strings.TrimRight(dirPath, "/")
-		if normalizedFilePath == normalizedDirPath {
-			// This is the root directory itself - skip it to avoid deleting the Downloads folder
-			bo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping root directory itself: %s", filepath))
-			continue
-		}
-
-		// Skip knowledgebase folder - it should never be deleted during cleanup
-		// Check if the filepath contains "/knowledgebase" (case-insensitive)
-		if strings.Contains(strings.ToLower(normalizedFilePath), "/knowledgebase") {
-			bo.GetLogger().Info(fmt.Sprintf("🔒 Skipping protected knowledgebase folder: %s", filepath))
-			continue
-		}
-
-		// Check if it's a directory
-		if fileInfo.Type == "folder" {
-			dirsToDelete = append(dirsToDelete, filepath)
-			bo.GetLogger().Info(fmt.Sprintf("📁 Found directory to delete: %s", filepath))
-		} else {
-			filesToDelete = append(filesToDelete, filepath)
-			bo.GetLogger().Info(fmt.Sprintf("📄 Found file to delete: %s", filepath))
-		}
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup directory %s: %v", dirPath, err))
+		return err
 	}
-
-	bo.GetLogger().Info(fmt.Sprintf("📊 Summary: %d files and %d directories to delete from %s", len(filesToDelete), len(dirsToDelete), dirName))
-
-	// Delete all files first
-	deletedFileCount := 0
-	if len(filesToDelete) > 0 {
-		bo.GetLogger().Info(fmt.Sprintf("🗑️ Starting to delete %d files from %s", len(filesToDelete), dirName))
-	}
-	for _, filepath := range filesToDelete {
-		bo.GetLogger().Info(fmt.Sprintf("🗑️ Attempting to delete file: %s", filepath))
-		if err := bo.DeleteWorkspaceFile(ctx, filepath); err == nil {
-			deletedFileCount++
-			bo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted file: %s", filepath))
-		} else {
-			// Log but don't fail - some files might already be deleted or have other issues
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete file %s: %v", filepath, err))
-		}
-	}
-
-	// Delete directories (deepest first - sort by path length descending)
-	// This ensures child directories are deleted before parent directories
-	sortKey := func(path string) int {
-		// Count path separators to determine depth
-		count := 0
-		for _, char := range path {
-			if char == '/' || char == '\\' {
-				count++
-			}
-		}
-		return count
-	}
-
-	// Sort directories by depth (deepest first)
-	for i := 0; i < len(dirsToDelete)-1; i++ {
-		for j := i + 1; j < len(dirsToDelete); j++ {
-			if sortKey(dirsToDelete[i]) < sortKey(dirsToDelete[j]) {
-				dirsToDelete[i], dirsToDelete[j] = dirsToDelete[j], dirsToDelete[i]
-			}
-		}
-	}
-
-	deletedDirCount := 0
-	for _, dirpath := range dirsToDelete {
-		// Delete directory using DeleteWorkspaceFile (workspace tool should handle directories)
-		if err := bo.DeleteWorkspaceFile(ctx, dirpath); err == nil {
-			deletedDirCount++
-			bo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted directory: %s", dirpath))
-		} else {
-			// Check if error is because directory is not empty
-			errStr := err.Error()
-			if strings.Contains(errStr, "directory not empty") {
-				// Directory still has contents - recursively clean it first
-				// Extract directory name for logging
-				dirName := filepath.Base(dirpath)
-				bo.GetLogger().Info(fmt.Sprintf("🔄 Directory %s not empty, recursively cleaning contents first", dirpath))
-				// Recursively clean the directory to ensure all contents are deleted
-				if err2 := bo.CleanupDirectory(ctx, dirpath, dirName); err2 == nil {
-					// After recursive cleanup, try to delete the directory itself again
-					if err3 := bo.DeleteWorkspaceFile(ctx, dirpath); err3 == nil {
-						deletedDirCount++
-						bo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted directory after recursive cleanup: %s", dirpath))
-					} else {
-						bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete directory %s even after recursive cleanup: %v", dirpath, err3))
-					}
-				} else {
-					bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to recursively cleanup directory %s: %v", dirpath, err2))
-				}
-			} else if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
-				// Directory already deleted or doesn't exist - that's okay
-				bo.GetLogger().Info(fmt.Sprintf("ℹ️ Directory %s already deleted or doesn't exist", dirpath))
-			} else {
-				// Other error - log but don't fail
-				bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete directory %s: %v", dirpath, err))
-			}
-		}
-	}
-
-	totalDeleted := deletedFileCount + deletedDirCount
-	if totalDeleted > 0 {
-		bo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up %d files and %d directories from %s directory (total: %d)", deletedFileCount, deletedDirCount, dirName, totalDeleted))
-	} else {
-		bo.GetLogger().Info(fmt.Sprintf("ℹ️ No files or directories found to delete in %s directory (may have been empty)", dirName))
-	}
-
+	bo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up %s directory", dirName))
 	return nil
 }
 

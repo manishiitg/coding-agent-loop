@@ -141,6 +141,13 @@ type OrchestratorAgentConfig struct {
 	// Runtime config overrides for MCP servers
 	// Allows workflow-specific modifications like output directories per run
 	RuntimeOverrides mcpclient.RuntimeOverrides `json:"runtime_overrides,omitempty"`
+
+	// Per-agent folder guard paths (optional override for shared orchestrator state).
+	// When set, these take precedence over BaseOrchestrator.folderGuardReadPaths/WritePaths
+	// in registerCustomToolsForAgent, preventing race conditions when parallel sub-agents
+	// share the same orchestrator instance.
+	FolderGuardReadPaths  []string `json:"-"`
+	FolderGuardWritePaths []string `json:"-"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

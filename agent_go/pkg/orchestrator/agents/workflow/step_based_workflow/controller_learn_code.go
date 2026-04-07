@@ -436,6 +436,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 		"SCRIPT_VERBOSE":          "1", // Enable verbose logging in scripts — stdout is only read on failure
 	}
 	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+		hcpo.LockWorkspaceEnv()
 		for k, v := range envRef {
 			if k == "STEP_OUTPUT_DIR" {
 				// Never let the shared workspace env override the per-step output folder.
@@ -445,6 +446,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 			}
 			extraEnv[k] = v
 		}
+		hcpo.UnlockWorkspaceEnv()
 	}
 
 	envKeys := make([]string, 0, len(extraEnv))

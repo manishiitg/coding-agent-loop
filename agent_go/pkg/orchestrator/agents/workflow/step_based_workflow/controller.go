@@ -769,6 +769,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	if execOpts != nil && execOpts.ExecutionStrategy != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Processing execution strategy early: %s", execOpts.ExecutionStrategy))
 		hcpo.SetSkipHumanInput(true)
+
+		// Apply human input overrides for routing/human_input steps.
+		// Previously this was only set via PrepareExecution → ApplyExecutionContext,
+		// which is only called for resume strategies. For start_from_beginning strategies
+		// humanInputOverrides was never populated, causing routing steps to miss
+		// injected human_input and fall through to their default route.
+		if len(execOpts.HumanInputs) > 0 {
+			hcpo.humanInputOverrides = execOpts.HumanInputs
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Set humanInputOverrides for %d step(s) (early apply)", len(execOpts.HumanInputs)))
+		}
 	}
 
 	// Determine if user wants to resume or start from beginning

@@ -1067,7 +1067,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				"LearnCodePriorScript":  learnCodePriorScript,
 				"LearnCodePriorError":   learnCodePriorError,
 			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
-			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.GetWorkspaceEnvRef()),
+			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.snapshotWorkspaceEnv()),
 			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
 		}
 
@@ -1089,6 +1089,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// VAR_* passes through the shell whitelist (MCP_*, SECRET_*, VAR_*).
 		// Available via os.environ["VAR_NAME"] in Python or $VAR_NAME in bash.
 		if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+			hcpo.LockWorkspaceEnv()
 			for k, v := range hcpo.variableValues {
 				envRef["VAR_"+k] = v
 			}
@@ -1097,6 +1098,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			if wp := hcpo.GetWorkspacePath(); wp != "" {
 				envRef["VAR_WORKSPACE_PATH"] = toAbsPath(wp)
 			}
+			hcpo.UnlockWorkspaceEnv()
 		}
 
 		// Add context dependencies with full absolute paths

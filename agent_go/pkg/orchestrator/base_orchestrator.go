@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -113,6 +114,8 @@ type BaseOrchestrator struct {
 	// MCP_API_URL and MCP_SESSION_ID in this map so that code execution mode shell commands
 	// use the correct session-scoped URL (preventing new browser tabs per Playwright call).
 	workspaceEnvRef map[string]string
+	// Mutex protecting concurrent writes to workspaceEnvRef (parallel sub-agents)
+	workspaceEnvMu sync.Mutex
 
 	// Browser downloads path (relative to workspace, e.g., "runs/iteration-2/xspaces/execution/Downloads")
 	// Set by setupBrowserDownloadsPathOverride when agent-browser is detected.
@@ -280,10 +283,12 @@ func (bo *BaseOrchestrator) SetMCPSessionID(sessionID string) {
 	// Propagate session change to workspace executor env map for code execution mode
 	if bo.workspaceEnvRef != nil && sessionID != "" {
 		if baseURL := os.Getenv("MCP_API_URL"); baseURL != "" {
+			bo.workspaceEnvMu.Lock()
 			oldURL := bo.workspaceEnvRef["MCP_API_URL"]
 			newURL := baseURL + "/s/" + sessionID
 			bo.workspaceEnvRef["MCP_API_URL"] = newURL
 			bo.workspaceEnvRef["MCP_SESSION_ID"] = sessionID
+			bo.workspaceEnvMu.Unlock()
 			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_API_URL: %s → %s", oldURL, newURL))
 			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_SESSION_ID: %s", sessionID))
 		} else {
@@ -316,4 +321,16 @@ func (bo *BaseOrchestrator) SetWorkspaceEnvRef(env map[string]string) {
 // so that MCP_API_URL updates flow through when the session ID changes.
 func (bo *BaseOrchestrator) GetWorkspaceEnvRef() map[string]string {
 	return bo.workspaceEnvRef
+}
+
+// LockWorkspaceEnv locks the workspace env mutex.
+// Must be called before writing to the map returned by GetWorkspaceEnvRef
+// when concurrent access is possible (e.g. parallel sub-agent execution).
+func (bo *BaseOrchestrator) LockWorkspaceEnv() {
+	bo.workspaceEnvMu.Lock()
+}
+
+// UnlockWorkspaceEnv unlocks the workspace env mutex.
+func (bo *BaseOrchestrator) UnlockWorkspaceEnv() {
+	bo.workspaceEnvMu.Unlock()
 }

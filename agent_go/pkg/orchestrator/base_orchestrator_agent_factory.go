@@ -268,18 +268,36 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) error {
+	// Determine whether to use per-agent folder guard paths (from config) or shared orchestrator state.
+	// Per-agent paths prevent race conditions when parallel sub-agents share the same orchestrator.
+	usePerAgentPaths := len(config.FolderGuardReadPaths) > 0 || len(config.FolderGuardWritePaths) > 0
+
 	// Filter out write tools if there's no write access
 	filteredTools := make([]llmtypes.Tool, 0, len(customTools))
 	for _, tool := range customTools {
-		if tool.Function != nil && !bo.ShouldFilterWriteTool(tool.Function.Name) {
+		if tool.Function == nil {
+			continue
+		}
+		var shouldFilter bool
+		if usePerAgentPaths {
+			shouldFilter = shouldFilterWriteToolWithPaths(config.FolderGuardReadPaths, config.FolderGuardWritePaths, tool.Function.Name)
+		} else {
+			shouldFilter = bo.ShouldFilterWriteTool(tool.Function.Name)
+		}
+		if !shouldFilter {
 			filteredTools = append(filteredTools, tool)
-		} else if tool.Function != nil && bo.ShouldFilterWriteTool(tool.Function.Name) {
-			// Removed verbose logging
 		}
 	}
 
 	// Wrap executors and enhance tool descriptions with folder guard (automatic)
-	filteredTools, wrappedExecutors := bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
+	var wrappedExecutors map[string]interface{}
+	if usePerAgentPaths {
+		filteredTools, wrappedExecutors = bo.PrepareWorkspaceToolsWithExplicitPaths(
+			config.FolderGuardReadPaths, config.FolderGuardWritePaths,
+			filteredTools, customToolExecutors)
+	} else {
+		filteredTools, wrappedExecutors = bo.PrepareWorkspaceToolsWithFolderGuard(filteredTools, customToolExecutors)
+	}
 
 	// Removed excessive discovery logging
 

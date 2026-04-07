@@ -45,7 +45,11 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
 		"- **Per workflow:** max %d concurrent browser sessions across all agents.\n"+
 		"- **Global:** max %d concurrent browser sessions across all workflows.\n"+
-		"- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot.",
+		"- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot.\n"+
+		"- **Multiple browsers in a workflow:** Each parallel agent MUST use a **unique session name** "+
+		"(e.g. session=\"twitter_research\", session=\"linkedin_lookup\"). "+
+		"If two agents both use session=\"default\", they will share the same browser instead of getting separate ones. "+
+		"Pick a descriptive name related to the agent's task.",
 		browser.MaxBrowserSessionsPerAgent,
 		browser.MaxBrowserSessionsPerWorkflow,
 		browser.MaxBrowserSessionsGlobal,

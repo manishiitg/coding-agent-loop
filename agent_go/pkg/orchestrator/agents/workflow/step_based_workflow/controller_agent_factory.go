@@ -1168,11 +1168,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to folder guard: %v", skillReadPaths))
 	}
 
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
+	// Instead, readPaths/writePaths are set on the per-agent config below (config.FolderGuardReadPaths/WritePaths)
+	// to prevent race conditions when parallel sub-agents share the same orchestrator instance.
 	if hasLearnings {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (no learnings folder, can read execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (no learnings folder, can read execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepPath))
 	}
 
 	// 3. Determine settings (extracted methods)
@@ -1195,6 +1197,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	hcpo.disableParentAgentTimeout(config, "execution-only agent")
+
+	// Set per-agent folder guard paths on config to avoid race conditions with parallel sub-agents.
+	// These take precedence over the shared BaseOrchestrator.folderGuardReadPaths/WritePaths
+	// in registerCustomToolsForAgent, ensuring each agent gets its own correct paths.
+	config.FolderGuardReadPaths = readPaths
+	config.FolderGuardWritePaths = writePaths
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure both execution and orchestrator agents set the override correctly

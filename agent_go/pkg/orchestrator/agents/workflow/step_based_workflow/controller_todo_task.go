@@ -663,7 +663,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		readPaths = append(readPaths, skillReadPaths...)
 	}
 
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
+	// The per-agent folder guard paths are set on the agent config inside createExecutionOnlyAgent,
+	// preventing race conditions when parallel sub-agents share the same orchestrator instance.
 
 	// Build execution context
 	var capturedHistory []llmtypes.MessageContent
@@ -951,7 +953,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		readPaths = append(readPaths, skillReadPaths...)
 	}
 
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
+	// The per-agent folder guard paths are set on the agent config inside createExecutionOnlyAgent,
+	// preventing race conditions when parallel sub-agents share the same orchestrator instance.
 
 	// Build orchestration routes for sub-agent (so it knows about other agents)
 	var orchestrationRoutesForSubAgent []OrchestrationRoute

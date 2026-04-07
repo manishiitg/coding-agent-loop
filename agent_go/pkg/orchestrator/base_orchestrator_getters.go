@@ -117,6 +117,7 @@ func (bo *BaseOrchestrator) SetSecrets(secrets []SecretEntry) {
 	bo.secrets = secrets
 	if bo.workspaceEnvRef != nil {
 		newSecretSet := make(map[string]bool, len(secrets))
+		bo.workspaceEnvMu.Lock()
 		for _, s := range secrets {
 			envKey := "SECRET_" + s.Name
 			bo.workspaceEnvRef[envKey] = s.Value
@@ -128,6 +129,7 @@ func (bo *BaseOrchestrator) SetSecrets(secrets []SecretEntry) {
 				delete(bo.workspaceEnvRef, envKey)
 			}
 		}
+		bo.workspaceEnvMu.Unlock()
 		bo.GetLogger().Info(fmt.Sprintf("🔐 Synced %d secrets into workspace env ref", len(secrets)))
 	}
 	bo.GetLogger().Info(fmt.Sprintf("🔐 Set %d secrets for agent injection", len(secrets)))

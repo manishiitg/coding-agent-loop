@@ -146,11 +146,30 @@ func SyncVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValu
 		return
 	}
 	keys := make([]string, 0, len(variableValues))
+	bo.LockWorkspaceEnv()
 	for k, v := range variableValues {
 		envRef["VAR_"+k] = v
 		keys = append(keys, "VAR_"+k)
 	}
+	bo.UnlockWorkspaceEnv()
 	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Synced %d variable values as VAR_* env vars: %v", len(variableValues), keys))
+}
+
+// snapshotWorkspaceEnv returns a shallow copy of the workspace env map.
+// Safe to iterate without holding the lock — used when passing env to
+// pure functions that only read keys/values.
+func (hcpo *StepBasedWorkflowOrchestrator) snapshotWorkspaceEnv() map[string]string {
+	envRef := hcpo.GetWorkspaceEnvRef()
+	if envRef == nil {
+		return nil
+	}
+	hcpo.LockWorkspaceEnv()
+	snapshot := make(map[string]string, len(envRef))
+	for k, v := range envRef {
+		snapshot[k] = v
+	}
+	hcpo.UnlockWorkspaceEnv()
+	return snapshot
 }
 
 // ResolveVariables replaces {{VARIABLE}} placeholders with actual values

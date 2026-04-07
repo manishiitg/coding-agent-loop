@@ -14,15 +14,17 @@ import (
 // ShouldFilterWriteTool checks if a write tool should be filtered out (not registered)
 // Returns true if the tool is a write tool and there's no write access (folder guard enabled but no write paths)
 func (bo *BaseOrchestrator) ShouldFilterWriteTool(toolName string) bool {
-	// Check if folder guard paths are set
-	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
+	return shouldFilterWriteToolWithPaths(bo.folderGuardReadPaths, bo.folderGuardWritePaths, toolName)
+}
 
-	// If folder guard is not enabled, don't filter (allow all tools)
+// ShouldFilterWriteToolWithPaths is like ShouldFilterWriteTool but uses explicit paths
+// instead of the shared orchestrator state. Used when per-agent paths are available.
+func shouldFilterWriteToolWithPaths(readPaths, writePaths []string, toolName string) bool {
+	useFolderGuardPaths := len(readPaths) > 0 || len(writePaths) > 0
 	if !useFolderGuardPaths {
 		return false
 	}
 
-	// Define write tools
 	writeTools := map[string]bool{
 		"update_workspace_file":     true,
 		"diff_patch_workspace_file": true,
@@ -31,8 +33,7 @@ func (bo *BaseOrchestrator) ShouldFilterWriteTool(toolName string) bool {
 		"move_workspace_file":       true,
 	}
 
-	// If it's a write tool and there are no write paths, filter it out
-	if writeTools[toolName] && len(bo.folderGuardWritePaths) == 0 {
+	if writeTools[toolName] && len(writePaths) == 0 {
 		return true
 	}
 
@@ -157,13 +158,23 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 // when multiple parallel agents share the same orchestrator instance.
 func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
 	// Snapshot folder guard paths at wrap time to avoid race conditions with parallel sub-agents.
-	// Each agent gets its own wrapper closure with the paths that were active when it was created,
-	// preventing one agent's setup from clobbering another's folder guard.
 	snapshotReadPaths := make([]string, len(bo.folderGuardReadPaths))
 	copy(snapshotReadPaths, bo.folderGuardReadPaths)
 	snapshotWritePaths := make([]string, len(bo.folderGuardWritePaths))
 	copy(snapshotWritePaths, bo.folderGuardWritePaths)
 
+	return bo.wrapWorkspaceToolsWithPaths(snapshotReadPaths, snapshotWritePaths, executors)
+}
+
+// WrapWorkspaceToolsWithExplicitPaths wraps workspace tool executors with path validation
+// using explicitly provided paths instead of the shared orchestrator state.
+// Used when per-agent folder guard paths are available (e.g., from OrchestratorAgentConfig).
+func (bo *BaseOrchestrator) WrapWorkspaceToolsWithExplicitPaths(readPaths, writePaths []string, executors map[string]interface{}) map[string]interface{} {
+	return bo.wrapWorkspaceToolsWithPaths(readPaths, writePaths, executors)
+}
+
+// wrapWorkspaceToolsWithPaths is the shared implementation for folder guard wrapping.
+func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snapshotWritePaths []string, executors map[string]interface{}) map[string]interface{} {
 	// Check if folder guard paths are set
 	useFolderGuardPaths := len(snapshotReadPaths) > 0 || len(snapshotWritePaths) > 0
 	workspacePath := bo.GetWorkspacePath()
@@ -342,6 +353,14 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 func (bo *BaseOrchestrator) PrepareWorkspaceToolsWithFolderGuard(tools []llmtypes.Tool, executors map[string]interface{}) ([]llmtypes.Tool, map[string]interface{}) {
 	// Wrap executors with folder guard
 	wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(executors)
+
+	return tools, wrappedExecutors
+}
+
+// PrepareWorkspaceToolsWithExplicitPaths is like PrepareWorkspaceToolsWithFolderGuard but uses
+// explicitly provided paths instead of the shared orchestrator state.
+func (bo *BaseOrchestrator) PrepareWorkspaceToolsWithExplicitPaths(readPaths, writePaths []string, tools []llmtypes.Tool, executors map[string]interface{}) ([]llmtypes.Tool, map[string]interface{}) {
+	wrappedExecutors := bo.WrapWorkspaceToolsWithExplicitPaths(readPaths, writePaths, executors)
 
 	// NOTE: Description enhancement disabled - the runtime path validation via
 	// WrapWorkspaceToolsWithFolderGuard is sufficient. The description enhancement

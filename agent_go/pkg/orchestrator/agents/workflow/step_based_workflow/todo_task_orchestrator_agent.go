@@ -184,11 +184,6 @@ Structure: ` + "`" + `_global/SKILL.md` + "`" + ` (global skill){{if .IsCodeExec
 **Note**: When updating the skill file, keep entries short and actionable — record tier configs, failure patterns, and routing decisions as concise bullet points, not detailed narratives.
 {{end}}
 
-{{if eq .SkipExecutionCleanup "true"}}
-## State Verification (Skip Cleanup Mode)
-Previous outputs preserved. Do NOT assume existing completed todos are valid — step config may have changed. Review current objective, re-open or recreate tasks if needed.
-{{end}}
-
 {{if .ShowToolsSection}}
 ## Tools Reference (CLI Provider)
 - call_sub_agent(route_id, todo_id, instructions{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
@@ -320,7 +315,6 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"KnowledgebasePath":          templateVars["KnowledgebasePath"],
 		"FolderGuardReadPaths":       templateVars["FolderGuardReadPaths"],
 		"FolderGuardWritePaths":      templateVars["FolderGuardWritePaths"],
-		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
 		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
 		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",

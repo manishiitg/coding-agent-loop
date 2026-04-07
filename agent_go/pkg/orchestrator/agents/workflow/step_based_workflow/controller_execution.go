@@ -1003,13 +1003,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			folderGuardWritePaths = append(folderGuardWritePaths, stepExecutionPathForGuard+"/code")
 		}
 
-		// Determine if skip execution cleanup is enabled
-		skipExecutionCleanup := false
-		if hcpo.executionOptions != nil {
-			skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
-		}
-
-		// Build absolute paths for agent prompts using the workspace docs root.
+			// Build absolute paths for agent prompts using the workspace docs root.
 		// Absolute paths are unambiguous — agents can use them directly in shell commands.
 		// e.g., "Workflow/HRMS/runs/iteration-1/group-1/execution/step-3"
 		//     → "/app/workspace-docs/Workflow/HRMS/runs/iteration-1/group-1/execution/step-3"
@@ -1065,14 +1059,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
 			"FolderGuardReadPaths":  strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),  // Absolute folder guard read paths
-			"FolderGuardWritePaths": strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "), // Absolute folder guard write paths
-			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                   // Skip cleanup mode flag for state verification prompt
-			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                  // Evaluation mode flag for eval-specific prompt guidance
-			"WorkflowRoot":          toAbsPath(workflowRoot),                                   // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
-			"IsLearnCodeMode":       fmt.Sprintf("%v", isLearnCodeMode),
-			"IsRelearnMode":         fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
-			"LearnCodePriorScript":  learnCodePriorScript,
-			"LearnCodePriorError":   learnCodePriorError,
+				"FolderGuardWritePaths": strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "), // Absolute folder guard write paths
+				"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                  // Evaluation mode flag for eval-specific prompt guidance
+				"WorkflowRoot":          toAbsPath(workflowRoot),                                   // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
+				"IsLearnCodeMode":       fmt.Sprintf("%v", isLearnCodeMode),
+				"IsRelearnMode":         fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
+				"LearnCodePriorScript":  learnCodePriorScript,
+				"LearnCodePriorError":   learnCodePriorError,
 			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
 			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.GetWorkspaceEnvRef()),
 			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),

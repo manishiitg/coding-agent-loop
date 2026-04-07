@@ -796,9 +796,6 @@ type ExecutionOptions struct {
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 
-	// Cleanup control
-	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
-
 	// Workshop mode override (builder/optimizer/runner) — sent from frontend toggle
 	WorkshopMode string `json:"workshop_mode,omitempty"`
 }

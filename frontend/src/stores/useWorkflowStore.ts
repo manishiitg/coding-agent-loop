@@ -1257,16 +1257,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.enable_context_summarization = false
         }
 
-        options.skip_execution_cleanup = false
-
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
           execution_strategy: options.execution_strategy,
           resume_from_step: options.resume_from_step,
           resume_from_branch_step: options.resume_from_branch_step,
           run_mode: options.run_mode,
           selected_run_folder: options.selected_run_folder,
-          enabled_group_ids: options.enabled_group_ids,
-          skip_execution_cleanup: options.skip_execution_cleanup
+          enabled_group_ids: options.enabled_group_ids
         }, null, 2))
 
         console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] buildExecutionOptions returning:', JSON.stringify(options, null, 2))

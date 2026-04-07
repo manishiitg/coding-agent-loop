@@ -98,20 +98,6 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 - Focus on evidence-based assessment: quote specific content from files, reference exact field values
 {{end}}
 
-{{if eq .SkipExecutionCleanup "true"}}
-## State Verification Required (Skip Cleanup Mode)
-
-Previous execution outputs are preserved. Existing progress files and step outputs may contain completed work from prior runs.
-
-**IMPORTANT**: Do NOT assume existing "completed" state is still valid. Step configurations or requirements may have changed since the last run.
-
-Before proceeding:
-1. Review the CURRENT step description and success criteria carefully
-2. Compare against any existing progress/todos to check alignment
-3. If requirements changed, update todos or restart work as needed
-4. Only consider tasks complete if they satisfy the CURRENT success criteria
-{{end}}
-
 {{if .DecisionEvaluationQuestion}}
 ## Output Formatting for Evaluation
 **Evaluation Question**: {{.DecisionEvaluationQuestion}}
@@ -354,7 +340,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"UseKnowledgebase":           templateVars["UseKnowledgebase"],     // Whether knowledgebase is enabled
 		"FolderGuardReadPaths":       folderGuardReadPaths,                 // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
-		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"], // Skip cleanup mode flag
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag
 		"IsLearnCodeMode":            templateVars["IsLearnCodeMode"],      // Learn code mode flag (validation schema shown in learn_code section instead)
 		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display

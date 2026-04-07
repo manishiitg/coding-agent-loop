@@ -1029,9 +1029,6 @@ export interface ExecutionOptions {
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
-  // Cleanup control
-  skip_execution_cleanup?: boolean;  // If true, skip deleting execution folders before running steps
-
   // Workshop mode override (builder/optimizer/debugger/runner/eval/output)
   workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output';
 }
@@ -1821,7 +1818,6 @@ export interface WorkflowCapabilities {
 
 export interface WorkflowExecutionDefaults {
   always_use_same_run: boolean
-  skip_execution_cleanup: boolean
   // Global step overrides (replaces step_override.json)
   disable_learning?: boolean
   global_skill_objective?: string

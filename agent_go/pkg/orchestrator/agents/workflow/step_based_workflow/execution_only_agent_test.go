@@ -21,7 +21,6 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		"UseKnowledgebase":      "true",
 		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
-		"SkipExecutionCleanup":  "false",
 		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "true",
 		"IsLearnCodeMode":       "false",

@@ -1174,11 +1174,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
 		}
 
-		// Log skip execution cleanup flag
-		if options.SkipExecutionCleanup {
-			hcpo.GetLogger().Info("🔧 Skip execution cleanup enabled - execution folders will NOT be deleted before running steps")
-		}
-
 	} else {
 		// Clear temporary overrides when options are cleared
 		hcpo.tempOverrideLLM = nil

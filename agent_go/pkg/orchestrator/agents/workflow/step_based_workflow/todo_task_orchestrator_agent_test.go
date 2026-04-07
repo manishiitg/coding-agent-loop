@@ -24,7 +24,6 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 		"KnowledgebasePath":          "/app/workspace-docs/Workflow/confida-oi/knowledgebase",
 		"FolderGuardReadPaths":       "",
 		"FolderGuardWritePaths":      "",
-		"SkipExecutionCleanup":       "",
 		"ShowToolsSection":           "false",
 		"UseKnowledgebase":           "true",
 		"IsCodeExecutionMode":        "true",

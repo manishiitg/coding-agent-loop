@@ -129,8 +129,7 @@ Example shape:
     }
   },
   "execution_defaults": {
-    "always_use_same_run": false,
-    "skip_execution_cleanup": false
+    "always_use_same_run": false
   },
   "ownership": {
     "employee_id": null
@@ -234,7 +233,6 @@ This minimizes frontend and backend reshaping because the system already underst
 Store workflow toolbar defaults in `execution_defaults`:
 
 - `always_use_same_run`
-- `skip_execution_cleanup`
 
 Important:
 

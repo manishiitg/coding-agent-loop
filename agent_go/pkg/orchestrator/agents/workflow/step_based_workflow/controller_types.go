@@ -79,9 +79,6 @@ type ExecutionOptions struct {
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 
-	// Cleanup control
-	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
-
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
 	// When SkipHumanInput is true, these take priority over variableValues fallback.
 	HumanInputs map[string]string `json:"human_inputs,omitempty"`

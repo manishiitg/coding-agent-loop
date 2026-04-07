@@ -302,12 +302,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Get knowledgebase setting
 	useKnowledgebase := hcpo.UseKnowledgebase()
 
-	// Determine if skip execution cleanup is enabled
-	skipExecutionCleanup := false
-	if hcpo.executionOptions != nil {
-		skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
-	}
-
 	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
 	docsRoot := GetPromptDocsRoot()
 	fgExecPath := hcpo.getTodoTaskExecutionWorkspacePath()
@@ -336,9 +330,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"EnableGenericAgent":    fmt.Sprintf("%t", step.EnableGenericAgent),
 		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.GetBrowserMode() != "" && hcpo.GetBrowserMode() != "none"),
 		// Add code execution mode and knowledgebase flags
-		"IsCodeExecutionMode":  fmt.Sprintf("%v", isCodeExecutionMode),
-		"UseKnowledgebase":     fmt.Sprintf("%v", useKnowledgebase),
-		"SkipExecutionCleanup": fmt.Sprintf("%v", skipExecutionCleanup),
+		"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode),
+		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),

@@ -48,8 +48,7 @@ type WorkflowCapabilities struct {
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.
 type WorkflowExecutionDefaults struct {
-	AlwaysUseSameRun     bool `json:"always_use_same_run"`
-	SkipExecutionCleanup bool `json:"skip_execution_cleanup"`
+	AlwaysUseSameRun bool `json:"always_use_same_run"`
 	// Global step overrides (replaces step_override.json)
 	DisableLearning              *bool    `json:"disable_learning,omitempty"`
 	GlobalSkillObjective         string   `json:"global_skill_objective,omitempty"`

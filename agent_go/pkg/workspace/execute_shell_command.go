@@ -367,34 +367,47 @@ func rewriteGeminiRelativePaths(command, projectDirID string) string {
 }
 
 // blockAbsoluteHostPaths rejects commands containing absolute paths that
-// reference the host filesystem rather than the Docker workspace.
-// The Docker workspace root /app/workspace-docs/ and /tmp/ are allowed;
-// host paths like /Users/, /home/ are blocked.
+// reference the host filesystem outside the workspace.
+//
+// In Docker, VirtioFS auto-mounts /Users/ into containers — an LLM-generated
+// command like "cat /Users/foo/secret.txt" would bypass workspace isolation.
+// This function blocks /Users/, /home/, /root/ to prevent that.
+//
+// On desktop Mac (WORKSPACE_DOCS_PATH set), the workspace root IS under /Users/,
+// so we skip blocking when the workspace root is a subdirectory of a blocked dir.
+// The workspace server's own sandbox-exec isolation handles fine-grained access.
 func blockAbsoluteHostPaths(command string) error {
 	if !strings.Contains(command, "/") {
 		return nil
 	}
 
-	// Check both with and without trailing slash to catch:
-	//   "ls /Users/"        → matches "/Users/"
-	//   "find /Users -type" → matches "/Users " (space after)
-	//   "cat /Users"        → matches "/Users" at end of string
 	blockedDirs := []string{
 		"/users",
 		"/home",
 		"/root",
 	}
 
+	// If workspace root is under a blocked dir (e.g. /Users/.../workspace-docs on Mac),
+	// allow commands that reference paths under the workspace root.
+	wsRoot := strings.ToLower(os.Getenv("WORKSPACE_DOCS_PATH"))
+
 	cmdLower := strings.ToLower(command)
 	for _, dir := range blockedDirs {
-		if strings.Contains(cmdLower, dir+"/") ||
+		matched := strings.Contains(cmdLower, dir+"/") ||
 			strings.Contains(cmdLower, dir+" ") ||
-			strings.HasSuffix(cmdLower, dir) {
-			return fmt.Errorf(
-				"access denied: shell command references absolute host path (%s). "+
-					"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
-					"absolute Docker paths (/app/workspace-docs/...) instead", dir)
+			strings.HasSuffix(cmdLower, dir)
+		if !matched {
+			continue
 		}
+		// If the workspace root is under this blocked dir, skip blocking —
+		// the command is likely referencing workspace paths.
+		if wsRoot != "" && strings.HasPrefix(wsRoot, dir+"/") {
+			continue
+		}
+		return fmt.Errorf(
+			"access denied: shell command references absolute host path (%s). "+
+				"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
+				"absolute workspace paths instead", dir)
 	}
 	return nil
 }

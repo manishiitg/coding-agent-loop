@@ -424,9 +424,15 @@ function spawnAgent(userDataPath) {
 
     // Load Settings
     const settings = loadSettings();
+    // In desktop mode, both agent-server and workspace-server run as native binaries
+    // (no Docker). WORKSPACE_DOCS_PATH tells the agent the real filesystem path so
+    // LLM-generated shell commands (jq, cat, etc.) use the correct absolute paths.
+    // This same path is passed to workspace-server via --docs-dir in spawnWorkspace().
+    const docsDir = path.join(userDataPath, 'workspace-docs');
     const env = {
       ...process.env,
-      WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`, // Inject dynamic workspace port
+      WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`,
+      WORKSPACE_DOCS_PATH: docsDir,
       DB_PATH: dbPath,
       LOG_FILE: logFile,
       WORKSPACE_ENABLE_GITHUB_SYNC: 'true'

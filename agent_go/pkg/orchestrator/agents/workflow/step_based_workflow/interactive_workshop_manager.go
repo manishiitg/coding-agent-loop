@@ -2622,12 +2622,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							inputData["run_folder"] = execOpts.RunFolder
 						}
 					}
+					if isLearnCodeStep {
+						inputData["workshop_mode"] = "learn_code"
+						inputData["IsLearnCodeMode"] = "true"
+					}
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
-						InputData:     inputData,
-						Iteration:     parseWorkshopIterationNumber(execOpts.Iteration),
+						BaseEventData:        baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:            "workshop-step-execution",
+						AgentName:            fmt.Sprintf("Step: %s", stepDisplayName),
+						InputData:            inputData,
+						Iteration:            parseWorkshopIterationNumber(execOpts.Iteration),
+						UseCodeExecutionMode: true,
+						UseLearnCodeMode:     isLearnCodeStep,
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,

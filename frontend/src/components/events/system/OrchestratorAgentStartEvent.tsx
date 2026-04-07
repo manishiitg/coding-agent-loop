@@ -28,6 +28,11 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     use_code_execution_mode?: boolean
     use_learn_code_mode?: boolean
   }
+  const useLearnCodeMode =
+    modeFlags.use_learn_code_mode ||
+    event.input_data?.IsLearnCodeMode === 'true' ||
+    event.input_data?.is_learn_code_mode === 'true' ||
+    event.input_data?.workshop_mode === 'learn_code'
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
@@ -206,7 +211,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  {modeFlags.use_learn_code_mode ? ' | Learn Code' : modeFlags.use_code_execution_mode ? ' | Code Exec' : null}
+                  {useLearnCodeMode ? ' | Learn Code' : modeFlags.use_code_execution_mode ? ' | Code Exec' : null}
                   {workshopMeta
                     ? ` | ${workshopMeta}`
                     : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}

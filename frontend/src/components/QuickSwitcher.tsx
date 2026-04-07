@@ -3,6 +3,7 @@ import { Layers, Search, MessageSquare, Loader2 } from 'lucide-react'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { restoreSession } from '../utils/sessionRestore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ChatHistorySummary } from '../services/api-types'
@@ -111,13 +112,9 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     if (!isOpen) return []
 
     if (isWorkflowMode) {
-      const { customPresets, predefinedPresets, recentPresetOrder } = useGlobalPresetStore.getState()
-      const allPresets: (CustomPreset | PredefinedPreset)[] = [
-        ...customPresets,
-        ...predefinedPresets
-      ]
-      const items = allPresets
-        .filter(p => p.agentMode === 'workflow' && p.selectedFolder?.filepath)
+      const { workflowPresets, recentPresetOrder } = useGlobalPresetStore.getState()
+      const items = workflowPresets
+        .filter(p => p.selectedFolder?.filepath)
         .map(p => ({
           type: 'workflow' as const,
           id: p.id,
@@ -229,6 +226,30 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       }
 
       presetStore.applyPreset(item.preset, 'workflow')
+
+      // Switch to the correct tab for the new preset (the App.tsx effect only
+      // runs on mode change, not on preset change within workflow mode)
+      const updatedChatStore = useChatStore.getState()
+      const currentTab = updatedChatStore.activeTabId ? updatedChatStore.getTab(updatedChatStore.activeTabId) : null
+      const hasValidTab = currentTab &&
+        currentTab.metadata?.mode === 'workflow' &&
+        currentTab.metadata?.presetQueryId === item.id
+
+      if (!hasValidTab) {
+        // Find the most recent workflow tab for the new preset
+        const presetTabs = Object.values(updatedChatStore.chatTabs)
+          .filter(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.id && (tab.sessionId || tab.isStreaming))
+          .sort((a, b) => b.createdAt - a.createdAt)
+
+        if (presetTabs.length > 0) {
+          updatedChatStore.switchTab(presetTabs[0].tabId)
+          useWorkflowStore.getState().setShowChatArea(true)
+        } else {
+          // No tabs for this preset yet — clear activeTabId so ChatArea doesn't show stale content
+          useChatStore.setState({ activeTabId: null })
+        }
+      }
+
       console.timeEnd('[QuickSwitcher] workflow-switch-total')
     } else {
       // Restore chat session

@@ -1230,12 +1230,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
-	if isScriptedExecutionModeConfig(stepConfig) {
+	// Inject STEP_OUTPUT_DIR for all execution-only agents (both learn_code and code_exec).
+	// Any script run via execute_shell_command may need STEP_OUTPUT_DIR to know where to write output.
+	{
 		executionWorkspacePath := fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		injectStepOutputDirIntoShellExecutor(executorsToUse, stepOutputAbsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Injecting STEP_OUTPUT_DIR into execute_shell_command for %s: %s", stepID, stepOutputAbsPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting STEP_OUTPUT_DIR into execute_shell_command for %s: %s", stepID, stepOutputAbsPath))
 	}
 
 	// 6. Use base factory! (This handles all setup automatically)

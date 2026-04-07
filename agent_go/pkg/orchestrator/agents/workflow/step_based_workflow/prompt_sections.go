@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -338,9 +339,20 @@ func ResolveDependencyPaths(
 }
 
 // GetPromptDocsRoot returns the workspace docs root path for use in prompts.
-// Always returns /app/workspace-docs — all agents (execution, todo task, conditional)
-// run inside Docker where workspace-docs is mounted at this path.
+// This path is passed to LLM agents so they generate correct absolute paths in
+// shell commands (jq, cat, ls, etc.) that execute inside the workspace server.
+//
+// Deployment modes:
+//   - Docker (default):  not set → returns "/app/workspace-docs" (volume mount inside container)
+//   - Desktop DMG (Mac): set by desktop/main.js → "~/Library/Application Support/AgentForge/workspace-docs"
+//     (workspace-server runs as a native binary, no Docker)
+//   - run_server_with_logging.sh: NOT set, because workspace still runs in Docker
+//
+// ~30 callers across the workflow engine use this; change the env var, not callers.
 func GetPromptDocsRoot() string {
+	if p := os.Getenv("WORKSPACE_DOCS_PATH"); p != "" {
+		return filepath.Clean(p)
+	}
 	return "/app/workspace-docs"
 }
 

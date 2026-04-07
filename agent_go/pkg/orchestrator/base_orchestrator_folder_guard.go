@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -304,8 +305,16 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 						// Path validation is handled at the isolator/shell level, not here
 						normalizedPath, _, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
 						if err != nil {
-							// Normalization failed — try stripping common absolute prefixes as fallback
-							for _, prefix := range []string{"/app/workspace-docs/", "/workspace-docs/"} {
+							// Normalization failed — try stripping common absolute prefixes as fallback.
+							// LLM-generated tool args may contain absolute paths (e.g. "/app/workspace-docs/Workflow/...")
+							// that need to be converted to relative paths for the workspace API.
+							// WORKSPACE_DOCS_PATH is checked first for desktop deployments where the
+							// workspace root is a native Mac path instead of the Docker default.
+							knownPrefixes := []string{"/app/workspace-docs/", "/workspace-docs/"}
+							if envRoot := os.Getenv("WORKSPACE_DOCS_PATH"); envRoot != "" {
+								knownPrefixes = append([]string{strings.TrimSuffix(envRoot, "/") + "/"}, knownPrefixes...)
+							}
+							for _, prefix := range knownPrefixes {
 								if strings.HasPrefix(pathStr, prefix) {
 									normalizedPath = strings.TrimPrefix(pathStr, prefix)
 									err = nil

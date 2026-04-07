@@ -101,6 +101,11 @@ export OBSERVABILITY_ENABLED="true"
 export MCP_GENERATED_DIR="${SCRIPT_DIR}/generated"
 echo "🔧 Set MCP_GENERATED_DIR to: $MCP_GENERATED_DIR"
 
+# WORKSPACE_DOCS_PATH: absolute path to workspace-docs as seen by the workspace server.
+# When workspace runs in Docker (default), this is /app/workspace-docs.
+# Only override for desktop/native deployments where workspace runs on the host.
+# export WORKSPACE_DOCS_PATH="/app/workspace-docs"  # default, no need to set
+
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
     echo "❌ Error: Failed to change to script directory: $SCRIPT_DIR"

@@ -8,6 +8,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -577,6 +578,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		ServersCount:         len(boa.config.ServerNames),
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
+		UseLearnCodeMode:     strings.EqualFold(strings.TrimSpace(templateVars["IsLearnCodeMode"]), "true"),
 		SystemPrompt:         emitSystemPrompt,
 		UserMessage:          emitUserMessage,
 	}

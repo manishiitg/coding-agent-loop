@@ -2262,6 +2262,9 @@
         "use_code_execution_mode": {
           "type": "boolean"
         },
+        "use_learn_code_mode": {
+          "type": "boolean"
+        },
         "use_tool_search_mode": {
           "type": "boolean"
         },

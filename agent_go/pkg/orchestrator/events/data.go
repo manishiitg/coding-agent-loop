@@ -52,18 +52,19 @@ func (e *OrchestratorErrorEvent) GetEventType() events.EventType {
 // Orchestrator Agent Events
 type OrchestratorAgentStartEvent struct {
 	events.BaseEventData
-	AgentType            string            `json:"agent_type"`                       // planning, execution, validation, organizer
-	AgentName            string            `json:"agent_name"`                       // specific agent name
-	Objective            string            `json:"objective"`                        // what the agent is trying to accomplish
-	InputData            map[string]string `json:"input_data"`                       // template variables passed to agent
-	ModelID              string            `json:"model_id"`                         // which LLM model
-	Provider             string            `json:"provider"`                         // which LLM provider
-	ServersCount         int               `json:"servers_count"`                    // number of MCP servers available
-	MaxTurns             int               `json:"max_turns"`                        // maximum conversation turns
-	PlanID               string            `json:"plan_id,omitempty"`                // associated plan ID
-	StepIndex            int               `json:"step_index,omitempty"`             // which step in the plan
-	Iteration            int               `json:"iteration,omitempty"`              // which iteration of the loop
+	AgentType            string            `json:"agent_type"`                        // planning, execution, validation, organizer
+	AgentName            string            `json:"agent_name"`                        // specific agent name
+	Objective            string            `json:"objective"`                         // what the agent is trying to accomplish
+	InputData            map[string]string `json:"input_data"`                        // template variables passed to agent
+	ModelID              string            `json:"model_id"`                          // which LLM model
+	Provider             string            `json:"provider"`                          // which LLM provider
+	ServersCount         int               `json:"servers_count"`                     // number of MCP servers available
+	MaxTurns             int               `json:"max_turns"`                         // maximum conversation turns
+	PlanID               string            `json:"plan_id,omitempty"`                 // associated plan ID
+	StepIndex            int               `json:"step_index,omitempty"`              // which step in the plan
+	Iteration            int               `json:"iteration,omitempty"`               // which iteration of the loop
 	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
+	UseLearnCodeMode     bool              `json:"use_learn_code_mode,omitempty"`     // persistent scripted learn_code mode enabled
 	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
 	SystemPrompt         string            `json:"system_prompt,omitempty"`           // full system prompt sent to LLM
 	UserMessage          string            `json:"user_message,omitempty"`            // user message sent to LLM
@@ -535,23 +536,22 @@ func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGr
 	}
 }
 
-
 // LearnCodeScriptExecutionEvent is emitted when the controller runs python3 main.py in learn_code mode.
 type LearnCodeScriptExecutionEvent struct {
 	events.BaseEventData
-	StepID       string `json:"step_id"`
-	StepIndex    int    `json:"step_index"`
-	StepTitle    string `json:"step_title"`
-	StepPath     string `json:"step_path"`
+	StepID        string `json:"step_id"`
+	StepIndex     int    `json:"step_index"`
+	StepTitle     string `json:"step_title"`
+	StepPath      string `json:"step_path"`
 	WorkspacePath string `json:"workspace_path"`
-	RunFolder    string `json:"run_folder"`
+	RunFolder     string `json:"run_folder"`
 	ScriptPath    string `json:"script_path"`    // Absolute path to main.py that was executed
 	ScriptContent string `json:"script_content"` // Contents of main.py (for UI display)
 	Success       bool   `json:"success"`        // true if exit code 0 and validation passed
 	ExitCode      int    `json:"exit_code"`
-	Output        string `json:"output"`         // combined stdout
-	Error         string `json:"error"`          // stderr / error message on failure
-	FixIteration  int    `json:"fix_iteration"`  // 0 = first run, >0 = fix attempt number
+	Output        string `json:"output"`          // combined stdout
+	Error         string `json:"error"`           // stderr / error message on failure
+	FixIteration  int    `json:"fix_iteration"`   // 0 = first run, >0 = fix attempt number
 	IsSavedScript bool   `json:"is_saved_script"` // true if running saved script from learnings, false if LLM-phase
 }
 

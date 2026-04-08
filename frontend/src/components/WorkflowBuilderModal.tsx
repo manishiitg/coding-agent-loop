@@ -51,7 +51,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
     if (workflowName === '' && selectedPlanIds.size === 1) {
       const planPath = Array.from(selectedPlanIds)[0]
       const name = planPath.split('/').pop() || planPath
-      setWorkflowName(name)
+      setWorkflowName(name.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, ''))
     }
   }, [selectedPlanIds, workflowName])
 
@@ -81,7 +81,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
     if (!workflowName.trim() || selectedPlanIds.size === 0) return
 
     // Check if a workflow with this name already exists
-    const existingPresets = useGlobalPresetStore.getState().customPresets
+    const existingPresets = useGlobalPresetStore.getState().workflowPresets
     const nameExists = existingPresets.some(
       p => p.agentMode === 'workflow' && p.label.toLowerCase() === workflowName.trim().toLowerCase()
     )
@@ -93,7 +93,8 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
     setLoading(true)
     setError(null)
     try {
-      const folderPath = `Workflow/${workflowName.trim()}`
+      const safeName = workflowName.trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+      const folderPath = `Workflow/${safeName}`
 
       // 1. Create workflow folder (409 = already exists, that's OK)
       try {
@@ -160,8 +161,8 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
         } : {})
       }
 
-      const { addPreset } = useGlobalPresetStore.getState()
-      const newPreset = await addPreset(
+      const { savePreset } = useGlobalPresetStore.getState()
+      const newPreset = await savePreset(
         workflowName.trim(),
         '',
         currentServers,
@@ -332,8 +333,8 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
           <input
             type="text"
             value={workflowName}
-            onChange={(e) => { setWorkflowName(e.target.value); setError(null) }}
-            placeholder="Enter workflow name..."
+            onChange={(e) => { setWorkflowName(e.target.value.replace(/[^a-zA-Z0-9_-]+/g, '-')); setError(null) }}
+            placeholder="Enter workflow name (e.g. HDFC-Personal)"
             className="w-full px-3 py-1.5 text-sm bg-secondary border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             autoFocus
           />

@@ -118,7 +118,7 @@ func loadCustomMemoryPrompt(ctx context.Context, wsClient *workspace.Client) str
 		return ""
 	}
 
-	resultJSON, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
+	readResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
 		Filepath: getMemoryPromptFile(ctx),
 	})
 	if err != nil {
@@ -126,13 +126,7 @@ func loadCustomMemoryPrompt(ctx context.Context, wsClient *workspace.Client) str
 		return ""
 	}
 
-	var readData map[string]interface{}
-	if json.Unmarshal([]byte(resultJSON), &readData) != nil {
-		return ""
-	}
-
-	content, _ := readData["content"].(string)
-	return strings.TrimSpace(content)
+	return strings.TrimSpace(readResult.Content)
 }
 
 // handleSaveMemory spawns a background agent to save a memory to memories/

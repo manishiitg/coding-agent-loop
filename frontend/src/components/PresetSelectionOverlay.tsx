@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Workflow, Plus, Folder, Check, Trash2 } from 'lucide-react'
+import { Workflow, Plus, Folder, Check } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 import { useModeStore } from '../stores/useModeStore'
 import PresetModal from './PresetModal'
@@ -23,7 +23,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   modeCategory,
   setCurrentQuery
 }) => {
-  const { addPreset, deletePreset, customPresets } = usePresetManagement()
+  const { savePreset } = usePresetManagement()
   const { getPresetsForMode } = usePresetApplication()
   const { getAgentModeFromCategory } = useModeStore()
   // Use toolList to get all available servers, not just enabled ones
@@ -104,8 +104,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     }
     
     try {
-      // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, undefined, selectedSecrets)
+      // Create the preset via manifest and get the returned preset object
+      const newPreset = await savePreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, undefined, enableContextSummarization, enableBrowserAccess, undefined, selectedSecrets)
       
       if (!newPreset) {
         console.error('Failed to create preset')
@@ -132,27 +132,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       console.error('Failed to create preset:', error)
       // You might want to show an error message to the user here
     }
-  }
-
-  const handleDeletePreset = async (presetId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (confirm('Are you sure you want to delete this workflow preset? This action cannot be undone.')) {
-      try {
-        await deletePreset(presetId)
-        // If the deleted preset was selected, clear the selection
-        if (selectedPresetId === presetId) {
-          setSelectedPresetId(null)
-        }
-      } catch (error) {
-        console.error('Failed to delete preset:', error)
-        alert('Failed to delete workflow preset. Please try again.')
-      }
-    }
-  }
-
-  // Check if a preset is a custom preset (can be deleted)
-  const isCustomPreset = (presetId: string): boolean => {
-    return customPresets.some(cp => cp.id === presetId)
   }
 
   if (!isOpen) return null
@@ -256,16 +235,6 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
                       </div>
                     </div>
                   </button>
-                  {/* Delete button for custom presets */}
-                  {isCustomPreset(preset.id) && (
-                    <button
-                      onClick={(e) => handleDeletePreset(preset.id, e)}
-                      className="absolute top-2 right-2 p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                      title="Delete workflow preset"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
                 </div>
               ))}
             </div>

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 )
@@ -12,10 +13,10 @@ type ListWorkspaceFilesParams struct {
 }
 
 // ListWorkspaceFiles lists files using the REST API: GET /api/documents
-func (c *Client) ListWorkspaceFiles(ctx context.Context, params ListWorkspaceFilesParams) (string, error) {
+func (c *Client) ListWorkspaceFiles(ctx context.Context, params ListWorkspaceFilesParams) (ListFilesResult, error) {
 	// Validate folder path against folder guard (read operation)
 	if err := c.ValidatePath(params.Folder, false); err != nil {
-		return "", err
+		return ListFilesResult{}, err
 	}
 
 	query := url.Values{}
@@ -27,8 +28,10 @@ func (c *Client) ListWorkspaceFiles(ctx context.Context, params ListWorkspaceFil
 	path := "/api/documents?" + query.Encode()
 	respBody, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
-		return "", err
+		return ListFilesResult{}, err
 	}
 
-	return string(respBody), nil
+	return ListFilesResult{
+		Raw: json.RawMessage(respBody),
+	}, nil
 }

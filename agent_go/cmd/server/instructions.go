@@ -316,7 +316,7 @@ func buildWorkflowContextPrompt(paths []string, workspaceAPIURL string) string {
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 	var sections []string
 
-	sections = append(sections, "\n## Workflow Context\n\nThe following workflow(s) have been selected for this conversation. Use the information below to answer questions about workflow structure, execution history, and debugging.\n")
+	sections = append(sections, "\n## Workflow Context (Read-Only)\n\nThe following workflow(s) have been selected as reference context for this conversation. You have **read-only** access to these workflow folders — you can read files and list directories but cannot modify them. Use the information below to answer questions about workflow structure, compare approaches, or reference patterns from these workflows.\n")
 
 	for _, wsPath := range paths {
 		section := buildSingleWorkflowContext(client, wsPath)

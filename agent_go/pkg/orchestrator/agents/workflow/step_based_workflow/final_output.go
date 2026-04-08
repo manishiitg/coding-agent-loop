@@ -284,7 +284,7 @@ func DefaultWorkflowFinalOutputConfig() *WorkflowFinalOutputConfig {
 
 func ResolveWorkflowOutputStep(plan *WorkflowOutputPlan) (*WorkflowOutputPlanStep, bool) {
 	if plan == nil {
-		return DefaultWorkflowOutputPlanStep(), true
+		return nil, false
 	}
 	if step := plan.PrimaryStep(); step != nil {
 		clone := *step
@@ -294,7 +294,7 @@ func ResolveWorkflowOutputStep(plan *WorkflowOutputPlan) (*WorkflowOutputPlanSte
 	if step := plan.FirstStep(); step != nil {
 		return nil, false
 	}
-	return DefaultWorkflowOutputPlanStep(), true
+	return nil, false
 }
 
 func ResolveWorkflowFinalOutputConfig(plan *WorkflowOutputPlan) (*WorkflowFinalOutputConfig, bool) {

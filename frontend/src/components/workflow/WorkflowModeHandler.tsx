@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandl
 import { agentApi } from '../../services/api'
 import { type WorkflowPhase } from '../../constants/workflow'
 import { useAppStore, useChatStore } from '../../stores'
-import { usePresetApplication } from '../../stores/useGlobalPresetStore'
+import { usePresetApplication, useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 
 interface Preset {
@@ -47,30 +47,19 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   // Use external state from ChatArea
   const currentPhase = currentWorkflowPhase
 
-  // Load presets function - can be called multiple times
+  // Load presets function - reads from manifest store
   const loadPresets = useCallback(async () => {
     try {
-      const [response, manifestResponse] = await Promise.all([
-        agentApi.getPresetQueries(50, 0),
-        agentApi.listWorkflowManifests().catch(error => {
-          console.warn('[WORKFLOW] Failed to load workflow manifests for label sync:', error)
-          return { workflows: [] }
-        })
-      ])
-
-      const manifestLabelByPath = new Map(
-        (manifestResponse.workflows || [])
-          .filter(workflow => workflow.manifest?.label)
-          .map(workflow => [workflow.workspace_path, workflow.manifest.label])
-      )
-
-      const presets = response.presets.map((preset: {id: string, label: string, query?: string, agent_mode?: string, selected_folder?: string}) => ({
-        id: preset.id,
-        name: preset.agent_mode === 'workflow' && preset.selected_folder
-          ? (manifestLabelByPath.get(preset.selected_folder) || preset.label)
-          : preset.label,
-        description: preset.query || preset.label
-      }))
+      // Refresh manifests, then build from store
+      await useGlobalPresetStore.getState().refreshPresets()
+      const workflowPresets = useGlobalPresetStore.getState().workflowPresets
+      const presets = workflowPresets
+        .filter(p => p.agentMode === 'workflow')
+        .map(p => ({
+          id: p.id,
+          name: p.label,
+          description: p.query || p.label
+        }))
       setAvailablePresets(presets)
     } catch (error) {
       console.error('[WORKFLOW] Failed to load presets:', error)
@@ -110,29 +99,17 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
           
           const loadPresetsAndSelect = async () => {
             try {
-              const [response, manifestResponse] = await Promise.all([
-                agentApi.getPresetQueries(50, 0),
-                agentApi.listWorkflowManifests().catch(error => {
-                  console.warn('[WORKFLOW] Failed to load workflow manifests for label sync:', error)
-                  return { workflows: [] }
-                })
-              ])
-
-              const manifestLabelByPath = new Map(
-                (manifestResponse.workflows || [])
-                  .filter(workflow => workflow.manifest?.label)
-                  .map(workflow => [workflow.workspace_path, workflow.manifest.label])
-              )
-
-              const presets = response.presets.map((preset: {id: string, label: string, query?: string, agent_mode?: string, selected_folder?: string}) => ({
-                id: preset.id,
-                name: preset.agent_mode === 'workflow' && preset.selected_folder
-                  ? (manifestLabelByPath.get(preset.selected_folder) || preset.label)
-                  : preset.label,
-                description: preset.query || preset.label
-              }))
+              await useGlobalPresetStore.getState().refreshPresets()
+              const workflowPresets = useGlobalPresetStore.getState().workflowPresets
+              const presets = workflowPresets
+                .filter(p => p.agentMode === 'workflow')
+                .map(p => ({
+                  id: p.id,
+                  name: p.label,
+                  description: p.query || p.label
+                }))
               setAvailablePresets(presets)
-              
+
               // Now try to find the selected preset
               const foundPreset = presets.find(p => p.id === selectedWorkflowPreset)
               if (foundPreset) {

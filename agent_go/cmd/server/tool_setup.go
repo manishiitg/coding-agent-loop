@@ -136,10 +136,19 @@ func extractWorkflowContextFolders(paths []string) []string {
 
 // collectAdditionalFolderGuardFolders merges extra folder guard paths from @file context
 // and #workflow context, preserving order and removing duplicates.
+// DEPRECATED: Use collectSplitFolderGuardFolders instead which separates write vs read-only paths.
 func collectAdditionalFolderGuardFolders(query string, workflowContextPaths []string) []string {
 	combined := append([]string{}, extractFileContextWriteFolders(query)...)
 	combined = append(combined, extractWorkflowContextFolders(workflowContextPaths)...)
 	return common.DeduplicateStrings(combined)
+}
+
+// collectSplitFolderGuardFolders returns separate write and read-only folder lists.
+// @file context paths get write access; #workflow context paths get read-only access.
+func collectSplitFolderGuardFolders(query string, workflowContextPaths []string) (writeFolders, readOnlyFolders []string) {
+	writeFolders = common.DeduplicateStrings(extractFileContextWriteFolders(query))
+	readOnlyFolders = common.DeduplicateStrings(extractWorkflowContextFolders(workflowContextPaths))
+	return
 }
 
 // extractRootCauseError returns the raw error message without any processing
@@ -319,7 +328,7 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription strin
 // 1. ALLOWS read access to all folders (skills/, Workflow/, Downloads/, etc.)
 // 2. ONLY ALLOWS write access to Chats/ folder (plus any additionalWriteFolders)
 // 3. Restricts shell writes to allowed folders
-func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), readOnlyFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// No protected folders — all users share the same filesystem
 	protectedFolders := []string{}
 
@@ -331,9 +340,10 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	shellAllowedFolders := make([]string, len(allowedWriteFolders))
 	copy(shellAllowedFolders, allowedWriteFolders)
 
-	// Check if any allowed write folder grants Workflow/ access (case-insensitive)
+	// Check if any allowed write folder OR read-only folder grants Workflow/ access (case-insensitive)
 	hasWorkflowAccess := false
-	for _, f := range allowedWriteFolders {
+	allAccessFolders := append(append([]string{}, allowedWriteFolders...), readOnlyFolders...)
+	for _, f := range allAccessFolders {
 		if strings.HasPrefix(strings.ToLower(filepath.Clean(f)), "workflow") {
 			hasWorkflowAccess = true
 			break
@@ -437,8 +447,9 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				}
 				// Inject allowed write folders for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
-				// Set chat-mode read paths: all standard user folders + shared resources
+				// Set chat-mode read paths: all standard user folders + shared resources + read-only workflow context
 				chatReadFolders := []string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
+				chatReadFolders = append(chatReadFolders, readOnlyFolders...)
 				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
 				// Default working directory for chat mode — workspace root
 				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "")
@@ -475,7 +486,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 // wrapExecutorsWithPlanFolderGuard wraps workspace tool executors to restrict writes to a specific plan folder.
 // Like wrapExecutorsWithChatModeFolderGuard but uses the plan folder (e.g. "Chats/{planID}")
 // instead of the whole "Chats/" tree as the allowed write folder. This ensures sub-agents only write to their assigned plan folder.
-func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, readOnlyFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	protectedFolders := []string{}
 
 	// Use the plan folder as the allowed write folder (instead of Chats/)
@@ -532,8 +543,9 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 				// to the relevant folders instead of the entire workspace (".").
 				// The write folder is always readable; add common shared folders
 				// (skills, subagents) for plan mode so sub-agents can read resources.
-				shellReadFolders := make([]string, 0, len(shellAllowedFolders)+2)
+				shellReadFolders := make([]string, 0, len(shellAllowedFolders)+2+len(readOnlyFolders))
 				shellReadFolders = append(shellReadFolders, shellAllowedFolders...)
+				shellReadFolders = append(shellReadFolders, readOnlyFolders...)
 				// For chat-backed plan mode (planFolder starts with "Chats"), add shared resources.
 				// For prototype mode (planFolder starts with "Projects/"), the project
 				// folder is self-contained — no extra reads needed.

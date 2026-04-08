@@ -137,13 +137,15 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 *Consider why you were routed to this step during execution.*
 {{end}}
 
-### Requirements
-- **Inputs**: {{.StepContextDependencies}}
+### Inputs
+{{if .StepContextDependencies}}{{.StepContextDependencies}}{{else}}None{{end}}
+
+### Output
 - **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
 
 {{if .LearnCodePriorContext}}{{.LearnCodePriorContext}}
 {{end}}### Execution Checklist
-1. Read all **Inputs** listed above before starting.
+1. Review all **Inputs** above. Inlined files are ready to use. For any marked "read via tool", read them first.
 {{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
 4. Verify the required outputs are fully produced before finishing.

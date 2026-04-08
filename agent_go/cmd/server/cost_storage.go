@@ -14,10 +14,19 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
+// normalizeWorkspacePath cleans and normalizes a workspace path for comparison.
+func normalizeWorkspacePath(path string) string {
+	cleaned := strings.TrimSpace(path)
+	if cleaned == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(cleaned))
+}
+
 var migratedCostWorkspaces sync.Map
 
 func ensureWorkspaceCostMigration(ctx context.Context, workspacePath string) error {
-	normalized := normalizeWorkspacePathForPresetMatch(workspacePath)
+	normalized := normalizeWorkspacePath(workspacePath)
 	if normalized == "" {
 		return nil
 	}

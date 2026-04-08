@@ -121,9 +121,10 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 	sb.WriteString("\n# Real secrets → SECRET_<NAME>  (passwords, API keys, tokens)\n")
 	sb.WriteString("my_password = os.environ['SECRET_MY_PASSWORD']\n")
 	sb.WriteString("\n# Special vars always available:\n")
-	sb.WriteString("output_dir = os.environ['STEP_OUTPUT_DIR']  # write all output files here\n")
-	sb.WriteString("mcp_url    = os.environ['MCP_API_URL']\n")
-	sb.WriteString("mcp_token  = os.environ['MCP_API_TOKEN']\n")
+	sb.WriteString("output_dir    = os.environ['STEP_OUTPUT_DIR']      # write all output files here\n")
+	sb.WriteString("execution_dir = os.environ['STEP_EXECUTION_DIR']  # parent folder (fallback only — prefer sys.argv for input data)\n")
+	sb.WriteString("mcp_url       = os.environ['MCP_API_URL']\n")
+	sb.WriteString("mcp_token     = os.environ['MCP_API_TOKEN']\n")
 	sb.WriteString("```\n\n")
 
 	// Input files

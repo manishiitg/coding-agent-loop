@@ -4,7 +4,7 @@ import type { CustomPreset } from '../types/preset'
 /**
  * Hook to get the active workflow preset.
  * Workflows are file-backed manifests, not DB presets.
- * Use this instead of manually looking up customPresets/predefinedPresets.
+ * Use this instead of manually looking up workflowPresets.
  */
 export function useActiveWorkflowPreset(): CustomPreset | null {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)

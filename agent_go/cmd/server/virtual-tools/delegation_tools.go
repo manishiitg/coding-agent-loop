@@ -1051,13 +1051,7 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 		if err != nil {
 			log.Printf("[DELEGATION PLAN] Warning: could not read plan.md content: %v", err)
 		} else {
-			// Extract just the content field from the JSON response
-			var readData map[string]interface{}
-			if json.Unmarshal([]byte(readResult), &readData) == nil {
-				if content, ok := readData["content"].(string); ok {
-					planContent = content
-				}
-			}
+			planContent = readResult.Content
 		}
 
 		// Fallback: if plan.md was not written by the planner sub-agent (common with
@@ -1189,13 +1183,8 @@ func archivePlanToTracking(ctx context.Context, wsClient *workspace.Client, plan
 		return false
 	}
 
-	// Extract content from JSON response
-	var readData map[string]interface{}
-	if json.Unmarshal([]byte(readResult), &readData) != nil {
-		return false
-	}
-	planContent, ok := readData["content"].(string)
-	if !ok || strings.TrimSpace(planContent) == "" {
+	planContent := readResult.Content
+	if strings.TrimSpace(planContent) == "" {
 		return false
 	}
 
@@ -1204,10 +1193,7 @@ func archivePlanToTracking(ctx context.Context, wsClient *workspace.Client, plan
 	if trackResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
 		Filepath: trackingFilePath,
 	}); err == nil {
-		var trackData map[string]interface{}
-		if json.Unmarshal([]byte(trackResult), &trackData) == nil {
-			existingTracking, _ = trackData["content"].(string)
-		}
+		existingTracking = trackResult.Content
 	}
 
 	// Build new tracking content: existing tracking + archived plan
@@ -1293,14 +1279,8 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 	planContent := ""
 	if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
 		planFilePath := currentPlanFolder + "/plan.md"
-		if resultJSON, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: planFilePath}); err == nil {
-			// Parse the JSON response to extract raw content
-			var result map[string]interface{}
-			if jsonErr := json.Unmarshal([]byte(resultJSON), &result); jsonErr == nil {
-				if content, ok := result["content"].(string); ok {
-					planContent = content
-				}
-			}
+		if readResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: planFilePath}); err == nil {
+			planContent = readResult.Content
 		} else {
 			log.Printf("[PLAN APPROVAL] Could not read plan.md from %s: %v", planFilePath, err)
 		}

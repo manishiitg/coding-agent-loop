@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -84,9 +84,8 @@ export const ModePresetBar: React.FC = () => {
 
   // Use the new global preset store
   const {
-    customPresets,
+    workflowPresets,
     savePreset,
-    deletePreset,
     duplicatePreset,
     refreshPresets,
     loading: presetsLoading
@@ -374,19 +373,6 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [editingPreset, savePreset, handlePresetClick])
 
-  const handleDeletePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (confirm('Are you sure you want to delete this workflow? This action cannot be undone.')) {
-      try {
-        await deletePreset(presetId)
-        setShowPresetDropdown(false)
-      } catch (error) {
-        console.error('Failed to delete preset:', error)
-        alert('Failed to delete workflow. Please try again.')
-      }
-    }
-  }, [deletePreset])
-
   const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
@@ -645,13 +631,6 @@ export const ModePresetBar: React.FC = () => {
                                         title="Duplicate workflow"
                                       >
                                         <Copy className="w-3 h-3" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => handleDeletePreset(preset.id, e)}
-                                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                        title="Delete workflow"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
                                       </button>
                                     </div>
                                   )}

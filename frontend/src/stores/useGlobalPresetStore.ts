@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { agentApi, sessionShareApi } from '../services/api'
-import type { PlannerFile, PresetQuery, PresetLLMConfig, CreatePresetQueryRequest, UpdatePresetQueryRequest } from '../services/api-types'
+import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
 import { type ModeCategory } from './useModeStore'
@@ -60,16 +60,12 @@ interface GlobalPresetState {
   // File-backed workflow presets (from manifests)
   workflowPresets: CustomPreset[]
 
-  // Database presets (multi-agent mode)
-  customPresets: CustomPreset[]
-  predefinedPresets: PredefinedPreset[]
-  predefinedServerSelections: Record<string, string[]>
   loading: boolean
   error: string | null
-  
+
   // Active preset tracking per mode category
   activePresetIds: Record<Exclude<ModeCategory, null>, string | null>
-  
+
   // Current preset application state
   currentPresetServers: string[]
   currentPresetTools: string[] // Array of "server:tool" strings
@@ -79,20 +75,16 @@ interface GlobalPresetState {
   // Recently accessed preset IDs (most recent first) for quick switcher ordering
   recentPresetOrder: string[]
 
-  // Actions for database management
+  // Actions for manifest management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
   savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => Promise<CustomPreset | null>
-  deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
-  updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
-  
+
   // Actions for preset application
   applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: Exclude<ModeCategory, null>) => PresetApplicationResult
   clearActivePreset: (modeCategory: Exclude<ModeCategory, null>) => void
   getActivePreset: (modeCategory: Exclude<ModeCategory, null>) => CustomPreset | PredefinedPreset | null
-  
+
   // Actions for current state management
   setCurrentPresetServers: (servers: string[]) => void
   setCurrentPresetTools: (tools: string[]) => void
@@ -111,9 +103,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
     (set, get) => ({
       // Initial state
       workflowPresets: [],
-      customPresets: [],
-      predefinedPresets: [],
-      predefinedServerSelections: {},
       loading: false,
       error: null,
       
@@ -128,644 +117,99 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       currentQuery: '',
       recentPresetOrder: [],
 
-      // Database management actions
+      // Manifest management actions
       refreshPresets: async () => {
         set({ loading: true, error: null })
         try {
           // Refresh workflow manifests and rebuild workflow presets
           await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
-          set({ workflowPresets: buildWorkflowPresetsFromManifests() })
-
-          const [response, manifestResponse] = await Promise.all([
-            agentApi.getPresetQueries(),
-            sessionShareApi.listWorkflowManifests().catch(error => {
-              console.warn('[PRESET] Failed to load workflow manifests for label sync:', error)
-              return { workflows: [] }
-            })
-          ])
-
-          const manifestLabelByPath = new Map(
-            (manifestResponse.workflows || [])
-              .filter(workflow => workflow.manifest?.label)
-              .map(workflow => [workflow.workspace_path, workflow.manifest.label])
-          )
-          
-          // Import secrets store for resolving secret names to IDs
-          // useSecretsStore imported at top level
-          const secretsState = useSecretsStore.getState()
-
-          // Filter custom and predefined presets from the same response
-          const customPresets: CustomPreset[] = response.presets
-            .filter(preset => !preset.is_predefined)
-            .map((preset: PresetQuery) => {
-            let selectedServers: string[] = []
-            let selectedTools: string[] = []
-            let selectedSkills: string[] = []
-            let selectedFolder: PlannerFile | undefined
-            
-            try {
-              if (preset.selected_servers) {
-                selectedServers = JSON.parse(preset.selected_servers)
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing selected servers:', error)
-            }
-            
-            try {
-              if (preset.selected_tools) {
-                const parsedTools = JSON.parse(preset.selected_tools)
-                selectedTools = parsedTools || []
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing selected tools:', error)
-            }
-
-            try {
-              if (preset.selected_skills) {
-                const parsedSkills = JSON.parse(preset.selected_skills)
-                selectedSkills = parsedSkills || []
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing selected skills:', error)
-            }
-
-            // After both selectedServers and selectedTools are loaded, add "*" markers for servers in "all tools" mode
-            // A server is in "all tools" mode if it's in selectedServers but has no specific tools
-            if (selectedServers.length > 0) {
-              selectedServers.forEach(server => {
-                const hasSpecificTools = selectedTools.some(t => 
-                  t.startsWith(`${server}:`) && !t.endsWith(':*')
-                )
-                if (!hasSpecificTools && !selectedTools.includes(`${server}:*`)) {
-                  selectedTools.push(`${server}:*`)
-                }
-              })
-            }
-            
-            // Handle selected_folder - could be string, null, or undefined
-            if (preset.selected_folder && typeof preset.selected_folder === 'string') {
-              selectedFolder = {
-                filepath: preset.selected_folder,
-                content: '',
-                last_modified: '',
-                type: 'folder' as const,
-                children: []
-              }
-            }
-            
-            // Parse LLM config safely
-            let llmConfig: PresetLLMConfig | undefined
-            try {
-              if (preset.llm_config) {
-                if (typeof preset.llm_config === 'string') {
-                  llmConfig = JSON.parse(preset.llm_config)
-                } else {
-                  llmConfig = preset.llm_config as unknown as PresetLLMConfig
-                }
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing LLM config:', error)
-              llmConfig = undefined
-            }
-
-            // Parse selected_secrets (stored as names in DB, resolve to local IDs)
-            let selectedSecrets: string[] = []
-            try {
-              if (preset.selected_secrets) {
-                const secretNames: string[] = typeof preset.selected_secrets === 'string'
-                  ? JSON.parse(preset.selected_secrets)
-                  : preset.selected_secrets
-                if (secretNames && secretNames.length > 0) {
-                  selectedSecrets = secretNames
-                    .map(name => secretsState.getSecretByName(name)?.id)
-                    .filter((id): id is string => !!id)
-                }
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing selected secrets:', error)
-            }
-
-            // Parse selected_global_secret_names (null in DB = all selected)
-            let selectedGlobalSecretNames: string[] | null = null
-            try {
-              if (preset.selected_global_secret_names) {
-                const parsed = typeof preset.selected_global_secret_names === 'string'
-                  ? JSON.parse(preset.selected_global_secret_names)
-                  : preset.selected_global_secret_names
-                if (Array.isArray(parsed)) {
-                  selectedGlobalSecretNames = parsed
-                }
-              }
-            } catch (error) {
-              console.error('[PRESET] Error parsing selected global secret names:', error)
-            }
-
-            const effectiveLabel = (preset.agent_mode === 'workflow' && selectedFolder?.filepath)
-              ? (manifestLabelByPath.get(selectedFolder.filepath) || preset.label)
-              : preset.label
-
-            return {
-              id: preset.id,
-              label: effectiveLabel,
-              query: preset.query || '',
-              createdAt: new Date(preset.created_at).getTime(),
-              selectedServers,
-              selectedTools, // NEW
-              selectedSkills, // Skill folder names
-              selectedSecrets, // Secret IDs resolved from backend names
-              selectedGlobalSecretNames, // Per-preset global secret selection (null=all)
-              agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
-              selectedFolder,
-              llmConfig,
-              useCodeExecutionMode: preset.use_code_execution_mode,
-              enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
-              enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
-              enableBrowserAccess: preset.enable_browser_access ?? false,
-              browserMode: (preset.browser_mode as CustomPreset['browserMode']) || undefined,
-              employee_id: preset.employee_id || undefined,
-            }
-          })
-
-          // Convert predefined presets
-          const predefinedPresets: PredefinedPreset[] = response.presets
-            .filter(preset => preset.is_predefined)
-            .map((preset: PresetQuery) => {
-              // Parse LLM config safely
-              let llmConfig: PresetLLMConfig | undefined
-              try {
-                if (preset.llm_config) {
-                  if (typeof preset.llm_config === 'string') {
-                    llmConfig = JSON.parse(preset.llm_config)
-                  } else {
-                    llmConfig = preset.llm_config as unknown as PresetLLMConfig
-                  }
-                }
-              } catch (error) {
-                console.error('[PRESET] Error parsing LLM config:', error)
-                llmConfig = undefined
-              }
-              
-              let selectedFolder: PlannerFile | undefined = undefined;
-              // Handle selected_folder - could be string, null, or undefined
-              if (preset.selected_folder && typeof preset.selected_folder === 'string') {
-                selectedFolder = {
-                  filepath: preset.selected_folder,
-                  content: '',
-                  last_modified: '',
-                  type: 'folder' as const,
-                  children: []
-                }
-              }
-              
-              const effectiveLabel = (preset.agent_mode === 'workflow' && selectedFolder?.filepath)
-                ? (manifestLabelByPath.get(selectedFolder.filepath) || preset.label)
-                : preset.label
-
-              return {
-                id: preset.id,
-                label: effectiveLabel,
-                query: preset.query || '',
-                selectedServers: [],
-                selectedTools: [], // NEW: Predefined presets don't have custom tool selection
-                agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
-                selectedFolder,
-                llmConfig,
-                useCodeExecutionMode: preset.use_code_execution_mode,
-                enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
-                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
-                employee_id: preset.employee_id || undefined,
-              }
-            })
-          
-          set({ 
-            customPresets, 
-            predefinedPresets, 
-            loading: false 
-          })
+          set({ workflowPresets: buildWorkflowPresetsFromManifests(), loading: false })
         } catch (error) {
           console.error('[PRESET] Error refreshing presets:', error)
-          set({ 
+          set({
             error: error instanceof Error ? error.message : 'Failed to refresh presets',
-            loading: false 
+            loading: false
           })
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
-        try {
-          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-
-          console.log('[PRESET_SAVE] Before filtering:', {
-            selectedServers,
-            selectedTools,
-            selectedSkills,
-            toolsForBackend,
-            label
-          });
-
-          const request: CreatePresetQueryRequest = {
-            label,
-            query: query || '',
-            selected_servers: selectedServers,
-            selected_tools: toolsForBackend,
-            selected_skills: selectedSkills, // Skill folder names for workflow
-            agent_mode: agentMode,
-            selected_folder: selectedFolder?.filepath,
-          }
-          
-          // Include LLM config if provided
-          if (llmConfig) {
-            request.llm_config = llmConfig
-          }
-          
-          // Include code execution mode - always send it if it's a boolean (true or false)
-          // Don't use !== undefined check as it will skip false values
-          if (useCodeExecutionMode !== undefined) {
-            request.use_code_execution_mode = useCodeExecutionMode
-            console.log('[code_execution] [PRESET_SAVE] Including code execution mode in create request:', useCodeExecutionMode)
-          } else {
-            console.log('[code_execution] [PRESET_SAVE] Code execution mode is undefined, not including in request')
-          }
-          
-          // Include context summarization if provided
-          if (enableContextSummarization !== undefined) {
-            request.enable_context_summarization = enableContextSummarization
-          }
-
-          // Include browser access if provided
-          if (enableBrowserAccess !== undefined) {
-            request.enable_browser_access = enableBrowserAccess
-          }
-
-          // Include context editing if provided
-          if (enableContextEditing !== undefined) {
-            request.enable_context_editing = enableContextEditing
-          }
-
-          console.log('[code_execution] [PRESET_SAVE] Sending to backend:', {
-            request,
-            use_code_execution_mode: request.use_code_execution_mode
-          });
-          
-          const response = await agentApi.createPresetQuery(request)
-          
-          const newPreset: CustomPreset = {
-            id: response.id,
-            label: response.label,
-            query: response.query || '',
-            createdAt: new Date(response.created_at).getTime(),
-            selectedServers,
-            selectedTools, // Keep original selection for UI
-            selectedSkills, // Skill folder names
-            selectedSecrets, // Secret IDs (persisted to DB as names)
-            agentMode,
-            selectedFolder,
-            llmConfig,
-            useCodeExecutionMode,
-            enableContextSummarization,
-            enableContextEditing,
-            enableBrowserAccess
-          }
-
-          set(state => ({
-            customPresets: [...state.customPresets, newPreset]
-          }))
-
-          return newPreset
-        } catch (error) {
-          console.error('[PRESET] Error adding preset:', error)
-          throw error
-        }
-      },
-
-      updatePreset: async (id, label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
-        console.log('[code_execution] [PRESET_STORE] updatePreset called')
-        console.log('[code_execution] [PRESET_STORE] id:', id)
-        console.log('[code_execution] [PRESET_STORE] label:', label)
-        console.log('[code_execution] [PRESET_STORE] useCodeExecutionMode:', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
-
-        try {
-          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-
-          const request: UpdatePresetQueryRequest = {
-            label,
-            query: query || '',
-            selected_servers: selectedServers,
-            selected_tools: toolsForBackend,
-            selected_skills: selectedSkills, // Skill folder names for workflow
-            agent_mode: agentMode,
-            selected_folder: selectedFolder?.filepath,
-          }
-
-          // Include LLM config if provided
-          if (llmConfig) {
-            request.llm_config = llmConfig
-          }
-
-          // Include code execution mode - always send it if it's a boolean (true or false)
-          // Don't use !== undefined check as it will skip false values
-          if (useCodeExecutionMode !== undefined) {
-            request.use_code_execution_mode = useCodeExecutionMode
-            console.log('[code_execution] [PRESET] Including code execution mode in update request:', useCodeExecutionMode)
-          } else {
-            console.log('[code_execution] [PRESET] Code execution mode is undefined, not including in request')
-          }
-
-          // Include context summarization if provided
-          if (enableContextSummarization !== undefined) {
-            request.enable_context_summarization = enableContextSummarization
-          }
-
-          // Include browser access if provided
-          if (enableBrowserAccess !== undefined) {
-            request.enable_browser_access = enableBrowserAccess
-          }
-
-          // Include context editing if provided
-          if (enableContextEditing !== undefined) {
-            request.enable_context_editing = enableContextEditing
-          }
-
-          console.log('[code_execution] [PRESET] Updating preset with request:', request)
-
-          await agentApi.updatePresetQuery(id, request)
-
-          set(state => ({
-            customPresets: state.customPresets.map(preset =>
-              preset.id === id
-                ? {
-                    ...preset,
-                    label,
-                    query,
-                    selectedServers,
-                    selectedTools, // Keep original UI selection
-                    selectedSkills, // Skill folder names
-                    selectedSecrets, // Secret IDs (persisted to DB as names)
-                    agentMode,
-                    selectedFolder,
-                    llmConfig,
-                    useCodeExecutionMode,
-                    enableContextSummarization,
-                    enableContextEditing,
-                    enableBrowserAccess
-                  }
-                : preset
-            )
-          }))
-        } catch (error) {
-          console.error('[PRESET] Error updating preset:', error)
-          throw error
-        }
-      },
-
       savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded, browserMode) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
 
         // Convert secret IDs to names for backend persistence (names are device-independent)
-        // useSecretsStore imported at top level
         const secretNamesForBackend = selectedSecrets
           ?.map(secretId => useSecretsStore.getState().getSecret(secretId)?.name)
           .filter((n): n is string => !!n) || []
 
-        if (id) {
-          // Update existing preset
-          try {
-            const request: UpdatePresetQueryRequest = {
+        // Only manifest-based workflow saves are supported
+        if (agentMode !== 'workflow' || !selectedFolder?.filepath) {
+          console.warn('[PRESET_STORE] savePreset called for non-workflow mode, ignoring')
+          return null
+        }
+
+        try {
+          if (id) {
+            // Update existing workflow manifest
+            await sessionShareApi.updateWorkflowManifest({
+              workspace_path: selectedFolder.filepath,
               label,
-              query: query || '',
-              selected_servers: selectedServers,
-              selected_tools: toolsForBackend,
-              selected_skills: selectedSkills, // Skill folder names for workflow
-              selected_secrets: secretNamesForBackend, // Secret names for backend persistence
-              selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
-              agent_mode: agentMode,
-              selected_folder: selectedFolder?.filepath,
-            }
+              capabilities: {
+                selected_servers: selectedServers || [],
+                selected_tools: toolsForBackend,
+                selected_skills: selectedSkills || [],
+                selected_secrets: secretNamesForBackend,
+                selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                browser_mode: browserMode || 'none',
+                use_code_execution_mode: useCodeExecutionMode ?? false,
+                llm_config: llmConfig || undefined,
+              },
+            })
+          } else {
+            // Create new workflow manifest
+            await sessionShareApi.createWorkflowManifest({
+              label,
+              workspace_path: selectedFolder.filepath,
+              capabilities: {
+                selected_servers: selectedServers || [],
+                selected_tools: toolsForBackend,
+                selected_skills: selectedSkills || [],
+                selected_secrets: secretNamesForBackend,
+                selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                browser_mode: browserMode || 'none',
+                use_code_execution_mode: useCodeExecutionMode ?? false,
+                llm_config: llmConfig || undefined,
+              },
+            })
+          }
 
-            // Include LLM config if provided
-            if (llmConfig) {
-              request.llm_config = llmConfig
-            }
+          // Refresh workflow presets from manifests
+          await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
+          const updatedPresets = buildWorkflowPresetsFromManifests()
+          set({ workflowPresets: updatedPresets })
 
-            // Include code execution mode if provided
-            if (useCodeExecutionMode !== undefined) {
-              request.use_code_execution_mode = useCodeExecutionMode
-              console.log('[code_execution] [PRESET_STORE] Including code execution mode in update request:', useCodeExecutionMode)
-            }
-
-            // Include context summarization if provided
-            if (enableContextSummarization !== undefined) {
-              request.enable_context_summarization = enableContextSummarization
-            }
-
-            // Include browser access if provided
-            if (enableBrowserAccess !== undefined) {
-              request.enable_browser_access = enableBrowserAccess
-            }
-
-            // Include browser mode if provided (source of truth for browser type)
-            if (browserMode) {
-              request.browser_mode = browserMode
-            }
-
-            // Include context editing if provided
-            if (enableContextEditing !== undefined) {
-              request.enable_context_editing = enableContextEditing
-            }
-
-            await agentApi.updatePresetQuery(id, request)
-
-            // Dual-write: also update workflow.json manifest if this is a workflow preset with a folder
-            if (agentMode === 'workflow' && selectedFolder?.filepath) {
-              try {
-                await sessionShareApi.updateWorkflowManifest({
-                  workspace_path: selectedFolder.filepath,
-                  label,
-                  capabilities: {
-                    selected_servers: selectedServers || [],
-                    selected_tools: toolsForBackend,
-                    selected_skills: selectedSkills || [],
-                    selected_secrets: secretNamesForBackend,
-                    selected_global_secret_names: selectedGlobalSecretNames ?? null,
-                    browser_mode: browserMode || 'none',
-                    use_code_execution_mode: useCodeExecutionMode ?? false,
-                    llm_config: llmConfig || undefined,
-                  },
-                })
-              } catch (manifestErr) {
-                // Non-fatal: manifest may not exist yet (pre-migration)
-                console.log('[PRESET_STORE] Manifest dual-write skipped (may not exist yet):', manifestErr)
-              }
-            }
-
-            set(state => ({
-              customPresets: state.customPresets.map(preset =>
-                preset.id === id
-                  ? {
-                      ...preset,
-                      label,
-                      query,
-                      selectedServers,
-                      selectedTools, // Keep original UI selection
-                      selectedSkills, // Skill folder names
-                      selectedSecrets, // Secret IDs (persisted to DB as names)
-                      selectedGlobalSecretNames, // Per-preset global secret selection
-                      agentMode,
-                      selectedFolder,
-                      llmConfig,
-                      useCodeExecutionMode,
-                      enableContextSummarization,
-                      enableContextEditing,
-                      enableBrowserAccess,
-                      camofoxHeaded
-                    }
-                  : preset
-              )
-            }))
-
-            // Sync global secret selection to secrets store if this is the active preset
+          // Sync global secret selection to secrets store if this is the active preset
+          if (id) {
             const activeWorkflowId = get().activePresetIds.workflow
-            const activeMultiAgentId = get().activePresetIds['multi-agent']
-            if (id === activeWorkflowId || id === activeMultiAgentId) {
+            if (id === activeWorkflowId) {
               useSecretsStore.getState().setSelectedGlobalSecretNames(selectedGlobalSecretNames ?? null)
             }
-
-            // Return the updated preset
-            const updatedPreset = get().customPresets.find(p => p.id === id)
-            return updatedPreset || null
-          } catch (error) {
-            console.error('[code_execution] [PRESET_STORE] Error updating preset:', error)
-            throw error
           }
-        } else {
-          // Create new preset
-          try {
-            const request: CreatePresetQueryRequest = {
-              label,
-              query: query || '',
-              selected_servers: selectedServers,
-              selected_tools: toolsForBackend,
-              selected_skills: selectedSkills, // Skill folder names for workflow
-              selected_secrets: secretNamesForBackend, // Secret names for backend persistence
-              selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
-              agent_mode: agentMode,
-              selected_folder: selectedFolder?.filepath,
-            }
 
-            // Include LLM config if provided
-            if (llmConfig) {
-              request.llm_config = llmConfig
-            }
-
-            // Include code execution mode if provided
-            if (useCodeExecutionMode !== undefined) {
-              request.use_code_execution_mode = useCodeExecutionMode
-              console.log('[code_execution] [PRESET_STORE] Including code execution mode in create request:', useCodeExecutionMode)
-            }
-
-            // Include context summarization if provided
-            if (enableContextSummarization !== undefined) {
-              request.enable_context_summarization = enableContextSummarization
-            }
-
-            // Include browser access if provided
-            if (enableBrowserAccess !== undefined) {
-              request.enable_browser_access = enableBrowserAccess
-            }
-
-            // Include browser mode if provided (source of truth for browser type)
-            if (browserMode) {
-              request.browser_mode = browserMode
-            }
-
-            // Include context editing if provided
-            if (enableContextEditing !== undefined) {
-              request.enable_context_editing = enableContextEditing
-            }
-
-            console.log('[code_execution] [PRESET_STORE] Creating preset with request:', {
-              ...request,
-              use_code_execution_mode: request.use_code_execution_mode
-            })
-
-            const response = await agentApi.createPresetQuery(request)
-
-            // Dual-write: also create workflow.json manifest for new workflow presets
-            if (agentMode === 'workflow' && selectedFolder?.filepath) {
-              try {
-                await sessionShareApi.createWorkflowManifest({
-                  label,
-                  workspace_path: selectedFolder.filepath,
-                  capabilities: {
-                    selected_servers: selectedServers || [],
-                    selected_tools: toolsForBackend,
-                    selected_skills: selectedSkills || [],
-                    selected_secrets: secretNamesForBackend,
-                    selected_global_secret_names: selectedGlobalSecretNames ?? null,
-                    browser_mode: browserMode || 'none',
-                    use_code_execution_mode: useCodeExecutionMode ?? false,
-                    llm_config: llmConfig || undefined,
-                  },
-                })
-              } catch (manifestErr) {
-                // Non-fatal: manifest creation may fail if workspace doesn't exist yet
-                console.log('[PRESET_STORE] Manifest creation skipped:', manifestErr)
-              }
-            }
-
-            const newPreset: CustomPreset = {
-              id: response.id,
-              label: response.label,
-              query: response.query || '',
-              createdAt: new Date(response.created_at).getTime(),
-              selectedServers,
-              selectedTools, // Keep original UI selection
-              selectedSkills, // Skill folder names
-              selectedSecrets, // Secret IDs (persisted to DB as names)
-              selectedGlobalSecretNames, // Per-preset global secret selection
-              agentMode,
-              selectedFolder,
-              llmConfig,
-              useCodeExecutionMode,
-              enableContextSummarization,
-              enableContextEditing,
-              enableBrowserAccess,
-              camofoxHeaded
-            }
-
-            set(state => ({
-              customPresets: [...state.customPresets, newPreset]
-            }))
-
-            return newPreset
-          } catch (error) {
-            console.error('[code_execution] [PRESET_STORE] Error creating preset:', error)
-            throw error
-          }
-        }
-      },
-
-      deletePreset: async (id) => {
-        try {
-          await agentApi.deletePresetQuery(id)
-          
-          set(state => ({
-            customPresets: state.customPresets.filter(preset => preset.id !== id),
-            activePresetIds: {
-              workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
-              'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent'],
-            }
-          }))
+          // Return the preset from the refreshed list
+          const savedPreset = updatedPresets.find(p =>
+            p.selectedFolder?.filepath === selectedFolder.filepath
+          )
+          return savedPreset || null
         } catch (error) {
-          console.error('[PRESET] Error deleting preset:', error)
+          console.error('[PRESET_STORE] Error saving preset:', error)
           throw error
         }
       },
-      
+
       duplicatePreset: async (presetId) => {
         try {
           const state = get()
-          const originalPreset = state.customPresets.find(p => p.id === presetId)
+          const originalPreset = state.workflowPresets.find(p => p.id === presetId)
           
           if (!originalPreset) {
             throw new Error('Preset not found')
@@ -778,7 +222,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           const baseNameWithoutVersion = match ? baseName.slice(0, match.index) : baseName
           
           // Find all presets with the same base name
-          const existingVersions = state.customPresets
+          const existingVersions = state.workflowPresets
             .filter(p => {
               const pMatch = p.label.match(versionRegex)
               const pBaseName = pMatch ? p.label.slice(0, pMatch.index) : p.label
@@ -943,15 +387,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePredefinedServerSelection: (presetId, selectedServers) => {
-        set(state => ({
-          predefinedServerSelections: {
-            ...state.predefinedServerSelections,
-            [presetId]: selectedServers
-          }
-        }))
-      },
-      
       // Unified preset application function - handles both preset objects and preset IDs
       applyPreset: (presetOrId, modeCategory) => {
         try {
@@ -959,11 +394,9 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           
           // Handle different input types
           if (typeof presetOrId === 'string') {
-            // If string, treat as preset ID and find the preset
+            // If string, treat as preset ID and find in workflow presets
             const state = get()
-            const customPreset = state.customPresets.find(p => p.id === presetOrId)
-            const predefinedPreset = state.predefinedPresets.find(p => p.id === presetOrId)
-            preset = customPreset || predefinedPreset || null
+            preset = state.workflowPresets.find(p => p.id === presetOrId) || null
             
             if (!preset) {
               return {
@@ -1001,12 +434,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             useAppStore.getState().setCurrentQuery(preset.query)
           }
           
-          // Set server selection (use predefined selection if not present on preset)
-          const state = get()
-          const servers =
-            (preset.selectedServers && preset.selectedServers.length > 0)
-              ? preset.selectedServers
-              : (state.predefinedServerSelections[preset.id] || [])
+          // Set server selection
+          const servers = preset.selectedServers || []
           set({ currentPresetServers: servers })
 
           // Set tool selection from preset
@@ -1134,22 +563,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       getActivePreset: (modeCategory) => {
         const state = get()
         const presetId = state.activePresetIds[modeCategory]
-
         if (!presetId) return null
-
-        // Workflow mode: file-backed manifests (zustand state)
-        if (modeCategory === 'workflow') {
-          return state.workflowPresets.find(p => p.id === presetId) ?? null
-        }
-
-        // Multi-agent mode: DB-backed presets
-        const customPreset = state.customPresets.find(p => p.id === presetId)
-        if (customPreset) return customPreset
-
-        const predefinedPreset = state.predefinedPresets.find(p => p.id === presetId)
-        if (predefinedPreset) return predefinedPreset
-
-        return null
+        return state.workflowPresets.find(p => p.id === presetId) ?? null
       },
       
       // Current state management
@@ -1193,15 +608,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       // Helper actions
       getPresetsForMode: (modeCategory) => {
-        // Workflow mode: file-backed workflow manifests (stored in zustand state)
         if (modeCategory === 'workflow') {
           return get().workflowPresets
         }
-
-        // Multi-agent mode: DB-backed presets
-        const state = get()
-        const allPresets = [...state.customPresets, ...state.predefinedPresets]
-        return allPresets.filter(preset => preset.agentMode === 'simple')
+        // Non-workflow modes no longer have DB-backed presets
+        return []
       },
       
       isPresetActive: (presetId, modeCategory) => {
@@ -1210,9 +621,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
     }),
     {
       name: 'global-preset-storage',
-      // Only persist UI session state — presets come from the database on load.
-      // Do NOT persist customPresets/predefinedPresets/predefinedServerSelections
-      // as that causes stale data (e.g. old server lists surviving preset edits).
+      // Only persist UI session state — presets come from manifests on load.
       partialize: (state) => ({
         activePresetIds: state.activePresetIds,
         currentPresetServers: state.currentPresetServers,
@@ -1238,26 +647,19 @@ export const usePresetApplication = () => {
     currentPresetServers: store.currentPresetServers,
     currentPresetTools: store.currentPresetTools,
     activePresetIds: store.activePresetIds,
-    customPresets: store.customPresets,
-    predefinedPresets: store.predefinedPresets
+    workflowPresets: store.workflowPresets,
   }
 }
 
 export const usePresetManagement = () => {
   const store = useGlobalPresetStore()
   return {
-    customPresets: store.customPresets,
-    predefinedPresets: store.predefinedPresets,
-    predefinedServerSelections: store.predefinedServerSelections,
+    workflowPresets: store.workflowPresets,
     loading: store.loading,
     error: store.error,
     refreshPresets: store.refreshPresets,
-    addPreset: store.addPreset,
-    updatePreset: store.updatePreset,
     savePreset: store.savePreset,
-    deletePreset: store.deletePreset,
     duplicatePreset: store.duplicatePreset,
-    updatePredefinedServerSelection: store.updatePredefinedServerSelection
   }
 }
 

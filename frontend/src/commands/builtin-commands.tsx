@@ -1,78 +1,8 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, CheckCircle2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
-  {
-    command: 'harden-loop',
-    description: 'Create a schedule that runs → evals → hardens all groups progressively',
-    icon: <RefreshCw className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Create a scheduled progressive hardening loop for this workflow. Use create_schedule with these settings:
-
-- name: "Progressive Hardening"
-- cron_expression: "0 2 * * *" (daily at 2 AM, adjust if needed)
-- timezone: "Asia/Kolkata"
-- group_ids: read variables.json to get ALL enabled group IDs
-- mode: "workshop"
-- workshop_mode: "optimizer"
-
-The message should instruct the optimizer agent to run this autonomous loop. CRITICAL: This runs unattended in non-interactive mode. The agent MUST NOT ask for user input, confirmation, or clarification at any point. Make all decisions autonomously. If something is unclear, use the best judgment and proceed.
-
-PHASE 0 — CONTEXT & CONTINUITY
-- Read the latest 2-3 builder conversation files from builder/ folder (ls -t builder/*.json | head -3). These contain what previous optimization runs tried, what failed, what was improved, and what scores were achieved. Use this to avoid repeating failed approaches and build on progress.
-- Read planning/plan.json for objective and success_criteria
-- Read evaluation/evaluation_plan.json
-- Read variables.json for all group IDs
-- Check existing runs: ls runs/ to see what iterations exist. For each recent iteration, check if all groups ran and what scores they got (read evaluation/runs/{iter}/{group}/evaluation_report.json). If the last iteration has incomplete groups or low scores, consider reusing it instead of creating a new one. If all groups scored well, create the next iteration number.
-
-PHASE 1 — PROGRESSIVE EXECUTION + EVAL + HARDEN
-For each group (one at a time, sequentially):
-  1. run_full_workflow(iteration="{iter}", group_id="{group}")
-  2. Wait for completion
-  3. run_full_evaluation(iteration="{iter}", group_id="{group}")
-  4. Wait for completion
-  5. harden_workflow(iteration="{iter}") — fixes benefit subsequent groups
-  6. Wait for completion
-
-TIP: If a specific step keeps failing across groups, you can run just that step in isolation using execute_step(step_id, iteration, group_id) to debug and fix it before continuing the full workflow. This is faster than re-running the entire workflow for a single broken step.
-
-PHASE 2 — STRUCTURAL REVIEW (after all groups)
-- Read all evaluation_report.json files for this iteration
-- If any group scored < 5/10: run replan_workflow_from_results(iteration="{iter}") for structural fixes
-- If all groups scored >= 8/10: skip structural changes — workflow is converging
-
-PHASE 3 — EVAL EVOLUTION
-- Check if eval plan has gaps: are there failure modes from this run that eval didn't catch?
-- Edit evaluation/evaluation_plan.json via shell to add missing deterministic checks
-- Validate with validate_evaluation_plan
-
-PHASE 4 — SECOND PASS (only if Phase 2 made structural changes)
-- Re-run all groups on a new iteration with the structural fixes applied
-- Re-eval and re-harden
-- Skip this phase if no structural changes were needed
-
-PHASE 5 — CONVERGENCE CHECK
-After all phases complete, run mark_workflow_optimized. If it passes — all steps optimized, learnings exist, eval plan present — the workflow is done. Disable this schedule (update_schedule with enabled=false) and log the final state.
-If it fails, log which checklist items remain. The next scheduled run will pick up from here.
-
-RULES:
-- NON-INTERACTIVE: Do not ask for user input or confirmation. Make all decisions autonomously.
-- THE END GOAL: Get mark_workflow_optimized to pass. Every action should move toward this.
-- Max 2 full iteration cycles per schedule run
-- If total scores don't improve between iterations, stop and log why
-- Never retry the same step more than 2 times within one iteration
-- Always proceed to the next group/phase even if one group fails${focusText}
-
-Read variables.json now and create the schedule with all group IDs.`)
-    }
-  },
   {
     command: 'harden',
     description: 'Harden the workflow from the latest run\'s eval results',
@@ -183,18 +113,6 @@ Then ask the user: "Would you like me to set up a recurring schedule to keep imp
     }
   },
   {
-    command: 'mark-workflow-optimized',
-    description: 'Run the readiness gate and show the checklist',
-    icon: <CheckCircle2 className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.onSubmit('Run mark_workflow_optimized now and show the readiness checklist.')
-    }
-  },
-  {
     command: 'audit-descriptions',
     description: 'Check all steps for description vs skill/learning confusion',
     icon: <AlertTriangle className="w-4 h-4" />,
@@ -240,6 +158,24 @@ For each step, report:
 - If issues found: which problems and a concrete fix suggestion
 
 End with a summary table of all steps and their status.${focusText}`)
+    }
+  },
+  {
+    command: 'review-code',
+    description: 'Review saved scripts (main.py) against step descriptions to detect drift',
+    icon: <FileText className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      if (focus) {
+        // If text before slash, treat it as a step ID
+        ctx.onSubmit(`Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.`)
+      } else {
+        ctx.onSubmit(`Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.`)
+      }
     }
   },
   {

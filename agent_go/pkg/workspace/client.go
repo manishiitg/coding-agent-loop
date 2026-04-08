@@ -287,8 +287,21 @@ func (c *Client) getUserIDFromContext(ctx context.Context) string {
 	return ""
 }
 
+// requestWithTimeout executes an HTTP request using a dedicated client with the given timeout.
+// Used by ExecuteShellCommand where shell commands (especially those wrapping call_sub_agent)
+// can run far longer than the default 5-minute client timeout.
+func (c *Client) requestWithTimeout(ctx context.Context, method, path string, body interface{}, timeout time.Duration) ([]byte, error) {
+	longClient := &http.Client{Timeout: timeout}
+	return c.doRequest(ctx, method, path, body, longClient)
+}
+
 // request executes a generic HTTP request and returns the response body
 func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
+	return c.doRequest(ctx, method, path, body, c.HTTPClient)
+}
+
+// doRequest is the shared implementation for request and requestWithTimeout.
+func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}, httpClient *http.Client) ([]byte, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
@@ -313,7 +326,7 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with NO X-User-ID header", method, path)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}

@@ -46,7 +46,8 @@ func mapToStruct(args map[string]interface{}, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 
-// NewBasicExecutor creates executors for basic workspace file tools
+// NewBasicExecutor creates executors for basic workspace file tools.
+// Executors return JSON strings for LLM consumption, wrapping the typed client methods.
 func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
@@ -56,10 +57,12 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.ListWorkspaceFiles(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "list", "", params.Folder)
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "list", "", params.Folder)
+		// ListFiles returns raw JSON from the API — pass it through directly
+		return string(result.Raw), nil
 	}
 
 	executors["read_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -68,10 +71,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.ReadWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "read", params.Filepath, "")
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "read", params.Filepath, "")
+		return marshalResult(result)
 	}
 
 	executors["update_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -80,10 +84,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.UpdateWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "update", params.Filepath, "")
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "update", params.Filepath, "")
+		return marshalResult(result)
 	}
 
 	executors["delete_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -92,10 +97,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.DeleteWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "delete", params.Filepath, "")
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "delete", params.Filepath, "")
+		return marshalResult(result)
 	}
 
 	executors["move_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -104,10 +110,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.MoveWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "move", params.DestinationFilepath, "")
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "move", params.DestinationFilepath, "")
+		return marshalResult(result)
 	}
 
 	return executors
@@ -137,7 +144,11 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.ExecuteShellCommand(ctx, params)
+		result, err := client.ExecuteShellCommand(ctx, params)
+		if err != nil {
+			return "", err
+		}
+		return marshalResult(result)
 	}
 
 	executors["read_image"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -162,10 +173,11 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		result, err := client.DiffPatchWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "patch", params.Filepath, "")
+		if err != nil {
+			return "", err
 		}
-		return result, err
+		emitWorkspaceFileEvent(ctx, "patch", params.Filepath, "")
+		return marshalResult(result)
 	}
 
 	return executors
@@ -181,4 +193,3 @@ func NewBrowserExecutor(client *Client) map[string]func(ctx context.Context, arg
 
 	return executors
 }
-

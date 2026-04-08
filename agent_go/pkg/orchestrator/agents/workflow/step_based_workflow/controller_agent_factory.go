@@ -87,7 +87,7 @@ func filterToolsByWorkflow(stepTools, workflowServers []string) []string {
 	return result
 }
 
-func injectStepOutputDirIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath string) {
+func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath string) {
 	if len(executors) == 0 || strings.TrimSpace(stepOutputAbsPath) == "" {
 		return
 	}
@@ -100,7 +100,8 @@ func injectStepOutputDirIntoShellExecutor(executors map[string]interface{}, step
 			args = make(map[string]interface{})
 		}
 		mergedEnv := map[string]interface{}{
-			"STEP_OUTPUT_DIR": stepOutputAbsPath,
+			"STEP_OUTPUT_DIR":    stepOutputAbsPath,
+			"STEP_EXECUTION_DIR": stepExecutionAbsPath,
 		}
 		if rawExtraEnv, exists := args["extra_env"]; exists {
 			switch typed := rawExtraEnv.(type) {
@@ -114,8 +115,9 @@ func injectStepOutputDirIntoShellExecutor(executors map[string]interface{}, step
 				}
 			}
 		}
-		// Per-step STEP_OUTPUT_DIR must always win over any stale caller-provided value.
+		// Per-step values must always win over any stale caller-provided value.
 		mergedEnv["STEP_OUTPUT_DIR"] = stepOutputAbsPath
+		mergedEnv["STEP_EXECUTION_DIR"] = stepExecutionAbsPath
 		args["extra_env"] = mergedEnv
 		return original(ctx, args)
 	}
@@ -387,9 +389,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScri
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents
 // Returns readPaths and writePaths for folder guard configuration
-// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
-// hasLearnings: If true, includes learnings folder in read paths; if false, excludes it
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, hasLearnings bool, useKnowledgebaseOverride ...bool) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, useKnowledgebaseOverride ...bool) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -400,24 +400,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
-	// READ: step-specific learnings folder (only if learnings exist) + execution folder (to read previous step results) + knowledgebase folder (if enabled)
+	// READ: execution folder (to read previous step results) + global learnings + knowledgebase folder (if enabled)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder (if enabled) + execution/Downloads folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	readPaths = []string{executionWorkspacePath}
-	// Only add learnings folder to read paths if learnings exist
-	if hasLearnings {
-		// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
-		// In evaluation mode, learnings are stored in evaluation/learnings/
-		var stepLearningsPath string
-		if hcpo.isEvaluationMode {
-			stepLearningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, stepID)
-		} else {
-			stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-		}
-		readPaths = append([]string{stepLearningsPath}, readPaths...)
-	}
 	// Always add global learnings folder to read paths — harmless if it doesn't exist,
 	// and required when global learning is enabled (checked at execution time via execution_defaults)
 	globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
@@ -884,10 +872,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareWorkspaceToolsOnly() ([]llmtyp
 
 // setupConditionalFolderGuard sets up folder guard paths for conditional agents
 // Returns readPaths and writePaths for folder guard configuration
-// stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
-// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
-// hasLearnings: If true, includes learnings folder in read paths; if false, excludes it
-func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath string, stepID string, hasLearnings bool) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath string, stepID string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -901,21 +886,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 
 	// Set folder guard paths:
-	// READ: step-specific learnings folder (only if learnings exist) + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder (if enabled)
+	// READ: execution folder (to read all previous step results and verify conditions) + global learnings + knowledgebase folder (if enabled)
 	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder (if enabled)
 	readPaths = []string{executionWorkspacePath}
-	// Only add learnings folder to read paths if learnings exist
-	if hasLearnings {
-		// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
-		// In evaluation mode, learnings are stored in evaluation/learnings/
-		var stepLearningsPath string
-		if hcpo.isEvaluationMode {
-			stepLearningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, stepID)
-		} else {
-			stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-		}
-		readPaths = append([]string{stepLearningsPath}, readPaths...)
-	}
 	// Always add global learnings folder to read paths
 	globalLearningsPath2 := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
 	readPaths = append(readPaths, globalLearningsPath2)
@@ -1133,19 +1106,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
 
-	// 2. Check if learnings exist for this step (needed for folder guard setup)
-	hasLearnings := false
-	if ctx != nil {
-		pathInfo := parseStepPath(stepPath)
-		stepIndexForLearnings := pathInfo.ParentStepNumber - 1
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndexForLearnings, stepPath)
-		if err == nil {
-			hasLearnings = !learningsEmpty
-		}
-	}
-
-	// 3. Setup folder guard (extracted method) - uses step-specific learnings folder only if learnings exist
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, hasLearnings)
+	// 2. Setup folder guard (extracted method)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID)
 
 	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
@@ -1171,11 +1133,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
 	// Instead, readPaths/writePaths are set on the per-agent config below (config.FolderGuardReadPaths/WritePaths)
 	// to prevent race conditions when parallel sub-agents share the same orchestrator instance.
-	if hasLearnings {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (no learnings folder, can read execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepPath))
-	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Per-agent folder guard for execution-only agent - Read paths: %v, Write paths: %v (can write to %s and execution/Downloads/)", readPaths, writePaths, stepPath))
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
@@ -1230,13 +1188,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
-	// Inject STEP_OUTPUT_DIR for all execution-only agents (both learn_code and code_exec).
-	// Any script run via execute_shell_command may need STEP_OUTPUT_DIR to know where to write output.
+	// Inject STEP_OUTPUT_DIR and STEP_EXECUTION_DIR for all execution-only agents (both learn_code and code_exec).
+	// Any script run via execute_shell_command may need STEP_OUTPUT_DIR to know where to write output
+	// and STEP_EXECUTION_DIR to read sibling step outputs.
 	{
 		executionWorkspacePath := fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
-		injectStepOutputDirIntoShellExecutor(executorsToUse, stepOutputAbsPath)
+		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting STEP_OUTPUT_DIR into execute_shell_command for %s: %s", stepID, stepOutputAbsPath))
 	}
 
@@ -1419,23 +1379,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createSuccessLearningAgent(ctx contex
 // stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
 func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, conditionalLLMConfig *orchestrator.LLMConfig, stepPath string, stepID string) (agents.OrchestratorAgent, error) {
-	// 1. Check if learnings exist for this step (needed for folder guard setup)
-	hasLearnings := false
-	if ctx != nil {
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, step, stepPath)
-		if err == nil {
-			hasLearnings = !learningsEmpty
-		}
-	}
-
-	// 2. Setup folder guard (similar to execution agent) - uses step-specific learnings folder only if learnings exist
-	readPaths, writePaths := hcpo.setupConditionalFolderGuard(stepPath, stepID, hasLearnings)
+	// 1. Setup folder guard
+	readPaths, writePaths := hcpo.setupConditionalFolderGuard(stepPath, stepID)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	if hasLearnings {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for conditional agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s)", readPaths, writePaths, stepID, stepPath))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for conditional agent - Read paths: %v, Write paths: %v (no learnings folder, can read execution/, can write to %s)", readPaths, writePaths, stepPath))
-	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for conditional agent - Read paths: %v, Write paths: %v (can write to %s)", readPaths, writePaths, stepPath))
 
 	// Determine max turns: use orchestrator default (conditional agents don't have step-specific max turns config)
 	maxTurns := hcpo.GetMaxTurns()

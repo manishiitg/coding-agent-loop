@@ -17,7 +17,7 @@ interface WorkflowLLMConfigModalProps {
 // Inner component mounts fresh each open, so state always reflects the current preset
 function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
   const { availableLLMs, loadDefaultsFromBackend, isLoadingLLMs } = useLLMStore()
-  const { getActivePreset, updatePreset } = useGlobalPresetStore()
+  const { getActivePreset, savePreset } = useGlobalPresetStore()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -112,8 +112,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         ...(tieredConfig ? { tiered_config: tieredConfig } : {}),
       }
 
-      await updatePreset(
-        activePreset.id,
+      await savePreset(
         activePreset.label,
         activePreset.query,
         activePreset.selectedServers,
@@ -123,6 +122,7 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
         activePreset.selectedFolder,
         newLLMConfig,
         activePreset.useCodeExecutionMode,
+        activePreset.id, // existing preset id
         activePreset.enableContextSummarization,
         activePreset.enableBrowserAccess,
         activePreset.enableContextEditing,

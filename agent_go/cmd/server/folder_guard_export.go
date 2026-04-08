@@ -6,7 +6,8 @@ import "context"
 // Exported for integration testing. See wrapExecutorsWithChatModeFolderGuard for details.
 func ApplyChatModeFolderGuard(
 	executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error),
+	readOnlyFolders []string,
 	additionalWriteFolders ...string,
 ) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	return wrapExecutorsWithChatModeFolderGuard(executors, additionalWriteFolders...)
+	return wrapExecutorsWithChatModeFolderGuard(executors, readOnlyFolders, additionalWriteFolders...)
 }

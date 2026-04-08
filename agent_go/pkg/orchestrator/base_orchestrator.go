@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
+
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
@@ -60,7 +62,8 @@ type BaseOrchestrator struct {
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
-	ToolCategories         map[string]string // Tool name to category mapping
+	WorkspaceClient        *workspace.Client // Direct typed access to workspace API
+	ToolCategories         map[string]string  // Tool name to category mapping
 
 	// Orchestrator type and configuration
 	orchestratorType OrchestratorType
@@ -237,6 +240,15 @@ func NewBaseOrchestrator(
 		// Context offloading configuration
 		largeOutputThreshold: largeOutputThreshold,
 	}
+
+	// Create workspace client for direct typed API access (used by orchestrator methods).
+	// The executors are still used for LLM tool calls, but the client is used for
+	// internal operations like ReadWorkspaceFile, ListWorkspaceFiles, etc.
+	wsURL := os.Getenv("WORKSPACE_API_URL")
+	if wsURL == "" {
+		wsURL = "http://localhost:8081"
+	}
+	orchestrator.WorkspaceClient = workspace.NewClient(wsURL)
 
 	// Note: No fallback to orchestrator default provider/model - LLM selection uses temp override → step config → preset LLM priority
 	// llmConfig.Primary should be populated by the caller if needed

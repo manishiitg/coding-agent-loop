@@ -13,14 +13,14 @@ type DeleteWorkspaceFileParams struct {
 }
 
 // DeleteWorkspaceFile deletes a file from the workspace
-func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspaceFileParams) (string, error) {
+func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspaceFileParams) (DeleteFileResult, error) {
 	if params.Filepath == "" {
-		return "", fmt.Errorf("filepath is required")
+		return DeleteFileResult{}, fmt.Errorf("filepath is required")
 	}
 
 	// Validate path against folder guard (write operation)
 	if err := c.ValidatePath(params.Filepath, true); err != nil {
-		return "", err
+		return DeleteFileResult{}, err
 	}
 
 	// Build API URL with confirm parameter
@@ -28,39 +28,31 @@ func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspace
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return DeleteFileResult{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to call workspace API: %w", err)
+		return DeleteFileResult{}, fmt.Errorf("failed to call workspace API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := readResponseBody(resp)
 	if err != nil {
-		return "", err
+		return DeleteFileResult{}, err
 	}
 
 	var apiResp APIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return "", fmt.Errorf("failed to parse API response: %w", err)
+		return DeleteFileResult{}, fmt.Errorf("failed to parse API response: %w", err)
 	}
 
 	if !apiResp.Success {
-		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+		return DeleteFileResult{}, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	// Return structured JSON for frontend parsing
-	resultJSON := map[string]interface{}{
-		"filepath": params.Filepath,
-		"deleted":  true,
-	}
-
-	jsonBytes, err := json.Marshal(resultJSON)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal result: %w", err)
-	}
-
-	return string(jsonBytes), nil
+	return DeleteFileResult{
+		Filepath: params.Filepath,
+		Deleted:  true,
+	}, nil
 }

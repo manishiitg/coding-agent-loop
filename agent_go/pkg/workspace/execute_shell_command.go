@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
@@ -52,7 +53,7 @@ type ExecuteShellCommandParams struct {
 }
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
-func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
+func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (ShellCommandResult, error) {
 	// Debug: log ExtraEnv keys, MCP_API_URL value, and client pointer for identity tracking
 	if len(c.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(c.ExtraEnv))
@@ -100,18 +101,15 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			if browserMode == "stealth" {
 				toolName = "Camofox MCP tools (snapshot, click, type_text, navigate, etc.)"
 			}
-			return "ERROR: Do not call agent-browser via execute_shell_command. Use the " + toolName + " for browser automation.\n\n" +
-				"The agent-browser CLI is not the correct tool for this workflow. " +
-				"Start with browser_snapshot to see the current page state, then use the appropriate browser_* tool for interactions.", nil
+			return ShellCommandResult{
+				Stderr:   "ERROR: Do not call agent-browser via execute_shell_command. Use the " + toolName + " for browser automation.\n\nThe agent-browser CLI is not the correct tool for this workflow. Start with browser_snapshot to see the current page state, then use the appropriate browser_* tool for interactions.",
+				ExitCode: 1,
+			}, nil
 		}
-		return "ERROR: Do not call agent-browser directly via execute_shell_command. Use the agent_browser tool instead.\n\n" +
-			"For direct tool call mode:\n" +
-			"  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\n" +
-			"For code execution mode (MCP bridge):\n" +
-			"  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n" +
-			"  then POST to the agent_browser endpoint via HTTP.\n\n" +
-			"The agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. " +
-			"Calling agent-browser CLI directly bypasses CDP URL resolution and will fail inside Docker.", nil
+		return ShellCommandResult{
+			Stderr:   "ERROR: Do not call agent-browser directly via execute_shell_command. Use the agent_browser tool instead.\n\nFor direct tool call mode:\n  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\nFor code execution mode (MCP bridge):\n  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n  then POST to the agent_browser endpoint via HTTP.\n\nThe agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. Calling agent-browser CLI directly bypasses CDP URL resolution and will fail inside Docker.",
+			ExitCode: 1,
+		}, nil
 	}
 
 	if sessionCfg != nil && sessionCfg.GeminiProjectDirID != "" {
@@ -194,7 +192,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	if params.FolderGuard != nil && params.FolderGuard.Enabled {
 		if err := blockAbsoluteHostPaths(params.Command); err != nil {
 			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", params.Command)
-			return "", err
+			return ShellCommandResult{}, err
 		}
 	}
 
@@ -213,89 +211,86 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	}
 
 	path := "/api/execute"
-	respBody, err := c.request(ctx, "POST", path, params)
+	// Use a long-timeout HTTP client for shell execution. The default workspace
+	// client has a 5-minute timeout (sufficient for file operations), but shell
+	// commands can run much longer — e.g., when a Python script wraps a
+	// call_sub_agent HTTP call that blocks until the sub-agent completes.
+	// Without this, the Go HTTP client times out before the shell finishes,
+	// the LLM sees "context deadline exceeded", retries, and spawns duplicate
+	// sub-agents while the original is still running on its detached context.
+	respBody, err := c.requestWithTimeout(ctx, "POST", path, params, 90*time.Minute)
 	if err != nil {
-		return "", err
+		return ShellCommandResult{}, err
 	}
 
-	// Always return the formatted result (stdout, stderr, exit_code) as a successful
-	// tool result. Previously, non-zero exit codes were wrapped as Go errors, which
-	// caused the LLM to see a generic "Tool execution failed" message instead of the
-	// actual stdout/stderr. By returning the full output, the LLM can read exit_code,
-	// stderr, and stdout to understand what went wrong and take corrective action.
-	// Only infrastructure errors (network, validation) use Go errors.
-	formatted, _ := formatShellResponse(respBody)
-	// Debug: log result size and first 500 chars to diagnose truncation issues
-	if len(formatted) < 200 && strings.Contains(params.Command, "call_sub_agent") {
-		log.Printf("[SHELL_RESULT_DEBUG] call_sub_agent via shell: formatted_len=%d raw_resp_len=%d formatted=%s", len(formatted), len(respBody), formatted)
+	// Parse the shell response into a typed struct.
+	// Infrastructure errors (network, validation) are returned as Go errors above.
+	// Command failures (non-zero exit code) are returned in the struct so callers
+	// can inspect stdout/stderr to understand what went wrong.
+	result := parseShellResponse(respBody)
+	// Debug: log result size for call_sub_agent diagnostics
+	if result.Stdout != "" && len(result.Stdout) < 200 && strings.Contains(params.Command, "call_sub_agent") {
+		log.Printf("[SHELL_RESULT_DEBUG] call_sub_agent via shell: stdout_len=%d raw_resp_len=%d", len(result.Stdout), len(respBody))
 	}
-	return formatted, nil
+	return result, nil
 }
 
-// formatShellResponse strips the success/message envelope and returns
-// just the data fields (stdout, stderr, exit_code, execution_time_ms) plus error if present.
-// Returns the formatted string and whether the command failed (non-zero exit code).
-func formatShellResponse(respBody []byte) (string, bool) {
+// parseShellResponse parses the workspace API shell response into a typed ShellCommandResult.
+func parseShellResponse(respBody []byte) ShellCommandResult {
 	var resp map[string]json.RawMessage
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return string(respBody), false
+		return ShellCommandResult{Stdout: string(respBody)}
 	}
 
-	// Build output with just the useful fields
-	out := make(map[string]json.RawMessage)
-	var exitCode float64
+	var result ShellCommandResult
 
-	// Copy data fields (stdout, stderr, exit_code, execution_time_ms)
-	// Skip "command" — the LLM already knows what it sent
+	// Extract fields from the "data" envelope
 	if data, ok := resp["data"]; ok {
-		var dataFields map[string]json.RawMessage
-		if err := json.Unmarshal(data, &dataFields); err == nil {
-			for k, v := range dataFields {
-				if k == "command" {
-					continue
-				}
-				out[k] = v
-			}
-			// Check exit code
-			if ec, ok := dataFields["exit_code"]; ok {
-				json.Unmarshal(ec, &exitCode)
-			}
+		var dataFields struct {
+			Stdout          string  `json:"stdout"`
+			Stderr          string  `json:"stderr"`
+			ExitCode        int     `json:"exit_code"`
+			ExecutionTimeMs float64 `json:"execution_time_ms"`
+		}
+		if json.Unmarshal(data, &dataFields) == nil {
+			result.Stdout = dataFields.Stdout
+			result.Stderr = dataFields.Stderr
+			result.ExitCode = dataFields.ExitCode
+			result.ExecutionTimeMs = dataFields.ExecutionTimeMs
 		}
 	}
 
 	// Include error if present
-	hasError := false
-	if errVal, ok := resp["error"]; ok && string(errVal) != `""` && string(errVal) != "null" {
-		out["error"] = errVal
-		hasError = true
+	if errVal, ok := resp["error"]; ok {
+		var errStr string
+		if json.Unmarshal(errVal, &errStr) == nil && errStr != "" {
+			result.Error = errStr
+		}
 	}
-
-	// Command failed if exit code is non-zero or API returned an error
-	commandFailed := exitCode != 0 || hasError
 
 	// Unwrap MCP API response from stdout to reduce JSON nesting for the LLM.
 	// When the shell command calls an MCP/virtual tool via HTTP (e.g. call_sub_agent),
 	// stdout contains: {"success":true,"result":"{...actual JSON...}"}
-	// This unwraps it so the LLM sees the actual result directly instead of
-	// triple-nested escaped JSON.
-	if exitCode == 0 && !hasError {
-		if stdoutRaw, ok := out["stdout"]; ok {
-			var stdout string
-			if json.Unmarshal(stdoutRaw, &stdout) == nil {
-				stdout = strings.TrimSpace(stdout)
-				if unwrapped := tryUnwrapMCPAPIResponse(stdout); unwrapped != "" {
-					out["stdout"] = json.RawMessage(fmt.Sprintf("%q", unwrapped))
-				}
-			}
+	// This unwraps it so the LLM sees the actual result directly.
+	if result.ExitCode == 0 && result.Error == "" {
+		stdout := strings.TrimSpace(result.Stdout)
+		if unwrapped := tryUnwrapMCPAPIResponse(stdout); unwrapped != "" {
+			result.Stdout = unwrapped
 		}
 	}
 
-	result, err := json.Marshal(out)
+	return result
+}
+
+// formatShellResponse is a backward-compatible wrapper that returns the JSON string form.
+// Used by executor wrappers that need to return strings to the LLM.
+func formatShellResponse(respBody []byte) (string, bool) {
+	result := parseShellResponse(respBody)
+	jsonBytes, err := json.Marshal(result)
 	if err != nil {
 		return string(respBody), false
 	}
-
-	return string(result), commandFailed
+	return string(jsonBytes), result.CommandFailed()
 }
 
 // tryUnwrapMCPAPIResponse attempts to unwrap a nested MCP API response.

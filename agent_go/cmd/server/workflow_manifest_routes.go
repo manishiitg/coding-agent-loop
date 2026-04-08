@@ -7,8 +7,6 @@ import (
 	"log"
 	"net/http"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
-
 	"github.com/google/uuid"
 )
 
@@ -330,175 +328,31 @@ func (api *StreamingAPI) handleDuplicateWorkflowManifest(w http.ResponseWriter, 
 	})
 }
 
-// --- Migration endpoint ---
-
-// handleMigrateWorkflowsToManifests reads workflow-mode presets and writes workflow.json for each.
-func (api *StreamingAPI) handleMigrateWorkflowsToManifests(w http.ResponseWriter, r *http.Request) {
-	setCORS(w)
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	overwrite := r.URL.Query().Get("overwrite") == "true"
-
-	// Load all presets
-	presets, _, err := api.chatDB.ListPresetQueries(r.Context(), 1000, 0)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to list presets: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	type migrationResult struct {
-		PresetID      string `json:"preset_id"`
-		Label         string `json:"label"`
-		WorkspacePath string `json:"workspace_path"`
-		Status        string `json:"status"` // "migrated", "skipped", "error"
-		Error         string `json:"error,omitempty"`
-	}
-
-	var results []migrationResult
-
-	for _, preset := range presets {
-		if preset.AgentMode != database.AgentModeWorkflow {
-			continue // Skip non-workflow presets
-		}
-
-		if !preset.SelectedFolder.Valid || preset.SelectedFolder.String == "" {
-			results = append(results, migrationResult{
-				PresetID: preset.ID,
-				Label:    preset.Label,
-				Status:   "error",
-				Error:    "no workspace folder set on preset",
-			})
-			continue
-		}
-
-		workspacePath := preset.SelectedFolder.String
-
-		// Check if manifest already exists
-		_, exists, err := ReadWorkflowManifest(r.Context(), workspacePath)
-		if err != nil {
-			results = append(results, migrationResult{
-				PresetID:      preset.ID,
-				Label:         preset.Label,
-				WorkspacePath: workspacePath,
-				Status:        "error",
-				Error:         fmt.Sprintf("failed to read existing manifest: %v", err),
-			})
-			continue
-		}
-		if exists && !overwrite {
-			results = append(results, migrationResult{
-				PresetID:      preset.ID,
-				Label:         preset.Label,
-				WorkspacePath: workspacePath,
-				Status:        "skipped",
-				Error:         "manifest already exists (use ?overwrite=true to replace)",
-			})
-			continue
-		}
-
-		// Convert preset to manifest
-		manifest, err := ManifestFromPreset(&preset)
-		if err != nil {
-			results = append(results, migrationResult{
-				PresetID:      preset.ID,
-				Label:         preset.Label,
-				WorkspacePath: workspacePath,
-				Status:        "error",
-				Error:         fmt.Sprintf("failed to build manifest: %v", err),
-			})
-			continue
-		}
-
-		// Write manifest
-		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
-			results = append(results, migrationResult{
-				PresetID:      preset.ID,
-				Label:         preset.Label,
-				WorkspacePath: workspacePath,
-				Status:        "error",
-				Error:         fmt.Sprintf("failed to write manifest: %v", err),
-			})
-			continue
-		}
-
-		results = append(results, migrationResult{
-			PresetID:      preset.ID,
-			Label:         preset.Label,
-			WorkspacePath: workspacePath,
-			Status:        "migrated",
-		})
-	}
-
-	// Count results
-	migrated, skipped, errored := 0, 0, 0
-	for _, r := range results {
-		switch r.Status {
-		case "migrated":
-			migrated++
-		case "skipped":
-			skipped++
-		case "error":
-			errored++
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"results":  results,
-		"migrated": migrated,
-		"skipped":  skipped,
-		"errors":   errored,
-		"total":    len(results),
-	})
-}
-
 // --- Resolve manifest for execution ---
 
-// ResolveWorkflowManifest tries to load a manifest for a given workspace path.
-// If manifest exists, returns it. If not, falls back to loading from preset.
-// This supports the gradual migration where some workflows have manifests and some don't.
+// ResolveWorkflowManifest loads a manifest for a given workspace path.
 func (api *StreamingAPI) ResolveWorkflowManifest(ctx context.Context, workspacePath string, presetQueryID string) (*WorkflowManifest, error) {
-	// Try manifest first
 	if workspacePath != "" {
 		manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
 		if err == nil && exists {
 			return manifest, nil
 		}
 		if err != nil {
-			log.Printf("[MANIFEST] Warning: error reading manifest from %s: %v (falling back to preset)", workspacePath, err)
+			log.Printf("[MANIFEST] Warning: error reading manifest from %s: %v", workspacePath, err)
 		}
 	}
 
-	// Fall back to preset
-	if presetQueryID == "" {
-		return nil, fmt.Errorf("no manifest found and no preset_query_id provided")
-	}
-
-	preset, err := api.chatDB.GetPresetQuery(ctx, presetQueryID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load preset %s: %w", presetQueryID, err)
-	}
-
-	manifest, err := ManifestFromPreset(preset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert preset to manifest: %w", err)
-	}
-
-	return manifest, nil
+	return nil, fmt.Errorf("no workflow.json manifest found at workspace path %q", workspacePath)
 }
 
-// --- Helper: resolve workspace path from preset ID ---
+// --- Helper: resolve workspace path from preset/workflow ID ---
 
 func (api *StreamingAPI) resolveWorkspacePathFromPreset(ctx context.Context, presetQueryID string) (string, error) {
 	if presetQueryID == "" {
 		return "", fmt.Errorf("preset_query_id is empty")
 	}
 
-	// Primary: look up workflow manifest by ID (file-backed, no DB dependency)
+	// Look up workflow manifest by ID (file-backed, no DB dependency)
 	workflows, err := DiscoverWorkflowManifests(ctx)
 	if err == nil {
 		for _, wf := range workflows {
@@ -508,15 +362,7 @@ func (api *StreamingAPI) resolveWorkspacePathFromPreset(ctx context.Context, pre
 		}
 	}
 
-	// Fallback: try DB preset (for backward compatibility with non-workflow presets)
-	preset, err := api.chatDB.GetPresetQuery(ctx, presetQueryID)
-	if err != nil {
-		return "", fmt.Errorf("preset %s not found in manifests or DB", presetQueryID)
-	}
-	if !preset.SelectedFolder.Valid || preset.SelectedFolder.String == "" {
-		return "", fmt.Errorf("preset %s has no selected_folder", presetQueryID)
-	}
-	return preset.SelectedFolder.String, nil
+	return "", fmt.Errorf("workflow %s not found in discovered manifests", presetQueryID)
 }
 
 // --- Helper: check if a setCORS-like helper already exists ---

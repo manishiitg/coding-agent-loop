@@ -24,89 +24,42 @@ import (
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
-func normalizeWorkspacePathForPresetMatch(path string) string {
-	cleaned := strings.TrimSpace(path)
-	if cleaned == "" {
-		return ""
-	}
-	return filepath.ToSlash(filepath.Clean(cleaned))
-}
-
-func (api *StreamingAPI) findPresetForWorkspace(ctx context.Context, workspacePath, userID string) (*database.PresetQuery, error) {
-	normalizedTarget := normalizeWorkspacePathForPresetMatch(workspacePath)
-	if normalizedTarget == "" {
-		return nil, nil
-	}
-
-	var (
-		presets []database.PresetQuery
-		err     error
-	)
-	if userID != "" {
-		presets, _, err = api.chatDB.ListPresetQueriesWithUser(ctx, 500, 0, userID)
-	} else {
-		presets, _, err = api.chatDB.ListPresetQueries(ctx, 500, 0)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range presets {
-		if !presets[i].SelectedFolder.Valid {
-			continue
-		}
-		presetPath := normalizeWorkspacePathForPresetMatch(presets[i].SelectedFolder.String)
-		if presetPath == normalizedTarget ||
-			strings.HasSuffix(presetPath, "/"+normalizedTarget) ||
-			strings.HasSuffix(normalizedTarget, "/"+presetPath) {
-			return &presets[i], nil
-		}
-	}
-
-	return nil, nil
-}
-
+// resolveWorkflowLLMConfigForWorkspace reads the workflow.json manifest at workspacePath
+// and extracts the LLM configuration for use in workflow execution.
 func (api *StreamingAPI) resolveWorkflowLLMConfigForWorkspace(
 	ctx context.Context,
 	workspacePath string,
 	userID string,
 ) (*todo_creation_human.AgentLLMConfig, *todo_creation_human.TieredLLMConfig, string, error) {
-	preset, err := api.findPresetForWorkspace(ctx, workspacePath, userID)
-	if err != nil {
-		return nil, nil, "", err
-	}
-
-	if preset != nil && len(preset.LLMConfig) > 0 {
-		var presetLLMConfig database.PresetLLMConfig
-		if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
-			return nil, nil, "", fmt.Errorf("failed to parse preset LLM config for workspace %s: %w", workspacePath, err)
-		}
-
-		phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+	// Try to load manifest from workspace
+	manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err == nil && exists && manifest.Capabilities.LLMConfig != nil {
+		llmCfg := manifest.Capabilities.LLMConfig
+		phaseLLM := workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
 		var tieredConfig *todo_creation_human.TieredLLMConfig
-		if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+		if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
 			tieredConfig = &todo_creation_human.TieredLLMConfig{
 				Tier1: &todo_creation_human.AgentLLMConfig{
-					Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
-					ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
-					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
+					Provider:  llmCfg.TieredConfig.Tier1.Provider,
+					ModelID:   llmCfg.TieredConfig.Tier1.ModelID,
+					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier1.Fallbacks),
 				},
 				Tier2: &todo_creation_human.AgentLLMConfig{
-					Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
-					ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
-					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
+					Provider:  llmCfg.TieredConfig.Tier2.Provider,
+					ModelID:   llmCfg.TieredConfig.Tier2.ModelID,
+					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier2.Fallbacks),
 				},
 				Tier3: &todo_creation_human.AgentLLMConfig{
-					Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
-					ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
-					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
+					Provider:  llmCfg.TieredConfig.Tier3.Provider,
+					ModelID:   llmCfg.TieredConfig.Tier3.ModelID,
+					Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier3.Fallbacks),
 				},
 			}
 		}
-
-		return phaseLLM, tieredConfig, preset.ID, nil
+		return phaseLLM, tieredConfig, manifest.ID, nil
 	}
 
+	// Fallback to server defaults
 	if api.provider != "" && api.model != "" {
 		return &todo_creation_human.AgentLLMConfig{
 			Provider: api.provider,

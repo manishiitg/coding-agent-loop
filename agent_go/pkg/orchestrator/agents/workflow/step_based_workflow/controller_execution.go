@@ -139,6 +139,74 @@ func parseStepPath(stepPath string) StepPathInfo {
 	}
 }
 
+const maxInlineFileSize = 15 * 1024  // 15 KB — inline small text files into LLM prompt
+const maxTotalInlineSize = 50 * 1024 // 50 KB — total budget across all inlined deps
+
+// isLikelyTextContent checks if content is text (not binary) by scanning for null bytes.
+func isLikelyTextContent(content string) bool {
+	checkLen := len(content)
+	if checkLen > 512 {
+		checkLen = 512
+	}
+	for i := 0; i < checkLen; i++ {
+		if content[i] == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func formatFileSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	kb := float64(bytes) / 1024.0
+	if kb < 1024 {
+		return fmt.Sprintf("%.1f KB", kb)
+	}
+	mb := kb / 1024.0
+	return fmt.Sprintf("%.1f MB", mb)
+}
+
+// formatContextDependenciesWithContent resolves context dependency paths and inlines
+// small text file contents directly into the prompt. Large or binary files are listed
+// as paths only. This saves the LLM one tool call per inlined file.
+func (hcpo *StepBasedWorkflowOrchestrator) formatContextDependenciesWithContent(
+	ctx context.Context,
+	resolvedContextDeps []string,
+	docsRoot string,
+) (string, error) {
+	if len(resolvedContextDeps) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	totalInlined := 0
+	for i, absPath := range resolvedContextDeps {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		if !filepath.IsAbs(absPath) {
+			sb.WriteString(fmt.Sprintf("**File**: `%s`\n", absPath))
+			continue
+		}
+		relPath := strings.TrimPrefix(absPath, docsRoot+"/")
+		content, readErr := hcpo.ReadWorkspaceFile(ctx, relPath)
+		if readErr != nil {
+			return "", fmt.Errorf(
+				"input file not found: %s\n(produced by a prior step — check that the previous step completed successfully)", absPath)
+		}
+
+		contentLen := len(content)
+		if contentLen <= maxInlineFileSize && totalInlined+contentLen <= maxTotalInlineSize && isLikelyTextContent(content) {
+			totalInlined += contentLen
+			sb.WriteString(fmt.Sprintf("**File**: `%s` (inlined, %s)\n<content>\n%s\n</content>\n", absPath, formatFileSize(contentLen), content))
+		} else {
+			sb.WriteString(fmt.Sprintf("**File**: `%s` (%s — read via tool)\n", absPath, formatFileSize(contentLen)))
+		}
+	}
+	return sb.String(), nil
+}
+
 func getArtifactFolderName(stepID string, stepPath string) string {
 	stepID = strings.TrimSpace(stepID)
 	if stepID != "" {
@@ -988,14 +1056,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		// Use step.GetID() as stepID for folder guard setup
-		// Check if learnings exist to determine if learnings folder should be included
-		hasLearnings := false
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
-		if err == nil {
-			hasLearnings = !learningsEmpty
-		}
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings, useKnowledgebase)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), useKnowledgebase)
 
 		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
 		if isLearnCodeMode {
@@ -1101,23 +1162,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.UnlockWorkspaceEnv()
 		}
 
-		// Add context dependencies with full absolute paths
+		// Add context dependencies with full absolute paths and inline small file contents.
+		// This validates existence (pre-flight) and inlines small text files into the prompt
+		// so the LLM doesn't waste tool calls reading them.
 		if len(resolvedContextDeps) > 0 {
-			templateVars["StepContextDependencies"] = strings.Join(resolvedContextDeps, ", ")
-
-			// Pre-flight: verify all resolved input files exist before launching any agent.
-			// A missing file means a prior step didn't produce its output — retrying this step
-			// won't fix that, so fail immediately with a clear message.
-			for _, absPath := range resolvedContextDeps {
-				if !filepath.IsAbs(absPath) {
-					continue // bare/relative — can't check via workspace API, skip
-				}
-				relPath := strings.TrimPrefix(absPath, docsRoot+"/")
-				if _, readErr := hcpo.ReadWorkspaceFile(ctx, relPath); readErr != nil {
-					return "", updatedContextFiles, fmt.Errorf(
-						"input file not found: %s\n(produced by a prior step — check that the previous step completed successfully)", absPath)
-				}
+			formattedDeps, depsErr := hcpo.formatContextDependenciesWithContent(ctx, resolvedContextDeps, docsRoot)
+			if depsErr != nil {
+				return "", updatedContextFiles, depsErr
 			}
+			templateVars["StepContextDependencies"] = formattedDeps
 		} else {
 			templateVars["StepContextDependencies"] = ""
 		}
@@ -1434,8 +1487,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				stepLearningHistory := formattedLearningHistory
 				stepMainPyRelPath := getLearnCodeDirRelPath(step.GetID(), hcpo.isEvaluationMode) + "/main.py"
 				if _, mainPyReadErr := hcpo.ReadWorkspaceFile(ctx, stepMainPyRelPath); mainPyReadErr == nil {
-					docsRoot := GetPromptDocsRoot()
-					absMainPyPath := filepath.Join(docsRoot, stepMainPyRelPath)
+					absMainPyPath := getLearnCodeScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), step.GetID(), hcpo.isEvaluationMode)
 					if stepLearningHistory != "" {
 						stepLearningHistory += "\n\n"
 					}
@@ -1576,7 +1628,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
 				// in the same conversation chain (no new agent, no system-prompt reset).
 				if isLearnCodeMode {
-					maxFixIter := 5
+					maxFixIter := 3
 					if agentCfgs := getAgentConfigs(step); agentCfgs != nil && agentCfgs.LearnCodeMaxFixIter != nil {
 						maxFixIter = *agentCfgs.LearnCodeMaxFixIter
 					}
@@ -1641,7 +1693,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 
 						if fixIter == maxFixIter {
-							// Record the failure for the outer loop
+							// Record the failure for the outer loop — include execution output
+							// so the next retry attempt knows what the script actually did
 							var errMsg string
 							if mainPyErr != nil {
 								errMsg = "main.py was not written"
@@ -1650,7 +1703,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							} else {
 								errMsg = "pre-validation could not run"
 							}
-							lastLcResult = &LearnCodeFastPathResult{RanScript: mainPyErr == nil, Success: false, Error: errMsg}
+							// Append last execution output so the next retry has full context
+							if lastRunOutput, lastRunExitCode, lastRunFound := extractLastMainPyRunOutput(executionConversationHistory, mainPyPath); lastRunFound {
+								outputSnippet := lastRunOutput
+								if len(outputSnippet) > 4000 {
+									outputSnippet = outputSnippet[:2000] + "\n... (truncated) ...\n" + outputSnippet[len(outputSnippet)-2000:]
+								}
+								errMsg = fmt.Sprintf("%s\n\nLast execution output (exit code %d):\n%s", errMsg, lastRunExitCode, outputSnippet)
+							}
+							// Use the latest main.py from execution/code/ (LLM may have rewritten it during fix loop)
+							latestScript := ""
+							if mainPyErr == nil {
+								if s, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); readErr == nil {
+									latestScript = s
+								}
+							}
+							lastLcResult = &LearnCodeFastPathResult{RanScript: mainPyErr == nil, Success: false, Error: errMsg, ExistingScript: latestScript}
 							hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, stepPath,
 								mainPyPath, false, 1, "", errMsg, fixIter, false)
 							break // exhausted fix attempts
@@ -1672,9 +1740,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							sb.WriteString("Write the complete solution to main.py there, run it, and ensure the output files are produced.")
 						} else {
 							// main.py exists but outputs are invalid
-							if actualScript, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); readErr == nil && actualScript != "" {
+							var actualScript string
+							if s, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); readErr == nil && s != "" {
+								actualScript = s
 								sb.WriteString("### Your Script\n\n```python\n")
 								sb.WriteString(actualScript)
+								sb.WriteString("\n```\n\n")
+							}
+							// Static code review: catch anti-patterns before they get saved to learnings
+							if actualScript != "" {
+								// Pass declared env vars so the review can distinguish declared vs invented vars
+								var declaredVars []string
+								if envNames := templateVars["LearnCodeEnvVarNames"]; envNames != "" {
+									declaredVars = strings.Split(envNames, "\n")
+								}
+								if codeIssues := reviewMainPyScript(actualScript, declaredVars...); len(codeIssues) > 0 {
+									sb.WriteString(fmt.Sprintf("**⚠️ Code review found %d issue(s) that MUST be fixed:**\n", len(codeIssues)))
+									for idx, issue := range codeIssues {
+										sb.WriteString(fmt.Sprintf("%d. %s\n", idx+1, issue))
+									}
+									sb.WriteString("\nThese issues will cause failures when the script is reused for other groups/users. Fix them before running.\n\n")
+									hcpo.GetLogger().Warn(fmt.Sprintf("🔍 [review-code] Found %d issue(s) in main.py for step %d", len(codeIssues), stepIndex+1))
+								}
+							}
+							// Include the last main.py execution output so the fix agent knows what happened
+							if lastRunOutput, lastRunExitCode, lastRunFound := extractLastMainPyRunOutput(executionConversationHistory, mainPyPath); lastRunFound {
+								sb.WriteString(fmt.Sprintf("**Last execution output (exit code %d):**\n```\n", lastRunExitCode))
+								// Truncate to avoid oversized prompts
+								if len(lastRunOutput) > 8000 {
+									sb.WriteString(lastRunOutput[:4000])
+									sb.WriteString("\n... (truncated) ...\n")
+									sb.WriteString(lastRunOutput[len(lastRunOutput)-4000:])
+								} else {
+									sb.WriteString(lastRunOutput)
+								}
 								sb.WriteString("\n```\n\n")
 							}
 							if fixPreValResults != nil {
@@ -1711,14 +1810,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 						}
 
-						// Continue the same conversation: inject validation feedback as a user turn
+						// Inject validation feedback as a user turn.
+						// When the repair agent was upgraded (different provider/model), start a fresh
+						// conversation — the old history may be from a different provider format and
+						// the feedback message already contains the script + execution output context.
 						if ba := executionAgent.GetBaseAgent(); ba != nil {
 							systemPrompt := ""
 							if learnCodeRepairSystemPrompt != "" {
 								systemPrompt = learnCodeRepairSystemPrompt
 								learnCodeRepairSystemPrompt = ""
 							}
-							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, executionConversationHistory, systemPrompt, false)
+							historyForRepair := executionConversationHistory
+							if learnCodeRepairAgentUpgraded {
+								// Fresh conversation — don't pass cross-provider history
+								historyForRepair = nil
+							}
+							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, historyForRepair, systemPrompt, false)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] agent error during fix attempt %d: %v", fixIter+1, err))
 								break
@@ -1731,11 +1838,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// The saved learnings script already failed — any LLM-produced script is a
 					// newer attempt and likely better. Save it to learnings regardless of success
 					// so the next run starts from the latest version, not the known-broken one.
+					// BUT: don't save scripts with syntax errors — those are definitely worse.
 					if mainPyRelCheck := stepExecutionPath + "/code/main.py"; true {
-						if _, checkErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelCheck); checkErr == nil {
-							hcpo.saveLearnCodeScriptToLearnings(step, toAbsPath(stepExecutionPath))
-							hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved LLM-produced main.py to learnings for step %d (replaces known-broken version)", stepIndex+1))
-							learnCodeScriptNeedsSaving = false // already saved, don't duplicate later
+						if scriptContent, checkErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelCheck); checkErr == nil && scriptContent != "" {
+							// Quick syntax check: run python3 -c "compile(...)" to catch syntax errors
+							hasSyntaxError := false
+							if lastLcResult != nil && !lastLcResult.Success && lastLcResult.Error != "" {
+								if strings.Contains(lastLcResult.Error, "SyntaxError") {
+									hasSyntaxError = true
+								}
+							}
+							if hasSyntaxError {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] NOT saving main.py to learnings for step %d — script has syntax errors", stepIndex+1))
+							} else {
+								hcpo.saveLearnCodeScriptToLearnings(step, toAbsPath(stepExecutionPath))
+								hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved LLM-produced main.py to learnings for step %d (replaces known-broken version)", stepIndex+1))
+								learnCodeScriptNeedsSaving = false // already saved, don't duplicate later
+							}
 						}
 					}
 

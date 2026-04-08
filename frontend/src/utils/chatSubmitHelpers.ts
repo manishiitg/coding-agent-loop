@@ -115,8 +115,7 @@ export function buildQueryRequestPayload(params: {
     const presetStore = useGlobalPresetStore.getState()
     const presetId = presetStore.activePresetIds.workflow
     const preset = presetId
-      ? presetStore.customPresets.find(p => p.id === presetId)
-        || presetStore.predefinedPresets.find(p => p.id === presetId)
+      ? presetStore.workflowPresets.find(p => p.id === presetId)
       : null
     if (preset?.llmConfig?.enable_context_editing === false) {
       enableContextEditing = false

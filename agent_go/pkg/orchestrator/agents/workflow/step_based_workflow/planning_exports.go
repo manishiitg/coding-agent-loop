@@ -647,19 +647,19 @@ func RegisterRunFullEvaluationTool(
 			"properties": map[string]interface{}{
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "The iteration folder name (e.g., 'iteration-1', 'iteration-27'). This is the top-level run folder under runs/.",
+					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
 					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces'). Required for grouped/batch workflows where each group has its own execution folder.",
 				},
 			},
-			"required": []string{"iteration", "group_id"},
+			"required": []string{"group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration, _ := args["iteration"].(string)
 			if iteration == "" {
-				return "iteration is required", nil
+				iteration = "iteration-0"
 			}
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
@@ -793,19 +793,19 @@ func RegisterRunFullReportTool(
 			"properties": map[string]interface{}{
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "The iteration folder name (e.g., 'iteration-1', 'iteration-27').",
+					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
 					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish'). Required — reports are always group-scoped.",
 				},
 			},
-			"required": []string{"iteration", "group_id"},
+			"required": []string{"group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration, _ := args["iteration"].(string)
 			if iteration == "" {
-				return "iteration is required", nil
+				iteration = "iteration-0"
 			}
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
@@ -1081,7 +1081,7 @@ func RegisterRunFullWorkflowTool(
 			"properties": map[string]interface{}{
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name (e.g., 'iteration-1', 'iteration-28'). Required. Reuses the folder if it exists, creates it if not.",
+					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted. Reuses the folder if it exists, creates it if not.",
 				},
 				"execution_strategy": map[string]interface{}{
 					"type":        "string",
@@ -1100,7 +1100,7 @@ func RegisterRunFullWorkflowTool(
 					},
 				},
 			},
-			"required": []string{"iteration", "group_id"},
+			"required": []string{"group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cfg := session.config
@@ -1108,13 +1108,10 @@ func RegisterRunFullWorkflowTool(
 				return "session config not available — cannot create workflow controller", nil
 			}
 
-			// Parse required parameters
-			iteration := ""
+			// Parse parameters — iteration defaults to "iteration-0"
+			iteration := "iteration-0"
 			if it, ok := args["iteration"].(string); ok && it != "" {
 				iteration = it
-			}
-			if iteration == "" {
-				return "iteration is required (e.g., 'iteration-1', 'iteration-28').", nil
 			}
 
 			strategy := "start_from_beginning_no_human"
@@ -1209,8 +1206,15 @@ func RegisterRunFullWorkflowTool(
 			session.StepRegistry.Register(exec)
 
 			// Notify workshop execution notifier so frontend keeps polling
+			// Include group and iteration in display name so notifications are unambiguous
+			workflowDisplayName := "full-workflow"
+			if len(enabledGroupIDs) > 0 && iteration != "" {
+				workflowDisplayName = fmt.Sprintf("full-workflow [%s / %s]", enabledGroupIDs[0], iteration)
+			} else if len(enabledGroupIDs) > 0 {
+				workflowDisplayName = fmt.Sprintf("full-workflow [%s]", enabledGroupIDs[0])
+			}
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "full-workflow", Cancel: cancel})
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: workflowDisplayName, Cancel: cancel})
 			}
 
 			go func() {

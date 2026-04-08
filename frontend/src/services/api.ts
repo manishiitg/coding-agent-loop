@@ -12,10 +12,6 @@ import type {
   GetSessionEventsResponse,
   CreateChatSessionRequest,
   UpdateChatSessionRequest,
-  PresetQuery,
-  CreatePresetQueryRequest,
-  UpdatePresetQueryRequest,
-  ListPresetQueriesResponse,
   WorkflowStatusResponse,
   WorkflowConstantsResponse,
   WorkflowSelectedOptions,
@@ -75,10 +71,6 @@ export type {
   GetSessionEventsResponse,
   CreateChatSessionRequest,
   UpdateChatSessionRequest,
-  PresetQuery,
-  CreatePresetQueryRequest,
-  UpdatePresetQueryRequest,
-  ListPresetQueriesResponse,
   WorkflowStatusResponse,
   WorkflowConstantsResponse,
   GetActiveSessionsResponse,
@@ -969,33 +961,6 @@ export const agentApi = {
       params: { limit, offset }
     })
     return response.data
-  },
-
-  // Preset Query API
-  getPresetQueries: async (limit: number = 50, offset: number = 0): Promise<ListPresetQueriesResponse> => {
-    const response = await api.get('/api/chat-history/presets', {
-      params: { limit, offset }
-    })
-    return response.data
-  },
-
-  getPresetQuery: async (id: string): Promise<PresetQuery> => {
-    const response = await api.get(`/api/chat-history/presets/${id}`)
-    return response.data
-  },
-
-  createPresetQuery: async (request: CreatePresetQueryRequest): Promise<PresetQuery> => {
-    const response = await api.post('/api/chat-history/presets', request)
-    return response.data
-  },
-
-  updatePresetQuery: async (id: string, request: UpdatePresetQueryRequest): Promise<PresetQuery> => {
-    const response = await api.put(`/api/chat-history/presets/${id}`, request)
-    return response.data
-  },
-
-  deletePresetQuery: async (id: string): Promise<void> => {
-    await api.delete(`/api/chat-history/presets/${id}`)
   },
 
   // Workflow API

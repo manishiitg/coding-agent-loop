@@ -141,7 +141,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 }) => {
   const { completeInitialSetup } = useModeStore()
   const { getActivePreset, applyPreset } = usePresetApplication()
-  const { customPresets } = usePresetManagement()
+  const { workflowPresets } = usePresetManagement()
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
@@ -201,7 +201,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   const handlePresetSelected = (presetId: string) => {
     if (pendingModeCategory) {
       // Find the preset object to apply properly
-      const preset = customPresets.find(p => p.id === presetId)
+      const preset = workflowPresets.find(p => p.id === presetId)
       
       if (preset) {
         // Use applyPreset to properly apply all preset configurations

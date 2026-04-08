@@ -29,16 +29,6 @@ type Database interface {
 	GetEventsByCorrelationID(ctx context.Context, sessionID string, correlationID string, limit, offset int) ([]Event, error)
 	CountEventsBySession(ctx context.Context, sessionID string) (int, error)
 
-	// Preset query management
-	// userID parameter is used for isolation in multi-user mode
-	CreatePresetQuery(ctx context.Context, req *CreatePresetQueryRequest) (*PresetQuery, error)
-	CreatePresetQueryWithUser(ctx context.Context, req *CreatePresetQueryRequest, userID string) (*PresetQuery, error)
-	GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error)
-	UpdatePresetQuery(ctx context.Context, id string, req *UpdatePresetQueryRequest) (*PresetQuery, error)
-	DeletePresetQuery(ctx context.Context, id string) error
-	ListPresetQueries(ctx context.Context, limit, offset int) ([]PresetQuery, int, error)
-	ListPresetQueriesWithUser(ctx context.Context, limit, offset int, userID string) ([]PresetQuery, int, error)
-
 	// Bot connector config management
 	UpsertBotConnectorConfig(ctx context.Context, req *CreateBotConnectorConfigRequest) (*BotConnectorConfig, error)
 	GetBotConnectorConfig(ctx context.Context, id string) (*BotConnectorConfig, error)

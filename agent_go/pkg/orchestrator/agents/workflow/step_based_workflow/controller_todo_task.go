@@ -315,11 +315,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"StepTitle":           ResolveVariables(step.GetTitle(), hcpo.variableValues),
 		"StepDescription":     ResolveVariables(step.GetDescription(), hcpo.variableValues),
 		"StepSuccessCriteria": "",
-		"StepContextDependencies": strings.Join(hcpo.resolveDependencyPathsWithWorkspace(
-			ctx,
-			ResolveVariablesArray(previousContextFiles, hcpo.variableValues),
-			stepIndex, stepPath, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
-		), ", "),
+		"StepContextDependencies": func() string {
+			resolvedDeps := hcpo.resolveDependencyPathsWithWorkspace(
+				ctx,
+				ResolveVariablesArray(previousContextFiles, hcpo.variableValues),
+				stepIndex, stepPath, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
+			)
+			formatted, err := hcpo.formatContextDependenciesWithContent(ctx, resolvedDeps, docsRoot)
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to inline context deps for todo task step: %v", err))
+				return strings.Join(resolvedDeps, ", ")
+			}
+			return formatted
+		}(),
 		"WorkspacePath":         filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath()),
 		"ExecutionFolderPath":   filepath.Join(docsRoot, fgExecPath),
 		"DownloadsPath":         filepath.Join(docsRoot, fgExecPath, "Downloads"),

@@ -15,19 +15,17 @@ type DiffPatchWorkspaceFileParams struct {
 }
 
 // DiffPatchWorkspaceFile applies a unified diff patch to a file
-func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWorkspaceFileParams) (string, error) {
+func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWorkspaceFileParams) (DiffPatchResult, error) {
 	if params.Filepath == "" {
-		return "", fmt.Errorf("filepath is required")
+		return DiffPatchResult{}, fmt.Errorf("filepath is required")
 	}
 	if params.Diff == "" {
-		return "", fmt.Errorf("diff is required")
+		return DiffPatchResult{}, fmt.Errorf("diff is required")
 	}
 
 	// Validate path against folder guard (write operation).
-	// Use ValidatePathWithContext to enforce session-scoped restrictions
-	// (e.g., planning/ read-only in workflow builder mode).
 	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
-		return "", err
+		return DiffPatchResult{}, err
 	}
 
 	// Build API URL for diff patching
@@ -40,39 +38,36 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
+		return DiffPatchResult{}, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "PATCH", apiURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return DiffPatchResult{}, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to call workspace API: %w", err)
+		return DiffPatchResult{}, fmt.Errorf("failed to call workspace API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := readResponseBody(resp)
 	if err != nil {
-		return "", err
+		return DiffPatchResult{}, err
 	}
 
 	var apiResp APIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return "", fmt.Errorf("failed to parse API response: %w", err)
+		return DiffPatchResult{}, fmt.Errorf("failed to parse API response: %w", err)
 	}
 
 	if !apiResp.Success {
-		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+		return DiffPatchResult{}, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	responseData, err := json.Marshal(apiResp.Data)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal API response: %w", err)
-	}
-
-	return string(responseData), nil
+	return DiffPatchResult{
+		Data: apiResp.Data,
+	}, nil
 }

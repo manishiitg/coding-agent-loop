@@ -47,8 +47,8 @@ func TestExecuteShellCommand_RewritesGeminiRelativePathsFromSession(t *testing.T
 	if err != nil {
 		t.Fatalf("ExecuteShellCommand returned error: %v", err)
 	}
-	if result == "" {
-		t.Fatalf("expected formatted response, got empty string")
+	if result.Stdout == "" && result.Stderr == "" {
+		t.Fatalf("expected non-empty response, got empty ShellCommandResult")
 	}
 
 	expectedCommand := "cat " + geminiProjectDirPath(projectDirID) + "/.gemini/policies/restrict-tools.toml"

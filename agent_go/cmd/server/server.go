@@ -1026,9 +1026,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs", getDelegationLogsHandler(chatDB)).Methods("GET")
 	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs/{delegation_id}/events", getDelegationEventsHandler(chatDB)).Methods("GET")
 
-	// Preset Queries API routes
-	PresetQueryRoutes(router, chatDB)
-
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api, chatDB)
 
@@ -1170,7 +1167,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflows/manifest", api.handleUpdateWorkflowManifest).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleDeleteWorkflowManifest).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest/duplicate", api.handleDuplicateWorkflowManifest).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/migrate", api.handleMigrateWorkflowsToManifests).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -3656,6 +3652,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
 		workspaceAccessEnabledForChat := false
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
+
+		// Extract #workflow read-only folders early — needed both inside isChatMode block
+		// (for folder guard setup) and in the workflow_phase block (for shell isolator).
+		_, workflowReadOnlyFolders := collectSplitFolderGuardFolders(req.Query, req.WorkflowContextPaths)
+
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
@@ -3771,12 +3772,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
 
-				// Merge @context file paths and #workflow references into additional folder-guard access.
-				// #workflow paths arrive separately in workflow_context_paths, so they must be added here
-				// or the prompt can mention a workflow while shell/file tools still cannot access it.
-				fileContextFolders := collectAdditionalFolderGuardFolders(req.Query, req.WorkflowContextPaths)
-				if len(fileContextFolders) > 0 {
-					log.Printf("[FILE CONTEXT] Extracted additional folder-guard paths from @context/#workflow: %v", fileContextFolders)
+				// Merge @context file paths into additional folder-guard write access.
+				// workflowReadOnlyFolders was computed above (before enableWorkspaceAccess block).
+				fileContextWriteFolders := extractFileContextWriteFolders(req.Query)
+				if len(fileContextWriteFolders) > 0 {
+					log.Printf("[FILE CONTEXT] Extracted write folder-guard paths from @context: %v", fileContextWriteFolders)
+				}
+				if len(workflowReadOnlyFolders) > 0 {
+					log.Printf("[FILE CONTEXT] Extracted read-only folder-guard paths from #workflow: %v", workflowReadOnlyFolders)
 				}
 
 				// Workflow phase: grant write access only to specific subfolders within the workflow folder.
@@ -3785,7 +3788,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if isWorkflowPhase && workflowPhaseFolder != "" {
 					workflowWriteSubfolders := []string{"knowledgebase/", "execution/", "learnings/", "scripts/", "runs/"}
 					for _, sub := range workflowWriteSubfolders {
-						fileContextFolders = append(fileContextFolders, workflowPhaseFolder+"/"+sub)
+						fileContextWriteFolders = append(fileContextWriteFolders, workflowPhaseFolder+"/"+sub)
 					}
 					log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access restricted to subfolders of %s: %v", workflowPhaseFolder, workflowWriteSubfolders)
 				}
@@ -3801,14 +3804,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if hasSubAgentCreator {
 						additionalFolders = append(additionalFolders, "subagents/custom/")
 					}
-					additionalFolders = append(additionalFolders, fileContextFolders...)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, virtualtools.PlanFileFolderPath, additionalFolders...)
+					additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, virtualtools.PlanFileFolderPath, workflowReadOnlyFolders, additionalFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "")
+					readPaths := append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/", "Workflow/", "config/", "memories/"}, additionalFolders...)
+					readPaths = append(readPaths, workflowReadOnlyFolders...)
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/", "Workflow/", "config/", "memories/"}, additionalFolders...),
+						readPaths,
 						append([]string{virtualtools.PlanFileFolderPath + "/", "Downloads/", "config/", "memories/"}, additionalFolders...),
 					)
-					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (additional: %v)", virtualtools.PlanFileFolderPath, additionalFolders)
+					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (write: %v, read-only: %v)", virtualtools.PlanFileFolderPath, additionalFolders, workflowReadOnlyFolders)
 				} else {
 					extraFolders := []string{"config/"}
 					if hasSkillCreator {
@@ -3817,14 +3822,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if hasSubAgentCreator {
 						extraFolders = append(extraFolders, "subagents/custom/")
 					}
-					extraFolders = append(extraFolders, fileContextFolders...)
-					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
+					extraFolders = append(extraFolders, fileContextWriteFolders...)
+					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "")
+					readPaths := append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...)
+					readPaths = append(readPaths, workflowReadOnlyFolders...)
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...),
+						readPaths,
 						append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
 					)
-					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
+					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction (read-only: %v)", extraFolders, workflowReadOnlyFolders)
 				}
 
 				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
@@ -3895,21 +3902,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
-					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
+					// Apply same folder guard as workspace tools (reuse fileContextWriteFolders/workflowReadOnlyFolders from above)
 					if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 						additionalFolders := []string{}
 						if hasSkillCreator {
 							additionalFolders = append(additionalFolders, "skills/custom/")
 						}
-						additionalFolders = append(additionalFolders, fileContextFolders...)
-						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, virtualtools.PlanFileFolderPath, additionalFolders...)
+						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, virtualtools.PlanFileFolderPath, workflowReadOnlyFolders, additionalFolders...)
 					} else {
 						browserExtraFolders := []string{}
 						if hasSkillCreator {
 							browserExtraFolders = append(browserExtraFolders, "skills/custom/")
 						}
-						browserExtraFolders = append(browserExtraFolders, fileContextFolders...)
-						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, browserExtraFolders...)
+						browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
+						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
 					}
 					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools (delegation_mode: %s)", req.DelegationMode)
 
@@ -4512,10 +4519,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if phaseWorkspacePath != "" && phaseWorkspacePath != "default_workspace" {
 					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
 					// Restrict shell commands to the workflow folder via Isolator
+					// Include #workflow read-only paths so the builder can read referenced workflows
+					phaseReadPaths := []string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"}
+					phaseReadPaths = append(phaseReadPaths, workflowReadOnlyFolders...)
 					workspace.SetSessionFolderGuard(sessionID,
-						[]string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"},
+						phaseReadPaths,
 						[]string{phaseWorkspacePath, "Downloads"},
 					)
+					if len(workflowReadOnlyFolders) > 0 {
+						log.Printf("[WORKFLOW_PHASE] Added read-only access for #workflow references: %v", workflowReadOnlyFolders)
+					}
 				}
 
 				// Create workspace client for reading plan.json and variables.json
@@ -4530,11 +4543,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						return "", err
 					}
-					var data virtualtools.WorkspaceFileContent
-					if err := json.Unmarshal([]byte(result), &data); err != nil {
-						return "", err
-					}
-					return data.Content, nil
+					return result.Content, nil
 				}
 
 				// writeFile closure: writes content to workspace
@@ -4812,6 +4821,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 						}
+					}
+				}
+
+				// Re-append workflow context prompt for #workflow references
+				// (was wiped by ClearAppendedSystemPrompts above)
+				if len(req.WorkflowContextPaths) > 0 {
+					workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
+					if workflowPrompt != "" {
+						underlyingAgent.AppendSystemPrompt(workflowPrompt)
+						log.Printf("[WORKFLOW_PHASE] Re-appended workflow context prompt (%d workflows) after system prompt override", len(req.WorkflowContextPaths))
 					}
 				}
 
@@ -7877,9 +7896,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 
 			// Merge parent @context paths and #workflow references into delegated folder-guard access.
-			fileContextFolders := collectAdditionalFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
-			if len(fileContextFolders) > 0 {
-				log.Printf("[DELEGATION] Extracted additional folder-guard paths from parent @context/#workflow: %v", fileContextFolders)
+			// @context paths get write access; #workflow paths get read-only access.
+			fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
+			if len(fileContextWriteFolders) > 0 {
+				log.Printf("[DELEGATION] Extracted write folder-guard paths from parent @context: %v", fileContextWriteFolders)
+			}
+			if len(workflowReadOnlyFolders) > 0 {
+				log.Printf("[DELEGATION] Extracted read-only folder-guard paths from parent #workflow: %v", workflowReadOnlyFolders)
 			}
 
 			// Apply folder guards
@@ -7895,14 +7918,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				if hasSubAgentCreator {
 					additionalFolders = append(additionalFolders, "subagents/custom/")
 				}
-				additionalFolders = append(additionalFolders, fileContextFolders...)
-				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
+				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, workflowReadOnlyFolders, additionalFolders...)
 				workspace.SetSessionWorkingDir(sessionID, planFolder+"/")
+				readPaths := append([]string{planFolder + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...)
+				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
-					append([]string{planFolder + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
+					readPaths,
 					append([]string{planFolder + "/", "Downloads/"}, additionalFolders...),
 				)
-				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
+				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/ (read-only: %v)", planFolder, workflowReadOnlyFolders)
 			} else {
 				extraFolders := []string{"config/"}
 				if hasSkillCreator {
@@ -7911,11 +7936,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				if hasSubAgentCreator {
 					extraFolders = append(extraFolders, "subagents/custom/")
 				}
-				extraFolders = append(extraFolders, fileContextFolders...)
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
+				extraFolders = append(extraFolders, fileContextWriteFolders...)
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "")
+				readPaths := append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...)
+				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
-					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...),
+					readPaths,
 					append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
 				)
 			}
@@ -7967,8 +7994,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				if hasSkillCreator {
 					browserExtraFolders = append(browserExtraFolders, "skills/custom/")
 				}
-				browserExtraFolders = append(browserExtraFolders, fileContextFolders...)
-				browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, browserExtraFolders...)
+				browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
+				browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
 
 				for _, tool := range browserTools {
 					if tool.Function == nil {
@@ -9654,7 +9681,7 @@ func resolveLatestRunFolder(ctx context.Context, workspacePath string, wsClient 
 	}
 
 	// Parse response using shared helper that handles all known formats
-	parsed, parseErr := virtualtools.ParseWorkspaceFilesList(resp)
+	parsed, parseErr := virtualtools.ParseWorkspaceFilesList(string(resp.Raw))
 	if parseErr != nil {
 		return ""
 	}

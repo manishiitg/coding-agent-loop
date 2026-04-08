@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -219,6 +220,188 @@ func detectSuccessfulLLMLearnCodeSelfRun(history []llmtypes.MessageContent, main
 	}
 }
 
+// extractLastMainPyRunOutput returns the output from the last execution of main.py
+// in the conversation history, regardless of exit code. This is used to provide
+// execution context to repair agents that start with a fresh conversation.
+func extractLastMainPyRunOutput(history []llmtypes.MessageContent, mainPyAbsPath string) (output string, exitCode int, found bool) {
+	type shellCall struct {
+		command string
+	}
+	pendingShellCalls := map[string]shellCall{}
+	var lastOutput string
+	var lastExitCode int
+	lastFound := false
+
+	for _, msg := range history {
+		switch msg.Role {
+		case llmtypes.ChatMessageTypeAI:
+			for _, part := range msg.Parts {
+				toolCall, ok := part.(llmtypes.ToolCall)
+				if !ok || toolCall.FunctionCall == nil {
+					continue
+				}
+				switch toolCall.FunctionCall.Name {
+				case "execute_shell_command", "mcp_api-bridge_execute_shell_command":
+					command := parseExecuteShellCommandArgs(toolCall.FunctionCall.Arguments)
+					pendingShellCalls[toolCall.ID] = shellCall{command: command}
+				}
+			}
+		case llmtypes.ChatMessageTypeTool:
+			for _, part := range msg.Parts {
+				toolResp, ok := part.(llmtypes.ToolCallResponse)
+				if !ok {
+					continue
+				}
+				call, exists := pendingShellCalls[toolResp.ToolCallID]
+				if !exists {
+					continue
+				}
+				if strings.Contains(call.command, "python3 "+shellQuotePath(mainPyAbsPath)) ||
+					strings.Contains(call.command, "python3 "+mainPyAbsPath) {
+					stdout, stderr, ec, ok := parseExecuteShellCommandResult(toolResp.Content)
+					if !ok {
+						continue
+					}
+					combined := strings.TrimSpace(stdout)
+					if strings.TrimSpace(stderr) != "" {
+						if combined != "" {
+							combined += "\n"
+						}
+						combined += strings.TrimSpace(stderr)
+					}
+					lastOutput = combined
+					lastExitCode = ec
+					lastFound = true
+				}
+			}
+		}
+	}
+
+	return lastOutput, lastExitCode, lastFound
+}
+
+// reviewMainPyScript performs static analysis on a main.py script to catch common
+// anti-patterns that would cause failures when the script is reused across groups.
+// declaredEnvVars is the list of env var names actually available to the script (e.g. VAR_USER_ID, SECRET_PASSWORD).
+// If nil, the VAR_*/SECRET_* check is skipped (can't distinguish declared vs invented vars).
+// Returns a list of human-readable issues. Empty list means the script looks clean.
+func reviewMainPyScript(script string, declaredEnvVars ...string) []string {
+	var issues []string
+	lines := strings.Split(script, "\n")
+
+	// Build set of declared env vars for quick lookup
+	declaredSet := map[string]bool{}
+	for _, v := range declaredEnvVars {
+		declaredSet[v] = true
+	}
+
+	// Precompile patterns
+	reHardcodedRunPath := regexp.MustCompile(`['"]/?app/workspace-docs/.*/runs/iteration-\d+/[^/'"]*/execution`)
+	reHardcodedWorkspacePath := regexp.MustCompile(`['"]/?app/workspace-docs/[^'"]{20,}['"]`)
+	reEnvGetWithDefault := regexp.MustCompile(`os\.environ\.get\(\s*['"][^'"]+['"]\s*,\s*['"][^'"]+['"]\s*\)`)
+	reEnvGetVarName := regexp.MustCompile(`os\.environ\.get\(\s*['"]((?:VAR_|SECRET_)[^'"]+)['"]\s*,\s*['"][^'"]+['"]\s*\)`)
+	reSiblingStepPath := regexp.MustCompile(`/execution/[a-z][\w-]+/`)
+	reStepOutputDirUsed := regexp.MustCompile(`os\.environ\[['"]STEP_OUTPUT_DIR['"]\]|STEP_OUTPUT_DIR`)
+	reStepExecDirUsed := regexp.MustCompile(`os\.environ\[['"]STEP_EXECUTION_DIR['"]\]|STEP_EXECUTION_DIR`)
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip comments
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		lineNum := i + 1
+
+		// Check 1: Hardcoded execution paths with group names
+		if reHardcodedRunPath.MatchString(line) {
+			issues = append(issues, fmt.Sprintf(
+				"Line %d: Hardcoded execution path with group name. Use `os.environ['STEP_EXECUTION_DIR']` instead. Found: %s",
+				lineNum, strings.TrimSpace(line)))
+		}
+
+		// Check 2: os.environ.get with hardcoded fallback for VAR_*/SECRET_* — only flag if the var is actually declared
+		if matches := reEnvGetVarName.FindStringSubmatch(line); len(matches) > 1 {
+			varName := matches[1]
+			if len(declaredSet) > 0 && declaredSet[varName] {
+				// Declared variable used with fallback — should use os.environ['KEY'] instead
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Using os.environ.get() with hardcoded fallback for declared variable %s. Use `os.environ['%s']` (no default) so missing vars fail loudly. Found: %s",
+					lineNum, varName, varName, strings.TrimSpace(line)))
+			}
+			// If not in declaredSet, the script invented this var — don't flag it
+		}
+
+		// Check 3: os.environ.get with any hardcoded default (weaker signal, only flag for known env vars)
+		if !reEnvGetVarName.MatchString(line) && reEnvGetWithDefault.MatchString(line) {
+			// Check if it's for a known step env var
+			if strings.Contains(line, "STEP_OUTPUT_DIR") || strings.Contains(line, "STEP_EXECUTION_DIR") ||
+				strings.Contains(line, "MCP_API_URL") || strings.Contains(line, "MCP_API_TOKEN") {
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Using os.environ.get() with fallback for a required env var. Use `os.environ['KEY']` instead. Found: %s",
+					lineNum, strings.TrimSpace(line)))
+			}
+		}
+	}
+
+	// Check 4: Script references sibling step folders but doesn't use STEP_EXECUTION_DIR
+	hasSiblingRef := false
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if reSiblingStepPath.MatchString(line) && !strings.Contains(line, "STEP_OUTPUT_DIR") && !strings.Contains(line, "STEP_EXECUTION_DIR") {
+			hasSiblingRef = true
+			break
+		}
+	}
+	if hasSiblingRef && !reStepExecDirUsed.MatchString(script) {
+		issues = append(issues, "Script references sibling step folders via hardcoded paths. Use `os.environ['STEP_EXECUTION_DIR']` to build paths to other steps (e.g., `os.path.join(os.environ['STEP_EXECUTION_DIR'], 'other-step/output.json')`).")
+	}
+
+	// Check 5: Long hardcoded workspace paths (even if not matching the run pattern)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if reHardcodedWorkspacePath.MatchString(line) && !reHardcodedRunPath.MatchString(line) {
+			// Only flag if not using an env var on the same line
+			if !reStepOutputDirUsed.MatchString(line) && !reStepExecDirUsed.MatchString(line) {
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Long hardcoded workspace path detected. Derive paths from environment variables (STEP_OUTPUT_DIR, STEP_EXECUTION_DIR) instead. Found: %s",
+					i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+
+	// Check 6: Script writes output but doesn't use STEP_OUTPUT_DIR
+	reOpenWrite := regexp.MustCompile(`open\s*\(\s*['"][^'"]+['"].*['"]w['"]`)
+	hasWriteWithoutEnv := false
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if reOpenWrite.MatchString(line) && !reStepOutputDirUsed.MatchString(line) && !strings.Contains(line, "output_dir") && !strings.Contains(line, "OUTPUT_DIR") {
+			hasWriteWithoutEnv = true
+			break
+		}
+	}
+	if hasWriteWithoutEnv && !reStepOutputDirUsed.MatchString(script) {
+		issues = append(issues, "Script writes files but never references STEP_OUTPUT_DIR. Output files must be written to `os.environ['STEP_OUTPUT_DIR']`.")
+	}
+
+	// Check 7: Script has sys.argv references but builds sibling paths manually instead
+	reSysArgv := regexp.MustCompile(`sys\.argv\[`)
+	reManualSiblingPath := regexp.MustCompile(`os\.path\.join\s*\(.*execution.*,\s*['"][a-z][\w-]+`)
+	if reSysArgv.MatchString(script) && reManualSiblingPath.MatchString(script) {
+		issues = append(issues, "Script receives input via sys.argv but also constructs manual paths to sibling step folders. Read ALL input data from sys.argv — do not build sibling paths manually. If you need additional input, add it as a context_dependency in the plan.")
+	}
+
+	return issues
+}
+
 // getLearnCodeDirRelPath returns the learnings subdirectory (relative to workspace root).
 func getLearnCodeDirRelPath(stepID string, isEvalMode bool) string {
 	if isEvalMode {
@@ -367,15 +550,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveLearnCodeShellGuard(
 		}
 	}
 
-	hasLearnings := false
-	learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
-	if err == nil {
-		hasLearnings = !learningsEmpty
-	} else {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted_code] Failed to inspect learnings folder for shell guard on step %d: %v", stepIndex+1, err))
-	}
-
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings, useKnowledgebase)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), useKnowledgebase)
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}
@@ -429,18 +604,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	includeCodeDir := workDirRel == stepExecutionRelPath+"/code"
 	guard := hcpo.resolveLearnCodeShellGuard(ctx, step, stepIndex, stepPath, stepExecutionRelPath, includeCodeDir)
 
-	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR.
+	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR and STEP_EXECUTION_DIR.
+	stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
 	extraEnv := map[string]string{
 		"STEP_OUTPUT_DIR":         stepOutputAbsPath,
+		"STEP_EXECUTION_DIR":     stepExecutionAbsPath,
 		"PYTHONDONTWRITEBYTECODE": "1",
 		"SCRIPT_VERBOSE":          "1", // Enable verbose logging in scripts — stdout is only read on failure
 	}
 	if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
 		hcpo.LockWorkspaceEnv()
 		for k, v := range envRef {
-			if k == "STEP_OUTPUT_DIR" {
-				// Never let the shared workspace env override the per-step output folder.
-				// STEP_OUTPUT_DIR is execution-specific and can leak across concurrently
+			if k == "STEP_OUTPUT_DIR" || k == "STEP_EXECUTION_DIR" {
+				// Never let the shared workspace env override the per-step folders.
+				// These are execution-specific and can leak across concurrently
 				// running steps if read from the shared env map.
 				continue
 			}
@@ -625,6 +802,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		if execScript, readErr := hcpo.ReadWorkspaceFile(ctx, execMainPyRelPath); readErr == nil {
 			existingScript = execScript
 		}
+	}
+
+	// Static code review before execution — catch anti-patterns that would fail on reuse
+	codeIssues := reviewMainPyScript(existingScript)
+	if len(codeIssues) > 0 {
+		hcpo.GetLogger().Warn(fmt.Sprintf("🔍 [review-code] Saved script for step %d (%s) has %d issue(s) — skipping fast path, falling back to LLM for fix", stepIndex+1, stepID, len(codeIssues)))
+		var issueReport strings.Builder
+		issueReport.WriteString("Static code review found issues that must be fixed:\n")
+		for idx, issue := range codeIssues {
+			issueReport.WriteString(fmt.Sprintf("%d. %s\n", idx+1, issue))
+		}
+		return &LearnCodeFastPathResult{
+			RanScript:      true,
+			Success:        false,
+			ExitCode:       -1,
+			Error:          issueReport.String(),
+			ExistingScript: existingScript,
+			FailureReason:  "execution_error",
+		}
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [review-code] Saved script for step %d (%s) passed static analysis", stepIndex+1, stepID))
 	}
 
 	// Run from execution/code/ — same location the LLM writes to
@@ -959,7 +1157,8 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString("- **LOGGING**: Use `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'` and guard debug prints with `if VERBOSE:`. Log state before/after each major action. For browser automation: print the snapshot/page state after each navigation and interaction so failures show exactly what the page looked like. The only way to debug a failed script is through its stdout.\n")
 	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
-	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n\n")
+	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n")
+	sb.WriteString("- **ROBUSTNESS**: This script runs across different groups/users with different data. Handle edge cases: missing fields (use `.get()` with safe defaults for data fields), empty lists, None values, different data formats (e.g. dates as string vs number), missing files (check existence before reading optional files). Always print diagnostic context before failing so the error output explains what went wrong. Do not assume the shape of external data — validate and handle gracefully.\n\n")
 
 	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
 	if len(varMappingLines) > 0 {
@@ -983,6 +1182,7 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 			sb.WriteString(fmt.Sprintf("- `sys.argv[%d]` = `%s`\n", i+1, arg))
 		}
 		sb.WriteString("\n")
+		sb.WriteString("**CRITICAL**: Read ALL input data from `sys.argv` — these are the declared dependencies from upstream steps. Do NOT construct paths to sibling step folders manually (e.g. do NOT build paths like `execution/login-step/output.json`). The controller resolves the correct paths per group/iteration and passes them as positional arguments. If you need data that isn't in sys.argv, add it as a context_dependency in the plan — don't hardcode paths.\n\n")
 	} else {
 		sb.WriteString("- No positional arguments — script takes no inputs\n\n")
 	}
@@ -994,6 +1194,9 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 		shown := map[string]bool{}
 		sb.WriteString(fmt.Sprintf("- `STEP_OUTPUT_DIR` = `%s`  (write output files here)\n", stepOutputAbsPath))
 		shown["STEP_OUTPUT_DIR"] = true
+		stepExecutionDir := filepath.Dir(stepOutputAbsPath)
+		sb.WriteString(fmt.Sprintf("- `STEP_EXECUTION_DIR` = `%s`  (parent execution folder — only use as fallback when data is not available via sys.argv)\n", stepExecutionDir))
+		shown["STEP_EXECUTION_DIR"] = true
 		sorted := make([]string, 0, len(envVarNames))
 		for _, name := range envVarNames {
 			if !shown[name] {

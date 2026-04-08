@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Share2, Copy, Check, Loader2 } from 'lucide-react'
 import { agentApi, sessionShareApi } from '../../services/api'
 import type { ChatHistorySummary, ActiveSessionInfo } from '../../services/api-types'
+import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -19,8 +20,6 @@ export default function ChatHistorySection({
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
-  const [presetCache, setPresetCache] = useState<Record<string, string>>({})
-  
   // Get chat history cache methods from store (persists across mount/unmount)
   const getChatHistory = useChatStore((state) => state.getChatHistory)
   const loadMoreChatHistory = useChatStore((state) => state.loadMoreChatHistory)
@@ -35,21 +34,12 @@ export default function ChatHistorySection({
   // Local sessions state (filtered by mode)
   const [sessions, setSessions] = useState<ChatHistorySummary[]>([])
 
-  // Fetch preset query details
-  const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
-    if (presetCache[presetQueryId]) {
-      return presetCache[presetQueryId]
-    }
-    
-    try {
-      const preset = await agentApi.getPresetQuery(presetQueryId)
-      setPresetCache(prev => ({ ...prev, [presetQueryId]: preset.label }))
-      return preset.label
-    } catch (err) {
-      console.error('Failed to fetch preset query:', err)
-      return 'Preset'
-    }
-  }, [presetCache])
+  // Lookup preset label from workflow manifests (no DB call needed)
+  const getPresetLabel = useCallback((presetQueryId: string): string => {
+    const workflowPresets = useGlobalPresetStore.getState().workflowPresets
+    const preset = workflowPresets.find(p => p.id === presetQueryId)
+    return preset?.label || 'Preset'
+  }, [])
 
   // Active sessions are now managed by the centralized cache in useChatStore
   // No need for local polling - the store handles it
@@ -87,22 +77,13 @@ export default function ChatHistorySection({
         return !isMultiAgent
       })
       setSessions(filteredSessions)
-
-      // Fetch preset details for sessions that have preset_query_id
-      const presetPromises = filteredSessions
-        .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
-        .map(session => fetchPresetQuery(session.preset_query_id!))
-
-      if (presetPromises.length > 0) {
-        await Promise.all(presetPromises)
-      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load chat history'
       setError(errorMessage)
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, selectedModeCategory, getChatHistory])
+  }, [selectedModeCategory, getChatHistory])
 
   // Load sessions on mount or when mode category changes
   // The store cache handles preventing unnecessary API calls
@@ -147,7 +128,7 @@ export default function ChatHistorySection({
 
   // Format preset query for display
   const formatPresetQuery = (presetQueryId: string) => {
-    return presetCache[presetQueryId] || 'Preset'
+    return getPresetLabel(presetQueryId)
   }
 
   // Handle session click
@@ -485,15 +466,6 @@ export default function ChatHistorySection({
                       return !isMultiAgent
                     })
                     setSessions(filteredSessions)
-                    
-                    // Fetch preset details for newly loaded sessions
-                    const presetPromises = filteredSessions
-                      .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
-                      .map(session => fetchPresetQuery(session.preset_query_id!))
-                    
-                    if (presetPromises.length > 0) {
-                      await Promise.all(presetPromises)
-                    }
                   } catch (err) {
                     const errorMessage = err instanceof Error ? err.message : 'Failed to load more chats'
                     setError(errorMessage)

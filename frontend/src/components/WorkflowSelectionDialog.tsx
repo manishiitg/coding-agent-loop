@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Layers, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import type { CustomPreset, PredefinedPreset } from '../types/preset'
+import type { CustomPreset } from '../types/preset'
 
 interface WorkflowItem {
   presetId: string
@@ -56,10 +56,8 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
   // Build all workflow items from preset store
   const allWorkflows = useMemo<WorkflowItem[]>(() => {
     const presetStore = useGlobalPresetStore.getState()
-    const allPresets: (CustomPreset | PredefinedPreset)[] = [
-      ...presetStore.customPresets,
-      ...presetStore.predefinedPresets
-    ]
+    // Use manifest-based workflow presets only
+    const allPresets = presetStore.workflowPresets
     return allPresets
       .filter(p => p.agentMode === 'workflow' && p.selectedFolder?.filepath)
       .map(p => ({

@@ -234,14 +234,14 @@ function formatLocalScheduleTime(dateStr?: string): string {
     const diffDays = Math.floor((d.getTime() - now.getTime()) / 86400000)
 
     if (diffDays < 1) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
     }
 
     if (diffDays < 7) {
-      return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+      return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
     }
 
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
   } catch {
     return dateStr
   }
@@ -254,7 +254,7 @@ function formatLocalScheduleTimeShort(dateStr?: string): string {
     return new Date(dateStr).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
-      timeZoneName: 'short',
+      hour12: true,
     })
   } catch {
     return ''
@@ -353,19 +353,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [runningRunFolders, setRunningRunFolders] = useState<Record<string, string>>({})
   const [latestRunFoldersByJob, setLatestRunFoldersByJob] = useState<Record<string, string>>({})
 
-  const { customPresets, predefinedPresets, refreshPresets } = useGlobalPresetStore()
+  const { workflowPresets, refreshPresets } = useGlobalPresetStore()
 
   // Build presetId → {label, workspacePath} map
   const presetMap = React.useMemo(() => {
     const map = new Map<string, { label: string; workspacePath: string | null }>()
-    ;[...customPresets, ...predefinedPresets].forEach((p) => {
+    workflowPresets.forEach((p) => {
       map.set(p.id, {
         label: p.label,
         workspacePath: p.selectedFolder?.filepath ?? null,
       })
     })
     return map
-  }, [customPresets, predefinedPresets])
+  }, [workflowPresets])
 
   const loadJobs = useCallback(async (showLoading = false) => {
     if (showLoading) setIsLoading(true)

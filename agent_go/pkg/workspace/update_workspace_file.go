@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -13,14 +14,14 @@ type UpdateWorkspaceFileParams struct {
 }
 
 // UpdateWorkspaceFile creates or updates a file using the REST API: PUT /api/documents/{filepath}
-func (c *Client) UpdateWorkspaceFile(ctx context.Context, params UpdateWorkspaceFileParams) (string, error) {
+func (c *Client) UpdateWorkspaceFile(ctx context.Context, params UpdateWorkspaceFileParams) (UpdateFileResult, error) {
 	if params.Filepath == "" {
-		return "", fmt.Errorf("filepath is required")
+		return UpdateFileResult{}, fmt.Errorf("filepath is required")
 	}
 
 	// Validate path against folder guard (write operation)
 	if err := c.ValidatePath(params.Filepath, true); err != nil {
-		return "", err
+		return UpdateFileResult{}, err
 	}
 
 	// URL-encode the filepath segments
@@ -40,8 +41,16 @@ func (c *Client) UpdateWorkspaceFile(ctx context.Context, params UpdateWorkspace
 	path := fmt.Sprintf("/api/documents/%s", encodedPath)
 	respBody, err := c.request(ctx, "PUT", path, requestBody)
 	if err != nil {
-		return "", err
+		return UpdateFileResult{}, err
 	}
 
-	return string(respBody), nil
+	var apiResp APIResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return UpdateFileResult{Success: true, Message: string(respBody)}, nil
+	}
+
+	return UpdateFileResult{
+		Success: apiResp.Success,
+		Message: apiResp.Message,
+	}, nil
 }

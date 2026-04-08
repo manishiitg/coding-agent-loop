@@ -27,10 +27,10 @@ export default function CreateFolderDialog({
       return
     }
 
-    // Validate folder name
-    const invalidChars = /[<>:"|?*]/
+    // Validate folder name — no spaces or special characters (only alphanumeric, hyphens, underscores)
+    const invalidChars = /[^a-zA-Z0-9_\-./]/
     if (invalidChars.test(folderName)) {
-      setError('Folder name contains invalid characters')
+      setError('Folder name can only contain letters, numbers, hyphens (-) and underscores (_)')
       return
     }
 

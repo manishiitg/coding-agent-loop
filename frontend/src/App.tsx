@@ -879,20 +879,20 @@ function App() {
     }
   }, [hasCompletedInitialSetup, selectedModeCategory, getActivePreset, applyPreset])
 
-  // Retry preset restoration for workflow mode after presets finish loading from API
+  // Retry preset restoration for workflow mode after presets finish loading from manifests
   // The 500ms timer above may fire before refreshPresets() completes
-  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  const workflowPresetsForRestore = useGlobalPresetStore(state => state.workflowPresets)
   useEffect(() => {
     if (hasRestoredPresetRef.current) return
     if (!hasCompletedInitialSetup || selectedModeCategory !== 'workflow') return
-    if (customPresets.length === 0) return // Presets not loaded yet
+    if (workflowPresetsForRestore.length === 0) return // Presets not loaded yet
 
     const activePreset = getActivePreset('workflow')
     if (activePreset) {
       hasRestoredPresetRef.current = true
       applyPreset(activePreset.id, 'workflow')
     }
-  }, [hasCompletedInitialSetup, selectedModeCategory, customPresets, getActivePreset, applyPreset])
+  }, [hasCompletedInitialSetup, selectedModeCategory, workflowPresetsForRestore, getActivePreset, applyPreset])
 
 
   // Auto-minimize sidebar when mode is selected or preset is selected

@@ -1161,6 +1161,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/versions", api.handleDeleteVersion).Methods("DELETE", "OPTIONS")
 
 	// Manifest-backed workflow API routes (file-backed workflow definitions)
+	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleCreateWorkflowManifest).Methods("POST", "OPTIONS")
@@ -1504,8 +1505,7 @@ func (api *StreamingAPI) handlePublicFile(w http.ResponseWriter, r *http.Request
 	}
 	req.Header.Set("X-User-ID", uid)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[PUBLIC-FILE] Workspace request failed: %v", err)
 		http.Error(w, "workspace unavailable", http.StatusBadGateway)
@@ -1566,8 +1566,7 @@ func (api *StreamingAPI) handlePublicFolder(w http.ResponseWriter, r *http.Reque
 	req.URL.RawQuery = q.Encode()
 	req.Header.Set("X-User-ID", uid)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("[PUBLIC-FOLDER] Workspace request failed: %v", err)
 		http.Error(w, "workspace unavailable", http.StatusBadGateway)
@@ -8761,30 +8760,9 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 }
 
 // buildWorkshopActionHint returns a mode-specific instruction appended to AUTO-NOTIFICATION messages
-// so the agent knows what to do next (e.g. call optimize_step, proceed to next step, etc.).
+// so the agent knows what to do next. Currently returns empty — the system prompt
+// already has detailed instructions for handling success/failure notifications.
 func buildWorkshopActionHint(workshopMode string, isOptimized bool, failed bool) string {
-	if failed {
-		switch workshopMode {
-		case "builder":
-			return "\nAction: Investigate the failure. Fix the step description or config, then re-run."
-		case "optimizer":
-			return "\nAction: Reset optimized flag and call optimize_step to analyze the failure."
-		case "runner":
-			return "\nAction: Reset optimized flag (update_step_config(step_id, optimized=false)) and investigate."
-		}
-		return ""
-	}
-	switch workshopMode {
-	case "builder":
-		return "\nAction: Step works. Move on to building/testing the next step."
-	case "optimizer":
-		if isOptimized {
-			return "\nAction: Already optimized. Proceed to next unoptimized step."
-		}
-		return "\nAction: Call optimize_step(step_id) to review learnings and execution quality before marking optimized."
-	case "runner":
-		return "\nAction: Proceed to next step."
-	}
 	return ""
 }
 

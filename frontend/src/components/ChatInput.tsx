@@ -28,14 +28,15 @@ function WorkshopModeToggle() {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowMode = useWorkflowStore(state => state.workflowMode)
   const setWorkflowMode = useWorkflowStore(state => state.setWorkflowMode)
-  const workshopMode = useWorkflowStore(state =>
-    (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
-  )
+  const workshopMode = useWorkflowStore(state => {
+    const raw = (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
+    // Normalize legacy "optimizer" to "builder" (modes were merged)
+    return raw === 'optimizer' ? 'builder' : raw
+  })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
 
   const builderModes = [
-    { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design and refine the workflow structure and step instructions.' },
-    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Improve reliability, learnings, validation, and step efficiency.' },
+    { id: 'builder' as const, label: 'Build', title: 'Build & Optimize', description: 'Design, build, test, debug, and optimize the workflow — all tools available.' },
     { id: 'debugger' as const, label: 'Ask', title: 'Ask', description: 'Inspect prior runs and failures without re-executing the workflow.' },
     { id: 'runner' as const, label: 'Run', title: 'Run', description: 'Use the finished workflow and focus on execution results.' },
   ]

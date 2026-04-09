@@ -9,7 +9,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Shield className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -23,7 +23,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
     source: 'builtin',
     execute: (ctx) => {
@@ -49,7 +49,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -111,7 +111,7 @@ Then ask the user: "Would you like me to set up a recurring schedule to keep imp
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -159,7 +159,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -177,7 +177,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'builder',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

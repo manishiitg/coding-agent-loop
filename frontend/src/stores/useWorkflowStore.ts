@@ -578,7 +578,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // === Workflow Mode State ===
       workflowMode: 'plan',
-      workshopMode: 'optimizer' as const,
+      workshopMode: 'builder' as const,
       workshopModeByPreset: {},
       setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow

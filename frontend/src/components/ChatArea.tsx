@@ -1394,32 +1394,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               const isSubAgent = isWorkshopSubAgent
               const eventLabel = isSubAgent ? 'SUB-AGENT' : 'STEP'
 
-              // Build mode-specific action hint for the LLM
-              let actionHint = ''
-              const isFailed = resultIndicatesFailure || !success
-              if (isFailed) {
-                if (workshopMode === 'builder') {
-                  actionHint = isSubAgent
-                    ? '\nAction: Investigate the sub-agent failure. Check its description, learnings, and tools.'
-                    : '\nAction: Investigate the failure. Fix the step description or config, then re-run.'
-                } else if (workshopMode === 'optimizer') {
-                  actionHint = '\nAction: Reset optimized flag and call optimize_step to analyze the failure.'
-                } else if (workshopMode === 'runner') {
-                  actionHint = '\nAction: Reset optimized flag (update_step_config(step_id, optimized=false)) and investigate.'
-                }
-              } else {
-                if (workshopMode === 'builder') {
-                  actionHint = isSubAgent
-                    ? '' // Don't suggest "move on" for sub-agents — parent step may have more sub-agents
-                    : '\nAction: Step works. Move on to building/testing the next step.'
-                } else if (workshopMode === 'optimizer' && !isStepOptimized) {
-                  actionHint = '\nAction: Call optimize_step(step_id) to review learnings and execution quality before marking optimized.'
-                } else if (workshopMode === 'optimizer' && isStepOptimized) {
-                  actionHint = '\nAction: Already optimized. Proceed to next unoptimized step.'
-                } else if (workshopMode === 'runner') {
-                  actionHint = '\nAction: Proceed to next step.'
-                }
-              }
+              // Action hints removed — system prompt already has detailed instructions
+              const actionHint = ''
 
               if (resultIndicatesFailure) {
                 notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${fullFailureText}${actionHint}`

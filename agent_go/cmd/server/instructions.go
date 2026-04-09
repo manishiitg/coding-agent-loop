@@ -435,13 +435,11 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Conditional: `+"`logs/step-X/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
 - Decision: `+"`logs/step-X/decision-evaluation.json`"+` — decision_result, decision_reasoning, routing targets
 - Orchestration/TodoTask: `+"`logs/step-X/orchestration-execution.json`"+` (JSONL, one line per iteration)
-- Steps done: `+"`execution/steps_done.json`"+` — which steps completed, branch decisions, retry counts
 
 **How to Investigate:**
 - Read plan: `+"`read_file`"+` on `+"`{path}/planning/plan.json`"+`
 - Check step output: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/step-{N}_*.json`"+`
 - Check step logs: `+"`list_files`"+` on `+"`{path}/runs/{iteration}/logs/step-{N}/`"+`
-- Check progress: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/steps_done.json`"+`
 - Check learnings: `+"`list_files`"+` on `+"`{path}/learnings/`"+`
 - All paths are workspace-relative (e.g., "Workflow/myproject/plan.md")
 `)
@@ -566,40 +564,10 @@ func buildExecutionSummary(client *skills.WorkspaceAPIClient, wsPath string) str
 	var lines []string
 	for _, iterPath := range iterations {
 		iterName := path.Base(iterPath)
-		progress := getIterationProgress(client, iterPath)
-		lines = append(lines, fmt.Sprintf("- %s: %s", iterName, progress))
-	}
-
-	// For the latest iteration, show detailed steps_done.json content
-	latestIter := iterations[len(iterations)-1]
-	stepsDoneContent := readFileContent(client, path.Join(latestIter, "execution", "steps_done.json"))
-	if stepsDoneContent != "" {
-		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("Latest run (%s) steps_done.json:", path.Base(latestIter)))
-		lines = append(lines, "```json")
-		lines = append(lines, stepsDoneContent)
-		lines = append(lines, "```")
+		lines = append(lines, fmt.Sprintf("- %s", iterName))
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// getIterationProgress reads steps_done.json to determine progress
-func getIterationProgress(client *skills.WorkspaceAPIClient, iterPath string) string {
-	// steps_done.json is inside execution/ folder
-	doneFile := path.Join(iterPath, "execution", "steps_done.json")
-	content, err := client.ReadFile(doneFile)
-	if err != nil {
-		return "no progress data"
-	}
-
-	// steps_done.json is typically an array of completed step objects
-	var stepsDone []json.RawMessage
-	if err := json.Unmarshal([]byte(content), &stepsDone); err != nil {
-		return "unable to parse progress"
-	}
-
-	return fmt.Sprintf("%d steps completed", len(stepsDone))
 }
 
 // buildLearningsSummary lists which steps have learnings

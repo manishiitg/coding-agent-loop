@@ -180,6 +180,37 @@ func (s *WorkshopChatSession) GetConfig() *WorkshopConfig {
 	return s.config
 }
 
+// resolveGroupFolderName resolves a group_id (e.g. "group-11") to the actual folder name
+// used in the runs directory (e.g. "excellence"). Falls back to groupID if no display name found.
+func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupID string) string {
+	if s.controller == nil || groupID == "" {
+		return groupID
+	}
+	// Read fresh manifest from file
+	manifest, err := readVariablesFromFile(ctx, s.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
+		return s.controller.ReadWorkspaceFile(ctx, path)
+	})
+	if err != nil || manifest == nil {
+		// Fallback to cached manifest
+		manifest = s.controller.variablesManifest
+	}
+	if manifest == nil {
+		return groupID
+	}
+	for _, g := range manifest.Groups {
+		if g.GroupID == groupID || s.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+			if g.DisplayName != "" {
+				sanitized := s.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+				if sanitized != "" {
+					return sanitized
+				}
+			}
+			break
+		}
+	}
+	return groupID
+}
+
 // MainSessionID returns the owning chat session ID for this workshop session.
 func (s *WorkshopChatSession) MainSessionID() string {
 	return s.mainSessionID
@@ -641,31 +672,26 @@ func RegisterRunFullEvaluationTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
-		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Evaluation itself runs in the internal iteration-0 sandbox under evaluation/runs/. Runs in background — you will be notified when complete.",
+		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
-				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces'). Required for grouped/batch workflows where each group has its own execution folder.",
+					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces', 'group-1'). Required for grouped/batch workflows where each group has its own execution folder.",
 				},
 			},
 			"required": []string{"group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			iteration, _ := args["iteration"].(string)
-			if iteration == "" {
-				iteration = "iteration-0"
-			}
+			iteration := "iteration-0"
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
 				return "group_id is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
 			}
-			targetRunFolder := iteration + "/" + groupID
+			// Resolve group_id to actual folder name (e.g. "group-11" → "excellence")
+			groupFolderName := session.resolveGroupFolderName(ctx, groupID)
+			targetRunFolder := iteration + "/" + groupFolderName
 
 			cfg := session.config
 			if cfg == nil {
@@ -787,31 +813,26 @@ func RegisterRunFullReportTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_report",
-		"Run the full workflow report generation against a target execution run. Report generation itself runs in the internal iteration-0 sandbox and then publishes the final report artifact back to the requested run. Runs in background and notifies when complete.",
+		"Run the full workflow report generation against a target execution run. Report generation always targets iteration-0. Runs in background and notifies when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
-				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish'). Required — reports are always group-scoped.",
+					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish', 'group-1'). Required — reports are always group-scoped.",
 				},
 			},
 			"required": []string{"group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			iteration, _ := args["iteration"].(string)
-			if iteration == "" {
-				iteration = "iteration-0"
-			}
+			iteration := "iteration-0"
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
 				return "group_id is required — reports are always group-scoped, e.g. group_id='manish'", nil
 			}
-			targetRunFolder := iteration + "/" + groupID
+			// Resolve group_id to actual folder name (e.g. "group-11" → "excellence")
+			groupFolderName := session.resolveGroupFolderName(ctx, groupID)
+			targetRunFolder := iteration + "/" + groupFolderName
 
 			cfg := session.config
 			if cfg == nil {
@@ -1075,19 +1096,10 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background — you will be notified when complete. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted. Reuses the folder if it exists, creates it if not.",
-				},
-				"execution_strategy": map[string]interface{}{
-					"type":        "string",
-					"description": "Execution strategy. Defaults to 'start_from_beginning_no_human' (fresh run, skip human input steps). Use 'resume_from_step_no_human' to resume from last incomplete step.",
-					"enum":        []string{"start_from_beginning_no_human", "resume_from_step_no_human"},
-				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID to execute (e.g., 'group-1', 'saurabh'). Required. Only one group runs at a time.",
@@ -1108,16 +1120,8 @@ func RegisterRunFullWorkflowTool(
 				return "session config not available — cannot create workflow controller", nil
 			}
 
-			// Parse parameters — iteration defaults to "iteration-0"
 			iteration := "iteration-0"
-			if it, ok := args["iteration"].(string); ok && it != "" {
-				iteration = it
-			}
-
 			strategy := "start_from_beginning_no_human"
-			if s, ok := args["execution_strategy"].(string); ok && s != "" {
-				strategy = s
-			}
 
 			// Single group only — required
 			groupID := ""

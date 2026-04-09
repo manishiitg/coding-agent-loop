@@ -263,14 +263,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	execManager := NewExecutionManager(hcpo)
 
 	// Load or initialize progress
-	progress, err := hcpo.loadStepProgress(ctx)
-	if err != nil {
-		if initErr := hcpo.initializeFreshProgress(ctx, totalSteps); initErr != nil {
-			return "", fmt.Errorf("failed to initialize progress: %w", initErr)
-		}
-		progress, err = hcpo.loadStepProgress(ctx)
-		if err != nil {
-			return "", fmt.Errorf("failed to load progress: %w", err)
+	progress, _ := hcpo.loadStepProgress(ctx)
+	if progress == nil {
+		progress = &StepProgress{
+			TotalSteps:           totalSteps,
+			CompletedStepIndices: []int{},
 		}
 	}
 

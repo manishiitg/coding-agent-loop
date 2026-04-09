@@ -12,16 +12,9 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
       const focus = ctx.beforeSlash.trim()
       const focusText = focus ? ` focus="${focus}"` : ''
-      if (runFolder) {
-        // Extract iteration from run folder (e.g., "iteration-28/saurabh" → "iteration-28")
-        const iteration = runFolder.split('/')[0]
-        ctx.onSubmit(`Run harden_workflow(iteration="${iteration}"${focusText}) now. Analyze all group eval reports, fix every failing step, and summarize what changed.`)
-      } else {
-        ctx.onSubmit(`Read runs/ to find the latest iteration, then run harden_workflow on it.${focusText ? ` Focus: ${focus}` : ''} Analyze all group eval reports, fix every failing step, and summarize what changed.`)
-      }
+      ctx.onSubmit(`Run harden_workflow(${focusText}) now. Analyze all group eval reports, fix every failing step, and summarize what changed.`)
     }
   },
   {

@@ -560,10 +560,11 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
 
-	// Execution options
+	// Execution options — always use iteration-0 (controller backs up previous run automatically)
 	execOpts := map[string]interface{}{
-		"run_mode":           "create_new_runs_always",
-		"execution_strategy": "start_from_beginning",
+		"run_mode":            "use_same_run",
+		"selected_run_folder": "iteration-0",
+		"execution_strategy":  "start_from_beginning",
 	}
 	if len(sctx.Schedule.GroupIDs) > 0 {
 		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
@@ -609,7 +610,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	if len(messages) == 0 {
 		messages = []string{"Run the full workflow using run_full_workflow tool."}
 	}
-	runFolder := resolveWorkshopScheduleRunFolder(ctx, sctx.WorkspacePath, sctx.Schedule.GroupIDs)
+	runFolder := "iteration-0"
 
 	idPrefix := sctx.Schedule.ID
 	if len(idPrefix) > 8 {
@@ -793,7 +794,6 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 
 // buildWorkshopRequest creates the base request map for workshop mode execution.
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
-	selectedRunFolder := resolveWorkshopScheduleRunFolder(ctx, sctx.WorkspacePath, sctx.Schedule.GroupIDs)
 	reqMap := map[string]interface{}{
 		"agent_mode":              "workflow_phase",
 		"phase_id":                "workflow-builder",
@@ -810,8 +810,9 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
 
 	execOpts := map[string]interface{}{
-		"run_mode":           "create_new_runs_always",
-		"execution_strategy": "start_from_beginning_no_human",
+		"run_mode":            "use_same_run",
+		"selected_run_folder": "iteration-0",
+		"execution_strategy":  "start_from_beginning_no_human",
 		"workshop_mode": func() string {
 			if sctx.Schedule.WorkshopMode != "" {
 				return sctx.Schedule.WorkshopMode
@@ -821,9 +822,6 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	}
 	if len(sctx.Schedule.GroupIDs) > 0 {
 		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
-	}
-	if selectedRunFolder != "" {
-		execOpts["selected_run_folder"] = selectedRunFolder
 	}
 	reqMap["execution_options"] = execOpts
 

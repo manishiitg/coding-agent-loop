@@ -2,7 +2,6 @@ package step_based_workflow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -21,69 +20,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) getStepsProgressPath() (string, error
 	return fmt.Sprintf("runs/%s/execution/steps_done.json", hcpo.selectedRunFolder), nil
 }
 
-// loadStepProgress loads progress from steps_done.json
+// loadStepProgress is a no-op — steps_done.json is no longer used.
+// Returns nil to signal no existing progress (iteration-0 is always fresh).
 func (hcpo *StepBasedWorkflowOrchestrator) loadStepProgress(ctx context.Context) (*StepProgress, error) {
-	progressPath, err := hcpo.getStepsProgressPath()
-	if err != nil {
-		return nil, err
-	}
-
-	content, err := hcpo.ReadWorkspaceFile(ctx, progressPath)
-	if err != nil {
-		// File doesn't exist or error reading
-		return nil, fmt.Errorf("failed to load step progress: %w", err)
-	}
-
-	var progress StepProgress
-	if err := json.Unmarshal([]byte(content), &progress); err != nil {
-		return nil, fmt.Errorf("failed to parse steps_done.json: %w", err)
-	}
-
-	// Backward compatibility: initialize BranchSteps if nil (old files won't have this field)
-	if progress.BranchSteps == nil {
-		progress.BranchSteps = make(map[int]BranchStepProgress)
-	}
-
-	// Backward compatibility: initialize ValidationFailures if nil
-	if progress.ValidationFailures == nil {
-		progress.ValidationFailures = make(map[string]int)
-	}
-
-	// Always initialize DecisionEvaluationCounts fresh (in-memory only, not persisted)
-	// This ensures each new run starts with clean counts, preventing false infinite loop detection
-	if progress.DecisionEvaluationCounts == nil {
-		progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
-	}
-
-	// Backward compatibility: initialize ArchivalCounts if nil
-	if progress.ArchivalCounts == nil {
-		progress.ArchivalCounts = make(map[int]int)
-	}
-
-	return &progress, nil
+	return nil, fmt.Errorf("no progress file")
 }
 
-// saveStepProgress saves progress to steps_done.json
+// saveStepProgress is a no-op — steps_done.json is no longer written.
 func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context, progress *StepProgress) error {
-	progressPath, err := hcpo.getStepsProgressPath()
-	if err != nil {
-		return err
-	}
-
-	progress.LastUpdated = time.Now()
-
-	progressJSON, err := json.MarshalIndent(progress, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal progress: %w", err)
-	}
-
-	if err := hcpo.WriteWorkspaceFile(ctx, progressPath, string(progressJSON)); err != nil {
-		return fmt.Errorf("failed to write steps_done.json: %w", err)
-	}
-
-	// Emit step progress updated event for frontend dynamic updates
-	hcpo.emitStepProgressUpdatedEvent(ctx, progress, "", "", "")
-
 	return nil
 }
 
@@ -453,42 +397,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupProgressFromStep(ctx context.C
 	return nil
 }
 
-// deleteStepProgress deletes steps_done.json file
+// deleteStepProgress is a no-op — steps_done.json is no longer used.
 func (hcpo *StepBasedWorkflowOrchestrator) deleteStepProgress(ctx context.Context) error {
-	progressPath, err := hcpo.getStepsProgressPath()
-	if err != nil {
-		return err
-	}
-
-	if err := hcpo.DeleteWorkspaceFile(ctx, progressPath); err != nil {
-		// Ignore error if file doesn't exist
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			return nil
-		}
-		return fmt.Errorf("failed to delete steps_done.json: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted step progress file: %s", progressPath))
 	return nil
 }
 
-// initializeFreshProgress creates a new steps_done.json with the new total steps and empty completed indices
+// initializeFreshProgress is a no-op — steps_done.json is no longer used.
 func (hcpo *StepBasedWorkflowOrchestrator) initializeFreshProgress(ctx context.Context, newTotalSteps int) error {
-	freshProgress := &StepProgress{
-		CompletedStepIndices:     []int{},
-		TotalSteps:               newTotalSteps,
-		LastUpdated:              time.Now(),
-		BranchSteps:              make(map[int]BranchStepProgress),
-		ValidationFailures:       make(map[string]int),
-		DecisionEvaluationCounts: make(DecisionEvaluationCount),
-		ArchivalCounts:           make(map[int]int),
-	}
-
-	if err := hcpo.saveStepProgress(ctx, freshProgress); err != nil {
-		return fmt.Errorf("failed to initialize fresh progress: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Initialized fresh progress with %d total steps", newTotalSteps))
 	return nil
 }
 

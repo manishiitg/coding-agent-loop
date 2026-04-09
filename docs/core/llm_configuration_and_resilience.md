@@ -154,9 +154,9 @@ The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM 
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Retry Logic** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isRetryAfterValidationFailure` calculation (lines 1221-1228), retry loop (line 1152) |
-| **LLM Selection** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `selectExecutionLLM()` - LLM selection logic (lines 228-270) |
-| **Validation Check** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isValidationFailure()` function (lines 46-54) |
+| **Retry Logic** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) | `isRetryAfterValidationFailure` calculation (lines 1221-1228), retry loop (line 1152) |
+| **LLM Selection** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) | `selectExecutionLLM()` - LLM selection logic (lines 228-270) |
+| **Validation Check** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) | `isValidationFailure()` function (lines 46-54) |
 
 ### 🔄 Flow Sequence
 
@@ -179,7 +179,7 @@ graph TD
 
 ### Attempt Sequence
 
-**File**: [`controller_agent_factory.go:228-270`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L228)
+**File**: [`controller_agent_factory.go:228-270`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L228)
 
 **Priority Order** (checked in this sequence):
 1. **tempLLM2** (checked FIRST) - Used when:
@@ -212,7 +212,7 @@ graph TD
 
 #### Validation Status Handling
 
-**File**: [`controller_execution.go:46-54`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L46)
+**File**: [`controller_execution.go:46-54`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L46)
 
 **Retry Decision**: Uses `IsSuccessCriteriaMet` from validation response
 - If `IsSuccessCriteriaMet == true`: Stop retry, step passes
@@ -230,7 +230,7 @@ graph TD
 
 #### Key Logic
 
-**File:** [`controller_execution.go:1221-1228`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1221)
+**File:** [`controller_execution.go:1221-1228`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1221)
 
 ```go
 // Validation failure check
@@ -244,7 +244,7 @@ if isDecisionStepFalse {
 }
 ```
 
-**File:** [`controller_agent_factory.go:131-236`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L131)
+**File:** [`controller_agent_factory.go:131-236`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L131)
 
 ```go
 // Calculate shouldSkipTempOverride (only blocks tempLLM1, not tempLLM2)
@@ -273,7 +273,7 @@ else {
 
 #### Conditions
 
-**File**: [`controller_agent_factory.go:131-236`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L131)
+**File**: [`controller_agent_factory.go:131-236`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L131)
 
 | Condition | Purpose | Blocks | Notes |
 |-----------|---------|--------|-------|
@@ -349,7 +349,7 @@ Loop Iteration 2: tempLLM2 (isRetryAfterValidationFailure && retryAttempt == 1) 
 
 ## 📖 Related Documentation
 
-- [Workflow Orchestrator](workflow_orchestrator.md) - Overall execution system
-- [Controller Execution](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) - Retry logic implementation
+- [Workflow Docs](../workflow/README.md) - Overall execution system
+- [Controller Execution](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) - Retry logic implementation
 - [Model Metadata](../../multi-llm-provider-go/llmtypes/model_metadata.go) - Pricing, context, capabilities
 - [LLM Store](../../frontend/src/stores/useLLMStore.ts) - State management

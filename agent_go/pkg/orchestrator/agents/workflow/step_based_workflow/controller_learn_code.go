@@ -399,6 +399,42 @@ func reviewMainPyScript(script string, declaredEnvVars ...string) []string {
 		issues = append(issues, "Script receives input via sys.argv but also constructs manual paths to sibling step folders. Read ALL input data from sys.argv — do not build sibling paths manually. If you need additional input, add it as a context_dependency in the plan.")
 	}
 
+	// Check 8: Script writes to knowledgebase/ or learnings/ — these are system-managed folders,
+	// not scratch space. Scripts that write caches here are taking shortcuts that break on reuse.
+	reWriteToSystemDir := regexp.MustCompile(`(?i)['"]/?(?:app/workspace-docs/)?[^'"]*(?:knowledgebase|learnings)/[^'"]*['"]`)
+	reOpenWriteMode := regexp.MustCompile(`open\s*\(.*['"]w`)
+	reMkdir := regexp.MustCompile(`(?:os\.makedirs|os\.mkdir|pathlib\.Path.*mkdir)`)
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if reWriteToSystemDir.MatchString(line) {
+			if reOpenWriteMode.MatchString(line) || reMkdir.MatchString(line) || strings.Contains(line, "shutil.copy") || strings.Contains(line, "shutil.move") {
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Script writes to knowledgebase/ or learnings/ directory. These are system-managed — do NOT use them as cache or scratch space. Write all output to `os.environ['STEP_OUTPUT_DIR']` instead. Found: %s",
+					i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+
+	// Check 9: Script creates its own cache/shortcut paths outside STEP_OUTPUT_DIR
+	// Detects patterns like CACHE_DIR = '/app/...', cache_path = '...knowledgebase...'
+	reCacheVar := regexp.MustCompile(`(?i)(?:cache|cached|shortcut|precomputed|saved_results?)\s*[=:]`)
+	reCacheWithHardcodedPath := regexp.MustCompile(`(?i)(?:cache|cached|shortcut|precomputed|saved_results?)\s*=\s*['"/]`)
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if reCacheVar.MatchString(line) && reCacheWithHardcodedPath.MatchString(line) {
+			// Only flag if it's not using STEP_OUTPUT_DIR
+			if !reStepOutputDirUsed.MatchString(line) && !reStepExecDirUsed.MatchString(line) {
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Script defines a cache/shortcut path with a hardcoded value. This bypasses the actual work the step should perform. If caching is needed, use `os.environ['STEP_OUTPUT_DIR']`. Found: %s",
+					i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+
 	return issues
 }
 
@@ -989,14 +1025,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 
 	learnDirRelPath := getLearnCodeDirRelPath(stepID, hcpo.isEvaluationMode)
 
+	// Snapshot old file contents from learnings/ before overwriting — used for diff debugging.
+	oldFileContents := map[string]string{}
+	if oldFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
+		for _, f := range oldFiles {
+			fn := filepath.Base(f)
+			if fn == "" || fn == "." || fn == "script_metadata.json" || fn == "SKILL.md" || fn == ".learning_metadata.json" || fn == "diffs" {
+				continue
+			}
+			if content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fn); readErr == nil {
+				oldFileContents[fn] = content
+			}
+		}
+	}
+
 	// Delete all existing files AND folders in learnings/{step-id}/ before copying new ones.
 	// Files use DELETE /api/documents/; subdirectories use DELETE /api/folders/.
 	// We try folder delete first (handles "code/" subdir), then fall back to file delete.
 	if existingFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
 		for _, f := range existingFiles {
 			fileName := filepath.Base(f)
-			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" {
-				continue // keep metadata and supplemental learning notes; refresh script files only
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == "diffs" {
+				continue // keep metadata, supplemental learning notes, and diffs/; refresh script files only
 			}
 			entryRelPath := learnDirRelPath + "/" + fileName
 			absPath := filepath.Join(GetPromptDocsRoot(), workspacePath, entryRelPath)
@@ -1069,6 +1119,82 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Saved main.py to learnings for step (%s) — version %d", stepID, version))
 	}
+
+	// Save diffs between old and new script files for debugging.
+	if len(oldFileContents) > 0 {
+		diffsDirRelPath := learnDirRelPath + "/diffs"
+		if mkErr := createFolderViaAPI(ctx, diffsDirRelPath, workspacePath); mkErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create diffs/ dir: %v", mkErr))
+		} else {
+			for fileName, oldContent := range oldFileContents {
+				newContent, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
+				if readErr != nil {
+					continue
+				}
+				if oldContent == newContent {
+					continue // no changes
+				}
+				diff := generateSimpleDiff(fileName, oldContent, newContent)
+				diffFileName := fmt.Sprintf("%s.v%d.diff", fileName, version)
+				if writeErr := hcpo.WriteWorkspaceFile(ctx, diffsDirRelPath+"/"+diffFileName, diff); writeErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write diff %s: %v", diffFileName, writeErr))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved diff for %s (v%d → v%d)", fileName, version-1, version))
+				}
+			}
+		}
+	}
+}
+
+// generateSimpleDiff produces a unified-style diff between old and new file contents for debugging.
+func generateSimpleDiff(fileName, oldContent, newContent string) string {
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("--- a/%s\n+++ b/%s\n", fileName, fileName))
+
+	// Simple line-by-line diff: show removed and added lines.
+	// Not a true unified diff algorithm, but sufficient for debugging.
+	oldSet := make(map[string]int)
+	for _, l := range oldLines {
+		oldSet[l]++
+	}
+	newSet := make(map[string]int)
+	for _, l := range newLines {
+		newSet[l]++
+	}
+
+	// Show lines only in old (removed)
+	for _, l := range oldLines {
+		if newSet[l] > 0 {
+			newSet[l]--
+		} else {
+			sb.WriteString(fmt.Sprintf("- %s\n", l))
+		}
+	}
+
+	// Reset newSet
+	newSet = make(map[string]int)
+	for _, l := range newLines {
+		newSet[l]++
+	}
+	oldSet2 := make(map[string]int)
+	for _, l := range oldLines {
+		oldSet2[l]++
+	}
+
+	// Show lines only in new (added)
+	for _, l := range newLines {
+		if oldSet2[l] > 0 {
+			oldSet2[l]--
+		} else {
+			sb.WriteString(fmt.Sprintf("+ %s\n", l))
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("\n@@ old: %d lines, new: %d lines @@\n", len(oldLines), len(newLines)))
+	return sb.String()
 }
 
 // updateLearnCodeRunStats increments run counters in script_metadata.json via workspace API.
@@ -1154,6 +1280,7 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
 	sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
 	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n")
+	sb.WriteString("- **EDITING**: When updating an existing main.py, prefer using `diff_patch_workspace_file` to apply targeted changes rather than rewriting the entire file. This preserves working code and reduces errors.\n")
 	sb.WriteString("- **LOGGING**: Use `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'` and guard debug prints with `if VERBOSE:`. Log state before/after each major action. For browser automation: print the snapshot/page state after each navigation and interaction so failures show exactly what the page looked like. The only way to debug a failed script is through its stdout.\n")
 	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")

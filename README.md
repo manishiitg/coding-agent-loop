@@ -60,39 +60,38 @@ AgentForge is built for teams that want more than a chat box:
 
 ## ⚡ Platform Overview
 
-At the core of AgentForge is the **[Workflow Orchestrator](docs/workflow_orchestrator.md)**, a directed acyclic graph (DAG) engine managed through a **[React Flow Canvas](docs/react_flow_workflow_canvas.md)**.
+At the core of AgentForge is the **[workflow system](docs/workflow/README.md)**, a directed acyclic graph (DAG) engine managed through a **[React Flow Canvas](docs/workflow/react_flow_workflow_canvas.md)**.
 
 Design complex workflows visually, then run them with a 7-phase execution pipeline and 13 specialized node types for planning, routing, evaluation, loops, human input, and execution settings.
 
 ### 🧠 Learning, Validation, and Observability
 Move beyond static prompts with built-in optimization, validation, and run visibility.
 
-- **[Validation & Learning](docs/learnings_and_validation_architecture.md):** As your agents execute workflows, the system tracks trajectory success rates. Once a pattern stabilizes, the orchestrator automatically locks the step and cascades to faster, more cost-effective LLMs.
-- **[Deterministic Pre-Validation](docs/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
-- **[Evaluation & Benchmarking](docs/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
-- **[Continuous Observability](docs/workflow_monitoring.md):** Real-time **Execution Logs** and step-by-step visibility into the orchestrator's 7-phase reasoning cycle.
-- **[Swarm Delegation](docs/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
-- **[Task Orchestration](docs/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
+- **[Learning Architecture](docs/workflow/learning_architecture.md):** Workflow learning now centers on a shared global skill plus step-level metadata and saved scripts for scripted steps.
+- **[Deterministic Pre-Validation](docs/workflow/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
+- **[Evaluation & Benchmarking](docs/workflow/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
+- **[Continuous Observability](docs/workflow/workflow_monitoring.md):** Execution logs, costs, evaluation reports, learnings, and run history across workflow, run-folder, and scheduled-run views.
+- **[Swarm Delegation](docs/multiagent/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
+- **[Task Orchestration](docs/workflow/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
 
 ### 🛡️ Security and Guardrails
 Deploy with deterministic controls designed for strict environments.
-- **[Zero-Trust Workspace (FolderGuard)](docs/multi_user_authentication.md):** Strict per-user filesystem isolation utilizing Linux namespaces. Agents operate in sandboxed environments, preventing cross-tenant data contamination.
-- **[Restricted Configuration Mode](docs/env-api-key-defaults.md):** Lock down the entire UI. Force the engine to route through environment-injected API keys (`LLM_CONFIG_LOCKED`), guaranteeing secrets never touch the browser.
-- **[Secure MCP OAuth](docs/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
+- **[Zero-Trust Workspace (FolderGuard)](docs/core/multi_user_authentication.md):** Strict per-user filesystem isolation utilizing Linux namespaces. Agents operate in sandboxed environments, preventing cross-tenant data contamination.
+- **[Restricted Configuration Mode](docs/core/env-api-key-defaults.md):** Lock down the entire UI. Force the engine to route through environment-injected API keys (`LLM_CONFIG_LOCKED`), guaranteeing secrets never touch the browser.
+- **[Secure MCP OAuth](docs/core/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
 
 ### 👁️ Automation, Connectors, and Browser Control
 Connect agents to real systems and communication channels.
-- **[Google Workspace (GWS)](docs/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
+- **[Google Workspace (GWS)](docs/core/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
 - **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
-- **[Camoufox Stealth Integration](docs/camoufox_stealth_browser.md):** Native integration with Camoufox, providing agents with anti-detect browser automation capable of bypassing the most aggressive enterprise bot-protections.
-- **[Local CDP Bridging](docs/cdp_local_browser.md):** Connect cloud agents directly to your local Chrome instance via CDP for real-time monitoring and session hijacking.
-- **[Bot Connectors](docs/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
+- **[Browser System](docs/core/browser.md):** Covers browser session management, runtime limits, and browser integration patterns across providers.
+- **[Bot Connectors](docs/core/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
 
 ### 🤝 Human-in-the-Loop Operations
 Keep operators involved when workflows need approval, intervention, or additional input.
 
-- **[Human Feedback System](docs/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via real-time browser notifications or the visual dashboard.
-- **[Slack Human Connector](docs/human_feedback_system.md#slack-configuration):** 
+- **[Human Feedback System](docs/workflow/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via real-time browser notifications or the visual dashboard.
+- **[Slack Human Connector](docs/workflow/human_feedback_system.md#slack-configuration):** 
     - **Smart Delayed Notifications**: If a user doesn't respond in the UI within 2 minutes, the orchestrator automatically pings a configured Slack channel.
     - **Threaded Conversations**: Users can reply directly in the Slack thread to provide the required information, which is then fed back to the agent's context in real-time.
     - **Multi-User Collaboration**: Entire teams can monitor agent progress and intervene via Slack without ever opening the dashboard.
@@ -112,7 +111,7 @@ AgentForge is provider-agnostic, so you can combine different models across diff
 *   **OpenRouter**: Unified access to 200+ open-source and frontier models with a single API key.
 
 #### 🛠️ Local CLI Agents
-Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/mcp_bridge_layer.md)**:
+Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/core/mcp_bridge_layer.md)**:
 *   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI.
 *   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.

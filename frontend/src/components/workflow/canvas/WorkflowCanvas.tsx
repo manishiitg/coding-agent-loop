@@ -378,9 +378,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [getLayoutFilePath, workspacePath])
 
-  // Track completed step indices from selected iteration (for enabling/disabling run buttons)
-  const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
-  
   // Variables state
   const [variablesManifest, setVariablesManifest] = React.useState<VariablesManifest | null>(null)
   const [isLoadingVariables, setIsLoadingVariables] = React.useState(false)
@@ -397,24 +394,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Calculate if StepSidebar should be in compact mode (when both ChatArea and Workspace are open)
   const isStepSidebarCompact = showChatArea && !workspaceMinimized
   
-  // Note: We no longer need handleProgressChange callback
-  // The completedStepIndices are synced directly from stepProgress in the useEffect below
-
-  // Load initial completedStepIndices from store when component mounts or selectedRunFolder/stepProgress changes
-  // This ensures we have the correct state even after page refresh
-  // Use ref to track previous indices to prevent loops
-  const prevIndicesRef = useRef<string>('')
-  useEffect(() => {
-    const indices = stepProgress?.completed_step_indices || []
-    const indicesStr = JSON.stringify(indices.slice().sort((a, b) => a - b))
-    const prevIndicesStr = prevIndicesRef.current
-    const indicesChanged = prevIndicesStr !== indicesStr
-
-    if (indicesChanged) {
-      prevIndicesRef.current = indicesStr
-      setCompletedStepIndices(indices)
-    }
-  }, [selectedRunFolder, stepProgress]) // Don't include completedStepIndices to prevent loop
 
   // Highlight execution folder in workspace when selectedRunFolder changes
   // This ensures workspace shows the correct group folder during multi-group execution
@@ -1031,7 +1010,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onRunFromStep: handleRunFromStepCallback,
     onOpenSidebar: handleOpenSidebarCallback,
     isExecuting,
-    completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
     stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder: selectedRunFolder ?? undefined,  // Pass selected run folder for file opening (convert null to undefined)
@@ -1311,8 +1289,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
     
     // Compare by length, IDs, node data (status), and step configs to detect actual changes
-    // This ensures nodes update when completedStepIndices changes (which updates status)
-    // and when agent_configs are updated (e.g., when saving config in side panel)
     const nodesChanged =
       prevNodesRef.current.length !== initialNodes.length ||
       prevNodesRef.current.some((node, i) => {
@@ -1909,70 +1885,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     prevStepStatusMapRef.current = new Map(stepStatusMap)
   }, [stepStatusMap, setNodes])
 
-  // Track previous completedStepIndices to detect actual changes
-  const prevCompletedIndicesRef = React.useRef<string>('')
-
-  // Update node status based on completedStepIndices from stepProgress (loaded from API)
-  // Note: step_progress_updated events no longer include progress details, but can trigger progress reload
-  React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
-
-    const lastCompletedStepId = stepProgress?.last_completed_step_id
-
-    if (completedStepIndices.length === 0) return
-
-    // Check if completedStepIndices actually changed
-    const indicesStr = JSON.stringify(completedStepIndices) + '|' + (lastCompletedStepId || '')
-    if (indicesStr === prevCompletedIndicesRef.current) return
-    prevCompletedIndicesRef.current = indicesStr
-
-    // Build a map of step IDs that should be marked as completed
-    const completedStepIds = new Set<string>()
-
-    // If we have last_completed_step_id directly from the event, use it
-    if (lastCompletedStepId) {
-      completedStepIds.add(lastCompletedStepId)
-    }
-
-    // Also map indices to IDs if plan is available (for all completed steps, not just the last one)
-    if (plan?.steps) {
-      for (const index of completedStepIndices) {
-        if (index >= 0 && index < plan.steps.length) {
-          const step = plan.steps[index]
-          if (step?.id) {
-            completedStepIds.add(step.id)
-          }
-        }
-      }
-    }
-
-    if (completedStepIds.size === 0) return
-
-    setNodes(nds => {
-      let hasUpdates = false
-      const updatedNodes = nds.map(node => {
-        if (node.type === 'step' || node.type === 'conditional' || node.type === 'decision') {
-          const nodeData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
-          const stepId = nodeData?.step?.id || node.id
-          const currentStatus = nodeData?.status
-
-          if (completedStepIds.has(stepId) && currentStatus !== 'completed') {
-            hasUpdates = true
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                status: 'completed' as const
-              }
-            } as WorkflowNode
-          }
-        }
-        return node
-      })
-
-      return hasUpdates ? updatedNodes : nds
-    })
-  }, [completedStepIndices, stepProgress?.last_completed_step_id, plan, setNodes])
 
   // Handle node selection - disabled: nodes no longer open sidebar on click
   // Sidebar is now opened via settings icon button on nodes
@@ -2637,7 +2549,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             presetQueryId={presetQueryId}
             onStartPhase={handleStartPhaseForStep}
             plan={plan}
-            completedStepIndices={completedStepIndices}
             isCompact={isStepSidebarCompact}
             showChatArea={showChatArea}
           />

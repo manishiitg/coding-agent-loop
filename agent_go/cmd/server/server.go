@@ -1132,7 +1132,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Legacy individual endpoints (kept for backward compatibility)
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/progress", api.handleGetProgress).Methods("GET", "OPTIONS")
+	// /workflow/progress endpoint removed — steps_done.json progress tracking no longer consumed by frontend
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleDeleteRunFolder).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/learnings", api.handleDeleteStepLearnings).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/learnings/all", api.handleGetAllStepLearnings).Methods("GET", "OPTIONS")
@@ -2860,9 +2860,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				TriggeredBy:   "manual",
 				StartedAt:     time.Now(),
 			}
-			if req.ExecutionOptions != nil && req.ExecutionOptions.SelectedRunFolder != "" {
-				activeExec.RunFolder = req.ExecutionOptions.SelectedRunFolder
-			}
+			activeExec.RunFolder = "iteration-0"
 			if req.TriggeredBy != "" {
 				activeExec.TriggeredBy = req.TriggeredBy
 			}
@@ -2882,6 +2880,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Pass execution options from frontend if provided
 			log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Received request - req.ExecutionOptions is nil: %v", req.ExecutionOptions == nil)
 			if req.ExecutionOptions != nil {
+				// Always run in iteration-0 — controller handles backup of previous iteration-0
+				req.ExecutionOptions.SelectedRunFolder = "iteration-0"
+				req.ExecutionOptions.RunMode = "use_same_run"
+
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
 					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
@@ -4559,20 +4561,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Build template vars by reading current plan and variables from workspace
-				phaseRunFolder := ""
+				phaseRunFolder := "iteration-0"
 				var phaseEnabledGroupIDs []string
 				if req.ExecutionOptions != nil {
-					phaseRunFolder = req.ExecutionOptions.SelectedRunFolder
 					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
-				}
-				// Builder chat uses iteration-0 as its scratch run (intentional).
-				// Other phases resolve the latest iteration from the workspace.
-				if phaseRunFolder == "" && phaseWorkspacePath != "" {
-					if workflowPhaseID == "workflow-builder" {
-						phaseRunFolder = "iteration-0"
-					} else {
-						phaseRunFolder = resolveLatestRunFolder(context.WithoutCancel(r.Context()), phaseWorkspacePath, phaseWSClient)
-					}
 				}
 				// Determine execution mode from the DB preset's resolved provider (finalProvider).
 				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;

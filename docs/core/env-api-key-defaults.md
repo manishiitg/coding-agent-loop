@@ -138,7 +138,7 @@ When a **new user** visits the site for the first time, they have no localStorag
 | `SUPABASE_URL` | Supabase project URL (e.g., `https://xxx.supabase.co`). |
 | `SUPABASE_ANON_KEY` | Supabase anonymous (public) key. |
 
-See [Multi-User Authentication](./multi_user_authentication.md) for detailed documentation on authentication providers and per-user workspace isolation.
+See [Multi-User Authentication](multi_user_authentication.md) for detailed documentation on authentication providers and per-user workspace isolation.
 
 ---
 

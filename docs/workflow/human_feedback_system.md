@@ -19,17 +19,17 @@ The human feedback system is an interactive virtual tool that pauses LLM executi
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Virtual Tool** | [`human_tools.go`](../agent_go/cmd/server/virtual-tools/human_tools.go) | `CreateHumanTools()`, `handleHumanFeedback()` |
-| **Backend Store** | [`human_feedback_store.go`](../agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequest()`, `CreateRequestWithSlack()`, `SubmitResponse()`, `WaitForResponse()`, `Cleanup()` |
-| **API Endpoint** | [`server.go`](../agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
-| **Slack Service** | [`slack_service.go`](../agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
-| **Slack API Routes** | [`slack_feedback_routes.go`](../agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
-| **Database Migration** | [`010_add_slack_feedback_config.sql`](../agent_go/pkg/database/migrations/010_add_slack_feedback_config.sql) | Slack config and message mapping tables |
-| **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
-| **Slack Config UI** | [`SlackFeedbackConfig.tsx`](../frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
-| **API Service** | [`api.ts`](../frontend/src/services/api.ts) | `submitHumanFeedback()`, `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
-| **Event Data Structures** | [`data.go`](../agent_go/pkg/events/data.go) | `BlockingHumanFeedbackEvent`, `RequestHumanFeedbackEvent` |
-| **Orchestrator Helpers** | [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go) | `RequestHumanFeedback()`, `RequestYesNoFeedback()`, `RequestMultipleChoiceFeedback()` |
+| **Virtual Tool** | [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go) | `CreateHumanTools()`, `handleHumanFeedback()` |
+| **Backend Store** | [`human_feedback_store.go`](../../agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequest()`, `CreateRequestWithSlack()`, `SubmitResponse()`, `WaitForResponse()`, `Cleanup()` |
+| **API Endpoint** | [`server.go`](../../agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
+| **Slack Service** | [`slack_service.go`](../../agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
+| **Slack API Routes** | [`slack_feedback_routes.go`](../../agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
+| **Database Migration** | [`010_add_slack_feedback_config.sql`](../../agent_go/pkg/database/migrations/010_add_slack_feedback_config.sql) | Slack config and message mapping tables |
+| **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](../../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
+| **Slack Config UI** | [`SlackFeedbackConfig.tsx`](../../frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
+| **API Service** | [`api.ts`](../../frontend/src/services/api.ts) | `submitHumanFeedback()`, `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
+| **Event Data Structures** | [`data.go`](../../agent_go/pkg/orchestrator/events/data.go) | `BlockingHumanFeedbackEvent`, `RequestHumanFeedbackEvent` |
+| **Orchestrator Helpers** | [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go) | `RequestHumanFeedback()`, `RequestYesNoFeedback()`, `RequestMultipleChoiceFeedback()` |
 
 ---
 
@@ -154,7 +154,7 @@ sequenceDiagram
 
 ### Backend Tool Handler
 
-**File:** [`human_tools.go`](../agent_go/cmd/server/virtual-tools/human_tools.go)
+**File:** [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go)
 
 ```go
 func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -178,7 +178,7 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 
 ### Orchestrator Helper Functions
 
-**File:** [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go)
+**File:** [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go)
 
 ```go
 // Request human feedback with text input
@@ -230,8 +230,8 @@ choice, err := orchestrator.RequestMultipleChoiceFeedback(
 
 | Component | Timeout | Location |
 |-----------|---------|----------|
-| Tool executor | `5 * time.Minute` | [`human_tools.go`](../agent_go/cmd/server/virtual-tools/human_tools.go) |
-| Orchestrator helpers | `10 * time.Minute` | [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go) |
+| Tool executor | `5 * time.Minute` | [`human_tools.go`](../../agent_go/cmd/server/virtual-tools/human_tools.go) |
+| Orchestrator helpers | `10 * time.Minute` | [`base_orchestrator.go`](../../agent_go/pkg/orchestrator/base_orchestrator.go) |
 | Browser notification | 30 seconds (auto-close) | Frontend component |
 
 ### Slack Configuration
@@ -486,7 +486,7 @@ type HumanFeedbackStore struct {
 
 ## 📖 Related Documentation
 
-- [Workflow Orchestrator](workflow_orchestrator.md) - Uses human feedback for approvals
-- [Todo Creation Human Workflow](step_based_workflow.md) - Uses human feedback for plan approval and variable confirmation
-- [Virtual Tools]() - Overview of all virtual tools
-- [Event System]() - How events coordinate frontend/backend
+- [Running Workflows](running_workflows.md) - Uses human feedback for approvals
+- [Todo Task Step Type](todo-task-step-type.md) - Uses human feedback for plan approval and variable confirmation
+- Virtual tools - See the backend tool handlers referenced above
+- [Event System](../core/event_system.md) - How events coordinate frontend/backend

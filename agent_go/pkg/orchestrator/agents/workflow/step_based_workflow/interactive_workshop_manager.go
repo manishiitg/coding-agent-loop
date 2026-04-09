@@ -2292,10 +2292,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name (e.g., 'iteration-0', 'iteration-28'). Required. Use an existing iteration to add results to it, or a new name to create it.",
-				},
 				"skip_learning": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, skip the learning phase after execution for faster iteration. Default is false (learning enabled).",
@@ -2348,11 +2344,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
 			}
 
-			// Use the iteration provided by the caller
 			iteration := "iteration-0"
-			if it, ok := args["iteration"].(string); ok && it != "" {
-				iteration = it
-			}
 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
@@ -2652,10 +2644,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
-				},
 			},
 			"required": []string{"step_id", "group_id"},
 		},
@@ -2676,9 +2664,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			iteration := "iteration-0"
-			if it, ok := args["iteration"].(string); ok && it != "" {
-				iteration = it
-			}
 			iwm.refreshVariablesManifest(ctx)
 			groupFolderName := groupID
 			groupDisplayName := ""
@@ -3115,10 +3100,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
 				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Iteration folder name. Defaults to 'iteration-0' if omitted.",
-				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
@@ -3140,9 +3121,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			groupID, _ := args["group_id"].(string)
 
 			iteration := "iteration-0"
-			if it, ok := args["iteration"].(string); ok && it != "" {
-				iteration = it
-			}
 			if groupID == "" {
 				return "group_id is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
 			}

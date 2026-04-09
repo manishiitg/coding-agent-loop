@@ -5,210 +5,67 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strings"
-	"time"
 )
 
-// resolveRunFolder determines which run folder to use based on the run mode
-// Returns the selected run folder name (e.g., "iteration-1", "iteration-2")
-// Note: "iteration-same" is deprecated - all folders now use numbered iterations
+// resolveRunFolder determines which run folder to use.
+// Always runs in iteration-0. If iteration-0 already exists, it is moved to the
+// next available iteration-N as a backup before creating a fresh iteration-0.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolder(ctx context.Context, workspacePath, runMode string) (string, error) {
 	return hcpo.resolveRunFolderWithOptions(ctx, workspacePath, runMode, "")
 }
 
-// resolveRunFolderWithOptions determines which run folder to use based on the run mode and optional pre-selected folder
-// If selectedRunFolder is provided, it will be used directly (for frontend-provided options)
-// Returns the selected run folder name (e.g., "iteration-1", "iteration-2")
+// resolveRunFolderWithOptions always resolves to iteration-0.
+// If iteration-0 exists and has content, it is moved to iteration-N (next available) as a backup.
+// A fresh iteration-0 is then created for the new run.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx context.Context, workspacePath, runMode, selectedRunFolder string) (string, error) {
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
+	iteration0Path := fmt.Sprintf("%s/iteration-0", runsPath)
 
-	// Default to "use_same_run" if runMode is empty
-	if runMode == "" {
-		runMode = "use_same_run"
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 No run_mode specified, defaulting to 'use_same_run'"))
-	}
-
-	switch runMode {
-	case "use_same_run":
-		// If frontend provided a specific folder, use it directly
-		if selectedRunFolder != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("📁 Using frontend-selected run folder: %s", selectedRunFolder))
-			// Ensure the folder exists
-			fullPath := fmt.Sprintf("%s/%s", runsPath, selectedRunFolder)
-			exists := hcpo.workspaceFileExists(ctx, fullPath)
-			if !exists {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Selected folder %s doesn't exist, creating it", selectedRunFolder))
-				if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
-					return "", err
-				}
-			}
-			return selectedRunFolder, nil
-		}
-
-		// Check if runs directory exists
-		exists := hcpo.workspaceFileExists(ctx, runsPath)
-		if !exists {
-			// Create iteration-1 run folder (not iteration-same)
-			selectedFolder := "iteration-1"
-			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
-				return "", err
-			}
-			return selectedFolder, nil
-		}
-
-		// List existing run folders
-		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
-		if err != nil || len(existingFolders) == 0 {
-			// Create iteration-1 folder if none exist (not iteration-same)
-			selectedFolder := "iteration-1"
-			if err := hcpo.createRunFolderStructure(ctx, fmt.Sprintf("%s/%s", runsPath, selectedFolder)); err != nil {
-				return "", err
-			}
-			return selectedFolder, nil
-		}
-
-		// Filter to only numbered iteration folders (iteration-N pattern)
-		// Note: iteration-same is deprecated but still supported for backward compatibility
-		var iterationFolders []string
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Found %d existing folders: %v", len(existingFolders), existingFolders))
-
-		for _, folder := range existingFolders {
-			// Include all iteration-* folders (both numbered and legacy "iteration-same")
-			if strings.HasPrefix(folder, "iteration-") {
-				iterationFolders = append(iterationFolders, folder)
-			}
-		}
-
-		// Sort iteration folders by iteration number
-		// Supports formats: "iteration-N", "YYYY-MM-DD-iteration-N", or "YYYY-MM-DD-initial"
-		if len(iterationFolders) > 0 {
-			sort.Slice(iterationFolders, func(i, j int) bool {
-				// Extract iteration number from folder name
-				extractIteration := func(name string) int {
-					// Try to match "iteration-N" pattern (works for both "iteration-N" and "YYYY-MM-DD-iteration-N")
-					re := regexp.MustCompile(`iteration-(\d+)$`)
-					matches := re.FindStringSubmatch(name)
-					if len(matches) > 1 {
-						var num int
-						if _, err := fmt.Sscanf(matches[1], "%d", &num); err == nil {
-							return num
-						}
-					}
-					// Legacy "iteration-same" treated as 0 (so it appears last after numbered iterations)
-					if name == "iteration-same" {
-						return 0
-					}
-					// If "initial" or no match, treat as -1 (lowest priority)
-					if strings.HasSuffix(name, "-initial") {
-						return -1
-					}
-					return -2 // Unknown format, put at end
-				}
-
-				iterI := extractIteration(iterationFolders[i])
-				iterJ := extractIteration(iterationFolders[j])
-
-				// Sort by iteration number (descending - highest iteration first)
-				if iterI != iterJ {
-					return iterI > iterJ
-				}
-				// If same iteration number, sort alphabetically
-				return iterationFolders[i] > iterationFolders[j]
-			})
-		}
-
-		// Limit to 10 most recent folders
-		folderOptions := iterationFolders
-		if len(folderOptions) > 10 {
-			folderOptions = folderOptions[:10]
-		}
-
-		// If only one folder exists, use it directly
-		if len(folderOptions) == 1 {
-			hcpo.GetLogger().Info(fmt.Sprintf("📁 Using the only existing run folder: %s", folderOptions[0]))
-			return folderOptions[0], nil
-		}
-
-		// Multiple folders exist - ask user to select which one to use
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Found %d existing run folders, presenting %d options to user", len(existingFolders), len(folderOptions)))
-
-		// Ask user to select which run folder to use
-		requestID := fmt.Sprintf("select_run_folder_%d", time.Now().UnixNano())
-
-		// Build appropriate question based on number of folders
-		var questionText string
-		if len(existingFolders) == 1 {
-			questionText = "Which run folder would you like to use?"
-		} else if len(folderOptions) == len(existingFolders) {
-			questionText = fmt.Sprintf("Found %d run folders. Which one would you like to use?", len(existingFolders))
-		} else {
-			questionText = fmt.Sprintf("Found %d run folders (showing %d most recent). Which one would you like to use?", len(existingFolders), len(folderOptions))
-		}
-
-		contextMsg := fmt.Sprintf("Found %d existing run folder(s). Which one would you like to use?\n\n", len(existingFolders))
-		if len(existingFolders) > len(folderOptions) {
-			contextMsg += fmt.Sprintf("**Note:** Showing %d most recent folders (sorted by iteration number).\n\n", len(folderOptions))
-		}
-		contextMsg += "**Available folders:**\n"
-		for _, folder := range folderOptions {
-			contextMsg += fmt.Sprintf("- %s\n", folder)
-		}
-
-		choice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			requestID,
-			questionText,
-			folderOptions,
-			contextMsg,
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
+	// Check if iteration-0 exists — if so, back it up
+	if hcpo.workspaceFileExists(ctx, iteration0Path) {
+		backupName, err := hcpo.nextAvailableIteration(ctx, runsPath)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user selection for run folder: %v, defaulting to first option", err))
-			// Default to first option (highest iteration number)
-			return folderOptions[0], nil
-		}
-
-		// Parse the choice (format: "option0", "option1", etc.)
-		// Extract the index from the choice string
-		var selectedIndex int
-		if _, err := fmt.Sscanf(choice, "option%d", &selectedIndex); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse folder choice '%s': %v, defaulting to first option", choice, err))
-			return folderOptions[0], nil
-		}
-
-		// Validate index
-		if selectedIndex < 0 || selectedIndex >= len(folderOptions) {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid folder index %d (max: %d), defaulting to first option", selectedIndex, len(folderOptions)-1))
-			return folderOptions[0], nil
-		}
-
-		selectedFolder := folderOptions[selectedIndex]
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ User selected run folder: %s", selectedFolder))
-		return selectedFolder, nil
-
-	case "create_new_runs_always":
-		// Always create a new iteration folder with incremental number
-		counter := 1
-		for {
-			selectedFolder := fmt.Sprintf("iteration-%d", counter)
-			fullPath := fmt.Sprintf("%s/%s", runsPath, selectedFolder)
-
-			exists := hcpo.workspaceFileExists(ctx, fullPath)
-			if !exists {
-				if err := hcpo.createRunFolderStructure(ctx, fullPath); err != nil {
-					return "", err
-				}
-				return selectedFolder, nil
+			hcpo.GetLogger().Warn(fmt.Sprintf("Failed to determine backup iteration number: %v, will overwrite iteration-0", err))
+		} else {
+			backupPath := fmt.Sprintf("%s/%s", runsPath, backupName)
+			hcpo.GetLogger().Info(fmt.Sprintf("Backing up iteration-0 -> %s", backupName))
+			if err := hcpo.MoveWorkspaceFile(ctx, iteration0Path, backupPath); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to backup iteration-0 to %s: %v, will overwrite", backupName, err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("Backed up iteration-0 -> %s", backupName))
 			}
-			counter++
 		}
-
-	default:
-		return "", fmt.Errorf("unknown run mode: %s", runMode)
 	}
+
+	// Create fresh iteration-0
+	if err := hcpo.createRunFolderStructure(ctx, iteration0Path); err != nil {
+		return "", fmt.Errorf("failed to create iteration-0: %w", err)
+	}
+
+	hcpo.GetLogger().Info("Using iteration-0 for workflow execution")
+	return "iteration-0", nil
+}
+
+// nextAvailableIteration finds the next available iteration-N name (N >= 1) under runsPath.
+func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIteration(ctx context.Context, runsPath string) (string, error) {
+	existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
+	if err != nil {
+		// If we can't list, start from 1
+		return "iteration-1", nil
+	}
+
+	maxIter := 0
+	re := regexp.MustCompile(`^iteration-(\d+)$`)
+	for _, folder := range existingFolders {
+		matches := re.FindStringSubmatch(folder)
+		if len(matches) > 1 {
+			var n int
+			if _, err := fmt.Sscanf(matches[1], "%d", &n); err == nil && n > maxIter {
+				maxIter = n
+			}
+		}
+	}
+	return fmt.Sprintf("iteration-%d", maxIter+1), nil
 }
 
 // workspaceFileExists checks if a file or directory exists in the workspace
@@ -315,45 +172,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 	return nil
 }
 
-// determineRunFolderForCleanup determines which run folder will be used (if any) without creating it
-// Returns: (runFolderName, shouldCleanSpecificFolder, error)
-// - runFolderName: The folder name that will be used (empty if new folder will be created)
-// - shouldCleanSpecificFolder: Whether we should clean a specific folder (true if reusing existing folder)
+// determineRunFolderForCleanup determines which run folder will be used (if any) without creating it.
+// Always returns iteration-0 since that is the only folder workflows run in.
 func (hcpo *StepBasedWorkflowOrchestrator) determineRunFolderForCleanup(ctx context.Context, workspacePath, runMode string) (string, bool, error) {
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
+	iteration0Path := fmt.Sprintf("%s/iteration-0", runsPath)
 
-	// Default to "use_same_run" if runMode is empty
-	if runMode == "" {
-		runMode = "use_same_run"
+	if hcpo.workspaceFileExists(ctx, iteration0Path) {
+		return "iteration-0", true, nil
 	}
-
-	switch runMode {
-	case "use_same_run":
-		// Check if runs directory exists
-		exists := hcpo.workspaceFileExists(ctx, runsPath)
-		if !exists {
-			// Will create "iteration-same" - no existing folder to clean
-			return "", false, nil
-		}
-
-		// List existing run folders
-		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
-		if err != nil || len(existingFolders) == 0 {
-			// Will create "iteration-same" - no existing folder to clean
-			return "", false, nil
-		}
-
-		// Will reuse the latest folder - should clean it
-		sort.Strings(existingFolders)
-		return existingFolders[len(existingFolders)-1], true, nil
-
-	case "create_new_runs_always":
-		// Always creates new folder - no specific folder to clean
-		return "", false, nil
-
-	default:
-		return "", false, fmt.Errorf("unknown run mode: %s", runMode)
-	}
+	// iteration-0 doesn't exist yet — nothing to clean
+	return "", false, nil
 }
 
 // shouldAskDeleteOldProgress determines if we should ask the "Delete old progress" question

@@ -495,132 +495,28 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [isStartPointDropdownOpen])
 
-  // Calculate progress info - use ref to track previous value and prevent infinite loops
-  const completedStepIndicesRef = useRef<number[]>([])
-  const stepProgressDataRef = useRef<string>('')
-  const completedStepIndicesDepsRef = useRef<{ indices: number[] | undefined, totalSteps: number }>({ indices: undefined, totalSteps: 0 })
-  
-  const completedStepIndices = useMemo(() => {
-    // Extract the array inside useMemo to avoid dependency issues
-    const indices = stepProgress?.completed_step_indices || []
-    const sorted = indices.slice().sort((a, b) => a - b)
-    
-    // Track dependency changes
-    const prevDeps = completedStepIndicesDepsRef.current
-    const depsChanged = prevDeps.indices !== indices || prevDeps.totalSteps !== totalSteps
-    if (depsChanged) {
-      completedStepIndicesDepsRef.current = { indices, totalSteps }
-    }
-    
-    // Create a stable string representation of the data
-    const dataStr = JSON.stringify(sorted) + String(totalSteps)
-    
-    // Only update if data actually changed
-    if (stepProgressDataRef.current !== dataStr) {
-      stepProgressDataRef.current = dataStr
-      completedStepIndicesRef.current = sorted
-    }
-    
-    return completedStepIndicesRef.current
-  }, [stepProgress?.completed_step_indices, totalSteps]) // Only depend on the array, not the whole object
-  
-  const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
-  const completedStepCount = completedStepIndices.length
   const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
 
 
   // Helper to format the selected run folder display text
   const getSelectedRunFolderDisplay = useMemo(() => {
-    // If no groups are selected via checkboxes, show "--Select--"
-    if (selectedGroupIds.length === 0) {
-      // Only show a specific folder if it's a direct group path (user clicked on a specific group)
-      const isGroupPath = selectedRunFolder && selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
-      if (isGroupPath) {
-        // Extract iteration and group folder name
-        const parts = selectedRunFolder.split('/')
-        const iteration = parts[0] // e.g., "iteration-14"
-        const groupFolderName = parts[1] // e.g., "group-1" or "siddharth"
-        
-        // Find the group in manifest to get display name
-        if (variablesManifest?.groups) {
-          const group = variablesManifest.groups.find(g => {
-            // Check if group_id matches or if display_name (sanitized) matches
-            if (groupFolderName.startsWith('group-')) {
-              return g.group_id === groupFolderName
-            } else {
-              // Display name - need to match sanitized version
-              const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-              const groupSanitized = g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-              return groupSanitized === sanitizedDisplayName
-            }
-          })
-          
-          if (group && group.display_name) {
-            // Show full path with original display name: "iteration-14/Siddharth"
-            return `${iteration}/${group.display_name}`
-          } else if (group) {
-            // No display name, use group_id: "iteration-14/group-1"
-            return `${iteration}/${group.group_id}`
-          }
-        }
-        
-        // Fallback: show the full path as-is
-        return selectedRunFolder
-      }
-      
-      // No groups selected and not a specific group path - show "--Select--"
-      return '--Select--'
-    }
-    
-    // Groups are selected via checkboxes - show them
+    // Show selected group names (iteration is always iteration-0, no need to display)
     if (selectedGroupIds.length > 0 && variablesManifest?.groups) {
-      // Find selected groups from manifest
       const selectedGroups = variablesManifest.groups.filter(g => selectedGroupIds.includes(g.group_id))
       if (selectedGroups.length > 0) {
-        // Show display names or group_ids of selected groups
         const groupNames = selectedGroups.map(g => g.display_name || g.group_id)
-        
-        // Extract iteration from selectedRunFolder (could be "iteration-5" or "iteration-5/group-1")
-        let iteration: string | null = null
-        if (selectedRunFolder && selectedRunFolder !== 'new') {
-          if (selectedRunFolder.includes('/')) {
-            // It's a group path - extract iteration
-            iteration = selectedRunFolder.split('/')[0]
-          } else {
-            // It's just an iteration folder
-            iteration = selectedRunFolder
-          }
-        }
-        
         if (groupNames.length === 1) {
-          // Single group selected - show with iteration if available
-          if (iteration) {
-            return `${iteration}/${groupNames[0]}`
-          }
           return groupNames[0]
         } else if (groupNames.length <= 3) {
-          // Multiple groups - show with iteration prefix if available
-          if (iteration) {
-            return `${iteration}: ${groupNames.join(', ')}`
-          }
           return groupNames.join(', ')
         } else {
-          // Many groups - show with iteration prefix if available
-          if (iteration) {
-            return `${iteration}: ${groupNames.slice(0, 2).join(', ')} +${groupNames.length - 2}`
-          }
           return `${groupNames.slice(0, 2).join(', ')} +${groupNames.length - 2}`
         }
       }
     }
-    
-    // Fallback
-    if (!selectedRunFolder) {
-      return '--Select--'
-    }
-    
-    return selectedRunFolder
-  }, [selectedRunFolder, selectedGroupIds, variablesManifest])
+
+    return '--Select Group--'
+  }, [selectedGroupIds, variablesManifest])
 
   // Build merged list of iterations and groups
   // Groups from variablesManifest are PRIMARY - runFolders only indicate if groups have run
@@ -933,215 +829,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [])
   
   // Generate start point options based on completed steps and branch steps
-  // Use ref to track previous options and prevent recalculation loops
-  const startPointOptionsRef = useRef<StartPointOption[]>([])
-  const startPointOptionsDataRef = useRef<string>('')
-  const startPointOptionsDepsRef = useRef<{ completedStepIndices: number[], totalSteps: number, planStepsLength: number, branchSteps: Record<string, unknown> | undefined }>({
-    completedStepIndices: [],
-    totalSteps: 0,
-    planStepsLength: 0,
-    branchSteps: undefined
-  })
-  
-  const startPointOptions = useMemo((): StartPointOption[] => {
-    const options: StartPointOption[] = [
-      { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
-    ]
-    
-    // Extract specific data inside useMemo to avoid dependency issues
-    const stepProgressBranchSteps = stepProgress?.branch_steps
-    const planSteps = plan?.steps
-    const planStepsCount = planSteps?.length || 0
-    
-    // Debug: Track dependency changes
-    const prevDeps = startPointOptionsDepsRef.current
-    const depsChanged = 
-      prevDeps.completedStepIndices !== completedStepIndices ||
-      prevDeps.totalSteps !== totalSteps ||
-      prevDeps.planStepsLength !== planStepsCount ||
-      prevDeps.branchSteps !== stepProgressBranchSteps
-    
-    if (depsChanged) {
-      startPointOptionsDepsRef.current = {
-        completedStepIndices,
-        totalSteps,
-        planStepsLength: planStepsCount,
-        branchSteps: stepProgressBranchSteps
-      }
-    }
-    
-    // Create stable data representation for comparison
-    const indicesStr = JSON.stringify(completedStepIndices)
-    const branchStepsStr = stepProgressBranchSteps ? JSON.stringify(stepProgressBranchSteps) : ''
-    const dataStr = `${indicesStr}|${branchStepsStr}|${totalSteps}|${planStepsCount}|${selectedStartPoint}`
-    
-    // Only recalculate if data actually changed
-    if (startPointOptionsDataRef.current === dataStr && startPointOptionsRef.current.length > 0) {
-      return startPointOptionsRef.current
-    }
-    
-    startPointOptionsDataRef.current = dataStr
-    
-    // Add resume options for all completed steps plus the next step after all completed
-    if (completedStepIndices.length > 0 && totalSteps > 0) {
-      // Convert 0-based indices to 1-based step numbers
-      const completedStepNumbers = completedStepIndices.map(idx => idx + 1).sort((a, b) => a - b)
-      const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
-      const nextStep = lastCompletedStep + 1
-      
-      // Add all completed steps as resume options
-      completedStepNumbers.forEach(stepNum => {
-        const stepIndex = stepNum - 1 // Convert to 0-based
-        const step = plan?.steps?.[stepIndex]
-        const stepTitle = step?.title || `Step ${stepNum}`
-        options.push({
-          id: 'resume',
-          stepNumber: stepNum,
-          label: `Start Again from step ${stepNum}: ${stepTitle}`,
-          icon: RefreshCw,
-          description: `Start again from step ${stepNum}`
-        })
-      })
-
-      // Add next step if it exists (resume from after all completed steps)
-      // This is a new step that will run, so it says "Resume" not "Start Again"
-      if (nextStep <= totalSteps) {
-        const stepIndex = nextStep - 1 // Convert to 0-based
-        const step = plan?.steps?.[stepIndex]
-        const stepTitle = step?.title || `Step ${nextStep}`
-        options.push({
-          id: 'resume',
-          stepNumber: nextStep,
-          label: `Resume from step ${nextStep}: ${stepTitle}`,
-          icon: RefreshCw,
-          description: `Resume from step ${nextStep}`
-        })
-      }
-    }
-    
-    // Add branch step resume options for conditional steps with incomplete branches
-    if (planSteps && stepProgressBranchSteps && Object.keys(stepProgressBranchSteps).length > 0) {
-      Object.entries(stepProgressBranchSteps).forEach(([stepIndexStr, branchProgress]) => {
-        const parentStepIndex = parseInt(stepIndexStr, 10)
-        const parentStep = planSteps[parentStepIndex]
-        
-        // Only process conditional steps
-        if (!parentStep || !isConditionalStep(parentStep)) {
-          return
-        }
-        
-        const branchType = branchProgress.branch_executed === 'if_true' ? 'if_true' : 'if_false'
-        const branchSteps = branchType === 'if_true' ? parentStep.if_true_steps : parentStep.if_false_steps
-        
-        if (!branchSteps || branchSteps.length === 0) {
-          return
-        }
-        
-        // Find first incomplete branch step
-        let firstIncompleteIndex = -1
-        for (let i = 0; i < branchSteps.length; i++) {
-          const branchStepPath = `step-${parentStepIndex + 1}-${branchType === 'if_true' ? 'if-true' : 'if-false'}-${i}`
-          const isCompleted = branchProgress.completed_steps?.includes(branchStepPath) || false
-          
-          if (!isCompleted) {
-            firstIncompleteIndex = i
-            break
-          }
-        }
-        
-        const branchLabel = branchType === 'if_true' ? 'Yes' : 'No'
-        const completedBranchSteps = branchProgress.completed_steps?.filter((path: string) => 
-          path.startsWith(`step-${parentStepIndex + 1}-${branchType === 'if_true' ? 'if-true' : 'if-false'}-`)
-        ).length || 0
-        
-        if (firstIncompleteIndex === -1) {
-          // All branch steps completed - add resume option to re-execute from the first branch step
-          // This allows re-running the branch even if all steps are completed (similar to regular steps)
-          console.log(`[WorkflowToolbar] Adding branch resume option (all completed): Step ${parentStepIndex + 1}, ${branchLabel} branch, step 1 (${completedBranchSteps}/${branchSteps.length} completed)`)
-          options.push({
-            id: 'resume_branch',
-            branchStep: {
-              parentStepIndex,
-              branchType,
-              branchStepIndex: 0 // Start from first branch step
-            },
-            label: `🔀 Resume: Step ${parentStepIndex + 1} → ${branchLabel} Branch → Step 1`,
-            icon: RefreshCw,
-            description: `Re-execute ${branchLabel} branch from step 1 (${completedBranchSteps}/${branchSteps.length} completed)`
-          })
-        } else {
-          // Add resume option for the first incomplete branch step
-          console.log(`[WorkflowToolbar] Adding branch resume option: Step ${parentStepIndex + 1}, ${branchLabel} branch, step ${firstIncompleteIndex + 1} (${completedBranchSteps}/${branchSteps.length} completed)`)
-          options.push({
-            id: 'resume_branch',
-            branchStep: {
-              parentStepIndex,
-              branchType,
-              branchStepIndex: firstIncompleteIndex
-            },
-            label: `🔀 Resume: Step ${parentStepIndex + 1} → ${branchLabel} Branch → Step ${firstIncompleteIndex + 1}`,
-            icon: RefreshCw,
-            description: `Continue from ${branchLabel} branch, step ${firstIncompleteIndex + 1} (${completedBranchSteps}/${branchSteps.length} completed)`
-          })
-        }
-      })
-    }
-    
-    // If selectedStartPoint > 0 but no resume options were added (e.g., completedStepIndices is empty),
-    // add the selected start point as an option so the user can see and change their selection
-    if (selectedStartPoint > 0 && totalSteps > 0) {
-      const hasSelectedOption = options.some(o => o.stepNumber === selectedStartPoint)
-      if (!hasSelectedOption) {
-        // Add options for all steps up to selectedStartPoint so user can change their selection
-        for (let stepNum = 1; stepNum <= Math.min(selectedStartPoint, totalSteps); stepNum++) {
-          // Skip if already exists
-          if (options.some(o => o.stepNumber === stepNum)) continue
-
-          const stepIndex = stepNum - 1
-          const step = planSteps?.[stepIndex]
-          const stepTitle = step?.title || `Step ${stepNum}`
-          const isSelectedStep = stepNum === selectedStartPoint
-          options.push({
-            id: 'resume',
-            stepNumber: stepNum,
-            label: isSelectedStep
-              ? `Resume from step ${stepNum}: ${stepTitle}`
-              : `Start Again from step ${stepNum}: ${stepTitle}`,
-            icon: RefreshCw,
-            description: isSelectedStep
-              ? `Resume from step ${stepNum}`
-              : `Start again from step ${stepNum}`
-          })
-        }
-      }
-    }
-
-    // Sort options: from_beginning first, then regular resume options, then branch resume options
-    options.sort((a, b) => {
-      if (a.id === 'from_beginning') return -1
-      if (b.id === 'from_beginning') return 1
-      if (a.id === 'resume_branch' && b.id !== 'resume_branch') return 1
-      if (b.id === 'resume_branch' && a.id !== 'resume_branch') return -1
-      if (a.id === 'resume_branch' && b.id === 'resume_branch') {
-        // Sort branch options by parent step index, then branch step index
-        const aParent = a.branchStep?.parentStepIndex ?? 0
-        const bParent = b.branchStep?.parentStepIndex ?? 0
-        if (aParent !== bParent) return aParent - bParent
-        return (a.branchStep?.branchStepIndex ?? 0) - (b.branchStep?.branchStepIndex ?? 0)
-      }
-      // Regular resume options - sort by step number
-      return (a.stepNumber ?? 0) - (b.stepNumber ?? 0)
-    })
-    
-    // Only log when options actually change (not on every render)  
-    // Removed console.log to prevent excessive logging - uncomment for debugging
-    // console.log(`[WorkflowToolbar] Generated ${options.length} start point options:`, options.map(o => ({ id: o.id, label: o.label, hasBranchStep: !!o.branchStep })))
-    
-    // Store in ref for next comparison
-    startPointOptionsRef.current = options
-    return options
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [completedStepIndices, totalSteps, plan?.steps?.length, stepProgress?.branch_steps, selectedStartPoint]) // Only depend on specific data, not whole objects - using ref comparison to prevent loops
+  // Start point is always "from beginning" — resume logic removed
+  const startPointOptions: StartPointOption[] = [
+    { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
+  ]
 
   // Get current start point info
   const currentStartPointInfo = useMemo(() => {
@@ -1548,12 +1239,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
-                {/* Iteration Selector */}
+                {/* Group Selector */}
                 {isExecutionWorkspace && <div className="relative" ref={iterationDropdownRef}>
                   <button
                     ref={iterationDropdownButtonRef}
                     onClick={(e) => {
-                      e.stopPropagation() // Prevok ent event bubbling
+                      e.stopPropagation()
                       if (!isRunning && !isLoadingWorkspaceState) {
                         setIsIterationDropdownOpen(!isIterationDropdownOpen)
                       }
@@ -1578,9 +1269,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     <ChevronDown className={`w-3 h-3 transition-transform ${isIterationDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   
-                  {/* Iteration Dropdown - rendered via portal for proper z-index */}
+                  {/* Group Dropdown - rendered via portal for proper z-index */}
                   {isIterationDropdownOpen && !isRunning && iterationDropdownPosition && createPortal(
-                    <div 
+                    <div
                       data-iteration-dropdown
                       ref={iterationDropdownRef}
                       className="fixed w-56 bg-popover rounded-lg shadow-xl border border-border z-[9999] max-h-[300px] overflow-y-auto"
@@ -1590,505 +1281,105 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       }}
                     >
                       <div className="p-1">
-                        {/* Create New Iteration Button */}
-                        <button
-                          onClick={handleCreateIteration}
-                          disabled={isCreatingIteration || !workspacePath}
-                          className={`
-                            w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors mb-1
-                            ${isCreatingIteration || !workspacePath
-                              ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                              : 'bg-primary/10 text-primary hover:bg-primary/20'
-                            }
-                          `}
-                        >
-                          {isCreatingIteration ? (
-                            <>
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              <span>Creating...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-4 h-4" />
-                              <span>Create New Iteration</span>
-                            </>
-                          )}
-                        </button>
-                        
-                        {(iterationGroups.sortedIterations.length > 0 || folders.length > 0) ? (
+                        {variablesManifest?.groups && variablesManifest.groups.length > 0 ? (
                           <>
-                            <div className="border-t border-border my-1" />
                             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 py-1">
-                              {iterationGroups.sortedIterations.length > 0 ? 'Iterations & Groups' : `Existing Runs (${folders.length})`}
+                              Groups
                             </div>
-                            {iterationGroups.sortedIterations.length > 0 ? (
-                              // Show grouped by iteration
-                              iterationGroups.sortedIterations.map((iteration) => {
-                                const groups = iterationGroups.iterationMap.get(iteration) || []
-                                const hasGroups = groups.some(g => g.groupId !== null)
-                                const enabledGroups = groups.filter(g => g.enabled !== false)
-                                const hasMultipleGroups = enabledGroups.length > 1
-                                const isExpanded = expandedIterations.has(iteration)
-                                
-                                return (
-                                  <div key={iteration}>
-                                    {/* Iteration header (only if it has groups or is a top-level folder) */}
-                                    {hasGroups ? (
-                                      <div
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() => toggleIteration(iteration)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleIteration(iteration) }}
-                                        className="w-full px-3 py-1.5 text-xs font-semibold text-muted-foreground bg-muted/50 flex items-center justify-between gap-2 hover:bg-muted transition-colors cursor-pointer"
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          {isExpanded ? (
-                                            <ChevronDown className="w-3.5 h-3.5" />
-                                          ) : (
-                                            <ChevronRight className="w-3.5 h-3.5" />
-                                          )}
-                                          <span>{iteration}</span>
-                                        </div>
-                                        {/* Select All / Unselect All buttons - only show if multiple groups */}
-                                        {hasMultipleGroups && isExpanded && (
-                                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation()
-                                                const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
-                                                setSelectedGroupIds(allGroupIds)
-                                                // Use the first selected group's folder path so loadProgress can find steps_done.json
-                                                if (allGroupIds.length > 0) {
-                                                  const firstGroup = enabledGroups.find(g => g.groupId)
-                                                  if (firstGroup) {
-                                                    setSelectedRunFolder(firstGroup.id)
-                                                  } else {
-                                                    setSelectedRunFolder(iteration)
-                                                  }
-                                                }
-                                              }}
-                                              disabled={isRunning}
-                                              className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                              <CheckSquare className="w-3.5 h-3.5 text-primary" />
-                                            </button>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation()
-                                                clearSelectedGroupIds()
-                                                // When unselecting all groups, set to iteration folder
-                                                setSelectedRunFolder(iteration)
-                                              }}
-                                              disabled={isRunning}
-                                              className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                              <Square className="w-3.5 h-3.5 text-muted-foreground" />
-                                            </button>
-                                          </div>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      /* Top-level iteration folder without groups - render as clickable item */
-                                      (() => {
-                                        const iterItem = groups[0] // The single item with groupId: null
-                                        const progress = iterItem?.progress
-                                        const completedCount = progress?.completed_step_indices?.length || 0
-                                        const totalSteps = progress?.total_steps || 0
-                                        const hasProgress = progress && completedCount > 0
-                                        const isSelected = selectedRunFolder === iteration
-                                        return (
-                                          <>
-                                            <button
-                                              onClick={() => handleSelectRunFolder(iteration)}
-                                              className={`
-                                                w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
-                                                ${isSelected
-                                                  ? 'bg-primary/10 text-primary'
-                                                  : 'hover:bg-accent text-foreground'
-                                                }
-                                              `}
-                                            >
-                                              <FolderOpen className="w-4 h-4" />
-                                              <span className="flex-1 text-xs font-mono">{iteration}</span>
-                                              {hasProgress && (
-                                                <span className="text-[10px] text-muted-foreground">
-                                                  {completedCount}/{totalSteps}
-                                                </span>
-                                              )}
-                                            </button>
-                                          </>
-                                        )
-                                      })()
-                                    )}
+                            {/* Select All / Unselect All - only if multiple groups */}
+                            {variablesManifest.groups.filter(g => g.enabled !== false).length > 1 && (
+                              <div className="flex items-center justify-end gap-1 px-2 pb-1">
+                                <button
+                                  onClick={() => {
+                                    const allGroupIds = variablesManifest.groups
+                                      .filter(g => g.enabled !== false)
+                                      .map(g => g.group_id)
+                                    setSelectedGroupIds(allGroupIds)
+                                    setSelectedRunFolder('iteration-0')
+                                  }}
+                                  disabled={isRunning}
+                                  className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    clearSelectedGroupIds()
+                                    setSelectedRunFolder('iteration-0')
+                                  }}
+                                  disabled={isRunning}
+                                  className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  <Square className="w-3.5 h-3.5 text-muted-foreground" />
+                                </button>
+                              </div>
+                            )}
+                            {variablesManifest.groups.map((group) => {
+                              const isDisabled = group.enabled === false
+                              const isGroupChecked = selectedGroupIds.includes(group.group_id)
+                              const hasMultipleGroups = variablesManifest.groups.filter(g => g.enabled !== false).length > 1
 
-                                    {/* Only show groups when iteration is expanded */}
-                                    {isExpanded && hasGroups && (
-                                      <>
-                                        {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
-                                        {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
-                                        {groups.filter(group => group.groupId !== null).map((group) => {
-                                      const progress = group.progress
-                                      const completedCount = progress?.completed_step_indices?.length || 0
-                                      const totalSteps = progress?.total_steps || 0
-                                      const hasProgress = progress && completedCount > 0
-                                      const isSelected = selectedRunFolder === group.id
-                                      const isDisabled = group.enabled === false
-                                      const isGroupChecked = group.groupId ? selectedGroupIds.includes(group.groupId) : false
-                                      
-                                      return (
-                                        <div
-                                          key={group.id}
-                                          className={`
-                                            group flex items-center gap-1 px-1
-                                            ${isSelected 
-                                              ? 'bg-primary/10' 
-                                              : ''
-                                            }
-                                            ${isDisabled ? 'opacity-60' : ''}
-                                          `}
-                                          onMouseEnter={() => {
-                                            // Load progress on-demand if not already loaded and folder exists
-                                            if (!group.progress && group.exists && workspacePath) {
-                                              loadFolderProgressOnDemand(workspacePath, group.id)
-                                            }
-                                          }}
-                                        >
-                                          {/* Checkbox for group selection (only show if group has an ID and multiple groups exist) */}
-                                          {group.groupId && hasMultipleGroups && (
-                                            <input
-                                              type="checkbox"
-                                              checked={isGroupChecked}
-                                              onChange={(e) => {
-                                                e.stopPropagation()
-                                                if (group.groupId) {
-                                                  // Calculate what the new selection count will be after toggle
-                                                  const currentlySelected = selectedGroupIds.includes(group.groupId)
-                                                  const willBeSelected = !currentlySelected
-                                                  const currentCount = selectedGroupIds.length
-                                                  const newSelectedCount = willBeSelected ? currentCount + 1 : currentCount - 1
-                                                  
-                                                  // Toggle the selection
-                                                  toggleGroupSelection(group.groupId)
-                                                  
-                                                  // If multiple groups will be selected, show parent iteration folder in workspace
-                                                  // Otherwise show the specific group folder
-                                                  if (newSelectedCount > 1) {
-                                                    // Multiple groups selected - use a specific group's folder so loadProgress can find steps_done.json
-                                                    if (willBeSelected) {
-                                                      // Just checked this group - use it for progress loading
-                                                      setSelectedRunFolder(group.id)
-                                                    } else {
-                                                      // Unchecked a group but >1 remain - use the first remaining group
-                                                      const remainingGroupIds = selectedGroupIds.filter(id => id !== group.groupId)
-                                                      const firstRemaining = iterationGroups.items.find(
-                                                        g => g.groupId && remainingGroupIds.includes(g.groupId) && g.iteration === group.iteration
-                                                      )
-                                                      setSelectedRunFolder(firstRemaining ? firstRemaining.id : group.iteration)
-                                                    }
-                                                  } else if (newSelectedCount === 1) {
-                                                    // Single group will be selected - set to that group's folder
-                                                    const selectedGroupId = willBeSelected ? group.groupId : selectedGroupIds.find(id => id !== group.groupId)
-                                                    if (selectedGroupId) {
-                                                      const selectedGroup = iterationGroups.items.find(g => g.groupId === selectedGroupId && g.iteration === group.iteration)
-                                                      if (selectedGroup) {
-                                                        setSelectedRunFolder(selectedGroup.id)
-                                                      } else {
-                                                        setSelectedRunFolder(group.iteration)
-                                                      }
-                                                    } else {
-                                                      setSelectedRunFolder(group.iteration)
-                                                    }
-                                                  } else {
-                                                    // No groups selected - set to iteration folder
-                                                    setSelectedRunFolder(group.iteration)
-                                                  }
-                                                }
-                                              }}
-                                              onClick={(e) => e.stopPropagation()}
-                                              disabled={isDisabled || isRunning}
-                                              className="w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                            />
-                                          )}
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation() // Prevent event from bubbling to parent
-                                              // Select only this group when clicking the button (not checkbox)
-                                              if (group.groupId) {
-                                                setSelectedGroupIds([group.groupId])
-                                              }
-                                              // Use full group path (e.g., "iteration-5/group-name") to load correct progress
-                                              handleSelectRunFolder(group.id)
-                                            }}
-                                            className={`
-                                              flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
-                                              ${isSelected 
-                                                ? 'bg-primary/10 text-primary' 
-                                                : isDisabled
-                                                ? 'hover:bg-accent text-muted-foreground'
-                                                : 'hover:bg-accent text-foreground'
-                                              }
-                                            `}
-                                          >
-                                            {/* Only show folder icon if folder exists - checkbox is the primary indicator for selection */}
-                                            {group.exists ? (
-                                              <FolderOpen className="w-4 h-4" />
-                                            ) : hasMultipleGroups ? (
-                                              // When checkboxes are present, don't show circle icon (checkbox is the indicator)
-                                              null
-                                            ) : (
-                                              // Show circle if no checkboxes are present
-                                              <Circle className="w-4 h-4" />
-                                            )}
-                                            <span className="flex-1 text-xs flex items-center gap-1.5">
-                                              <span className={group.displayName ? 'font-medium' : 'font-mono'}>
-                                                {group.displayName || group.groupId || group.name}
-                                              </span>
-                                            </span>
-                                            {hasProgress && (
-                                              <span className="text-xs text-muted-foreground">
-                                                {completedCount}/{totalSteps}
-                                              </span>
-                                            )}
-                                            {!group.exists && !hasProgress && (
-                                              <span className="text-[10px] text-muted-foreground/70 italic">
-                                                not run
-                                              </span>
-                                            )}
-                                            {isSelected && <Check className="w-4 h-4 ml-auto" />}
-                                          </button>
-                                          {group.exists && (
-                                            <button
-                                              onClick={(e) => handleDeleteFolderClick(e, group.id)}
-                                              className={`
-                                                p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
-                                                opacity-0 group-hover:opacity-100 transition-opacity
-                                              `}
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
-                                      )
-                                    })}
-                                      </>
-                                    )}
-                                  </div>
-                                )
-                              })
-                            ) : folders.length > 0 && !variablesManifest?.groups?.length ? (
-                              // Iterations exist but no variable groups defined
-                              <>
-                                {folders.map((folder: RunFolder) => {
-                                  const progress = folder.progress
-                                  const folderCompletedCount = progress?.completed_step_indices?.length || 0
-                                  const folderTotalSteps = progress?.total_steps || 0
-                                  const hasProgress = progress && folderCompletedCount > 0
-                                  const isSelected = selectedRunFolder === folder.name
-
-                                  return (
-                                    <button
-                                      key={folder.name}
-                                      onClick={() => handleSelectRunFolder(folder.name)}
-                                      className={`
-                                        w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
-                                        ${isSelected
-                                          ? 'bg-primary/10 text-primary'
-                                          : 'hover:bg-accent text-foreground'
+                              return (
+                                <div
+                                  key={group.group_id}
+                                  className={`
+                                    group flex items-center gap-1 px-1
+                                    ${isGroupChecked ? 'bg-primary/10' : ''}
+                                    ${isDisabled ? 'opacity-60' : ''}
+                                  `}
+                                >
+                                  {hasMultipleGroups && (
+                                    <input
+                                      type="checkbox"
+                                      checked={isGroupChecked}
+                                      onChange={() => {
+                                        if (group.group_id) {
+                                          toggleGroupSelection(group.group_id)
+                                          setSelectedRunFolder('iteration-0')
                                         }
-                                      `}
-                                    >
-                                      <FolderOpen className="w-4 h-4" />
-                                      <span className="flex-1 text-xs font-mono">{folder.name}</span>
-                                      {hasProgress && (
-                                        <span className="text-[10px] text-muted-foreground">
-                                          {folderCompletedCount}/{folderTotalSteps}
-                                        </span>
-                                      )}
-                                    </button>
-                                  )
-                                })}
-                                <div className="border-t border-border mt-1 pt-1 px-3 py-2 text-[10px] text-amber-600 dark:text-amber-400">
-                                  No variable groups defined. Add groups in Variables to run per-group iterations.
-                                </div>
-                              </>
-                            ) : (
-                              // Fallback: show flat list if no groups (backward compatibility)
-                              folders.map((folder: RunFolder) => {
-                                const progress = folder.progress
-                                const folderCompletedCount = progress?.completed_step_indices?.length || 0
-                                const folderTotalSteps = progress?.total_steps || 0
-                                const hasProgress = progress && folderCompletedCount > 0
-                                
-                                return (
-                                  <div
-                                    key={folder.name}
-                                    className={`
-                                      group flex items-center gap-1 px-1
-                                      ${selectedRunFolder === folder.name 
-                                        ? 'bg-primary/10' 
-                                        : ''
-                                      }
-                                    `}
-                                    onMouseEnter={() => {
-                                      // Load progress on-demand if not already loaded
-                                      if (!folder.progress && workspacePath) {
-                                        loadFolderProgressOnDemand(workspacePath, folder.name)
+                                      }}
+                                      disabled={isDisabled || isRunning}
+                                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                    />
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      if (group.group_id) {
+                                        setSelectedGroupIds([group.group_id])
+                                        setSelectedRunFolder('iteration-0')
+                                        setIsIterationDropdownOpen(false)
                                       }
                                     }}
+                                    disabled={isDisabled || isRunning}
+                                    className={`
+                                      flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                      ${isGroupChecked
+                                        ? 'bg-primary/10 text-primary'
+                                        : isDisabled
+                                        ? 'hover:bg-accent text-muted-foreground'
+                                        : 'hover:bg-accent text-foreground'
+                                      }
+                                    `}
                                   >
-                                    <button
-                                      onClick={() => handleSelectRunFolder(folder.name)}
-                                      className={`
-                                        flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
-                                        ${selectedRunFolder === folder.name 
-                                          ? 'bg-primary/10 text-primary' 
-                                          : 'hover:bg-accent text-foreground'
-                                        }
-                                      `}
-                                    >
-                                      <FolderOpen className="w-4 h-4" />
-                                      <span className="flex-1">{folder.name}</span>
-                                      {hasProgress && (
-                                        <span className="text-xs text-muted-foreground">
-                                          {folderCompletedCount}/{folderTotalSteps}
-                                        </span>
-                                      )}
-                                      {selectedRunFolder === folder.name && <Check className="w-4 h-4 ml-auto" />}
-                                    </button>
-                                    <button
-                                      onClick={(e) => handleDeleteFolderClick(e, folder.name)}
-                                      className={`
-                                        p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
-                                        opacity-0 group-hover:opacity-100 transition-opacity
-                                      `}
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                )
-                              })
-                            )}
+                                    <span className="flex-1 text-xs font-medium">
+                                      {group.display_name || group.group_id}
+                                    </span>
+                                    {isGroupChecked && <Check className="w-4 h-4 ml-auto" />}
+                                  </button>
+                                </div>
+                              )
+                            })}
                           </>
-                        ) : !isLoadingWorkspaceState && workspacePath ? (
+                        ) : (
                           <div className="px-3 py-2 text-xs text-muted-foreground">
-                            No existing runs found
+                            No variable groups defined. Add groups in Variables.
                           </div>
-                        ) : null}
+                        )}
                       </div>
                     </div>,
                     document.body
                   )}
                 </div>}
-
-                {/* Progress indicator when existing run selected */}
-                {hasExistingProgress && (
-                  <div className="flex items-center gap-1 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-[10px] font-medium">
-                    <Check className="w-2.5 h-2.5" />
-                    <span>{completedStepCount}/{totalSteps}</span>
-                  </div>
-                )}
-
-                {/* Dropdown 2: Start Point - Where to start */}
-                <div className="relative" ref={startPointDropdownRef}>
-                  <button
-                    ref={startPointButtonRef}
-                    onClick={() => !isRunning && setIsStartPointDropdownOpen(!isStartPointDropdownOpen)}
-                    disabled={isRunning}
-                    className={`
-                      flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
-                      ${isRunning
-                        ? 'bg-muted text-muted-foreground cursor-not-allowed' 
-                        : 'bg-muted text-foreground hover:bg-accent'
-                      }
-                    `}
-                  >
-                    {(() => {
-                      const Icon = currentStartPointInfo.icon
-                      return <Icon className="w-3.5 h-3.5" />
-                    })()}
-                    <span className="max-w-[120px] truncate" title={currentStartPointInfo.label}>{currentStartPointInfo.label}</span>
-                    <ChevronDown className={`w-3 h-3 transition-transform ${isStartPointDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  
-                  {/* Start Point Dropdown - rendered via portal for proper z-index */}
-                  {isStartPointDropdownOpen && !isRunning && startPointDropdownPosition && createPortal(
-                    <div 
-                      data-start-point-dropdown
-                      ref={startPointDropdownRef}
-                      className="fixed w-64 bg-popover rounded-lg shadow-xl border border-border z-[9999] max-h-[300px] overflow-y-auto"
-                      style={{
-                        top: `${startPointDropdownPosition.top}px`,
-                        left: `${startPointDropdownPosition.left}px`
-                      }}
-                    >
-                      <div className="p-1">
-                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2">
-                          Start Point
-                        </div>
-                        {startPointOptions.map((option: StartPointOption, idx: number) => {
-                          const Icon = option.icon
-                          const isSelected = option.id === 'from_beginning' 
-                            ? (selectedStartPoint === 0 && !selectedBranchStep)
-                            : option.id === 'resume_branch'
-                            ? (selectedBranchStep !== null && 
-                               selectedBranchStep !== undefined &&
-                               option.branchStep !== undefined &&
-                               option.branchStep !== null &&
-                               selectedBranchStep.parentStepIndex === option.branchStep.parentStepIndex &&
-                               selectedBranchStep.branchType === option.branchStep.branchType &&
-                               selectedBranchStep.branchStepIndex === option.branchStep.branchStepIndex)
-                            : selectedStartPoint === option.stepNumber
-                          
-                          // Check if previous option was not a branch option and this one is (add separator)
-                          const prevOption = idx > 0 ? startPointOptions[idx - 1] : null
-                          const showBranchSeparator = option.id === 'resume_branch' && prevOption && prevOption.id !== 'resume_branch'
-                          
-                          return (
-                            <div key={`${option.id}-${option.stepNumber || option.branchStep?.parentStepIndex || idx}`}>
-                              {showBranchSeparator && (
-                                <div className="px-3 py-2">
-                                  <div className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">
-                                    Branch Resume Options
-                                  </div>
-                                </div>
-                              )}
-                            <button
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  handleSelectStartPoint(option)
-                                }}
-                              className={`
-                                  w-full text-left px-3 py-2.5 rounded-md transition-colors cursor-pointer
-                                ${isSelected 
-                                  ? 'bg-primary/10' 
-                                  : 'hover:bg-accent'
-                                }
-                                  ${option.id === 'resume_branch' ? 'border-l-4 border-blue-400 dark:border-blue-500 ml-0' : ''}
-                              `}
-                                type="button"
-                            >
-                              <div className="flex items-start gap-3">
-                                  <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isSelected ? 'text-primary' : option.id === 'resume_branch' ? 'text-blue-500 dark:text-blue-400' : 'text-muted-foreground'}`} />
-                                <div className="flex-1 min-w-0">
-                                    <div className={`font-medium text-sm ${isSelected ? 'text-primary' : option.id === 'resume_branch' ? 'text-blue-700 dark:text-blue-300' : 'text-foreground'}`}>
-                                    {option.label}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                    {option.description}
-                                  </div>
-                                </div>
-                                  {isSelected && <Check className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />}
-                              </div>
-                            </button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>,
-                    document.body
-                  )}
-                </div>
 
                 <div className="w-px h-5 bg-border" />
 

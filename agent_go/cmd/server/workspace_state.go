@@ -102,24 +102,6 @@ func (api *StreamingAPI) handleLoadWorkspaceState(w http.ResponseWriter, r *http
 		mu.Unlock()
 	}()
 
-	// Load selected folder progress if specified
-	if selectedFolder != "" && selectedFolder != "new" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			progress, err := api.loadProgressInternal(ctx, workspacePath, selectedFolder)
-			if err != nil {
-				mu.Lock()
-				errors = append(errors, fmt.Sprintf("progress: %v", err))
-				mu.Unlock()
-				return
-			}
-			mu.Lock()
-			state.SelectedProgress = progress
-			mu.Unlock()
-		}()
-	}
-
 	// Load phases (synchronous, fast)
 	state.Phases = orchtypes.GetWorkflowConstants().Phases
 
@@ -300,33 +282,11 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 		folderInfos = folderInfos[:maxFolders]
 	}
 
-	// Load progress and metadata for all iterations/groups
+	// Load metadata for all iterations/groups
 	for i := range folderInfos {
 		folderName := folderInfos[i].Name
-		stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
-		if progress, err := readProgressForFolder(ctx, stepsFilePath); err == nil && progress != nil {
-			folderInfos[i].Progress = progress
-		}
-
 		metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
 		metadata, _ := readRunMetadata(ctx, metadataPath)
-
-		if metadata == nil && folderInfos[i].Progress != nil {
-			// Fallback: infer metadata from progress and token_usage for legacy runs
-			metadata = inferRunMetadata(ctx, workspacePath, folderName, folderInfos[i].Progress)
-			if metadata != nil {
-				_ = writeRunMetadata(ctx, metadataPath, metadata)
-			}
-		} else if metadata != nil && metadata.Status == "running" && folderInfos[i].Progress != nil {
-			// Auto-derive completion from progress
-			p := folderInfos[i].Progress
-			if p.TotalSteps > 0 && len(p.CompletedStepIndices) >= p.TotalSteps {
-				completedAt := p.LastUpdated
-				metadata.Status = "completed"
-				metadata.CompletedAt = &completedAt
-				_ = writeRunMetadata(ctx, metadataPath, metadata)
-			}
-		}
 
 		if metadata != nil {
 			folderInfos[i].Metadata = metadata

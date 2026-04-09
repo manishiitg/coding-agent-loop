@@ -1483,15 +1483,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					executionAgentName = fmt.Sprintf("%s-val-%d", executionAgentName, retryAttempt)
 				}
 				// Add learning history to template vars for execution-only agent (reused for all retry attempts)
-				// If a saved main.py exists for this step, append a reference so the LLM knows to read it
+				// If a saved main.py exists for this step, point to the execution/code/ copy (not learnings/)
+				// so the LLM doesn't reference or hardcode learnings paths in generated scripts.
 				stepLearningHistory := formattedLearningHistory
-				stepMainPyRelPath := getLearnCodeDirRelPath(step.GetID(), hcpo.isEvaluationMode) + "/main.py"
-				if _, mainPyReadErr := hcpo.ReadWorkspaceFile(ctx, stepMainPyRelPath); mainPyReadErr == nil {
-					absMainPyPath := getLearnCodeScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), step.GetID(), hcpo.isEvaluationMode)
+				execCodeMainPyRelPath := stepExecutionPath + "/code/main.py"
+				if _, mainPyReadErr := hcpo.ReadWorkspaceFile(ctx, execCodeMainPyRelPath); mainPyReadErr == nil {
+					execCodeMainPyAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code", "main.py")
 					if stepLearningHistory != "" {
 						stepLearningHistory += "\n\n"
 					}
-					stepLearningHistory += fmt.Sprintf("📜 **Saved script available** at `%s` — this is a working implementation from a previous run. Read it before starting to understand the approach, selectors, and patterns used.", absMainPyPath)
+					stepLearningHistory += fmt.Sprintf("📜 **Saved script available** at `%s` — this is a working implementation from a previous run. Read it before starting, then use `diff_patch_workspace_file` to update it rather than rewriting the entire file.", execCodeMainPyAbsPath)
 				}
 				templateVars["LearningHistory"] = stepLearningHistory
 				// Set HasLearnings flag to explicitly indicate whether learnings exist (prevents agent from searching)
@@ -1634,9 +1635,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 					codeDirAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code")
 					mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
-					learnCodeRepairAgentUpgraded := false
-					learnCodeRepairSystemPrompt := ""
-
 					var lastLcResult *LearnCodeFastPathResult
 					// Check if pre-validation already passes (LLM may have run main.py or produced outputs).
 					// If outputs are valid AND main.py exists, skip the fix loop — no need to re-run.
@@ -1663,6 +1661,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							mainPyPath, true, lastLcResult.ExitCode, lastLcResult.Output, "", 0, false)
 					} else if preValResults != nil && preValResults.OverallPass {
 						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [learn_code] Pre-validation passed but main.py not found for step %d — entering fix loop to generate script", stepIndex+1))
+					}
+
+					// Track script content before each fix iteration to generate diffs
+					prevFixScript := ""
+					if s, readErr := hcpo.ReadWorkspaceFile(ctx, stepExecutionPath+"/code/main.py"); readErr == nil {
+						prevFixScript = s
 					}
 
 					// Fix loop: check pre-validation after each LLM turn.
@@ -1786,52 +1790,57 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						feedbackMsg = sb.String()
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] validation failed for step %d (fix attempt %d/%d) — continuing conversation with feedback", stepIndex+1, fixIter+1, maxFixIter))
 
-						if !learnCodeRepairAgentUpgraded {
-							repairAgentName := fmt.Sprintf("%s-fix-%d-high", executionAgentName, fixIter+1)
-							// Force Tier 1 (High) for repair agents — they need to fix a failure,
-							// so they should use at least the same tier as the original execution.
-							repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
-							repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
-							if repairErr != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to upgrade repair agent for step %d: %v", stepIndex+1, repairErr))
-							} else {
-								if repairCfg := repairAgent.GetConfig(); repairCfg != nil && repairCfg.LLMConfig.Primary.ModelID != "" {
-									executionLLM = fmt.Sprintf("%s/%s", repairCfg.LLMConfig.Primary.Provider, repairCfg.LLMConfig.Primary.ModelID)
-								}
-								if repairEOA, ok := repairAgent.(*WorkflowExecutionOnlyAgent); ok {
-									learnCodeRepairSystemPrompt = repairEOA.executionOnlySystemPromptProcessor(templateVars)
-								}
-								if executionAgent != nil {
-									_ = executionAgent.Close()
-								}
-								executionAgent = repairAgent
-								learnCodeRepairAgentUpgraded = true
-								hcpo.GetLogger().Info(fmt.Sprintf("🔁 [learn_code] recreated repair agent for step %d using default tier selection: %s", stepIndex+1, executionLLM))
-							}
+						// Create a fresh repair agent for each fix iteration — each attempt gets
+						// a clean conversation with the latest script + errors as context.
+						// This avoids accumulated confusion from prior failed attempts.
+						repairAgentName := fmt.Sprintf("%s-fix-%d-high", executionAgentName, fixIter+1)
+						// Force Tier 1 (High) for repair agents — they need to fix a failure,
+						// so they should use at least the same tier as the original execution.
+						repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
+						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
+						if repairErr != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
+							break
 						}
+						if repairCfg := repairAgent.GetConfig(); repairCfg != nil && repairCfg.LLMConfig.Primary.ModelID != "" {
+							executionLLM = fmt.Sprintf("%s/%s", repairCfg.LLMConfig.Primary.Provider, repairCfg.LLMConfig.Primary.ModelID)
+						}
+						repairSystemPrompt := ""
+						if repairEOA, ok := repairAgent.(*WorkflowExecutionOnlyAgent); ok {
+							repairSystemPrompt = repairEOA.executionOnlySystemPromptProcessor(templateVars)
+						}
+						if executionAgent != nil {
+							_ = executionAgent.Close()
+						}
+						executionAgent = repairAgent
+						hcpo.GetLogger().Info(fmt.Sprintf("🔁 [learn_code] created fresh repair agent for step %d fix %d: %s", stepIndex+1, fixIter+1, executionLLM))
 
-						// Inject validation feedback as a user turn.
-						// When the repair agent was upgraded (different provider/model), start a fresh
-						// conversation — the old history may be from a different provider format and
-						// the feedback message already contains the script + execution output context.
+						// Fresh conversation each time — feedback message already contains
+						// the full script + execution output + validation errors as context.
 						if ba := executionAgent.GetBaseAgent(); ba != nil {
-							systemPrompt := ""
-							if learnCodeRepairSystemPrompt != "" {
-								systemPrompt = learnCodeRepairSystemPrompt
-								learnCodeRepairSystemPrompt = ""
-							}
-							historyForRepair := executionConversationHistory
-							if learnCodeRepairAgentUpgraded {
-								// Fresh conversation — don't pass cross-provider history
-								historyForRepair = nil
-							}
-							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, historyForRepair, systemPrompt, false)
+							_, executionConversationHistory, err = ba.Execute(ctx, feedbackMsg, nil, repairSystemPrompt, false)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] agent error during fix attempt %d: %v", fixIter+1, err))
 								break
 							}
 						} else {
 							break
+						}
+
+						// Capture diff between fix iterations for debugging
+						mainPyFixRelPath := stepExecutionPath + "/code/main.py"
+						if curScript, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyFixRelPath); readErr == nil && prevFixScript != "" && curScript != prevFixScript {
+							fixDiffsRelPath := stepExecutionPath + "/code/fix-diffs"
+							if mkErr := createFolderViaAPI(ctx, fixDiffsRelPath); mkErr == nil {
+								diff := generateSimpleDiff("main.py", prevFixScript, curScript)
+								diffFile := fmt.Sprintf("fix-%d-to-%d.diff", fixIter, fixIter+1)
+								if writeErr := hcpo.WriteWorkspaceFile(ctx, fixDiffsRelPath+"/"+diffFile, diff); writeErr == nil {
+									hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved fix diff %s for step %d", diffFile, stepIndex+1))
+								}
+							}
+							prevFixScript = curScript
+						} else if readErr == nil {
+							prevFixScript = curScript
 						}
 					}
 

@@ -291,6 +291,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 	if toolSessionID == "" || browserSessionID == "" {
 		return
 	}
+	// Clear stopped status for deterministic browser session IDs that may have been
+	// marked stopped by a previous run. Without this, the zombie prevention logic
+	// permanently blocks the reused browser session ID from accepting new connections.
+	mcpagent.ClearSessionsStopped([]string{browserSessionID})
 	mcpagent.RegisterBrowserSessionOverride(toolSessionID, browserSessionID)
 	common.SetSessionBrowserSessionID(toolSessionID, browserSessionID)
 	if hcpo.httpSessionID != "" {
@@ -619,91 +623,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Note: Learning integration phase removed - execution agent now auto-discovers learning files and scripts
 
-	// Check if execution options are provided from chfrontend
+	// Resolve iteration folder.
+	// When running a subset of groups, keep iteration-0 in place so other groups' output is preserved.
+	// Batch execution handles per-group cleanup independently.
 	execOpts := hcpo.executionOptions
-	var selectedRunMode string
+	isPartialGroupRun := execOpts != nil && len(execOpts.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil && len(execOpts.EnabledGroupIDs) < len(hcpo.variablesManifest.GetEnabledGroups())
 	var selectedRunFolder string
-
-	if execOpts != nil {
-		// ===== FRONTEND-PROVIDED EXECUTION OPTIONS =====
-		// Use options from frontend, skip interactive prompts
-
-		// Use run mode from options
-		selectedRunMode = execOpts.RunMode
-		if selectedRunMode == "" {
-			selectedRunMode = "use_same_run" // Default
-		}
-		hcpo.selectedRunMode = selectedRunMode
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Using run mode from frontend: %s", selectedRunMode))
-
-		// Resolve run folder with provided options
-		var err error
-		selectedRunFolder, err = hcpo.resolveRunFolderWithOptions(ctx, hcpo.GetWorkspacePath(), selectedRunMode, execOpts.SelectedRunFolder)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve run folder with frontend options: %w", err)
-		}
-		hcpo.selectedRunFolder = selectedRunFolder
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder: %s", selectedRunFolder))
-		// Set iteration folder for real-time token persistence
-		hcpo.SetIterationFolder(selectedRunFolder)
-		// Update session working dir to the run's execution folder
-		if hcpo.httpSessionID != "" && hcpo.GetWorkspacePath() != "" {
-			common.SetSessionWorkingDir(hcpo.httpSessionID, fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), selectedRunFolder))
+	if isPartialGroupRun {
+		// Partial group run — reuse iteration-0 without backup
+		hcpo.GetLogger().Info(fmt.Sprintf("📦 Partial group run (%d of %d groups) — reusing iteration-0 without backup", len(execOpts.EnabledGroupIDs), len(hcpo.variablesManifest.GetEnabledGroups())))
+		selectedRunFolder = "iteration-0"
+		// Ensure iteration-0 structure exists (no-op if already there)
+		iteration0Path := fmt.Sprintf("%s/runs/iteration-0", hcpo.GetWorkspacePath())
+		if mkErr := hcpo.createRunFolderStructure(ctx, iteration0Path); mkErr != nil {
+			return "", fmt.Errorf("failed to ensure iteration-0: %w", mkErr)
 		}
 	} else {
-		// ===== INTERACTIVE MODE (no frontend options) =====
-		// Ask for run mode FIRST (before checking progress)
-		// This allows user to select which run folder to use before we check for existing progress
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Asking for run mode selection before checking progress"))
-
-		// First, ask for run mode
-		runModeRequestID := fmt.Sprintf("run_mode_selection_%d", time.Now().UnixNano())
-		runModeOptions := []string{
-			"Use Same Run",   // Option 0: use_same_run
-			"Create New Run", // Option 1: create_new_runs_always
-		}
-
-		runModeChoice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			runModeRequestID,
-			"Which run mode would you like to use for this execution?",
-			runModeOptions,
-			"Run mode determines how execution folders are organized:\n- Use Same Run: Reuses an existing run folder (you'll be asked to select which one)\n- Create New Run: Creates a new folder for this execution",
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user decision for run mode: %v, defaulting to 'use_same_run'", err))
-			runModeChoice = "option0" // Default to use_same_run
-		}
-
-		// Map choice to run mode value
-		switch runModeChoice {
-		case "option0": // Use Same Run
-			selectedRunMode = "use_same_run"
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ User chose run mode: use_same_run"))
-		case "option1": // Create New Run
-			selectedRunMode = "create_new_runs_always"
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ User chose run mode: create_new_runs_always"))
-		default:
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown run mode choice: %s, defaulting to 'use_same_run'", runModeChoice))
-			selectedRunMode = "use_same_run"
-		}
-
-		// Store selected run mode and resolve run folder with it
-		hcpo.selectedRunMode = selectedRunMode
-		selectedRunFolder, err = hcpo.resolveRunFolder(ctx, hcpo.GetWorkspacePath(), selectedRunMode)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve run folder with selected run mode: %w", err)
-		}
-		hcpo.selectedRunFolder = selectedRunFolder
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder with selected run mode: %s", selectedRunFolder))
-		// Set iteration folder for real-time token persistence
-		hcpo.SetIterationFolder(selectedRunFolder)
-		// Update session working dir to the run's execution folder
-		if hcpo.httpSessionID != "" && hcpo.GetWorkspacePath() != "" {
-			common.SetSessionWorkingDir(hcpo.httpSessionID, fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), selectedRunFolder))
-		}
+		// Full run — back up iteration-0 to iteration-N as before
+		selectedRunFolder, err = hcpo.resolveRunFolderWithOptions(ctx, hcpo.GetWorkspacePath(), "use_same_run", "iteration-0")
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve run folder: %w", err)
+	}
+	hcpo.selectedRunMode = "use_same_run"
+	hcpo.selectedRunFolder = selectedRunFolder
+	hcpo.GetLogger().Info(fmt.Sprintf("Using run folder: %s", selectedRunFolder))
+	// Set iteration folder for real-time token persistence
+	hcpo.SetIterationFolder(selectedRunFolder)
+	// Update session working dir to the run's execution folder
+	if hcpo.httpSessionID != "" && hcpo.GetWorkspacePath() != "" {
+		common.SetSessionWorkingDir(hcpo.httpSessionID, fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), selectedRunFolder))
 	}
 
 	// EARLY PROGRESS CHECK: Load progress from the selected run folder

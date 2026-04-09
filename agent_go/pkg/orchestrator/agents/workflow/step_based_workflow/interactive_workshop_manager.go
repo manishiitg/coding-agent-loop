@@ -865,7 +865,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "builder":
 		// BUILD: design workflow, create/modify steps, test execution, configure
 		tools = append(tools, execution...)
-		tools = append(tools, "run_saved_main_py")
+
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
 		tools = append(tools, schedule...)
@@ -876,7 +876,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "optimizer":
 		// OPTIMIZE: same as builder plus optimization tools (harden_workflow, generate_learnings, debug_step, run_full_workflow)
 		tools = append(tools, execution...)
-		tools = append(tools, "run_saved_main_py")
+
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
@@ -901,14 +901,14 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "eval":
 		// EVAL: build and run evaluations — no execution plan changes, but evaluation step configs are allowed
 		tools = append(tools, eval...)
-		tools = append(tools, "update_step_config", "optimize_eval_step", "run_saved_main_py")
+		tools = append(tools, "update_step_config", "optimize_eval_step")
 		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	case "output":
 		// OUTPUT/REPORT: design and run the final report artifact
 		tools = append(tools, report...)
 		tools = append(tools, "optimize_report_step")
-		tools = append(tools, "update_step_config", "run_saved_main_py")
+		tools = append(tools, "update_step_config")
 		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	default:
@@ -1273,7 +1273,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Generate learnings only when a step is working correctly and the user explicitly asks for it
 
 **When creating or configuring each step, choose its execution mode:**
-1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`run_saved_main_py(step_id, group_id?)`"+`.
+1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_id, fast_path_only=true)`"+`.
 2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. The LLM writes and runs code inline each time — no persistent script is saved.
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
@@ -1634,6 +1634,44 @@ You can read, edit, and delete them using **execute_shell_command** and **diff_p
 - **Lock after editing**: Always suggest lock_learnings=true after manual edits to prevent the learning agent from overwriting.
 - **Legacy migration**: If you find '*_learning.md' files (old format) instead of SKILL.md, migrate their content into a new SKILL.md with proper frontmatter and delete the legacy files.
 
+### 3b. Debugging & Fixing Scripted Code Steps (learn_code)
+
+For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}/main.py`"+` is the primary artifact. When a scripted step fails, follow this workflow:
+
+**1. Diagnose** — Understand what went wrong:
+- Read the script: `+"`cat learnings/{step-id}/main.py`"+`
+- Read the execution log: `+"`cat runs/{iteration}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` — contains exit_code, stdout output, and error
+- Read script_metadata.json: `+"`cat learnings/{step-id}/script_metadata.json`"+` — shows recent_runs (last 10 with error snippets), per-group stats, duration trends, last failure details, and success/failure streak
+- Check pre-validation results: `+"`cat runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`"+`
+- Use `+"`debug_step(step_id)`"+` for a comprehensive analysis including the script metadata
+
+**1b. Live diagnosis with MCP tools** — You share the same browser session and MCP tools as the step execution. You can directly call Playwright/browser tools and other MCP servers to investigate issues interactively:
+- Use `+"`browser_snapshot`"+` to see the current browser state (page content, DOM structure, visible elements)
+- Use `+"`browser_navigate`"+` to reproduce the step's navigation flow manually
+- Use `+"`browser_run_code`"+` to test JavaScript selectors, check element visibility, or inspect page state
+- Use `+"`browser_click`"+`, `+"`browser_type`"+` etc. to step through the UI flow interactively and find where it breaks
+- You can also call any other MCP tools the step uses (e.g., google-sheets) to verify API behavior
+- This is the fastest way to diagnose issues like changed selectors, timing problems, unexpected page states, or API response changes — you see exactly what the script would see at runtime
+
+**2. Fix** — Patch the script directly:
+- Use **diff_patch_workspace_file** to edit `+"`learnings/{step-id}/main.py`"+` (this is the source of truth — execution/code/ is a disposable copy that gets overwritten from learnings on every run)
+- For helper files alongside main.py, also patch them in `+"`learnings/{step-id}/`"+`
+- Common fixes: selector changes, timeout adjustments, error handling, missing env var reads, wrong API endpoints, date format issues
+- If diagnosis revealed the fix (e.g., a selector changed), apply it directly. If the issue is complex, use your live MCP access to prototype the fix interactively before patching.
+
+**3. Test** — Run the patched script:
+- Use `+"`execute_step(step_id, group_id, fast_path_only=true)`"+` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
+- Or use `+"`execute_step(step_id, group_id, skip_learning=true)`"+` to run with LLM fallback if the script fails
+- After running, you can use MCP tools again to verify the result — e.g., `+"`browser_snapshot`"+` to confirm the page is in the expected state, or read output files to check correctness
+- Check the output files and logs to confirm the fix
+
+**4. Validate across groups** — If the workflow has multiple groups, test the fix against other groups too. Check `+"`script_metadata.json`"+` group_stats to see which groups were failing.
+
+**5. Lock** — After confirming the fix works:
+- `+"`update_step_config(step_id, lock_learnings=true)`"+` to prevent the learning agent from overwriting your fix
+
+**Key principle**: Always edit `+"`learnings/{step-id}/main.py`"+`, never `+"`execution/{step-id}/code/main.py`"+`. The execution copy is overwritten from learnings on every run.
+
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, review the execution logs to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
 
@@ -1784,7 +1822,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
-{{if ne .WorkshopMode "runner"}}- **run_saved_main_py(step_id, group_id?)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
+{{if ne .WorkshopMode "runner"}}- **execute_step(step_id, group_id, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
 {{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
@@ -1972,7 +2010,7 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 |------|----------|
 | learnings/{step-id}/main.py | **Code exec steps**: saved Python script — executed on each run via fast path |
 | learnings/_global/SKILL.md | Global prose learnings shared across all steps |
-| learnings/{step-id}/script_metadata.json | Script version, run counts, success/failure stats |
+| learnings/{step-id}/script_metadata.json | Script version, run counts, per-group stats, duration stats, recent run history (last 10 with exit codes/errors/durations), last failure details, success/failure streak |
 
 ### Evaluation
 | Path | Contents |
@@ -2280,7 +2318,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is enabled (skip_learning=false). Set skip_learning=true to skip learning for faster iteration. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry).",
+		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is enabled (skip_learning=false). Set skip_learning=true to skip learning for faster iteration. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Set fast_path_only=true to run ONLY the saved main.py script with no LLM fallback — useful for quickly testing patches to learnings/{step-id}/main.py.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2308,6 +2346,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"enum":        []interface{}{"high", "medium", "low"},
 					"description": "Optional LLM tier override for this execution. 'high' = Tier 1 (most capable), 'medium' = Tier 2, 'low' = Tier 3 (fastest/cheapest). Overrides the default maturity-based tier selection. Only works in tiered mode.",
+				},
+				"fast_path_only": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback. Fails if no saved script exists or the step is not in scripted code mode. Implies skip_learning=true. Use this to quickly test patches to main.py.",
 				},
 			},
 			"required": []string{"step_id", "group_id"},
@@ -2397,12 +2439,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// fast_path_only: run saved script only, no LLM fallback
+			fastPathOnly := false
+			if val, ok := args["fast_path_only"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					fastPathOnly = b
+				}
+			}
+			if fastPathOnly {
+				skipLearning = true
+			}
+
 			execOpts := &WorkshopExecuteOptions{
 				GroupID:          groupID,
 				GroupDisplayName: groupDisplayName,
 				Iteration:        iteration,
 				RunFolder:        runFolder,
 				SkipLearning:     skipLearning,
+				SavedScriptOnly:  fastPathOnly,
 				Instructions:     instructions,
 				HumanInput:       humanInput,
 				Tier:             tierValue,
@@ -2627,220 +2681,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register execute_step tool: %v", err))
-	}
-
-	// Tool 1b: run_saved_main_py — run the saved scripted-code fast path only
-	if err := mcpAgent.RegisterCustomTool(
-		"run_saved_main_py",
-		"Run the learned step's saved learnings/{step-id}/main.py directly for a scripted code step. Uses the same workflow env vars, context dependency args, output folder, and validation checks as a real workflow run, but never falls back to LLM. Fails if the step is not in scripted code mode or if no saved main.py exists.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"step_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1', 'step1')",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
-				},
-			},
-			"required": []string{"step_id", "group_id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepIDRaw, ok := args["step_id"]
-			if !ok || stepIDRaw == nil {
-				return "step_id is required", nil
-			}
-			stepID, ok := stepIDRaw.(string)
-			if !ok || stepID == "" {
-				return "step_id must be a non-empty string", nil
-			}
-
-			groupIDRaw, _ := args["group_id"]
-			groupID, _ := groupIDRaw.(string)
-			if groupID == "" {
-				return "group_id is required. Read variables.json to see available groups.", nil
-			}
-
-			iteration := "iteration-0"
-			iwm.refreshVariablesManifest(ctx)
-			groupFolderName := groupID
-			groupDisplayName := ""
-			if iwm.controller.variablesManifest != nil && groupID != "" {
-				for _, g := range iwm.controller.variablesManifest.Groups {
-					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
-						if g.DisplayName != "" {
-							groupDisplayName = g.DisplayName
-							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
-							if sanitized != "" {
-								groupFolderName = sanitized
-							}
-						}
-						break
-					}
-				}
-			}
-			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
-
-			execOpts := &WorkshopExecuteOptions{
-				GroupID:          groupID,
-				GroupDisplayName: groupDisplayName,
-				Iteration:        iteration,
-				RunFolder:        runFolder,
-				SkipLearning:     true,
-				SavedScriptOnly:  true,
-			}
-
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan: %v. Cannot resolve step ID.", err), nil
-			}
-			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
-			if resolveErr != nil {
-				return resolveErr.Error(), nil
-			}
-			stepID = resolvedID
-
-			execID := fmt.Sprintf("saved-main-py-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-saved-main-py-%s-%d", stepID, time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         stepID,
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			go func() {
-				var result string
-				var execErr error
-
-				stepDisplayName := stepID
-				stepType := ""
-				if iwm.controller.approvedPlan != nil {
-					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
-						stepDisplayName = stepInfo.Step.GetTitle()
-						stepType = string(stepInfo.Step.StepType())
-					}
-				}
-
-				notifierName := fmt.Sprintf("Saved Script: %s", stepDisplayName)
-				if iwm.executionNotifier != nil {
-					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: notifierName, Cancel: cancel})
-				}
-
-				var workshopModeForMeta string
-
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-saved-main-py",
-							AgentName:     notifierName,
-							Success:       execErr == nil,
-							InputData: map[string]string{
-								"saved_script_only": "true",
-							},
-						}
-						if execOpts.RunFolder != "" {
-							endEvent.InputData["run_folder"] = execOpts.RunFolder
-						}
-						if workshopModeForMeta != "" {
-							endEvent.InputData["workshop_mode"] = workshopModeForMeta
-						}
-						if stepType != "" {
-							endEvent.InputData["step_type"] = stepType
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						execMeta := map[string]string{
-							"saved_script_only": "true",
-						}
-						if iwm.workshopModeOverride != "" {
-							execMeta["workshop_mode"] = iwm.workshopModeOverride
-						} else if workshopModeForMeta != "" {
-							execMeta["workshop_mode"] = workshopModeForMeta
-						}
-						iwm.executionNotifier.OnExecutionComplete(execID, notifierName, result, execMeta, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					inputData := map[string]string{
-						"saved_script_only": "true",
-					}
-					if execOpts.GroupID != "" {
-						inputData["group_id"] = execOpts.GroupID
-					}
-					if execOpts.GroupDisplayName != "" {
-						inputData["group_display_name"] = execOpts.GroupDisplayName
-					}
-					if execOpts.Iteration != "" {
-						inputData["iteration"] = execOpts.Iteration
-					}
-					if execOpts.RunFolder != "" {
-						inputData["run_folder"] = execOpts.RunFolder
-					}
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-saved-main-py",
-						AgentName:     notifierName,
-						InputData:     inputData,
-						Iteration:     parseWorkshopIterationNumber(execOpts.Iteration),
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
-
-				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
-					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
-				}
-			}()
-
-			groupInfo := ""
-			if groupID != "" {
-				groupInfo = fmt.Sprintf(", group=%q", groupID)
-			}
-			logger.Info(fmt.Sprintf("🚀 Workshop: saved main.py run for step %q started in background, execution_id=%q%s", stepID, execID, groupInfo))
-			return fmt.Sprintf("Saved main.py run for step %q started in background.\nexecution_id: %q\nThis will run only the current learnings/%s/main.py fast path with no LLM fallback.\nYou will be automatically notified when it completes.", stepID, execID, stepID), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_saved_main_py tool: %v", err))
 	}
 
 	// Tool: run_in_background — spawn independent background agent (not tied to a workflow step)
@@ -8980,7 +8820,7 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 |------|----------|
 | `+"`learnings/{step-id}/main.py`"+` | Saved Python script for code_exec steps — **this is what gets executed on each run** |
 | `+"`learnings/_global/SKILL.md`"+` | Global prose learnings shared across all steps |
-| `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, success/failure stats |
+| `+"`learnings/{step-id}/script_metadata.json`"+` | Script version, run counts, per-group stats, duration stats, recent run history, last failure details, streak |
 
 ### Plan and config
 | Path | Contents |

@@ -68,6 +68,56 @@ type LearnCodeMetadata struct {
 	SuccessfulRuns map[string]int `json:"successful_runs"` // per-mode success counts; canonical scripted key is "code_exec"
 	FailedRuns     int            `json:"failed_runs"`
 	RelearnCount   int            `json:"relearn_count"` // how many times the LLM had to rewrite
+
+	// Rich run tracking (added for debugging & optimization decisions)
+	RecentRuns    []RunRecord          `json:"recent_runs,omitempty"`    // last N runs with full details (capped at 10)
+	GroupStats    map[string]GroupStat `json:"group_stats,omitempty"`    // per-group success/failure counts
+	DurationStats *DurationStats       `json:"duration_stats,omitempty"` // execution time statistics
+	LastFailure   *LastFailureInfo     `json:"last_failure,omitempty"`   // details of most recent failure
+	CurrentStreak *StreakInfo           `json:"current_streak,omitempty"` // consecutive success/failure streak
+}
+
+// RunRecord captures details of a single script execution.
+type RunRecord struct {
+	Timestamp     string `json:"timestamp"`
+	Success       bool   `json:"success"`
+	ExitCode      int    `json:"exit_code"`
+	DurationMs    int64  `json:"duration_ms"`
+	GroupID       string `json:"group_id,omitempty"`
+	RunFolder     string `json:"run_folder,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"` // "execution_error", "validation_error", or "execution_and_validation_error"
+	ErrorSummary  string `json:"error_summary,omitempty"`  // first ~200 chars of error
+}
+
+// GroupStat tracks per-group run statistics.
+type GroupStat struct {
+	Runs      int `json:"runs"`
+	Successes int `json:"successes"`
+	Failures  int `json:"failures"`
+}
+
+// DurationStats tracks execution time across runs.
+type DurationStats struct {
+	AvgMs  int64 `json:"avg_ms"`
+	MinMs  int64 `json:"min_ms"`
+	MaxMs  int64 `json:"max_ms"`
+	LastMs int64 `json:"last_ms"`
+	Count  int   `json:"count"` // number of runs included in the stats
+}
+
+// LastFailureInfo captures the most recent failure for quick debugging.
+type LastFailureInfo struct {
+	Timestamp    string `json:"timestamp"`
+	Reason       string `json:"reason"`
+	ErrorSnippet string `json:"error_snippet"` // first ~300 chars
+	GroupID      string `json:"group_id,omitempty"`
+	ExitCode     int    `json:"exit_code"`
+}
+
+// StreakInfo tracks consecutive success/failure runs.
+type StreakInfo struct {
+	Type  string `json:"type"`  // "success" or "failure"
+	Count int    `json:"count"`
 }
 
 // LearnCodeFastPathResult is returned by tryRunSavedLearnCodeScript.
@@ -801,44 +851,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	// Preserve code/ — it may contain an LLM-fixed main.py from a previous attempt.
 	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath, "code")
 
-	// Copy saved script from learnings/ to execution/code/ — but only if execution/code/main.py
-	// doesn't already exist. A previous LLM fix attempt may have written a newer version there,
-	// and blindly overwriting it with the old saved script would discard the fix.
-	execMainPyRelPath := codeDirRelPath + "/main.py"
-	if _, existsErr := hcpo.ReadWorkspaceFile(ctx, execMainPyRelPath); existsErr != nil {
-		// No main.py in execution/code/ — copy from learnings/
-		if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create code/ dir for saved script copy: %v", mkErr))
+	// Always copy saved script from learnings/ to execution/code/.
+	// learnings/{step-id}/main.py is the source of truth — execution/code/ is a disposable
+	// working copy. If the user or workflow builder patches learnings, the next run must
+	// pick up the change. LLM relearn fixes are saved back to learnings/ via
+	// saveLearnCodeScriptToLearnings, so always copying from learnings is safe.
+	if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to create code/ dir for saved script copy: %v", mkErr))
+	}
+	learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
+	if listErr != nil {
+		// Fallback: copy just main.py
+		if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy main.py to code/: %v", writeErr))
 		}
-		learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
-		if listErr != nil {
-			// Fallback: copy just main.py
-			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy main.py to code/: %v", writeErr))
-			}
-		} else {
-			for _, f := range learnFiles {
-				fileName := filepath.Base(f)
-				if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == ".learning_metadata.json" {
-					continue // skip metadata files, only copy script files
-				}
-				content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
-				if readErr != nil {
-					continue
-				}
-				if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy %s to code/: %v", fileName, writeErr))
-				}
-			}
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] main.py already exists in %s/ — using existing version (may be LLM-fixed)", codeDirRelPath))
-		// Update existingScript to the actual content in execution/code/ for relearn context
-		if execScript, readErr := hcpo.ReadWorkspaceFile(ctx, execMainPyRelPath); readErr == nil {
-			existingScript = execScript
+		for _, f := range learnFiles {
+			fileName := filepath.Base(f)
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == ".learning_metadata.json" {
+				continue // skip metadata files, only copy script files
+			}
+			content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
+			if readErr != nil {
+				continue
+			}
+			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to copy %s to code/: %v", fileName, writeErr))
+			}
 		}
 	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
 
 	// Static code review before execution — catch anti-patterns that would fail on reuse
 	codeIssues := reviewMainPyScript(existingScript)
@@ -862,7 +904,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	}
 
 	// Run from execution/code/ — same location the LLM writes to
+	scriptStartTime := time.Now()
 	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, mainPyAbsPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
+	scriptDurationMs := time.Since(scriptStartTime).Milliseconds()
+
+	// Helper to build a RunRecord with common fields pre-filled
+	buildRunRecord := func(success bool, failureReason, errSummary string) RunRecord {
+		return RunRecord{
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
+			Success:       success,
+			ExitCode:      exitCode,
+			DurationMs:    scriptDurationMs,
+			GroupID:       hcpo.currentGroupId,
+			RunFolder:     hcpo.selectedRunFolder,
+			FailureReason: failureReason,
+			ErrorSummary:  truncateStr(errSummary, 200),
+		}
+	}
+
 	if execErr != nil || exitCode != 0 {
 		var execErrMsg string
 		if execErr != nil {
@@ -881,7 +940,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		}
 		if preValResults != nil && preValResults.OverallPass {
 			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
-			hcpo.updateLearnCodeRunStats(ctx, stepID, true)
+			hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""))
 			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output, ExistingScript: existingScript}
 		}
 		validationErrMsg := ""
@@ -895,7 +954,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
 		}
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script failed for step %d: %s", stepIndex+1, errMsg))
-		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
+		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, failureReason, errMsg))
 		return &LearnCodeFastPathResult{
 			RanScript:       true,
 			Success:         false,
@@ -921,7 +980,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	if preValResults != nil && !preValResults.OverallPass {
 		errMsg := formatWorkspaceResults(preValResults)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script ran but output validation failed for step %d", stepIndex+1))
-		hcpo.updateLearnCodeRunStats(ctx, stepID, false)
+		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, "validation_error", errMsg))
 		return &LearnCodeFastPathResult{
 			RanScript:       true,
 			Success:         false,
@@ -935,7 +994,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
-	hcpo.updateLearnCodeRunStats(ctx, stepID, true)
+	hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""))
 	return &LearnCodeFastPathResult{RanScript: true, Success: true, Output: output}
 }
 
@@ -1197,15 +1256,16 @@ func generateSimpleDiff(fileName, oldContent, newContent string) string {
 	return sb.String()
 }
 
-// updateLearnCodeRunStats increments run counters in script_metadata.json via workspace API.
-func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.Context, stepID string, success bool) {
+// updateLearnCodeRunStats increments run counters and appends rich run data to script_metadata.json.
+func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.Context, stepID string, record RunRecord) {
 	meta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
 	if meta == nil {
 		return
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	meta.TotalRuns++
-	meta.LastRunAt = time.Now().UTC().Format(time.RFC3339)
-	if success {
+	meta.LastRunAt = now
+	if record.Success {
 		if meta.SuccessfulRuns == nil {
 			meta.SuccessfulRuns = map[string]int{}
 		}
@@ -1213,7 +1273,89 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 	} else {
 		meta.FailedRuns++
 	}
+
+	// Fill in timestamp if not set
+	if record.Timestamp == "" {
+		record.Timestamp = now
+	}
+
+	// Append to recent runs (cap at 10)
+	meta.RecentRuns = append(meta.RecentRuns, record)
+	if len(meta.RecentRuns) > 10 {
+		meta.RecentRuns = meta.RecentRuns[len(meta.RecentRuns)-10:]
+	}
+
+	// Update per-group stats
+	if record.GroupID != "" {
+		if meta.GroupStats == nil {
+			meta.GroupStats = map[string]GroupStat{}
+		}
+		gs := meta.GroupStats[record.GroupID]
+		gs.Runs++
+		if record.Success {
+			gs.Successes++
+		} else {
+			gs.Failures++
+		}
+		meta.GroupStats[record.GroupID] = gs
+	}
+
+	// Update duration stats
+	if record.DurationMs > 0 {
+		if meta.DurationStats == nil {
+			meta.DurationStats = &DurationStats{MinMs: record.DurationMs}
+		}
+		ds := meta.DurationStats
+		ds.LastMs = record.DurationMs
+		ds.Count++
+		if record.DurationMs < ds.MinMs || ds.MinMs == 0 {
+			ds.MinMs = record.DurationMs
+		}
+		if record.DurationMs > ds.MaxMs {
+			ds.MaxMs = record.DurationMs
+		}
+		// Running average
+		ds.AvgMs = ((ds.AvgMs * int64(ds.Count-1)) + record.DurationMs) / int64(ds.Count)
+	}
+
+	// Update last failure
+	if !record.Success {
+		meta.LastFailure = &LastFailureInfo{
+			Timestamp:    record.Timestamp,
+			Reason:       record.FailureReason,
+			ErrorSnippet: truncateStr(record.ErrorSummary, 300),
+			GroupID:      record.GroupID,
+			ExitCode:     record.ExitCode,
+		}
+	}
+
+	// Update streak
+	if meta.CurrentStreak == nil {
+		meta.CurrentStreak = &StreakInfo{}
+	}
+	if record.Success {
+		if meta.CurrentStreak.Type == "success" {
+			meta.CurrentStreak.Count++
+		} else {
+			meta.CurrentStreak = &StreakInfo{Type: "success", Count: 1}
+		}
+	} else {
+		if meta.CurrentStreak.Type == "failure" {
+			meta.CurrentStreak.Count++
+		} else {
+			meta.CurrentStreak = &StreakInfo{Type: "failure", Count: 1}
+		}
+	}
+
 	_ = hcpo.writeLearnCodeMetadataAPI(ctx, stepID, *meta)
+}
+
+// truncateStr returns at most maxLen characters from s.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // saveLearnCodeFastPathLog writes a JSON execution log to the standard logs directory

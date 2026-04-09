@@ -1881,10 +1881,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						isLearnCodeMode = false
 						templateVars["IsLearnCodeMode"] = "false"
 						hcpo.GetLogger().Info(fmt.Sprintf("🔄 [learn_code] Switching step %d to normal code_exec mode for remaining retries", stepIndex+1))
+						// Add explicit guidance for the code_exec fallback — tell the LLM
+						// that the scripted approach failed and it should use tools directly.
+						fallbackGuidance := fmt.Sprintf(
+							"%s\n\n"+
+								"**IMPORTANT: The scripted main.py approach failed after multiple attempts. "+
+								"Do NOT write a main.py script this time. Instead, complete the task by calling "+
+								"MCP tools directly via the API step by step. Use the tools to understand the "+
+								"current state first (e.g. read files, take browser snapshots, inspect pages), "+
+								"then perform the required actions interactively. Focus on completing the task, "+
+								"not on writing reusable code.**",
+							errMsg)
 						validationResponse = &ValidationResponse{
 							IsSuccessCriteriaMet: false,
 							ExecutionStatus:      "FAILED",
-							Reasoning:            errMsg,
+							Reasoning:            fallbackGuidance,
 						}
 						if retryAttempt >= maxRetryAttempts {
 							validationFailedAfterMaxRetries = true

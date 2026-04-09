@@ -375,7 +375,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScri
 		// Store the config on the logical tool session. The executor will later resolve
 		// browser-capable servers onto the shared browser session before connecting.
 		registry.StoreServerConfig(sessionID, serverName, serverConfig)
-		primed = append(primed, fmt.Sprintf("%s->%s", serverName, registry.ResolveConnectionSessionID(sessionID, serverName)))
+		// Also store under the shared browser session ID so that ANY session sharing
+		// this browser (e.g. the chat session) can lazy-reconnect to playwright.
+		connSessionID := registry.ResolveConnectionSessionID(sessionID, serverName)
+		if connSessionID != sessionID {
+			registry.StoreServerConfig(connSessionID, serverName, serverConfig)
+		}
+		primed = append(primed, fmt.Sprintf("%s->%s", serverName, connSessionID))
 	}
 
 	if len(primed) > 0 {

@@ -3567,19 +3567,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// User ID for per-user OAuth token isolation
 			// This ensures MCP servers with OAuth use user-specific token files
 			UserID: currentUserID,
-			// [BROWSER_UPLOAD] Override Playwright MCP server config to use shared workspace.
-			// Playwright restricts file access to its working_dir (cwd).
-			RuntimeOverrides: func() mcpclient.RuntimeOverrides {
-				workspacePath := filepath.Join("..", "workspace-docs")
-				downloadsPath := filepath.Join(workspacePath, "Downloads")
-				log.Printf("[BROWSER_UPLOAD] Playwright runtime override: working_dir=%s, output-dir=%s", workspacePath, downloadsPath)
-				return mcpclient.RuntimeOverrides{
-					"playwright": {
-						WorkingDir:  workspacePath,
-						ArgsReplace: map[string]string{"--output-dir": downloadsPath},
-					},
-				}
-			}(),
 		}
 
 		// Set agent mode based on request

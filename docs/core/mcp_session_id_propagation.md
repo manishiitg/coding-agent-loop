@@ -1,5 +1,18 @@
 # MCP Session ID Propagation: Workspace Env Fix
 
+This page covers one narrow fix in the broader session architecture.
+
+For the current end-to-end model of:
+
+- HTTP session IDs
+- MCP session IDs
+- browser session binding
+- shell/folder-guard binding
+- provider CLI resume state
+- stop / clear / restart behavior
+
+see [session_and_tool_binding.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/core/session_and_tool_binding.md).
+
 ## Problem
 
 In workflow/code execution mode, every Playwright tool call opens a **new browser** instead of reusing the existing one. The root cause is a **session ID mismatch** between the `MCP_API_URL` baked into the workspace executor's env map and the actual MCP session ID used by the agent.

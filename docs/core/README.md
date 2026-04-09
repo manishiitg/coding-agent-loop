@@ -25,6 +25,7 @@ These docs describe platform subsystems that cut across workflow and multi-agent
 - `mcp_session_id_propagation.md`
 - `multi_user_authentication.md`
 - `oauth.md`
+- `session_and_tool_binding.md`
 - `secrets.md`
 - `skills.md`
 - `streaming_llm_output.md`

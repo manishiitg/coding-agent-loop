@@ -1091,11 +1091,11 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		}
 	}
 	if iwm.controller.variablesManifest != nil && len(iwm.controller.variablesManifest.Groups) > 0 {
-		var groupIDs []string
+		var groupNames []string
 		for _, g := range iwm.controller.variablesManifest.Groups {
-			groupIDs = append(groupIDs, g.GroupID)
+			groupNames = append(groupNames, g.Name)
 		}
-		availableGroups = strings.Join(groupIDs, ", ")
+		availableGroups = strings.Join(groupNames, ", ")
 	}
 
 	templateVars := map[string]string{
@@ -1260,7 +1260,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Set up servers, tools, and context dependencies
 
 **When creating or configuring each step, choose its execution mode:**
-1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_id, fast_path_only=true)`"+`.
+1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+`.
 2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. The LLM writes and runs code inline each time — no persistent script is saved.
 
 ### Phase 2: Optimize & Harden
@@ -1292,9 +1292,9 @@ Once steps are working correctly, shift to optimization. All optimization must b
 
 **Progressive hardening loop** (when user asks to "harden loop" or "run and harden all groups"):
 Run one group at a time so each group's failures harden the workflow before the next group runs:
-1. Read variables.json to get all enabled group IDs
+1. Read variables.json to get all enabled group names
 2. For each group (one by one):
-   a. Execute the workflow for this group only (execute_step with group_id, or run_full_workflow with a single group)
+   a. Execute the workflow for this group only (execute_step with group_name, or run_full_workflow with a single group)
    b. Run evaluation for this group's results
    c. Run harden_workflow(iteration) — fixes from this group benefit all subsequent groups
 3. After all groups have run: summarize overall scores and remaining issues
@@ -1506,13 +1506,13 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 {{end}}
 
 When running a step or the full workflow:
-- Before running anything, read `+"`cat variables.json`"+` to find available `+"`group_id`"+` values.
-- Always use execute_step with an explicit `+"`group_id`"+`. Never guess or silently default if multiple groups exist.
+- Before running anything, read `+"`cat variables.json`"+` to find available `+"`group_name`"+` values.
+- Always use execute_step with an explicit `+"`group_name`"+`. Never guess or silently default if multiple groups exist.
 - Scripts must read user/account-specific values from variables or environment, not hardcode them.
 - When testing code_exec steps that operate on group-specific data, verify them across more than one group before locking learnings.
 
 ### Execution Procedure
-1. User says "run step-X" → determine group → call **execute_step("step-id", group_id=group_id)** → get execution_id
+1. User says "run step-X" → determine group → call **execute_step("step-id", group_name=group_name)** → get execution_id
 2. By default, execute_step runs with **learning enabled**. Pass skip_learning=true to skip learning for faster iteration.
 3. **Human input steps**: Pass **human_input** parameter with the appropriate answer from your conversation context. This prevents blocking for manual UI input.
 4. Tell user step is running. Move on to other work or wait for the auto-notification.
@@ -1632,8 +1632,8 @@ For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}
 - If diagnosis revealed the fix (e.g., a selector changed), apply it directly. If the issue is complex, use your live MCP access to prototype the fix interactively before patching.
 
 **3. Test** — Run the patched script:
-- Use `+"`execute_step(step_id, group_id, fast_path_only=true)`"+` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
-- Or use `+"`execute_step(step_id, group_id, skip_learning=true)`"+` to run with LLM fallback if the script fails
+- Use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
+- Or use `+"`execute_step(step_id, group_name, skip_learning=true)`"+` to run with LLM fallback if the script fails
 - After running, you can use MCP tools again to verify the result — e.g., `+"`browser_snapshot`"+` to confirm the page is in the expected state, or read output files to check correctness
 - Check the output files and logs to confirm the fix
 
@@ -1793,15 +1793,15 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
-- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
-{{if ne .WorkshopMode "runner"}}- **execute_step(step_id, group_id, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
+- **execute_step(step_id, iteration, group_name?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
+{{if ne .WorkshopMode "runner"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-{{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
+{{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
 - **run_in_background(name, instruction)** — Spawn independent background agent with same tools
-{{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_id?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.{{end}}
+{{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.{{end}}
 {{end}}
 
 {{if eq .WorkshopMode "debugger"}}
@@ -1824,14 +1824,13 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **infer_objective(focus?)** — Infer workflow objective from plan structure (only when objective is truly missing from plan.json)
 - **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json
 - **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
-{{end}}
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
 {{if eq .WorkshopMode "debugger"}}
 ### Analysis
 - **harden_workflow(target_run_folder, focus?)** — Analyze eval failures and apply targeted fixes across all failing steps
-- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths
+- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
@@ -1860,8 +1859,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 - To view existing schedules, read `+"`workflow.json`"+` via `+"`execute_shell_command`"+` — schedules are under the `+"`schedules`"+` key.
 - Each schedule entry in `+"`workflow.json`"+` has this shape:
-  `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_ids": ["group-1"] }`+"`"+`
-  Fields: `+"`id`"+` (auto-assigned), `+"`name`"+` (display label), `+"`description`"+` (optional), `+"`cron_expression`"+` (standard 5-field cron), `+"`timezone`"+` (IANA tz e.g. America/New_York), `+"`enabled`"+` (bool), `+"`trigger_payload`"+` (arbitrary JSON passed to the run), `+"`group_ids`"+` (required array of one or more explicit group IDs from `+"`variables.json`"+`).
+  `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_names": ["confida-prod"] }`+"`"+`
+  Fields: `+"`id`"+` (auto-assigned), `+"`name`"+` (display label), `+"`description`"+` (optional), `+"`cron_expression`"+` (standard 5-field cron), `+"`timezone`"+` (IANA tz e.g. America/New_York), `+"`enabled`"+` (bool), `+"`trigger_payload`"+` (arbitrary JSON passed to the run), `+"`group_names`"+` (required array of one or more explicit group names from `+"`variables.json`"+`).
 - Schedule management is available in **builder and optimizer modes**. If the user asks about schedules in another mode, tell them to switch to builder or optimizer mode.
 - **3 ways to schedule a workflow:**
   1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
@@ -1873,10 +1872,10 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
   - **Run mode**: typically one message, e.g. "Run the full workflow using run_full_workflow. Use the latest run folder."
   - **Optimize mode**: one message with stop conditions (see optimizer best practices below)
   - Use multiple messages to break work into sequential phases, e.g. ["Run the workflow", "Generate the final report"]
-  - Read `+"`variables.json`"+` for available group IDs and include them explicitly in the message if needed
+  - Read `+"`variables.json`"+` for available group names and include them explicitly in the message if needed
 - **CRITICAL — schedules run unattended, messages must never require human input:**
   - Explicitly tell the agent to make all decisions autonomously: "Do not ask for confirmation, proceed automatically"
-  - Provide all required parameters upfront in the message (group IDs, run folders, step IDs) so the agent never needs to ask
+  - Provide all required parameters upfront in the message (group names, run folders, step IDs) so the agent never needs to ask
   - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
   - Never include open-ended questions or "let me know" style instructions
   - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Run the workflow, then optimize all unoptimized steps automatically"
@@ -2298,7 +2297,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1', 'step1')",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
@@ -2324,7 +2323,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "If true, run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback. Fails if no saved script exists or the step is not in scripted code mode. Implies skip_learning=true. Use this to quickly test patches to main.py.",
 				},
 			},
-			"required": []string{"step_id", "group_id"},
+			"required": []string{"step_id", "group_name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -2336,26 +2335,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id must be a non-empty string", nil
 			}
 
-			// Extract group_id and other options
-			groupIDRaw, _ := args["group_id"]
-			groupID, _ := groupIDRaw.(string)
-			if groupID == "" {
-				return "group_id is required. Read variables.json to see available groups.", nil
+			// Extract group_name and other options
+			groupNameRaw, _ := args["group_name"]
+			groupName, _ := groupNameRaw.(string)
+			if groupName == "" {
+				return "group_name is required. Read variables.json to see available groups.", nil
 			}
 
 			// Fallback to session-level group from toolbar selection
-			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
-				groupID = iwm.controller.enabledGroupIDs[0]
+			if groupName == "" && len(iwm.controller.enabledGroupNames) > 0 {
+				groupName = iwm.controller.enabledGroupNames[0]
 			}
 
 			// Validate a group is available — cannot run steps without one
-			if groupID == "" {
+			if groupName == "" {
 				iwm.refreshVariablesManifest(ctx)
 				if iwm.controller.variablesManifest == nil || len(iwm.controller.variablesManifest.Groups) == 0 {
 					return "No variable groups exist. Create a group first using add_group before running steps.", nil
 				}
 				// Auto-select the first available group
-				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
+				groupName = iwm.controller.variablesManifest.Groups[0].Name
 			}
 
 			iteration := "iteration-0"
@@ -2363,17 +2362,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
 			iwm.refreshVariablesManifest(ctx)
-			// Resolve group folder name from group_id (uses sanitized display name or group_id)
-			groupFolderName := groupID
-			groupDisplayName := ""
-			if iwm.controller.variablesManifest != nil && groupID != "" {
+			// Resolve group folder name from name (uses sanitized name)
+			groupFolderName := groupName
+			resolvedGroupName := ""
+			if iwm.controller.variablesManifest != nil && groupName != "" {
 				for _, g := range iwm.controller.variablesManifest.Groups {
-					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
-						if g.DisplayName != "" {
-							groupDisplayName = g.DisplayName
-						}
-						if g.DisplayName != "" {
-							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+					if g.Name == groupName || iwm.controller.sanitizeDisplayNameForFolder(g.Name) == groupName {
+						if g.Name != "" {
+							resolvedGroupName = g.Name
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.Name)
 							if sanitized != "" {
 								groupFolderName = sanitized
 							}
@@ -2423,8 +2420,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execOpts := &WorkshopExecuteOptions{
-				GroupID:          groupID,
-				GroupDisplayName: groupDisplayName,
+				GroupName:        resolvedGroupName,
 				Iteration:        iteration,
 				RunFolder:        runFolder,
 				SkipLearning:     skipLearning,
@@ -2507,10 +2503,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 				// Include group name in display name so notifications clearly identify which group they belong to
-				if groupDisplayName != "" {
-					stepDisplayName = fmt.Sprintf("%s [%s]", stepDisplayName, groupDisplayName)
-				} else if groupID != "" {
-					stepDisplayName = fmt.Sprintf("%s [%s]", stepDisplayName, groupID)
+				if resolvedGroupName != "" {
+					stepDisplayName = fmt.Sprintf("%s [%s]", stepDisplayName, resolvedGroupName)
+				} else if groupName != "" {
+					stepDisplayName = fmt.Sprintf("%s [%s]", stepDisplayName, groupName)
 				}
 
 				// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
@@ -2568,7 +2564,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
 							"iteration": iteration,
-							"group_id":  groupID,
+							"group_name":  groupName,
 						}
 						if isOptimized {
 							execMeta["step_optimized"] = "true"
@@ -2587,11 +2583,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if eventBridge != nil {
 					inputData := map[string]string{}
 					if execOpts != nil {
-						if execOpts.GroupID != "" {
-							inputData["group_id"] = execOpts.GroupID
-						}
-						if execOpts.GroupDisplayName != "" {
-							inputData["group_display_name"] = execOpts.GroupDisplayName
+						if execOpts.GroupName != "" {
+							inputData["group_name"] = execOpts.GroupName
 						}
 						if execOpts.Iteration != "" {
 							inputData["iteration"] = execOpts.Iteration
@@ -2636,8 +2629,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}()
 
 			groupInfo := ""
-			if groupID != "" {
-				groupInfo = fmt.Sprintf(", group=%q", groupID)
+			if groupName != "" {
+				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
 			learningInfo := "Learning: skipped (default for faster iteration). To generate learnings after execution, use generate_learnings(step_id). To run with learning enabled, use execute_step(step_id, skip_learning=false)."
 			if !skipLearning {
@@ -2912,12 +2905,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
 				},
 			},
-			"required": []string{"step_id", "group_id"},
+			"required": []string{"step_id", "group_name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -2929,23 +2922,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id must be a non-empty string", nil
 			}
 
-			// Extract group_id
-			groupID, _ := args["group_id"].(string)
+			// Extract group_name
+			groupName, _ := args["group_name"].(string)
 
 			iteration := "iteration-0"
-			if groupID == "" {
-				return "group_id is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
+			if groupName == "" {
+				return "group_name is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
 			}
 
 			// Refresh manifest from file to avoid stale group data
 			iwm.refreshVariablesManifest(ctx)
 			// Resolve group folder name and build run folder
-			groupFolderName := groupID
+			groupFolderName := groupName
 			if iwm.controller.variablesManifest != nil {
 				for _, g := range iwm.controller.variablesManifest.Groups {
-					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
-						if g.DisplayName != "" {
-							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+					if g.Name == groupName || iwm.controller.sanitizeDisplayNameForFolder(g.Name) == groupName {
+						if g.Name != "" {
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.Name)
 							if sanitized != "" {
 								groupFolderName = sanitized
 							}
@@ -4772,9 +4765,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional iteration folder (e.g., 'iteration-3'). If provided with group_id, the optimizer reads the published evaluation report and execution artifacts for that run.",
+					"description": "Optional iteration folder (e.g., 'iteration-3'). If provided with group_name, the optimizer reads the published evaluation report and execution artifacts for that run.",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
 				},
@@ -4803,7 +4796,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iter, ok := args["iteration"]; ok && iter != nil {
 				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
 					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_id"]; ok && gid != nil {
+					if gid, ok := args["group_name"]; ok && gid != nil {
 						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
 							targetRunFolder += "/" + strings.TrimSpace(g)
 						}
@@ -4913,8 +4906,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							endEvent.InputData["iteration"] = iterationName
 						}
 						if groupName != "" {
-							endEvent.InputData["group_id"] = groupName
-							endEvent.InputData["group_display_name"] = groupName
+							endEvent.InputData["group_name"] = groupName
 						}
 						if execErr != nil {
 							if isCancelled {
@@ -4943,8 +4935,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							execMeta["iteration"] = iterationName
 						}
 						if groupName != "" {
-							execMeta["group_id"] = groupName
-							execMeta["group_display_name"] = groupName
+							execMeta["group_name"] = groupName
 						}
 						iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder), result, execMeta, execErr)
 					}
@@ -4964,8 +4955,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						startEvent.InputData["iteration"] = iterationName
 					}
 					if groupName != "" {
-						startEvent.InputData["group_id"] = groupName
-						startEvent.InputData["group_display_name"] = groupName
+						startEvent.InputData["group_name"] = groupName
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -5007,9 +4997,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional iteration folder (e.g., 'iteration-23'). If provided with group_id, the optimizer reads the run artifacts and any generated markdown report for that run.",
+					"description": "Optional iteration folder (e.g., 'iteration-23'). If provided with group_name, the optimizer reads the run artifacts and any generated markdown report for that run.",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional group/user subfolder within the iteration (e.g., 'manish'). Use together with iteration for grouped workflows.",
 				},
@@ -5038,7 +5028,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iter, ok := args["iteration"]; ok && iter != nil {
 				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
 					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_id"]; ok && gid != nil {
+					if gid, ok := args["group_name"]; ok && gid != nil {
 						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
 							targetRunFolder += "/" + strings.TrimSpace(g)
 						}
@@ -5107,8 +5097,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							endEvent.InputData["iteration"] = iterationName
 						}
 						if groupName != "" {
-							endEvent.InputData["group_id"] = groupName
-							endEvent.InputData["group_display_name"] = groupName
+							endEvent.InputData["group_name"] = groupName
 						}
 						if execErr != nil {
 							if isCancelled {
@@ -5137,8 +5126,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							execMeta["iteration"] = iterationName
 						}
 						if groupName != "" {
-							execMeta["group_id"] = groupName
-							execMeta["group_display_name"] = groupName
+							execMeta["group_name"] = groupName
 						}
 						iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Report: %s", stepID), targetRunFolder), result, execMeta, execErr)
 					}
@@ -5158,8 +5146,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						startEvent.InputData["iteration"] = iterationName
 					}
 					if groupName != "" {
-						startEvent.InputData["group_id"] = groupName
-						startEvent.InputData["group_display_name"] = groupName
+						startEvent.InputData["group_name"] = groupName
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -5493,7 +5480,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Optional iteration folder (e.g., 'iteration-3'). If omitted, the review stays plan-centric unless a run folder is already selected.",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
 				},
@@ -5510,7 +5497,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iter, ok := args["iteration"]; ok && iter != nil {
 				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
 					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_id"]; ok && gid != nil {
+					if gid, ok := args["group_name"]; ok && gid != nil {
 						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
 							targetRunFolder += "/" + strings.TrimSpace(g)
 						}
@@ -5741,7 +5728,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Optional iteration folder (e.g., 'iteration-3'). Defaults to the currently selected run folder.",
 				},
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
 				},
@@ -5756,7 +5743,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iter, ok := args["iteration"]; ok && iter != nil {
 				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
 					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_id"]; ok && gid != nil {
+					if gid, ok := args["group_name"]; ok && gid != nil {
 						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
 							targetRunFolder += "/" + strings.TrimSpace(g)
 						}
@@ -6221,13 +6208,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: add_group — create a new variable group
 	if err := mcpAgent.RegisterCustomTool(
 		"add_group",
-		"Create a new variable group. Optionally provide a display_name and initial values. The new group will have all defined variables with empty values by default.",
+		"Create a new variable group. Optionally provide a name and initial values. The new group will have all defined variables with empty values by default.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"display_name": map[string]interface{}{
+				"name": map[string]interface{}{
 					"type":        "string",
-					"description": "User-friendly name for the group (e.g., 'Production', 'Staging'). If not provided, defaults to the group_id.",
+					"description": "Name for the group (e.g., 'Production', 'Staging'). If not provided, an auto-generated name is used.",
 				},
 				"values": map[string]interface{}{
 					"type":        "object",
@@ -6259,9 +6246,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			newGroup := manifest.AddGroup()
 
-			// Set display name if provided
-			if displayName, ok := args["display_name"].(string); ok && displayName != "" {
-				newGroup.DisplayName = displayName
+			// Set name if provided
+			if name, ok := args["name"].(string); ok && name != "" {
+				newGroup.Name = name
 			}
 
 			// Set initial values if provided
@@ -6277,31 +6264,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
 
-			displayName := newGroup.DisplayName
-			if displayName == "" {
-				displayName = newGroup.GroupID
-			}
-			return fmt.Sprintf("Created new group: %s (group_id: %s) with %d variables", displayName, newGroup.GroupID, len(newGroup.Values)), nil
+			return fmt.Sprintf("Created new group: %s with %d variables", newGroup.Name, len(newGroup.Values)), nil
 		},
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register add_group tool: %v", err))
 	}
 
-	// Tool: update_group — update an existing variable group's display_name, values, or enabled status
+	// Tool: update_group — update an existing variable group's name, values, or enabled status
 	if err := mcpAgent.RegisterCustomTool(
 		"update_group",
-		"Update a variable group. Provide group_id (required) and fields to change: display_name, values (key-value map), enabled (true/false). Only provided fields are updated.",
+		"Update a variable group. Provide name (required) and fields to change: new_name, values (key-value map), enabled (true/false). Only provided fields are updated.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"group_id": map[string]interface{}{
+				"name": map[string]interface{}{
 					"type":        "string",
-					"description": "The group_id of the group to update (e.g., 'group-1')",
+					"description": "The name of the group to update (e.g., 'group-1')",
 				},
-				"display_name": map[string]interface{}{
+				"new_name": map[string]interface{}{
 					"type":        "string",
-					"description": "New display name for the group",
+					"description": "New name for the group",
 				},
 				"values": map[string]interface{}{
 					"type":        "object",
@@ -6315,12 +6298,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Enable or disable the group for execution",
 				},
 			},
-			"required": []interface{}{"group_id"},
+			"required": []interface{}{"name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			groupID, ok := args["group_id"].(string)
-			if !ok || groupID == "" {
-				return "", fmt.Errorf("group_id is required")
+			groupName, ok := args["name"].(string)
+			if !ok || groupName == "" {
+				return "", fmt.Errorf("name is required")
 			}
 
 			readFile := func(ctx context.Context, path string) (string, error) {
@@ -6339,21 +6322,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Find the group
 			groupIdx := -1
 			for i := range manifest.Groups {
-				if manifest.Groups[i].GroupID == groupID {
+				if manifest.Groups[i].Name == groupName {
 					groupIdx = i
 					break
 				}
 			}
 			if groupIdx == -1 {
-				return "", fmt.Errorf("group %s not found", groupID)
+				return "", fmt.Errorf("group %s not found", groupName)
 			}
 
 			changes := []string{}
 
-			// Update display_name
-			if displayName, ok := args["display_name"].(string); ok {
-				manifest.Groups[groupIdx].DisplayName = displayName
-				changes = append(changes, fmt.Sprintf("display_name=%s", displayName))
+			// Update name
+			if newName, ok := args["new_name"].(string); ok {
+				manifest.Groups[groupIdx].Name = newName
+				changes = append(changes, fmt.Sprintf("name=%s", newName))
 			}
 
 			// Update enabled
@@ -6383,7 +6366,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
 
-			return fmt.Sprintf("Updated group %s: %s", groupID, strings.Join(changes, ", ")), nil
+			return fmt.Sprintf("Updated group %s: %s", groupName, strings.Join(changes, ", ")), nil
 		},
 		"workflow",
 	); err != nil {
@@ -6393,21 +6376,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: delete_group — remove a variable group
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_group",
-		"Delete a variable group by group_id. Cannot delete the last remaining group.",
+		"Delete a variable group by name. Cannot delete the last remaining group.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"group_id": map[string]interface{}{
+				"name": map[string]interface{}{
 					"type":        "string",
-					"description": "The group_id of the group to delete (e.g., 'group-2')",
+					"description": "The name of the group to delete (e.g., 'group-2')",
 				},
 			},
-			"required": []interface{}{"group_id"},
+			"required": []interface{}{"name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			groupID, ok := args["group_id"].(string)
-			if !ok || groupID == "" {
-				return "", fmt.Errorf("group_id is required")
+			groupName, ok := args["name"].(string)
+			if !ok || groupName == "" {
+				return "", fmt.Errorf("name is required")
 			}
 
 			readFile := func(ctx context.Context, path string) (string, error) {
@@ -6427,15 +6410,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "", fmt.Errorf("cannot delete the last remaining group")
 			}
 
-			if !manifest.DeleteGroup(groupID) {
-				return "", fmt.Errorf("group %s not found", groupID)
+			if !manifest.DeleteGroup(groupName) {
+				return "", fmt.Errorf("group %s not found", groupName)
 			}
 
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
 
-			return fmt.Sprintf("Deleted group %s. Remaining groups: %d", groupID, len(manifest.Groups)), nil
+			return fmt.Sprintf("Deleted group %s. Remaining groups: %d", groupName, len(manifest.Groups)), nil
 		},
 		"workflow",
 	); err != nil {
@@ -7200,10 +7183,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "IANA timezone (e.g., 'America/New_York', 'Asia/Kolkata'). Defaults to 'UTC'.",
 				},
-				"group_ids": map[string]interface{}{
+				"group_names": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Required. Variable group IDs to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Do not leave empty.",
+					"description": "Required. Variable group names to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Do not leave empty.",
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
@@ -7213,7 +7196,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"messages": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Required when mode='workshop'. Predefined message queue sent one-by-one to the LLM. Messages should reference tools with full parameters. Example: ['Run the full workflow using run_full_workflow(group_id=\"group-1\", iteration=\"iteration-0\")']. Read variables.json for available group IDs.",
+					"description": "Required when mode='workshop'. Predefined message queue sent one-by-one to the LLM. Messages should reference tools with full parameters. Example: ['Run the full workflow using run_full_workflow(group_name=\"group-1\", iteration=\"iteration-0\")']. Read variables.json for available group names.",
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
@@ -7221,7 +7204,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"enum":        []string{"runner", "optimizer"},
 				},
 			},
-			"required": []string{"name", "cron_expression", "group_ids"},
+			"required": []string{"name", "cron_expression", "group_names"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if iwm.schedulerFuncs == nil {
@@ -7233,12 +7216,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			name, _ := args["name"].(string)
 			cronExpr, _ := args["cron_expression"].(string)
 			timezone, _ := args["timezone"].(string)
-			var groupIDs []string
-			if raw, ok := args["group_ids"]; ok && raw != nil {
+			var groupNames []string
+			if raw, ok := args["group_names"]; ok && raw != nil {
 				if arr, ok := raw.([]interface{}); ok {
 					for _, v := range arr {
 						if s, ok := v.(string); ok {
-							groupIDs = append(groupIDs, s)
+							groupNames = append(groupNames, s)
 						}
 					}
 				}
@@ -7261,14 +7244,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
 			}
-			if len(groupIDs) == 0 {
-				return "group_ids is required. Read variables.json and provide at least one explicit group_id, e.g. ['group-1'].", nil
+			if len(groupNames) == 0 {
+				return "group_names is required. Read variables.json and provide at least one explicit group_name, e.g. ['group-1'].", nil
 			}
 			// Validate: workshop mode requires messages
 			if mode == "workshop" && len(messages) == 0 {
-				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_id=\"group-1\")'].", nil
+				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].", nil
 			}
-			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupIDs, mode, messages, workshopMode)
+			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupNames, mode, messages, workshopMode)
 		},
 		"workflow",
 	); err != nil {
@@ -7298,10 +7281,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "New IANA timezone.",
 				},
-				"group_ids": map[string]interface{}{
+				"group_names": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Explicit variable group IDs for the schedule (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Omit to keep the current groups; do not pass an empty array.",
+					"description": "Explicit variable group names for the schedule (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Omit to keep the current groups; do not pass an empty array.",
 				},
 				"enabled": map[string]interface{}{
 					"type":        "boolean",
@@ -7315,7 +7298,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"messages": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Replaces existing messages. Messages should reference tools with full parameters, e.g. ['Run the full workflow using run_full_workflow(group_id=\"group-1\")'].",
+					"description": "Replaces existing messages. Messages should reference tools with full parameters, e.g. ['Run the full workflow using run_full_workflow(group_name=\"group-1\")'].",
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
@@ -7336,20 +7319,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			name, _ := args["name"].(string)
 			cronExpr, _ := args["cron_expression"].(string)
 			timezone, _ := args["timezone"].(string)
-			var groupIDs []string
-			setGroupIDs := false
-			if raw, ok := args["group_ids"]; ok && raw != nil {
-				setGroupIDs = true
+			var groupNames []string
+			setGroupNames := false
+			if raw, ok := args["group_names"]; ok && raw != nil {
+				setGroupNames = true
 				if arr, ok := raw.([]interface{}); ok {
 					for _, v := range arr {
 						if s, ok := v.(string); ok {
-							groupIDs = append(groupIDs, s)
+							groupNames = append(groupNames, s)
 						}
 					}
 				}
 			}
-			if setGroupIDs && len(groupIDs) == 0 {
-				return "group_ids cannot be empty. Provide at least one explicit group_id from variables.json, or omit group_ids to keep the current selection.", nil
+			if setGroupNames && len(groupNames) == 0 {
+				return "group_names cannot be empty. Provide at least one explicit group_name from variables.json, or omit group_names to keep the current selection.", nil
 			}
 			var enabled *bool
 			if raw, ok := args["enabled"]; ok && raw != nil {
@@ -7369,7 +7352,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
-			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled, mode, messages, workshopMode)
+			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupNames, setGroupNames, enabled, mode, messages, workshopMode)
 		},
 		"workflow",
 	); err != nil {

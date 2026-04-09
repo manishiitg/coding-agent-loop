@@ -59,7 +59,7 @@ type ContextAwareEventBridge struct {
 	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
 	currentAgentName string
 	// Batch execution context (for batch progress tracking in frontend)
-	currentGroupID  string // Current group ID being executed
+	currentGroupName string // Current group name being executed
 	currentGroupIdx int    // 0-based index of current group
 	totalGroups     int    // Total number of groups in batch
 	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
@@ -182,15 +182,15 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 }
 
 // SetBatchContext sets the current batch execution context
-func (c *ContextAwareEventBridge) SetBatchContext(groupID string, groupIndex int, totalGroups int) {
+func (c *ContextAwareEventBridge) SetBatchContext(groupName string, groupIndex int, totalGroups int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.currentGroupID = groupID
+	c.currentGroupName = groupName
 	c.currentGroupIdx = groupIndex
 	c.totalGroups = totalGroups
 
-	c.logger.Info(fmt.Sprintf("📦 Set batch context: group %s (%d/%d)", groupID, groupIndex+1, totalGroups))
+	c.logger.Info(fmt.Sprintf("📦 Set batch context: group %s (%d/%d)", groupName, groupIndex+1, totalGroups))
 }
 
 // ClearBatchContext clears the batch execution context
@@ -198,7 +198,7 @@ func (c *ContextAwareEventBridge) ClearBatchContext() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.currentGroupID = ""
+	c.currentGroupName = ""
 	c.currentGroupIdx = 0
 	c.totalGroups = 0
 
@@ -263,7 +263,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	currentStep := c.currentStep
 	currentStepID := c.currentStepID
 	currentAgentName := c.currentAgentName
-	currentGroupID := c.currentGroupID
+	currentGroupName := c.currentGroupName
 	currentGroupIdx := c.currentGroupIdx
 	totalGroups := c.totalGroups
 	c.mu.RUnlock()
@@ -275,7 +275,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 
 	// Add context to metadata if we have any context (step ID, batch, or orchestrator)
 	if hasOrchestratorContext || hasBatchContext || hasStepID {
-		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with step %s, batch %s", event.Type, currentStepID, currentGroupID))
+		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with step %s, batch %s", event.Type, currentStepID, currentGroupName))
 
 		// Add context to metadata
 		// We need to check if the event data has a BaseEventData field
@@ -305,7 +305,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 
 				// Add batch context (which group is running)
 				if hasBatchContext {
-					newMeta["batch_group_id"] = currentGroupID
+					newMeta["batch_group_name"] = currentGroupName
 					newMeta["batch_group_index"] = currentGroupIdx
 					newMeta["batch_total_groups"] = totalGroups
 				}

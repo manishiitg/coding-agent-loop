@@ -391,7 +391,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),
-		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"]),
+		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataJSON"]),
 	}
 
 	// Execute the pre-parsed template

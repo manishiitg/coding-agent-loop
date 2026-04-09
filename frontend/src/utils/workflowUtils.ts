@@ -51,78 +51,71 @@ export function extractIterationFolder(runFolder: string | null | undefined): st
 }
 
 /**
- * Extracts the group ID from a run folder path
- * Handles both formats: "iteration-X/group-Y" and "iteration-X/display-name"
- * 
- * @param runFolder - The run folder path (e.g., "iteration-1/group-5" or "iteration-1/production")
- * @param manifest - Optional variables manifest to resolve display names to group IDs
- * @returns The group ID (e.g., "group-5"), or null if not found
+ * Extracts the group name from a run folder path
+ * Matches the folder name against sanitized group names from the manifest.
+ *
+ * @param runFolder - The run folder path (e.g., "iteration-1/production")
+ * @param manifest - Optional variables manifest to resolve folder names to group names
+ * @returns The group name, or null if not found
  */
-export function extractGroupIdFromFolder(
+export function extractGroupNameFromFolder(
   runFolder: string | null | undefined,
   manifest?: VariablesManifest | null
 ): string | null {
   if (!runFolder || runFolder === 'new' || !runFolder.includes('/')) {
     return null
   }
-  
+
   const parts = runFolder.split('/')
   if (parts.length !== 2) return null
-  
-  const groupFolderName = parts[1] // e.g., "group-5" or "production"
-  
-  // If it starts with "group-", return it directly as the group ID
-  if (groupFolderName.startsWith('group-')) {
-    return groupFolderName // e.g., "group-5"
-  }
-  
-  // Otherwise, it's a display name - try to resolve it to a group ID using manifest
+
+  const groupFolderName = parts[1] // e.g., "production"
+
+  // Try to resolve it to a group name using manifest
   if (manifest?.groups) {
-    const sanitizeForMatch = (name: string) => 
+    const sanitizeForMatch = (name: string) =>
       name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-    
+
     const group = manifest.groups.find((g: VariableGroup) => {
-      const sanitizedDisplayName = g.display_name ? sanitizeForMatch(g.display_name) : ''
+      const sanitizedName = sanitizeForMatch(g.name)
       const folderNameSanitized = sanitizeForMatch(groupFolderName)
-      
-      return sanitizedDisplayName === folderNameSanitized || g.group_id === groupFolderName
+
+      return sanitizedName === folderNameSanitized || g.name === groupFolderName
     })
-    
-    return group?.group_id || null
+
+    return group?.name || null
   }
-  
-  // No manifest provided, return the folder name as-is (might be a display name)
+
+  // No manifest provided, return the folder name as-is
   return groupFolderName
 }
 
 /**
  * Builds a group folder path from a group ID
- * Uses sanitized display_name if available, otherwise falls back to group_id
+ * Uses the sanitized group name as the folder name
  * 
- * @param groupId - The group ID (e.g., "group-5")
+ * @param groupName - The group name (e.g., "Production")
  * @param iterationFolder - The iteration folder (e.g., "iteration-1")
  * @param manifest - Variables manifest to get group details
- * @returns The full group folder path (e.g., "iteration-1/group-5" or "iteration-1/production"), or null if group not found
+ * @returns The full group folder path (e.g., "iteration-1/production"), or null if group not found
  */
 export function buildGroupFolderPath(
-  groupId: string,
+  groupName: string,
   iterationFolder: string | null | undefined,
   manifest?: VariablesManifest | null
 ): string | null {
-  if (!groupId || !iterationFolder) return null
-  
+  if (!groupName || !iterationFolder) return null
+
   // Find the group in manifest
-  const group = manifest?.groups?.find(g => g.group_id === groupId)
+  const group = manifest?.groups?.find(g => g.name === groupName)
   if (!group) {
-    // Group not found in manifest, use group_id as folder name
-    return `${iterationFolder}/${groupId}`
+    // Group not found in manifest, use sanitized groupName as folder name
+    return `${iterationFolder}/${sanitizeDisplayNameForFolder(groupName) || groupName}`
   }
-  
-  // Determine folder name (sanitized display_name or group_id)
-  const folderName = group.display_name && sanitizeDisplayNameForFolder(group.display_name)
-    ? sanitizeDisplayNameForFolder(group.display_name)
-    : group.group_id
-  
+
+  // Folder name is the sanitized group name
+  const folderName = sanitizeDisplayNameForFolder(group.name) || group.name
+
   return `${iterationFolder}/${folderName}`
 }
 
@@ -135,21 +128,21 @@ export function buildGroupFolderPath(
  * - Fallback: Iteration folder only (no specific group)
  *
  * @param options - Configuration options
- * @param options.currentRunningGroupId - Currently running group ID (during batch execution)
+ * @param options.currentRunningGroupId - Currently running group name (during batch execution)
  * @param options.selectedRunFolder - Currently selected run folder (e.g., "iteration-1")
- * @param options.selectedGroupIds - Array of selected group IDs from checkboxes
+ * @param options.selectedGroupIds - Array of selected group names from checkboxes (store field still called selectedGroupIds)
  * @param options.manifest - Variables manifest containing group definitions
- * @returns The resolved group folder path (e.g., "iteration-1/group-5"), iteration folder, or undefined
+ * @returns The resolved group folder path (e.g., "iteration-1/production"), iteration folder, or undefined
  *
  * @example
  * // During batch execution
- * resolveGroupFolderPath({ currentRunningGroupId: 'group-2', selectedRunFolder: 'iteration-1', ... })
- * // Returns: "iteration-1/group-2"
+ * resolveGroupFolderPath({ currentRunningGroupId: 'Production', selectedRunFolder: 'iteration-1', ... })
+ * // Returns: "iteration-1/production"
  *
  * @example
  * // User selected groups via checkboxes
- * resolveGroupFolderPath({ selectedGroupIds: ['group-1', 'group-3'], selectedRunFolder: 'iteration-5', ... })
- * // Returns: "iteration-5/group-1" (uses first selected)
+ * resolveGroupFolderPath({ selectedGroupIds: ['Production', 'Staging'], selectedRunFolder: 'iteration-5', ... })
+ * // Returns: "iteration-5/production" (uses first selected)
  *
  * @example
  * // No groups selected - execute all enabled

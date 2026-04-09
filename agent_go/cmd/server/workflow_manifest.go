@@ -71,7 +71,7 @@ type WorkflowSchedule struct {
 	Timezone       string          `json:"timezone"`
 	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs       []string        `json:"group_ids,omitempty"`
+	GroupNames     []string        `json:"group_names,omitempty"`
 	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator) or "workshop" (LLM-driven via workshop builder)
 	Messages       []string        `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
 	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner" (default), "debugger"
@@ -116,19 +116,19 @@ func ValidateManifest(m *WorkflowManifest) error {
 		if sched.CronExpression == "" {
 			return fmt.Errorf("schedules[%d].cron_expression is required", i)
 		}
-		if len(normalizeScheduleGroupIDs(sched.GroupIDs)) == 0 {
-			return fmt.Errorf("schedules[%d].group_ids is required", i)
+		if len(normalizeScheduleGroupNames(sched.GroupNames)) == 0 {
+			return fmt.Errorf("schedules[%d].group_names is required", i)
 		}
 	}
 
 	return nil
 }
 
-func normalizeScheduleGroupIDs(groupIDs []string) []string {
-	seen := make(map[string]struct{}, len(groupIDs))
-	normalized := make([]string, 0, len(groupIDs))
-	for _, groupID := range groupIDs {
-		trimmed := strings.TrimSpace(groupID)
+func normalizeScheduleGroupNames(groupNames []string) []string {
+	seen := make(map[string]struct{}, len(groupNames))
+	normalized := make([]string, 0, len(groupNames))
+	for _, groupName := range groupNames {
+		trimmed := strings.TrimSpace(groupName)
 		if trimmed == "" {
 			continue
 		}
@@ -141,10 +141,10 @@ func normalizeScheduleGroupIDs(groupIDs []string) []string {
 	return normalized
 }
 
-func validateScheduleGroupIDsForWorkspace(ctx context.Context, workspacePath string, groupIDs []string) ([]string, error) {
-	normalized := normalizeScheduleGroupIDs(groupIDs)
+func validateScheduleGroupNamesForWorkspace(ctx context.Context, workspacePath string, groupNames []string) ([]string, error) {
+	normalized := normalizeScheduleGroupNames(groupNames)
 	if len(normalized) == 0 {
-		return nil, fmt.Errorf("group_ids is required and must contain at least one group ID")
+		return nil, fmt.Errorf("group_names is required and must contain at least one group name")
 	}
 
 	content, exists, err := readFileFromWorkspace(ctx, workspacePath+"/variables/variables.json")
@@ -160,27 +160,27 @@ func validateScheduleGroupIDsForWorkspace(ctx context.Context, workspacePath str
 		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 	if len(manifest.Groups) == 0 {
-		return nil, fmt.Errorf("workflow has no variable groups; schedules must specify at least one valid group_id")
+		return nil, fmt.Errorf("workflow has no variable groups; schedules must specify at least one valid group name")
 	}
 
 	validGroups := make(map[string]struct{}, len(manifest.Groups))
 	available := make([]string, 0, len(manifest.Groups))
 	for _, group := range manifest.Groups {
-		groupID := strings.TrimSpace(group.GroupID)
-		if groupID == "" {
+		groupName := strings.TrimSpace(group.Name)
+		if groupName == "" {
 			continue
 		}
-		if _, exists := validGroups[groupID]; exists {
+		if _, exists := validGroups[groupName]; exists {
 			continue
 		}
-		validGroups[groupID] = struct{}{}
-		available = append(available, groupID)
+		validGroups[groupName] = struct{}{}
+		available = append(available, groupName)
 	}
 	sort.Strings(available)
 
-	for _, groupID := range normalized {
-		if _, ok := validGroups[groupID]; !ok {
-			return nil, fmt.Errorf("unknown group_id %q; available groups: %s", groupID, strings.Join(available, ", "))
+	for _, groupName := range normalized {
+		if _, ok := validGroups[groupName]; !ok {
+			return nil, fmt.Errorf("unknown group name %q; available groups: %s", groupName, strings.Join(available, ", "))
 		}
 	}
 
@@ -388,8 +388,7 @@ func listWorkspaceFolders(ctx context.Context) ([]string, error) {
 	q.Add("max_depth", "1")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call workspace API: %w", err)
 	}

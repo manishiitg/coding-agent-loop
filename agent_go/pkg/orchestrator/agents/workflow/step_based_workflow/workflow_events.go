@@ -125,7 +125,7 @@ type StepProgressUpdatedEvent struct {
 	Status        string `json:"status,omitempty"`          // Step status: "start", "end", "failed", or empty (for progress updates)
 	Error         string `json:"error,omitempty"`           // Error message (populated when status is "failed")
 	// Batch execution info (always present since backend always runs in batch context)
-	GroupId     string `json:"group_id,omitempty"`     // Current group ID being executed
+	GroupName   string `json:"group_name,omitempty"`   // Current group name being executed
 	GroupIndex  int    `json:"group_index"`            // 0-based index of current group
 	TotalGroups int    `json:"total_groups"`           // Total number of groups in batch
 	// Tiered LLM allocation info (only populated in tiered mode)

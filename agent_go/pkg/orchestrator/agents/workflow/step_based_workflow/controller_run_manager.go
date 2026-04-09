@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 )
 
 // resolveRunFolder determines which run folder to use.
@@ -37,6 +38,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 		}
 	}
 
+	// Delete old backup iterations beyond the most recent 10
+	hcpo.pruneOldIterations(ctx, runsPath, 10)
+
 	// Create fresh iteration-0
 	if err := hcpo.createRunFolderStructure(ctx, iteration0Path); err != nil {
 		return "", fmt.Errorf("failed to create iteration-0: %w", err)
@@ -44,6 +48,49 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 
 	hcpo.GetLogger().Info("Using iteration-0 for workflow execution")
 	return "iteration-0", nil
+}
+
+// pruneOldIterations deletes backup iteration folders (iteration-1, iteration-2, ...)
+// keeping only the most recent `keep` backups. iteration-0 is never deleted.
+func (hcpo *StepBasedWorkflowOrchestrator) pruneOldIterations(ctx context.Context, runsPath string, keep int) {
+	existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
+	if err != nil {
+		return
+	}
+
+	// Collect backup iteration numbers (skip iteration-0)
+	type iterEntry struct {
+		num  int
+		name string
+	}
+	var backups []iterEntry
+	re := regexp.MustCompile(`^iteration-(\d+)$`)
+	for _, folder := range existingFolders {
+		matches := re.FindStringSubmatch(folder)
+		if len(matches) > 1 {
+			var n int
+			if _, scanErr := fmt.Sscanf(matches[1], "%d", &n); scanErr == nil && n > 0 {
+				backups = append(backups, iterEntry{num: n, name: folder})
+			}
+		}
+	}
+
+	if len(backups) <= keep {
+		return
+	}
+
+	// Sort descending by iteration number — keep the highest N
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].num > backups[j].num
+	})
+
+	for _, entry := range backups[keep:] {
+		folderPath := fmt.Sprintf("%s/%s", runsPath, entry.name)
+		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Pruning old iteration backup: %s", entry.name))
+		if delErr := hcpo.DeleteWorkspaceFile(ctx, folderPath); delErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete old iteration %s: %v", entry.name, delErr))
+		}
+	}
 }
 
 // nextAvailableIteration finds the next available iteration-N name (N >= 1) under runsPath.

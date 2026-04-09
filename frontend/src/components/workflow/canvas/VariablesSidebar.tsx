@@ -65,7 +65,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
         values[v.name] = v.value || ''
       })
       return [{
-        group_id: 'group-1',
+        name: 'group-1',
         values,
         enabled: true
       }]
@@ -83,7 +83,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
         objective: '',
         extraction_date: new Date().toISOString(),
         variables: [],
-        groups: [{ group_id: 'group-1', values: {}, enabled: true }]
+        groups: [{ name: 'group-1', values: {}, enabled: true }]
       }
       setManifest(newManifest)
       setHasChanges(true)
@@ -111,8 +111,8 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
 
       newGroupId = 'group-2'
       updatedGroups = [
-        { group_id: 'group-1', values: existingValues, enabled: true },
-        { group_id: newGroupId, values: newValues, enabled: true }
+        { name: 'group-1', values: existingValues, enabled: true },
+        { name: newGroupId, values: newValues, enabled: true }
       ]
     } else {
       // Add to existing groups
@@ -125,7 +125,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
 
       updatedGroups = [
         ...existingGroups,
-        { group_id: newGroupId, values: newValues, enabled: true }
+        { name: newGroupId, values: newValues, enabled: true }
       ]
     }
 
@@ -139,11 +139,11 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   }, [manifest])
 
   // Toggle group enabled/disabled
-  const handleToggleGroup = useCallback((groupId: string) => {
+  const handleToggleGroup = useCallback((groupName: string) => {
     if (!manifest?.groups) return
-    
-    const updatedGroups = manifest.groups.map(g => 
-      g.group_id === groupId ? { ...g, enabled: !g.enabled } : g
+
+    const updatedGroups = manifest.groups.map(g =>
+      g.name === groupName ? { ...g, enabled: !g.enabled } : g
     )
     
     const updatedManifest = { ...manifest, groups: updatedGroups }
@@ -152,10 +152,10 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   }, [manifest])
 
   // Delete group
-  const handleDeleteGroup = useCallback((groupId: string) => {
+  const handleDeleteGroup = useCallback((groupName: string) => {
     if (!manifest?.groups || manifest.groups.length <= 1) return
-    
-    const updatedGroups = manifest.groups.filter(g => g.group_id !== groupId)
+
+    const updatedGroups = manifest.groups.filter(g => g.name !== groupName)
     const updatedManifest = { ...manifest, groups: updatedGroups }
     setManifest(updatedManifest)
     setHasChanges(true)
@@ -285,7 +285,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
           <div className="p-4 space-y-4">
             {groups.map((group, index) => (
               <div
-                key={`${group.group_id}-${index}`}
+                key={`${group.name}-${index}`}
                 className={`border rounded-lg p-3 space-y-3 ${
                   !group.enabled ? 'opacity-60 border-border/50' : 'border-border'
                 }`}
@@ -294,7 +294,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <button
-                      onClick={() => handleToggleGroup(group.group_id)}
+                      onClick={() => handleToggleGroup(group.name)}
                       className="flex items-center gap-1.5 hover:scale-110 transition-transform flex-shrink-0"
                       title={group.enabled ? 'Disable group' : 'Enable group'}
                     >
@@ -307,16 +307,16 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <input
                         type="text"
-                        value={group.display_name || ''}
+                        value={group.name}
                         onChange={(e) => {
-                          // Update display name for this specific group
+                          // Update name for this specific group
                           // Handle both cases: when groups exist in manifest, and when we're in single-group mode
                           if (!manifest) return
                           if (manifest.groups && manifest.groups.length > 0) {
                             // Multi-group mode: update existing groups
                             const updatedGroups = manifest.groups.map(g => {
-                              if (g.group_id === group.group_id) {
-                                return { ...g, display_name: e.target.value }
+                              if (g.name === group.name) {
+                                return { ...g, name: e.target.value }
                               }
                               return g
                             })
@@ -332,7 +332,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             })
                             const updatedGroups = [{
                               ...group,
-                              display_name: e.target.value,
+                              name: e.target.value,
                               values
                             }]
                             const updatedManifest = { ...manifest, groups: updatedGroups }
@@ -340,15 +340,12 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             setHasChanges(true)
                           }
                         }}
-                        placeholder={group.group_id.toUpperCase()}
+                        placeholder="Group name"
                         className="flex-1 px-2 py-1 rounded border border-border bg-background text-sm font-semibold text-foreground
                                  focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
                                  placeholder:text-muted-foreground/50 min-w-0"
-                        title="Edit group display name"
+                        title="Edit group name"
                       />
-                      <span className="text-xs text-muted-foreground font-mono flex-shrink-0">
-                        ({group.group_id})
-                      </span>
                     </div>
                     {!group.enabled && (
                       <span className="text-xs text-muted-foreground flex-shrink-0">(Disabled)</span>
@@ -356,7 +353,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                   </div>
                   {groups.length > 1 && (
                     <button
-                      onClick={() => handleDeleteGroup(group.group_id)}
+                      onClick={() => handleDeleteGroup(group.name)}
                       className="p-1 hover:text-red-500 transition-colors flex-shrink-0 ml-2"
                       title="Delete group"
                     >
@@ -387,7 +384,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                           if (!manifest) return
                           if (manifest.groups && manifest.groups.length > 0) {
                             const updatedGroups = manifest.groups.map(g => {
-                              if (g.group_id === group.group_id) {
+                              if (g.name === group.name) {
                                 return { ...g, values: { ...g.values, [variable.name]: e.target.value } }
                               }
                               return g

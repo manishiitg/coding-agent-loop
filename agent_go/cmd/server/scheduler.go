@@ -475,7 +475,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	schedID := sctx.Schedule.ID
 	startTime := time.Now().UTC()
 	scheduleLogf("[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v",
-		schedID, sctx.Schedule.Name, startTime.Format(time.RFC3339), sctx.Schedule.GroupIDs)
+		schedID, sctx.Schedule.Name, startTime.Format(time.RFC3339), sctx.Schedule.GroupNames)
 
 	// Clear session/error fields — status is already "running" (set atomically by caller)
 	state := s.getOrCreateRuntimeState(schedID)
@@ -488,7 +488,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		ID:         runID,
 		ScheduleID: schedID,
 		Status:     "running",
-		GroupIDs:   sctx.Schedule.GroupIDs,
+		GroupNames: sctx.Schedule.GroupNames,
 		StartedAt:  startTime,
 	}
 	if err := AppendScheduleRun(ctx, sctx.WorkspacePath, run); err != nil {
@@ -566,8 +566,8 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 		"selected_run_folder": "iteration-0",
 		"execution_strategy":  "start_from_beginning",
 	}
-	if len(sctx.Schedule.GroupIDs) > 0 {
-		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
+	if len(sctx.Schedule.GroupNames) > 0 {
+		execOpts["enabled_group_names"] = sctx.Schedule.GroupNames
 	}
 	reqMap["execution_options"] = execOpts
 
@@ -820,16 +820,16 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 			return "runner"
 		}(),
 	}
-	if len(sctx.Schedule.GroupIDs) > 0 {
-		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
+	if len(sctx.Schedule.GroupNames) > 0 {
+		execOpts["enabled_group_names"] = sctx.Schedule.GroupNames
 	}
 	reqMap["execution_options"] = execOpts
 
 	return reqMap
 }
 
-func sanitizeGroupDisplayNameForFolder(displayName string) string {
-	sanitized := strings.TrimSpace(displayName)
+func sanitizeGroupNameForFolder(name string) string {
+	sanitized := strings.TrimSpace(name)
 	if sanitized == "" {
 		return ""
 	}
@@ -852,35 +852,23 @@ func sanitizeGroupDisplayNameForFolder(displayName string) string {
 	return sanitized
 }
 
-func resolveWorkshopScheduleRunFolder(ctx context.Context, workspacePath string, groupIDs []string) string {
+func resolveWorkshopScheduleRunFolder(ctx context.Context, workspacePath string, groupNames []string) string {
 	baseRunFolder := "iteration-0"
 	if strings.TrimSpace(workspacePath) == "" {
 		return baseRunFolder
 	}
 
-	if len(groupIDs) != 1 {
+	if len(groupNames) != 1 {
 		return baseRunFolder
 	}
 
-	groupFolderName := strings.TrimSpace(groupIDs[0])
+	groupFolderName := strings.TrimSpace(groupNames[0])
 	if groupFolderName == "" {
 		return baseRunFolder
 	}
 
-	content, exists, err := readFileFromWorkspace(ctx, workspacePath+"/variables/variables.json")
-	if err == nil && exists {
-		var manifest VariablesManifest
-		if jsonErr := json.Unmarshal([]byte(content), &manifest); jsonErr == nil {
-			for _, group := range manifest.Groups {
-				if group.GroupID != groupIDs[0] {
-					continue
-				}
-				if sanitized := sanitizeGroupDisplayNameForFolder(group.DisplayName); sanitized != "" {
-					groupFolderName = sanitized
-				}
-				break
-			}
-		}
+	if sanitized := sanitizeGroupNameForFolder(groupFolderName); sanitized != "" {
+		groupFolderName = sanitized
 	}
 
 	return fmt.Sprintf("%s/%s", baseRunFolder, groupFolderName)

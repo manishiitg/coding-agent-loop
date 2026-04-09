@@ -1107,6 +1107,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			learnCodeInputArgsForPrompt = strings.Join(resolvedContextDeps, "\n")
 		}
 
+		// Inject VAR_GROUP_NAME early so it appears in the snapshotWorkspaceEnv used by LearnCodeEnvVarNames.
+		if hcpo.currentGroupName != "" {
+			if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+				hcpo.LockWorkspaceEnv()
+				envRef["VAR_GROUP_NAME"] = hcpo.currentGroupName
+				hcpo.UnlockWorkspaceEnv()
+			}
+		}
+
 		templateVars := map[string]string{
 			"StepTitle":             stepTitleForPrompt,
 			"StepDescription":       stepDescriptionForPrompt,
@@ -1130,6 +1139,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
 			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.snapshotWorkspaceEnv()),
 			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
+			"GroupName":             hcpo.currentGroupName,
 		}
 
 		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent
@@ -1290,6 +1300,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["IsRelearnMode"] = fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != "")
 			templateVars["LearnCodePriorScript"] = learnCodePriorScript
 			templateVars["LearnCodePriorError"] = learnCodePriorError
+
+			// On failure, include script_metadata.json so the relearn agent can see
+			// run history, failure patterns, per-group stats, and streaks.
+			if learnCodePriorError != "" {
+				if meta := hcpo.readLearnCodeMetadataAPI(ctx, step.GetID()); meta != nil {
+					if metaBytes, err := json.MarshalIndent(meta, "", "  "); err == nil {
+						templateVars["LearnCodeMetadataJSON"] = string(metaBytes)
+					}
+				}
+			}
 
 			if execCtx != nil && execCtx.SavedScriptOnly {
 				if fastResult.RanScript && fastResult.Success {
@@ -1736,7 +1756,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 						if mainPyErr != nil {
 							// main.py not written yet
-							if priorCtx := BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"]); priorCtx != "" {
+							if priorCtx := BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataJSON"]); priorCtx != "" {
 								sb.WriteString(priorCtx)
 								sb.WriteString("\n")
 							}

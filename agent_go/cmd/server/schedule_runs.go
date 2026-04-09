@@ -25,7 +25,7 @@ type ScheduleRunEntry struct {
 	Status      string     `json:"status"` // running, success, error
 	Error       string     `json:"error,omitempty"`
 	DurationMs  *int64     `json:"duration_ms,omitempty"`
-	GroupIDs    []string   `json:"group_ids,omitempty"`
+	GroupNames  []string   `json:"group_names,omitempty"`
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }

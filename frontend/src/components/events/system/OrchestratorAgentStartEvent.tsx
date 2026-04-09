@@ -45,7 +45,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const isWorkshopStep = agentType?.startsWith('workshop-')
   const isBackgroundAgent = agentType === 'workshop-background-task'
   const isWorkshopStepExecution = agentType === 'workshop-step-execution'
-  const workshopGroup = event.input_data?.group_display_name || event.input_data?.group_id
+  const workshopGroup = event.input_data?.group_name
   const workshopIteration = formatWorkshopIteration(event.iteration, event.input_data?.iteration)
   const workshopMeta = (workshopGroup || workshopIteration)
     ? [

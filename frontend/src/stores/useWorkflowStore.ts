@@ -67,7 +67,7 @@ export interface PresetWorkflowState {
     isActive: boolean
     totalGroups: number
     currentGroupIndex: number
-    currentGroupId: string | null
+    currentGroupName: string | null
     completedCount: number
     failedCount: number
     remainingCount: number
@@ -191,7 +191,7 @@ interface WorkflowStore {
     isActive: boolean
     totalGroups: number
     currentGroupIndex: number
-    currentGroupId: string | null
+    currentGroupName: string | null
     completedCount: number
     failedCount: number
     remainingCount: number
@@ -267,14 +267,14 @@ interface WorkflowStore {
   setVariablesManifest: (manifest: VariablesManifest | null) => void
 
   // Selected group IDs
-  toggleGroupSelection: (groupId: string) => void
-  setSelectedGroupIds: (groupIds: string[]) => void
+  toggleGroupSelection: (groupName: string) => void
+  setSelectedGroupIds: (groupNames: string[]) => void
   clearSelectedGroupIds: () => void
   // Restore selection state from localStorage (called after API load completes)
   restoreSelectionFromLocalStorage: () => void
 
   // Current running group
-  setCurrentRunningGroupId: (groupId: string | null) => void
+  setCurrentRunningGroupId: (groupName: string | null) => void
 
   // Current step (for auto-focus on canvas)
   setCurrentStepId: (stepId: string | null) => void
@@ -285,8 +285,8 @@ interface WorkflowStore {
 
   // Consolidated batch group switching handler
   // Handles group start/end events and updates state atomically
-  handleBatchGroupStart: (groupId: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => void
-  handleBatchGroupEnd: (groupId: string, success?: boolean, remainingGroups?: number) => void
+  handleBatchGroupStart: (groupName: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => void
+  handleBatchGroupEnd: (groupName: string, success?: boolean, remainingGroups?: number) => void
 
   // Reset batch progress (called when batch completes or is canceled)
   resetBatchProgress: () => void
@@ -1230,18 +1230,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // from the manifest so workflow builder chat still works before the user has
         // manually clicked a group selector in the canvas.
         if (state.selectedGroupIds.length > 0) {
-          options.enabled_group_ids = state.selectedGroupIds
-          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from selectedGroupIds:', state.selectedGroupIds)
+          options.enabled_group_names = state.selectedGroupIds
+          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_names from selectedGroupIds:', state.selectedGroupIds)
         } else {
           const enabledManifestGroupIds = (state.variablesManifest?.groups || [])
             .filter(group => group.enabled)
-            .map(group => group.group_id)
+            .map(group => group.name)
 
           if (enabledManifestGroupIds.length > 0) {
-            options.enabled_group_ids = enabledManifestGroupIds
+            options.enabled_group_names = enabledManifestGroupIds
             console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Falling back to enabled manifest groups:', enabledManifestGroupIds)
           } else {
-            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected and no enabled manifest groups found - enabled_group_ids will be omitted')
+            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected and no enabled manifest groups found - enabled_group_names will be omitted')
           }
         }
 
@@ -1263,7 +1263,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           resume_from_branch_step: options.resume_from_branch_step,
           run_mode: options.run_mode,
           selected_run_folder: options.selected_run_folder,
-          enabled_group_ids: options.enabled_group_ids
+          enabled_group_names: options.enabled_group_names
         }, null, 2))
 
         console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] buildExecutionOptions returning:', JSON.stringify(options, null, 2))
@@ -1415,14 +1415,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Toggle group selection (add if not selected, remove if selected)
-      toggleGroupSelection: (groupId: string) => {
+      toggleGroupSelection: (groupName: string) => {
         const state = get()
         const currentIds = state.selectedGroupIds
-        const isSelected = currentIds.includes(groupId)
+        const isSelected = currentIds.includes(groupName)
 
         const newIds = isSelected
-          ? currentIds.filter(id => id !== groupId)
-          : [...currentIds, groupId]
+          ? currentIds.filter(id => id !== groupName)
+          : [...currentIds, groupName]
 
         set({ selectedGroupIds: newIds })
 
@@ -1442,15 +1442,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Set selected group IDs directly
-      setSelectedGroupIds: (groupIds: string[]) => {
+      setSelectedGroupIds: (groupNames: string[]) => {
         const state = get()
-        set({ selectedGroupIds: groupIds })
+        set({ selectedGroupIds: groupNames })
 
         // Persist to localStorage - save groupIds, runFolder, AND presetId
         // Note: startPoint is NOT persisted - it's calculated from progress
         try {
           const persistData = {
-            groupIds: groupIds,
+            groupIds: groupNames,
             runFolder: state.selectedRunFolder,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             presetId: (state as any)._currentPresetId
@@ -1537,13 +1537,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
 
-      setCurrentRunningGroupId: (groupId: string | null) => {
-        set({ currentRunningGroupId: groupId })
+      setCurrentRunningGroupId: (groupName: string | null) => {
+        set({ currentRunningGroupId: groupName })
 
         // Persist to localStorage
         try {
-          if (groupId) {
-            localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupId)
+          if (groupName) {
+            localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
           } else {
             localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
           }
@@ -1579,15 +1579,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Consolidated batch group switching handler
       // Handles group start: sets currentRunningGroupId, updates selectedRunFolder, and updates batchProgress
-      handleBatchGroupStart: (groupId: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => {
+      handleBatchGroupStart: (groupName: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => {
         const state = get()
 
         // Set current running group ID
-        set({ currentRunningGroupId: groupId })
+        set({ currentRunningGroupId: groupName })
 
         // Persist currentRunningGroupId to localStorage
         try {
-          localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupId)
+          localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
         }
@@ -1616,7 +1616,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 isActive: true,
                 totalGroups,
                 currentGroupIndex: groupIndex,
-                currentGroupId: groupId,
+                currentGroupName: groupName,
                 completedCount: 0,
                 failedCount: 0,
                 remainingCount: totalGroups,
@@ -1628,7 +1628,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               batchProgress: {
                 ...state.batchProgress,
                 currentGroupIndex: groupIndex,
-                currentGroupId: groupId,
+                currentGroupName: groupName,
                 totalGroups // Update in case it changed
               }
             })
@@ -1636,7 +1636,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
 
         console.log('[WorkflowStore] Batch group started:', {
-          groupId,
+          groupName,
           runFolder,
           normalizedFolder,
           workspacePath,
@@ -1661,12 +1661,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Consolidated batch group end handler
       // Clears currentRunningGroupId if it matches, and updates batch progress counts
-      handleBatchGroupEnd: (groupId: string, success?: boolean, remainingGroups?: number) => {
+      handleBatchGroupEnd: (groupName: string, success?: boolean, remainingGroups?: number) => {
         const state = get()
 
         // Only clear if this is the currently running group
         // This prevents clearing when events arrive out of order
-        if (state.currentRunningGroupId === groupId) {
+        if (state.currentRunningGroupId === groupName) {
           set({ currentRunningGroupId: null })
 
           // Clear from localStorage
@@ -1696,13 +1696,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
               // Keep batch active if there are remaining groups
               isActive: remaining > 0,
               // Clear current group ID if batch is done
-              currentGroupId: remaining > 0 ? state.batchProgress.currentGroupId : null
+              currentGroupName: remaining > 0 ? state.batchProgress.currentGroupName : null
             }
           })
         }
 
         console.log('[WorkflowStore] Batch group ended:', {
-          groupId,
+          groupName,
           success,
           remainingGroups,
           batchProgress: get().batchProgress

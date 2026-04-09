@@ -954,7 +954,7 @@ export interface ExecutionOptions {
   // Tool access control (global configuration)
 
   // Variable group execution options (for batch execution with multiple groups)
-  enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)
+  enabled_group_names?: string[];  // Group names to execute (if empty, uses groups' enabled flags)
 
   // Feature toggles (runtime configuration)
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
@@ -1005,8 +1005,7 @@ export interface Variable {
 }
 
 export interface VariableGroup {
-  group_id: string;  // e.g., "group-1", "group-2" (used as fallback for folder names)
-  display_name?: string;  // Optional user-friendly name (e.g., "Production", "Staging")
+  name: string;  // Unique identifier and display label
   values: Record<string, string>;  // Variable name -> value mapping
   enabled: boolean;
 }
@@ -1224,13 +1223,13 @@ export interface BatchExecutionProgress {
 // Batch execution event types
 export interface BatchExecutionStartEvent {
   total_groups: number;
-  enabled_group_ids: string[];
+  enabled_group_names: string[];
   iteration_number: number;
   workspace_path: string;
 }
 
 export interface BatchGroupStartEvent {
-  group_id: string;
+  group_name: string;
   group_index: number;
   total_groups: number;
   variable_values: Record<string, string>;
@@ -1240,7 +1239,7 @@ export interface BatchGroupStartEvent {
 }
 
 export interface BatchGroupEndEvent {
-  group_id: string;
+  group_name: string;
   group_index: number;
   total_groups: number;
   success: boolean;
@@ -1261,15 +1260,15 @@ export interface BatchExecutionEndEvent {
   success: boolean;
   error?: string;
   iteration_number: number;
-  completed_group_ids: string[];
-  failed_group_ids: string[];
+  completed_group_names: string[];
+  failed_group_names: string[];
 }
 
 export interface BatchExecutionCanceledEvent {
   total_groups: number;
   completed_groups: number;
-  canceled_group_id: string;
-  remaining_group_ids: string[];
+  canceled_group_name: string;
+  remaining_group_names: string[];
   reason: string;
 }
 
@@ -1643,7 +1642,7 @@ export interface ScheduledJob {
   workflow_id?: string
   workflow_label?: string
   trigger_payload?: Record<string, unknown>
-  group_ids?: string[]  // undefined/empty = all groups
+  group_names?: string[]  // undefined/empty = all groups
   mode?: 'workflow' | 'workshop'  // 'workflow' (default) or 'workshop' (LLM-driven)
   messages?: string[]  // predefined messages for workshop mode
   workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
@@ -1668,7 +1667,7 @@ export interface CreateScheduledJobRequest {
   entity_type: 'workflow' | 'chat'
   preset_query_id: string
   trigger_payload?: Record<string, unknown>
-  group_ids?: string[]  // undefined/empty = all groups
+  group_names?: string[]  // undefined/empty = all groups
   cron_expression: string
   timezone?: string
   enabled?: boolean
@@ -1678,8 +1677,8 @@ export interface UpdateScheduledJobRequest {
   name?: string
   description?: string
   trigger_payload?: Record<string, unknown>
-  group_ids?: string[]       // undefined = don't change; [] = run all groups; [...] = specific groups
-  set_group_ids?: boolean    // must be true to actually update group_ids
+  group_names?: string[]       // undefined = don't change; [] = run all groups; [...] = specific groups
+  set_group_names?: boolean    // must be true to actually update group_names
   cron_expression?: string
   timezone?: string
   enabled?: boolean
@@ -1700,7 +1699,7 @@ export interface ScheduledJobRun {
   status: 'running' | 'success' | 'error'
   error?: string
   duration_ms?: number
-  group_ids?: string[]
+  group_names?: string[]
   started_at: string
   completed_at?: string
 }
@@ -1769,7 +1768,7 @@ export interface WorkflowScheduleEntry {
   timezone: string
   enabled: boolean
   trigger_payload?: Record<string, unknown>
-  group_ids?: string[]
+  group_names?: string[]
 }
 
 export interface DiscoveredWorkflow {

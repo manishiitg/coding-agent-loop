@@ -77,7 +77,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
         if (job) {
           setCronExpr(job.cron_expression)
           setJobName(job.name)
-          setSelectedGroupIds(job.group_ids?.length ? job.group_ids : [])
+          setSelectedGroupIds(job.group_names?.length ? job.group_names : [])
         } else {
           setJobName(presetLabel ? `${presetLabel} (scheduled)` : 'Scheduled job')
         }
@@ -90,7 +90,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
               setAvailableGroups(resp.manifest.groups)
               // Default: select all groups if no prior selection
               setSelectedGroupIds(prev =>
-                prev.length === 0 ? resp.manifest!.groups!.map((g: VariableGroup) => g.group_id) : prev
+                prev.length === 0 ? resp.manifest!.groups!.map((g: VariableGroup) => g.name) : prev
               )
             }
           })
@@ -128,8 +128,8 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           timezone: LOCAL_TIMEZONE,
           name: jobName,
           enabled: true,
-          group_ids: groupIds,
-          set_group_ids: true,
+          group_names: groupIds,
+          set_group_names: true,
         })
         setExistingJob(updated)
       } else {
@@ -140,7 +140,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           cron_expression: cronExpr,
           timezone: LOCAL_TIMEZONE,
           enabled: true,
-          group_ids: groupIds,
+          group_names: groupIds,
         }
         const created = await schedulerApi.createJob(req)
         setExistingJob(created)
@@ -288,7 +288,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
                         type="checkbox"
                         checked={allGroupsSelected}
                         onChange={() => setSelectedGroupIds(
-                          allGroupsSelected ? [] : availableGroups.map(g => g.group_id)
+                          allGroupsSelected ? [] : availableGroups.map(g => g.name)
                         )}
                         className="rounded border-gray-300 text-amber-500 focus:ring-amber-400"
                       />
@@ -298,15 +298,15 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
                     </label>
                     {/* Individual groups */}
                     {availableGroups.map((g) => (
-                      <label key={g.group_id} className="flex items-center gap-2 cursor-pointer pl-4">
+                      <label key={g.name} className="flex items-center gap-2 cursor-pointer pl-4">
                         <input
                           type="checkbox"
-                          checked={selectedGroupIds.includes(g.group_id)}
-                          onChange={() => toggleGroup(g.group_id)}
+                          checked={selectedGroupIds.includes(g.name)}
+                          onChange={() => toggleGroup(g.name)}
                           className="rounded border-gray-300 text-amber-500 focus:ring-amber-400"
                         />
                         <span className="text-xs text-gray-600 dark:text-gray-400">
-                          {g.display_name || g.group_id}
+                          {g.name}
                         </span>
                       </label>
                     ))}

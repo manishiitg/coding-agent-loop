@@ -177,7 +177,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 		Status:        status,
 		Error:         errorMsg,
 		// Include batch context for frontend batch progress tracking
-		GroupId:     hcpo.currentGroupId,
+		GroupName:   hcpo.currentGroupName,
 		GroupIndex:  hcpo.currentGroupIdx,
 		TotalGroups: hcpo.totalGroups,
 	}

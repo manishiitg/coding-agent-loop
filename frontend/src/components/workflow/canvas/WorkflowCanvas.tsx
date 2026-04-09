@@ -506,7 +506,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     const preferredGroupId = selectedGroupIds[0]
-      || variablesManifest?.groups?.find(group => group.enabled !== false)?.group_id
+      || variablesManifest?.groups?.find(group => group.enabled !== false)?.name
       || null
 
     const builderGroupRunFolder = preferredGroupId

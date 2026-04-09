@@ -125,8 +125,8 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 // This avoids importing database/scheduler packages in the workshop package.
 type SchedulerCallbacks struct {
 	ListSchedules   func(ctx context.Context, workspacePath string) (string, error)
-	CreateSchedule  func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string, workshopMode string) (string, error)
-	UpdateSchedule  func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error)
+	CreateSchedule  func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string) (string, error)
+	UpdateSchedule  func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error)
 	DeleteSchedule  func(ctx context.Context, jobID string) error
 	TriggerSchedule func(ctx context.Context, jobID string) (string, error)
 	GetScheduleRuns func(ctx context.Context, jobID string, limit int) (string, error)
@@ -180,11 +180,11 @@ func (s *WorkshopChatSession) GetConfig() *WorkshopConfig {
 	return s.config
 }
 
-// resolveGroupFolderName resolves a group_id (e.g. "group-11") to the actual folder name
-// used in the runs directory (e.g. "excellence"). Falls back to groupID if no display name found.
-func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupID string) string {
-	if s.controller == nil || groupID == "" {
-		return groupID
+// resolveGroupFolderName resolves a group name (e.g. "group-11") to the actual folder name
+// used in the runs directory (e.g. "excellence"). Falls back to groupName if no matching name found.
+func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupName string) string {
+	if s.controller == nil || groupName == "" {
+		return groupName
 	}
 	// Read fresh manifest from file
 	manifest, err := readVariablesFromFile(ctx, s.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
@@ -195,12 +195,12 @@ func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupI
 		manifest = s.controller.variablesManifest
 	}
 	if manifest == nil {
-		return groupID
+		return groupName
 	}
 	for _, g := range manifest.Groups {
-		if g.GroupID == groupID || s.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
-			if g.DisplayName != "" {
-				sanitized := s.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+		if g.Name == groupName || s.controller.sanitizeDisplayNameForFolder(g.Name) == groupName {
+			if g.Name != "" {
+				sanitized := s.controller.sanitizeDisplayNameForFolder(g.Name)
 				if sanitized != "" {
 					return sanitized
 				}
@@ -208,7 +208,7 @@ func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupI
 			break
 		}
 	}
-	return groupID
+	return groupName
 }
 
 // MainSessionID returns the owning chat session ID for this workshop session.
@@ -303,9 +303,9 @@ type WorkshopConfig struct {
 	// WorkspaceEnvRef holds the env map reference for session-aware workspace executors.
 	// When set, code execution mode uses this to get MCP_API_URL with session scoping.
 	WorkspaceEnvRef map[string]string
-	// EnabledGroupIDs holds the group IDs selected from the workspace toolbar.
+	// EnabledGroupNames holds the group names selected from the workspace toolbar.
 	// When set, the session auto-resolves variable values and run folder for these groups.
-	EnabledGroupIDs []string
+	EnabledGroupNames []string
 	// ToolCallQueryFunc provides live tool call query capability for query_step_tools.
 	// Set by server.go which has access to the EventStore.
 	ToolCallQueryFunc ToolCallQueryFunc
@@ -431,7 +431,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		logger.Debug(fmt.Sprintf("[WORKSHOP] Set workspace env ref (MCP_API_URL=%s)", cfg.WorkspaceEnvRef["MCP_API_URL"]))
 	}
 
-	// Set run folder if provided. With per-call group_id support, the run folder
+	// Set run folder if provided. With per-call group support, the run folder
 	// can also be set on each execute_step call, so it's OK if empty here.
 	if cfg.RunFolder != "" {
 		controller.SetSelectedRunFolder(cfg.RunFolder)
@@ -449,24 +449,24 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 
 		// Auto-set variable values from the enabled group selected in the toolbar.
 		// This ensures execute_step always uses the correct group values without
-		// requiring the agent to pass group_id on each call.
-		if len(cfg.EnabledGroupIDs) > 0 {
-			groupID := cfg.EnabledGroupIDs[0] // Use the first selected group
-			groupValues := existingManifest.GetVariableValues(groupID)
+		// requiring the agent to pass a group name on each call.
+		if len(cfg.EnabledGroupNames) > 0 {
+			groupName := cfg.EnabledGroupNames[0] // Use the first selected group
+			groupValues := existingManifest.GetVariableValues(groupName)
 			if groupValues != nil {
 				merged := MergeGroupWithDefaults(existingManifest, groupValues)
 				controller.variableValues = merged
 				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, merged)
-				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars, %d after merge with defaults)", groupID, len(groupValues), len(merged)))
+				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars, %d after merge with defaults)", groupName, len(groupValues), len(merged)))
 			} else {
-				logger.Warn(fmt.Sprintf("[WORKSHOP] Toolbar-selected group %q not found in manifest — falling back to base values", groupID))
+				logger.Warn(fmt.Sprintf("[WORKSHOP] Toolbar-selected group %q not found in manifest — falling back to base values", groupName))
 				vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
 				if loadErr == nil && vals != nil {
 					controller.variableValues = vals
 					SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
 				}
 			}
-			controller.enabledGroupIDs = cfg.EnabledGroupIDs
+			controller.enabledGroupNames = cfg.EnabledGroupNames
 		} else if existingManifest.HasGroups() {
 			logger.Warn("[WORKSHOP] No toolbar-selected group available — variable group selection is required for workshop context")
 		} else {
@@ -592,10 +592,10 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 	}
 }
 
-// UpdateEnabledGroupIDs refreshes the toolbar-selected group IDs and reloads variable values.
+// UpdateEnabledGroupNames refreshes the toolbar-selected group names and reloads variable values.
 // Called when reusing a cached workshop session to pick up any group selection changes.
-func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabledGroupIDs []string) {
-	s.controller.enabledGroupIDs = enabledGroupIDs
+func (s *WorkshopChatSession) UpdateEnabledGroupNames(ctx context.Context, enabledGroupNames []string) {
+	s.controller.enabledGroupNames = enabledGroupNames
 
 	// Reload variables manifest from disk (may have changed since session was created)
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", s.controller.GetWorkspacePath())
@@ -609,15 +609,15 @@ func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabled
 	}
 
 	// Re-resolve variable values from the selected group
-	if manifest != nil && len(enabledGroupIDs) > 0 {
-		groupID := enabledGroupIDs[0]
-		groupValues := manifest.GetVariableValues(groupID)
+	if manifest != nil && len(enabledGroupNames) > 0 {
+		groupName := enabledGroupNames[0]
+		groupValues := manifest.GetVariableValues(groupName)
 		if groupValues != nil {
 			merged := MergeGroupWithDefaults(manifest, groupValues)
 			s.controller.variableValues = merged
-			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from group %q (%d vars, %d after merge with defaults)", groupID, len(groupValues), len(merged)))
+			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from group %q (%d vars, %d after merge with defaults)", groupName, len(groupValues), len(merged)))
 		} else {
-			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupID))
+			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupName))
 		}
 	} else if manifest != nil && manifest.HasGroups() {
 		s.controller.GetLogger().Warn("[WORKSHOP] No selected group during refresh — preserving existing workshop variable values")
@@ -676,21 +676,21 @@ func RegisterRunFullEvaluationTool(
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces', 'group-1'). Required for grouped/batch workflows where each group has its own execution folder.",
 				},
 			},
-			"required": []string{"group_id"},
+			"required": []string{"group_name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration := "iteration-0"
-			groupID, _ := args["group_id"].(string)
-			if groupID == "" {
-				return "group_id is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
+			groupName, _ := args["group_name"].(string)
+			if groupName == "" {
+				return "group_name is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
 			}
-			// Resolve group_id to actual folder name (e.g. "group-11" → "excellence")
-			groupFolderName := session.resolveGroupFolderName(ctx, groupID)
+			// Resolve group_name to actual folder name (e.g. "group-11" → "excellence")
+			groupFolderName := session.resolveGroupFolderName(ctx, groupName)
 			targetRunFolder := iteration + "/" + groupFolderName
 
 			cfg := session.config
@@ -735,8 +735,7 @@ func RegisterRunFullEvaluationTool(
 					execMeta["iteration"] = iterationName
 				}
 				if groupName != "" {
-					execMeta["group_id"] = groupName
-					execMeta["group_display_name"] = groupName
+					execMeta["group_name"] = groupName
 				}
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
@@ -817,21 +816,21 @@ func RegisterRunFullReportTool(
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish', 'group-1'). Required — reports are always group-scoped.",
 				},
 			},
-			"required": []string{"group_id"},
+			"required": []string{"group_name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration := "iteration-0"
-			groupID, _ := args["group_id"].(string)
-			if groupID == "" {
-				return "group_id is required — reports are always group-scoped, e.g. group_id='manish'", nil
+			groupName, _ := args["group_name"].(string)
+			if groupName == "" {
+				return "group_name is required — reports are always group-scoped, e.g. group_name='manish'", nil
 			}
-			// Resolve group_id to actual folder name (e.g. "group-11" → "excellence")
-			groupFolderName := session.resolveGroupFolderName(ctx, groupID)
+			// Resolve group_name to actual folder name (e.g. "group-11" → "excellence")
+			groupFolderName := session.resolveGroupFolderName(ctx, groupName)
 			targetRunFolder := iteration + "/" + groupFolderName
 
 			cfg := session.config
@@ -874,8 +873,7 @@ func RegisterRunFullReportTool(
 					execMeta["iteration"] = iterationName
 				}
 				if groupName != "" {
-					execMeta["group_id"] = groupName
-					execMeta["group_display_name"] = groupName
+					execMeta["group_name"] = groupName
 				}
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
@@ -895,8 +893,7 @@ func RegisterRunFullReportTool(
 							endEvent.InputData["iteration"] = iterationName
 						}
 						if groupName != "" {
-							endEvent.InputData["group_id"] = groupName
-							endEvent.InputData["group_display_name"] = groupName
+							endEvent.InputData["group_name"] = groupName
 						}
 						if execErr != nil {
 							if skipNotify || execCtx.Err() != nil {
@@ -934,8 +931,7 @@ func RegisterRunFullReportTool(
 						startEvent.InputData["iteration"] = iterationName
 					}
 					if groupName != "" {
-						startEvent.InputData["group_id"] = groupName
-						startEvent.InputData["group_display_name"] = groupName
+						startEvent.InputData["group_name"] = groupName
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -1100,9 +1096,9 @@ func RegisterRunFullWorkflowTool(
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"group_id": map[string]interface{}{
+				"group_name": map[string]interface{}{
 					"type":        "string",
-					"description": "Variable group ID to execute (e.g., 'group-1', 'saurabh'). Required. Only one group runs at a time.",
+					"description": "Variable group name to execute (e.g., 'group-1', 'saurabh'). Required. Only one group runs at a time.",
 				},
 				"human_inputs": map[string]interface{}{
 					"type":        "object",
@@ -1112,7 +1108,7 @@ func RegisterRunFullWorkflowTool(
 					},
 				},
 			},
-			"required": []string{"group_id"},
+			"required": []string{"group_name"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cfg := session.config
@@ -1124,14 +1120,14 @@ func RegisterRunFullWorkflowTool(
 			strategy := "start_from_beginning_no_human"
 
 			// Single group only — required
-			groupID := ""
-			if g, ok := args["group_id"].(string); ok && g != "" {
-				groupID = g
+			groupName := ""
+			if g, ok := args["group_name"].(string); ok && g != "" {
+				groupName = g
 			}
-			if groupID == "" {
-				return "group_id is required. Read variables.json to see available groups.", nil
+			if groupName == "" {
+				return "group_name is required. Read variables.json to see available groups.", nil
 			}
-			enabledGroupIDs := []string{groupID}
+			enabledGroupNames := []string{groupName}
 
 			// Parse human_inputs (optional map of step_id → response)
 			var humanInputs map[string]string
@@ -1212,10 +1208,10 @@ func RegisterRunFullWorkflowTool(
 			// Notify workshop execution notifier so frontend keeps polling
 			// Include group and iteration in display name so notifications are unambiguous
 			workflowDisplayName := "full-workflow"
-			if len(enabledGroupIDs) > 0 && iteration != "" {
-				workflowDisplayName = fmt.Sprintf("full-workflow [%s / %s]", enabledGroupIDs[0], iteration)
-			} else if len(enabledGroupIDs) > 0 {
-				workflowDisplayName = fmt.Sprintf("full-workflow [%s]", enabledGroupIDs[0])
+			if len(enabledGroupNames) > 0 && iteration != "" {
+				workflowDisplayName = fmt.Sprintf("full-workflow [%s / %s]", enabledGroupNames[0], iteration)
+			} else if len(enabledGroupNames) > 0 {
+				workflowDisplayName = fmt.Sprintf("full-workflow [%s]", enabledGroupNames[0])
 			}
 			if session.executionNotifier != nil {
 				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: workflowDisplayName, Cancel: cancel})
@@ -1232,9 +1228,8 @@ func RegisterRunFullWorkflowTool(
 				if iteration != "" {
 					execMeta["iteration"] = iteration
 				}
-				if len(enabledGroupIDs) > 0 {
-					execMeta["group_id"] = enabledGroupIDs[0]
-					execMeta["group_display_name"] = enabledGroupIDs[0]
+				if len(enabledGroupNames) > 0 {
+					execMeta["group_name"] = enabledGroupNames[0]
 				}
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
@@ -1349,7 +1344,7 @@ func RegisterRunFullWorkflowTool(
 					RunMode:           runMode,
 					SelectedRunFolder: iteration,
 					ExecutionStrategy: strategy,
-					EnabledGroupIDs:   enabledGroupIDs,
+					EnabledGroupNames: enabledGroupNames,
 					HumanInputs:      humanInputs,
 				}
 				workflowController.SetExecutionOptions(execOpts)
@@ -1363,8 +1358,8 @@ func RegisterRunFullWorkflowTool(
 			}()
 
 			groupInfo := ""
-			if len(enabledGroupIDs) > 0 {
-				groupInfo = fmt.Sprintf("\nGroup: %s", enabledGroupIDs[0])
+			if len(enabledGroupNames) > 0 {
+				groupInfo = fmt.Sprintf("\nGroup: %s", enabledGroupNames[0])
 			}
 			iterInfo := "\nIteration: new (auto-created)"
 			if iteration != "" {

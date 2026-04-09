@@ -31,7 +31,7 @@ export const builtinCommands: CommandDefinition[] = [
       ctx.onSubmit(`Tune step "${stepId}". Do all of this autonomously without pausing for confirmation:
 
 1. Read variables.json to get a group ID. Find the latest iteration from runs/.
-2. Run execute_step(step_id="${stepId}", group_id=<group>, iteration=<iter>). Wait for completion.
+2. Run execute_step(step_id="${stepId}", group_name=<group>, iteration=<iter>). Wait for completion.
 3. Check the result. If it failed, read the execution logs (learn_code_fast_path.json or conversation log) to understand why.
 4. Read the step's current description, validation_schema, and learnings (main.py or SKILL.md).
 5. Fix any issues found:
@@ -89,8 +89,8 @@ Work through the gap analysis top-down. For each issue, pick the right tool:
 After applying fixes, do a second pass: re-read the success criteria and ask "is there anything in the plan that still can't produce what the criteria require?" Fix any remaining gaps.
 
 PHASE 4 — VERIFY
-1. Pick one group and re-run: run_full_workflow(iteration=next_iter, group_id="{group}").
-2. Wait for completion, then evaluate: run_full_evaluation(iteration=next_iter, group_id="{group}").
+1. Pick one group and re-run: run_full_workflow(iteration=next_iter, group_name="{group}").
+2. Wait for completion, then evaluate: run_full_evaluation(iteration=next_iter, group_name="{group}").
 3. Compare the gap analysis from Phase 2 against the new results. For each success criterion, report: was it met before? Is it met now?
 4. If new failures appeared, fix them and re-verify (max 2 retry cycles).
 

@@ -22,7 +22,7 @@ type ScheduledJobResponse struct {
 	WorkflowLabel       string          `json:"workflow_label"`
 	PresetQueryID       string          `json:"preset_query_id"` // empty — kept for frontend compat
 	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs            []string        `json:"group_ids,omitempty"`
+	GroupNames          []string        `json:"group_names,omitempty"`
 	Mode                string          `json:"mode,omitempty"`          // "workflow" or "workshop"
 	Messages            []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode        string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
@@ -50,7 +50,7 @@ type CreateScheduleRequest struct {
 	Timezone       string          `json:"timezone"`
 	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs       []string        `json:"group_ids,omitempty"`
+	GroupNames     []string        `json:"group_names,omitempty"`
 	Mode           string          `json:"mode,omitempty"`          // "workflow" (default) or "workshop"
 	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
@@ -64,7 +64,7 @@ type UpdateScheduleRequest struct {
 	Timezone       string          `json:"timezone,omitempty"`
 	Enabled        *bool           `json:"enabled,omitempty"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
-	GroupIDs       []string        `json:"group_ids,omitempty"`
+	GroupNames     []string        `json:"group_names,omitempty"`
 	Mode           string          `json:"mode,omitempty"`          // "workflow" or "workshop"
 	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
 	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
@@ -82,7 +82,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		WorkflowLabel:       manifest.Label,
 		PresetQueryID:       "", // no longer used
 		TriggerPayload:      sched.TriggerPayload,
-		GroupIDs:            sched.GroupIDs,
+		GroupNames:          sched.GroupNames,
 		Mode:                sched.Mode,
 		Messages:            sched.Messages,
 		WorkshopMode:        sched.WorkshopMode,
@@ -222,7 +222,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, "workflow manifest not found at "+req.WorkspacePath, http.StatusBadRequest)
 			return
 		}
-		req.GroupIDs, err = validateScheduleGroupIDsForWorkspace(r.Context(), req.WorkspacePath, req.GroupIDs)
+		req.GroupNames, err = validateScheduleGroupNamesForWorkspace(r.Context(), req.WorkspacePath, req.GroupNames)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -237,7 +237,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			Timezone:       req.Timezone,
 			Enabled:        req.Enabled,
 			TriggerPayload: req.TriggerPayload,
-			GroupIDs:       req.GroupIDs,
+			GroupNames:     req.GroupNames,
 			Mode:           req.Mode,
 			Messages:       req.Messages,
 			WorkshopMode:   req.WorkshopMode,
@@ -342,13 +342,13 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.TriggerPayload != nil {
 			sched.TriggerPayload = req.TriggerPayload
 		}
-		if req.GroupIDs != nil {
-			validGroupIDs, err := validateScheduleGroupIDsForWorkspace(r.Context(), workspacePath, req.GroupIDs)
+		if req.GroupNames != nil {
+			validGroupNames, err := validateScheduleGroupNamesForWorkspace(r.Context(), workspacePath, req.GroupNames)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			sched.GroupIDs = validGroupIDs
+			sched.GroupNames = validGroupNames
 		}
 		if req.Mode != "" {
 			sched.Mode = req.Mode
@@ -359,12 +359,12 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.WorkshopMode != "" {
 			sched.WorkshopMode = req.WorkshopMode
 		}
-		validGroupIDs, err := validateScheduleGroupIDsForWorkspace(r.Context(), workspacePath, sched.GroupIDs)
+		validGroupNames, err := validateScheduleGroupNamesForWorkspace(r.Context(), workspacePath, sched.GroupNames)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		sched.GroupIDs = validGroupIDs
+		sched.GroupNames = validGroupNames
 
 		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
 			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
@@ -618,7 +618,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 			Status      string     `json:"status"`
 			Error       string     `json:"error,omitempty"`
 			DurationMs  *int64     `json:"duration_ms,omitempty"`
-			GroupIDs    []string   `json:"group_ids,omitempty"`
+			GroupNames  []string   `json:"group_names,omitempty"`
 			StartedAt   time.Time  `json:"started_at"`
 			CompletedAt *time.Time `json:"completed_at,omitempty"`
 		}
@@ -633,7 +633,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 				Status:      run.Status,
 				Error:       run.Error,
 				DurationMs:  run.DurationMs,
-				GroupIDs:    run.GroupIDs,
+				GroupNames:  run.GroupNames,
 				StartedAt:   run.StartedAt,
 				CompletedAt: run.CompletedAt,
 			})

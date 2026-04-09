@@ -77,7 +77,7 @@ type ExecutionOptions struct {
 	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
 
 	// Variable group execution options (for batch execution with multiple groups)
-	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
+	EnabledGroupNames []string `json:"enabled_group_names,omitempty"` // Group names to execute (if empty, uses groups' enabled flags)
 
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
 	// When SkipHumanInput is true, these take priority over variableValues fallback.

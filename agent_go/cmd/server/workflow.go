@@ -107,8 +107,7 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 		return "", false, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -185,8 +184,7 @@ func writeFileToWorkspace(ctx context.Context, filePath, content string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -215,8 +213,7 @@ func aggregateGroupTokenUsage(ctx context.Context, runFolderPath string) map[str
 	q.Add("max_depth", "1")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -744,7 +741,7 @@ type ExecutionOptions struct {
 	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
 
 	// Variable group execution options (for batch execution with multiple groups)
-	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
+	EnabledGroupNames []string `json:"enabled_group_names,omitempty"` // Group names to execute (if empty, uses groups' enabled flags)
 
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
@@ -1024,8 +1021,7 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 	q.Add("max_depth", "2")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1238,8 +1234,7 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1317,10 +1312,9 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 
 // VariableGroup represents a single set of variable values (matches controller type)
 type VariableGroup struct {
-	GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2" (used as fallback for folder names)
-	DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
-	Values      map[string]string `json:"values"`
-	Enabled     bool              `json:"enabled"`
+	Name    string            `json:"name"`    // Unique identifier and display label (e.g., "Production", "Staging")
+	Values  map[string]string `json:"values"`
+	Enabled bool              `json:"enabled"`
 }
 
 // Variable represents a single variable definition
@@ -1386,8 +1380,7 @@ func (api *StreamingAPI) handleGetVariableGroups(w http.ResponseWriter, r *http.
 		return
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1525,8 +1518,7 @@ func (api *StreamingAPI) handleUpdateVariableGroups(w http.ResponseWriter, r *ht
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1593,8 +1585,7 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 	q.Add("max_depth", "2")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1636,7 +1627,6 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 	// Find the next available iteration number
 	// Extract all iteration numbers from existing folders
 	maxIteration := 0
-	iterationRe := regexp.MustCompile(`iteration-(\d+)`)
 	for _, folder := range existingFolders {
 		// Handle both formats: iteration-X and iteration-X/group-Y
 		matches := iterationRe.FindStringSubmatch(folder)
@@ -1673,7 +1663,7 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 	}
 	createReq.Header.Set("Content-Type", "application/json")
 
-	createResp, err := client.Do(createReq)
+	createResp, err := workspaceHTTPClient.Do(createReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API to create folder: %v", err), http.StatusInternalServerError)
 		return
@@ -1699,7 +1689,7 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 		createReq, _ = http.NewRequestWithContext(r.Context(), "POST", createFolderURL, strings.NewReader(string(reqBodyJSON)))
 		createReq.Header.Set("Content-Type", "application/json")
 
-		createResp, err = client.Do(createReq)
+		createResp, err = workspaceHTTPClient.Do(createReq)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to call workspace API to create folder: %v", err), http.StatusInternalServerError)
 			return
@@ -1817,8 +1807,7 @@ func (api *StreamingAPI) handleDeleteRunFolder(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -1919,8 +1908,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -2231,8 +2219,7 @@ func readPlanFromWorkspace(ctx context.Context, workspacePath string) (*todo_cre
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -2319,8 +2306,7 @@ func writePlanToWorkspace(ctx context.Context, workspacePath string, plan *todo_
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -2357,8 +2343,7 @@ func readStepConfigFromWorkspace(ctx context.Context, workspacePath string) ([]t
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -2451,8 +2436,7 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -2532,8 +2516,7 @@ func deleteWorkspaceFile(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -4025,8 +4008,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	q.Add("max_depth", "3")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return
@@ -4052,7 +4034,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	execQ.Add("max_depth", "2")
 	execReq.URL.RawQuery = execQ.Encode()
 
-	execResp, err := client.Do(execReq)
+	execResp, err := workspaceHTTPClient.Do(execReq)
 	var execListingResp FolderListingResponse
 	if err == nil {
 		defer execResp.Body.Close()
@@ -4959,8 +4941,7 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	q.Add("max_depth", "1")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to list evaluation runs: %v", err)})
@@ -5056,7 +5037,7 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 		subQ.Add("max_depth", "1")
 		subReq.URL.RawQuery = subQ.Encode()
 
-		subResp, err := client.Do(subReq)
+		subResp, err := workspaceHTTPClient.Do(subReq)
 		if err == nil && subResp.StatusCode == http.StatusOK {
 			subBody, _ := io.ReadAll(subResp.Body)
 			subResp.Body.Close()
@@ -5369,8 +5350,7 @@ func writeRawFileToWorkspace(ctx context.Context, filePath string, content strin
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -5400,8 +5380,7 @@ func listWorkspaceFolder(ctx context.Context, folderPath string, maxDepth int) (
 	q.Add("max_depth", strconv.Itoa(maxDepth))
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -5499,8 +5478,7 @@ func deleteWorkspaceFolder(ctx context.Context, folderPath string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -5598,8 +5576,7 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 	q.Add("max_depth", "1")
 	listReq.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	listResp, err := client.Do(listReq)
+	listResp, err := workspaceHTTPClient.Do(listReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list versions: %v", err), http.StatusInternalServerError)
 		return
@@ -5737,8 +5714,7 @@ func (api *StreamingAPI) handleListVersions(w http.ResponseWriter, r *http.Reque
 	q.Add("max_depth", "1")
 	listReq.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	listResp, err := client.Do(listReq)
+	listResp, err := workspaceHTTPClient.Do(listReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list versions: %v", err), http.StatusInternalServerError)
 		return
@@ -5990,8 +5966,7 @@ func (api *StreamingAPI) handleDeleteVersion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
 		return

@@ -70,8 +70,8 @@ type ExecutionSetup struct {
 	// RunFolder is the target run folder path (e.g., "iteration-1" or "iteration-1/group-1" or "iteration-1/production" for display names)
 	RunFolder string
 
-	// GroupID is the current group ID for batch execution (empty for single execution)
-	GroupID string
+	// GroupName is the current group name for batch execution (empty for single execution)
+	GroupName string
 
 	// VariableValues are the variable values for this execution (for batch: group-specific)
 	VariableValues map[string]string
@@ -105,7 +105,7 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 		Cleanup:              es.Cleanup, // CleanupScope is a value type, so this copies
 		StartFromStep:        es.StartFromStep,
 		RunFolder:            es.RunFolder,
-		GroupID:              es.GroupID,
+		GroupName:            es.GroupName,
 	}
 
 	// Deep copy Context

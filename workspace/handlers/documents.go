@@ -2357,6 +2357,8 @@ func isTextBasedFile(filename, contentType string) bool {
 		"asciidoc":   true,
 		"org":        true,
 		"wiki":       true,
+		"diff":       true,
+		"patch":      true,
 		"svg":        true,  // SVG is text-based
 		"pdf":        false, // PDF is binary
 		"doc":        false, // Word docs are binary

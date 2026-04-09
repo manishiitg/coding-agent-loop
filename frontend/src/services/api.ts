@@ -1129,6 +1129,30 @@ export const agentApi = {
   },
 
 
+  // Lightweight workflow summaries for dashboard pages (single call for all workflows)
+  getWorkflowsSummary: async (workspacePaths: string[]): Promise<{
+    success: boolean
+    workflows: Array<{
+      workspace_path: string
+      total_runs: number
+      latest_run: {
+        folder: string
+        status: string
+        created_at?: string
+        completed_at?: string
+        completed_steps: number
+        total_steps: number
+      } | null
+      is_running: boolean
+      active_run_folder?: string
+    }>
+  }> => {
+    const response = await api.get('/api/workflows/summary', {
+      params: { workspace_paths: workspacePaths.join(',') }
+    })
+    return response.data
+  },
+
   // Plan and Step Config API
   // Update a plan step (plan.json fields only, no agent_configs)
   updatePlanStep: async (

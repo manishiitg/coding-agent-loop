@@ -52,7 +52,7 @@ import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import {
   buildGroupFolderPath,
-  extractGroupIdFromFolder,
+  extractGroupNameFromFolder,
   sanitizeDisplayNameForFolder,
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
@@ -418,17 +418,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           const groupFolderName = parts[1]
           // Try to find matching group in manifest
           const matchingGroup = variablesManifest.groups.find(g => {
-            if (g.group_id === groupFolderName) return true
-            if (g.display_name) {
-              const sanitized = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-              const groupSanitized = g.display_name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-              return sanitized === groupSanitized
-            }
-            return false
+            if (g.name === groupFolderName) return true
+            const sanitized = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+            const groupSanitized = g.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+            return sanitized === groupSanitized
           })
           if (matchingGroup) {
-            console.log('[WorkflowToolbar] Restoring selectedGroupIds from selectedRunFolder:', matchingGroup.group_id)
-            setSelectedGroupIds([matchingGroup.group_id])
+            console.log('[WorkflowToolbar] Restoring selectedGroupIds from selectedRunFolder:', matchingGroup.name)
+            setSelectedGroupIds([matchingGroup.name])
           }
         }
       }
@@ -502,9 +499,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const getSelectedRunFolderDisplay = useMemo(() => {
     // Show selected group names (iteration is always iteration-0, no need to display)
     if (selectedGroupIds.length > 0 && variablesManifest?.groups) {
-      const selectedGroups = variablesManifest.groups.filter(g => selectedGroupIds.includes(g.group_id))
+      const selectedGroups = variablesManifest.groups.filter(g => selectedGroupIds.includes(g.name))
       if (selectedGroups.length > 0) {
-        const groupNames = selectedGroups.map(g => g.display_name || g.group_id)
+        const groupNames = selectedGroups.map(g => g.name)
         if (groupNames.length === 1) {
           return groupNames[0]
         } else if (groupNames.length <= 3) {
@@ -524,9 +521,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     interface GroupItem {
       id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
       name: string  // Display name like "group-5" or "iteration-1"
-      displayName?: string  // Optional user-friendly name from manifest
       iteration: string  // e.g., "iteration-1"
-      groupId: string | null  // e.g., "group-5" or null if no group
+      groupName: string | null  // e.g., "group-5" or null if no group
       progress: StepProgress | null
       exists: boolean  // Whether folder exists (from runFolders)
       enabled: boolean  // Whether group is enabled
@@ -542,23 +538,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     const sanitizeDisplayName = sanitizeDisplayNameForFolder
 
     // Helper function to find matching runFolder for a group
-    const findMatchingFolder = (iteration: string, group: { group_id: string; display_name?: string }): RunFolder | null => {
+    const findMatchingFolder = (iteration: string, group: { name: string }): RunFolder | null => {
       return folders.find(folder => {
         const parts = folder.name.split('/')
         if (parts.length !== 2 || parts[0] !== iteration) return false
-        
+
         const folderName = parts[1]
-        
-        // Check if folder name matches group_id
-        if (folderName === group.group_id) return true
-        
-        // Check if folder name matches sanitized display_name
-        if (group.display_name) {
-          const sanitizedDisplayName = sanitizeForMatch(group.display_name)
-          const folderNameSanitized = sanitizeForMatch(folderName)
-          if (sanitizedDisplayName === folderNameSanitized) return true
-        }
-        
+
+        // Check if folder name matches group name
+        if (folderName === group.name) return true
+
+        // Check if folder name matches sanitized group name
+        const sanitizedGroupName = sanitizeForMatch(group.name)
+        const folderNameSanitized = sanitizeForMatch(folderName)
+        if (sanitizedGroupName === folderNameSanitized) return true
+
         return false
       }) || null
     }
@@ -586,17 +580,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           // Check if matching folder exists in runFolders
           const matchingFolder = findMatchingFolder(iteration, group)
           
-          // Determine folder name for the path (use sanitized display_name if available, otherwise group_id)
-          const folderName = group.display_name && sanitizeDisplayName(group.display_name)
-            ? sanitizeDisplayName(group.display_name)
-            : group.group_id
-          
+          // Determine folder name for the path (use sanitized name)
+          const folderName = sanitizeDisplayName(group.name) || group.name
+
           const item: GroupItem = {
             id: `${iteration}/${folderName}`,
-            name: group.group_id,
-            displayName: group.display_name,
+            name: group.name,
             iteration,
-            groupId: group.group_id,
+            groupName: group.name,
             progress: matchingFolder?.progress || null,
             exists: matchingFolder !== null, // Only true if matching folder found
             enabled: group.enabled
@@ -626,7 +617,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             id: folder.name,
             name: iteration,
             iteration,
-            groupId: null,
+            groupName: null,
             progress: folder.progress || null,
             exists: true,
             enabled: true
@@ -640,54 +631,49 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         const groupName = parts[1]
 
         // Check if this group is already in the map (from variablesManifest)
-        // Need to check both by folder path AND by matching folder name to sanitized display_name
         const existingGroups = iterationMap.get(iteration) || []
         const alreadyExists = existingGroups.some(g => {
           // Check if folder path matches exactly
           if (g.id === folder.name) return true
-          
-          // Check if groupId matches (for folders named with group_id like "group-5")
-          if (g.groupId === groupName) return true
-          
-          // Check if folder name matches sanitized display_name
-          // This handles cases where folder is named with display_name but manifest has different group_id
-          if (g.displayName) {
-            const sanitizedDisplayName = sanitizeForMatch(g.displayName)
+
+          // Check if groupName matches
+          if (g.groupName === groupName) return true
+
+          // Check if folder name matches sanitized group name
+          if (g.name) {
+            const sanitizedName = sanitizeForMatch(g.name)
             const folderNameSanitized = sanitizeForMatch(groupName)
-            if (sanitizedDisplayName === folderNameSanitized) return true
+            if (sanitizedName === folderNameSanitized) return true
           }
-          
+
           return false
         })
 
         if (!alreadyExists) {
           // Folder exists on disk but doesn't match any group in manifest
-          // Try to find a matching group in manifest by folder name (might be display_name)
+          // Try to find a matching group in manifest by folder name
           let matchingManifestGroup = null
           if (variablesManifest?.groups) {
             matchingManifestGroup = variablesManifest.groups.find(g => {
-              // Check if folder name matches group_id
-              if (g.group_id === groupName) return true
-              
-              // Check if folder name matches sanitized display_name
-              if (g.display_name) {
-                const sanitizedDisplayName = sanitizeForMatch(g.display_name)
-                const folderNameSanitized = sanitizeForMatch(groupName)
-                if (sanitizedDisplayName === folderNameSanitized) return true
-              }
-              
+              // Check if folder name matches group name
+              if (g.name === groupName) return true
+
+              // Check if folder name matches sanitized group name
+              const sanitizedName = sanitizeForMatch(g.name)
+              const folderNameSanitized = sanitizeForMatch(groupName)
+              if (sanitizedName === folderNameSanitized) return true
+
               return false
             })
           }
-          
-          // If we found a matching group in manifest, use its group_id
-          // Otherwise, use folder name as group_id (for backward compatibility)
+
+          // If we found a matching group in manifest, use its name
+          // Otherwise, use folder name as group name (for backward compatibility)
           const item: GroupItem = {
             id: folder.name,
-            name: matchingManifestGroup?.group_id || groupName,
-            displayName: matchingManifestGroup?.display_name || groupName,
+            name: matchingManifestGroup?.name || groupName,
             iteration,
-            groupId: matchingManifestGroup?.group_id || groupName,
+            groupName: matchingManifestGroup?.name || groupName,
             progress: folder.progress || null,
             exists: true,
             enabled: matchingManifestGroup?.enabled ?? true
@@ -725,26 +711,26 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       return null
     }
 
-    const selectedFolderGroupId = extractGroupIdFromFolder(selectedRunFolder, variablesManifest)
-    if (selectedFolderGroupId && enabledManifestGroups.some(group => group.group_id === selectedFolderGroupId)) {
+    const selectedFolderGroupName = extractGroupNameFromFolder(selectedRunFolder, variablesManifest)
+    if (selectedFolderGroupName && enabledManifestGroups.some(group => group.name === selectedFolderGroupName)) {
       return {
-        groupIds: [selectedFolderGroupId],
+        groupIds: [selectedFolderGroupName],
         runFolder: selectedRunFolder
-          || buildGroupFolderPath(selectedFolderGroupId, targetIteration, variablesManifest)
+          || buildGroupFolderPath(selectedFolderGroupName, targetIteration, variablesManifest)
           || targetIteration
       }
     }
 
     const groupsInTargetIteration = iterationGroups.iterationMap.get(targetIteration) || []
-    const firstEnabledGroup = groupsInTargetIteration.find(group => group.groupId && group.enabled !== false)
-    if (firstEnabledGroup?.groupId) {
+    const firstEnabledGroup = groupsInTargetIteration.find(group => group.groupName && group.enabled !== false)
+    if (firstEnabledGroup?.groupName) {
       return {
-        groupIds: [firstEnabledGroup.groupId],
+        groupIds: [firstEnabledGroup.groupName],
         runFolder: firstEnabledGroup.id
       }
     }
 
-    const fallbackGroupId = enabledManifestGroups[0].group_id
+    const fallbackGroupId = enabledManifestGroups[0].name
     return {
       groupIds: [fallbackGroupId],
       runFolder: buildGroupFolderPath(fallbackGroupId, targetIteration, variablesManifest) || targetIteration
@@ -759,7 +745,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     const groupsInLatestIteration = iterationGroups.iterationMap.get(latestIteration) || []
     const selectedEnabledGroupId = selectedGroupIds.find(groupId =>
-      groupsInLatestIteration.some(group => group.groupId === groupId && group.enabled !== false)
+      groupsInLatestIteration.some(group => group.groupName === groupId && group.enabled !== false)
     )
 
     if (selectedEnabledGroupId) {
@@ -769,10 +755,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       }
     }
 
-    const firstEnabledGroup = groupsInLatestIteration.find(group => group.groupId && group.enabled !== false)
-    if (firstEnabledGroup?.groupId) {
+    const firstEnabledGroup = groupsInLatestIteration.find(group => group.groupName && group.enabled !== false)
+    if (firstEnabledGroup?.groupName) {
       return {
-        groupIds: [firstEnabledGroup.groupId],
+        groupIds: [firstEnabledGroup.groupName],
         runFolder: firstEnabledGroup.id
       }
     }
@@ -1107,7 +1093,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
         hasVariablesManifest: !!variablesManifest,
         groupsCount: variablesManifest?.groups?.length || 0,
-        allGroupIds: variablesManifest?.groups?.map(g => g.group_id) || []
+        allGroupNames: variablesManifest?.groups?.map(g => g.name) || []
       })
       const options = buildExecutionOptions()
       console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] Starting execution with options:', JSON.stringify({
@@ -1116,8 +1102,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         resume_from_branch_step: options.resume_from_branch_step,
         selected_run_folder: options.selected_run_folder,
         run_mode: options.run_mode,
-        enabled_group_ids: options.enabled_group_ids,
-        enabled_group_ids_length: options.enabled_group_ids?.length || 0
+        enabled_group_names: options.enabled_group_names,
+        enabled_group_names_length: options.enabled_group_names?.length || 0
       }, null, 2))
 
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
@@ -1143,15 +1129,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
 
     const options = buildExecutionOptions()
-    const inferredGroupId = extractGroupIdFromFolder(runFolder, variablesManifest)
-    const enabledGroupIds = inferredGroupId
-      ? [inferredGroupId]
-      : (options.enabled_group_ids && options.enabled_group_ids.length > 0 ? options.enabled_group_ids : undefined)
+    const inferredGroupName = extractGroupNameFromFolder(runFolder, variablesManifest)
+    const enabledGroupNames = inferredGroupName
+      ? [inferredGroupName]
+      : (options.enabled_group_names && options.enabled_group_names.length > 0 ? options.enabled_group_names : undefined)
 
     onStartPhase(REPORT_EXECUTION_PHASE_ID, {
       ...options,
       selected_run_folder: runFolder,
-      enabled_group_ids: enabledGroupIds,
+      enabled_group_names: enabledGroupNames,
     })
   }, [buildExecutionOptions, onStartPhase, variablesManifest])
 
@@ -1161,15 +1147,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
 
     const options = buildExecutionOptions()
-    const inferredGroupId = extractGroupIdFromFolder(runFolder, variablesManifest)
-    const enabledGroupIds = inferredGroupId
-      ? [inferredGroupId]
-      : (options.enabled_group_ids && options.enabled_group_ids.length > 0 ? options.enabled_group_ids : undefined)
+    const inferredGroupName = extractGroupNameFromFolder(runFolder, variablesManifest)
+    const enabledGroupNames = inferredGroupName
+      ? [inferredGroupName]
+      : (options.enabled_group_names && options.enabled_group_names.length > 0 ? options.enabled_group_names : undefined)
 
     onStartPhase(EVAL_EXECUTION_PHASE_ID, {
       ...options,
       selected_run_folder: runFolder,
-      enabled_group_ids: enabledGroupIds,
+      enabled_group_names: enabledGroupNames,
     })
   }, [buildExecutionOptions, onStartPhase, variablesManifest])
 
@@ -1293,7 +1279,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                   onClick={() => {
                                     const allGroupIds = variablesManifest.groups
                                       .filter(g => g.enabled !== false)
-                                      .map(g => g.group_id)
+                                      .map(g => g.name)
                                     setSelectedGroupIds(allGroupIds)
                                     setSelectedRunFolder('iteration-0')
                                   }}
@@ -1316,12 +1302,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             )}
                             {variablesManifest.groups.map((group) => {
                               const isDisabled = group.enabled === false
-                              const isGroupChecked = selectedGroupIds.includes(group.group_id)
+                              const isGroupChecked = selectedGroupIds.includes(group.name)
                               const hasMultipleGroups = variablesManifest.groups.filter(g => g.enabled !== false).length > 1
 
                               return (
                                 <div
-                                  key={group.group_id}
+                                  key={group.name}
                                   className={`
                                     group flex items-center gap-1 px-1
                                     ${isGroupChecked ? 'bg-primary/10' : ''}
@@ -1333,8 +1319,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       type="checkbox"
                                       checked={isGroupChecked}
                                       onChange={() => {
-                                        if (group.group_id) {
-                                          toggleGroupSelection(group.group_id)
+                                        if (group.name) {
+                                          toggleGroupSelection(group.name)
                                           setSelectedRunFolder('iteration-0')
                                         }
                                       }}
@@ -1344,8 +1330,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                   )}
                                   <button
                                     onClick={() => {
-                                      if (group.group_id) {
-                                        setSelectedGroupIds([group.group_id])
+                                      if (group.name) {
+                                        setSelectedGroupIds([group.name])
                                         setSelectedRunFolder('iteration-0')
                                         setIsIterationDropdownOpen(false)
                                       }
@@ -1362,7 +1348,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                     `}
                                   >
                                     <span className="flex-1 text-xs font-medium">
-                                      {group.display_name || group.group_id}
+                                      {group.name}
                                     </span>
                                     {isGroupChecked && <Check className="w-4 h-4 ml-auto" />}
                                   </button>

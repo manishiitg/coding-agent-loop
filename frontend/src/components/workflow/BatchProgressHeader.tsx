@@ -23,15 +23,13 @@ export const BatchProgressHeader: React.FC<BatchProgressHeaderProps> = ({
   const {
     totalGroups,
     currentGroupIndex,
-    currentGroupId,
+    currentGroupName,
     completedCount,
     failedCount,
     remainingCount
   } = batchProgress
 
-  // Get display name from variables manifest if available
-  const currentGroup = variablesManifest?.groups?.find(g => g.group_id === currentGroupId)
-  const displayName = currentGroup?.display_name || currentGroupId
+  const displayName = currentGroupName
 
   // Calculate progress percentage
   const progressPercent = totalGroups > 0
@@ -114,9 +112,9 @@ export const BatchProgressHeader: React.FC<BatchProgressHeaderProps> = ({
             <span className="text-blue-700 dark:text-blue-300 font-medium">
               Group {currentGroupIndex + 1}/{totalGroups}
             </span>
-            {currentGroupId && (
+            {currentGroupName && (
               <span className="text-blue-600 dark:text-blue-400 truncate max-w-[100px] font-mono">
-                {currentGroupId.toUpperCase()}
+                {currentGroupName.toUpperCase()}
               </span>
             )}
             <span className="text-blue-500 dark:text-blue-400">|</span>
@@ -155,7 +153,7 @@ export const BatchProgressHeader: React.FC<BatchProgressHeaderProps> = ({
               </span>
               <span className="text-blue-500 dark:text-blue-400">|</span>
               <span className="text-blue-600 dark:text-blue-400 font-mono truncate">
-                {currentGroupId?.toUpperCase() || 'Starting...'}
+                {currentGroupName?.toUpperCase() || 'Starting...'}
               </span>
             </div>
           </div>

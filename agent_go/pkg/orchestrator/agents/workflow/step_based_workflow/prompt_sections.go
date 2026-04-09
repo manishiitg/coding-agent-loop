@@ -125,6 +125,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 	sb.WriteString("execution_dir = os.environ['STEP_EXECUTION_DIR']  # parent folder (fallback only — prefer sys.argv for input data)\n")
 	sb.WriteString("mcp_url       = os.environ['MCP_API_URL']\n")
 	sb.WriteString("mcp_token     = os.environ['MCP_API_TOKEN']\n")
+	sb.WriteString("group_name    = os.environ.get('VAR_GROUP_NAME', '')  # current group name (e.g., 'production'); empty if no group\n")
 	sb.WriteString("```\n\n")
 
 	// Input files

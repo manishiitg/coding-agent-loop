@@ -243,7 +243,7 @@ func (em *ExecutionManager) PrepareExecution(
 // Each group gets its own run folder and fresh execution state
 func (em *ExecutionManager) PrepareForBatchGroup(
 	ctx context.Context,
-	groupID string,
+	groupName string,
 	runFolder string,
 	totalSteps int,
 	variableValues map[string]string,
@@ -341,7 +341,7 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 
 	setup := &ExecutionSetup{
 		Mode:           executionMode,
-		GroupID:        groupID,
+		GroupName:      groupName,
 		RunFolder:      runFolder,
 		VariableValues: variableValues,
 		Context:        execCtx,
@@ -380,7 +380,7 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	orch.selectedRunFolder = setup.RunFolder
 	defer func() {
 		// Restore if we're not in batch mode (batch mode keeps the new folder)
-		if setup.GroupID == "" {
+		if setup.GroupName == "" {
 			// For single execution, we want to keep the folder set
 			// Only restore if explicitly told to
 		}

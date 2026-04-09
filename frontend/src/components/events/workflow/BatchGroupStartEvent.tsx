@@ -16,7 +16,7 @@ export const BatchGroupStartEvent: React.FC<BatchGroupStartEventProps> = ({ even
       <div className="p-2 bg-white dark:bg-gray-800/40 border border-blue-200 dark:border-blue-900/30 rounded">
         <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
           <Play className="w-3 h-3 text-blue-600 dark:text-blue-400" />
-          <span className="font-medium">Group {event.group_id?.toUpperCase() || 'N/A'}</span>
+          <span className="font-medium">Group {event.group_name?.toUpperCase() || 'N/A'}</span>
           <span className="text-gray-500 dark:text-gray-400">
             ({event.group_index !== undefined ? event.group_index + 1 : '?'}/{event.total_groups ?? '?'})
           </span>
@@ -35,7 +35,7 @@ export const BatchGroupStartEvent: React.FC<BatchGroupStartEventProps> = ({ even
           <div className="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             Batch Group Started
             <span className="text-[10px] font-normal bg-blue-100 dark:bg-blue-900/20 px-1.5 py-0.5 rounded text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/30 font-mono">
-              {event.group_id?.toUpperCase() || 'N/A'}
+              {event.group_name?.toUpperCase() || 'N/A'}
             </span>
           </div>
           <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">

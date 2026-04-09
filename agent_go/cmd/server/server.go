@@ -2884,8 +2884,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.ExecutionOptions.RunMode = "use_same_run"
 
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
-				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
-					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_names=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupNames, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
 
 				// Convert to controller ExecutionOptions and pass to workflow orchestrator
 				controllerOpts := &todo_creation_human.ExecutionOptions{
@@ -2897,7 +2897,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
 					SkipLearningWhenTempLLM1:       req.ExecutionOptions.SkipLearningWhenTempLLM1,
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
-					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
+					EnabledGroupNames:              req.ExecutionOptions.EnabledGroupNames,
 				}
 
 				// Convert TempOverrideLLM if present
@@ -4548,9 +4548,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Build template vars by reading current plan and variables from workspace
 				phaseRunFolder := "iteration-0"
-				var phaseEnabledGroupIDs []string
+				var phaseEnabledGroupNames []string
 				if req.ExecutionOptions != nil {
-					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
+					phaseEnabledGroupNames = req.ExecutionOptions.EnabledGroupNames
 				}
 				// Determine execution mode from the DB preset's resolved provider (finalProvider).
 				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;
@@ -4572,7 +4572,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
 				if workflowPhaseID == "workflow-builder" {
-					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupIDs)
+					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupNames)
 					if groupInfo != "" {
 						phaseTemplateVars["GroupInfo"] = groupInfo
 					}
@@ -4852,9 +4852,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						workshopSession.UpdateAPIKeys(mergedAPIKeys)
 
 						// Refresh enabled group IDs from current request (toolbar selection may have changed)
-						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
-							workshopSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
-							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
+						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupNames) > 0 {
+							workshopSession.UpdateEnabledGroupNames(r.Context(), req.ExecutionOptions.EnabledGroupNames)
+							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group names: %v", req.ExecutionOptions.EnabledGroupNames)
 						}
 
 						// Pass frontend-selected workshop mode so AUTO-NOTIFICATION action hints use the correct mode
@@ -8731,7 +8731,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		if snap.Metadata != nil {
 			if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
 				batchContext += fmt.Sprintf(" [%s", iter)
-				if gid, ok := snap.Metadata["group_id"]; ok && gid != "" {
+				if gid, ok := snap.Metadata["group_name"]; ok && gid != "" {
 					batchContext += "/" + gid
 				}
 				batchContext += "]"
@@ -8812,13 +8812,13 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	isFailed := snap.Status == BGAgentFailed
 	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isFailed)
 
-	// Include iteration and group_id if available in metadata
+	// Include iteration and group_name if available in metadata
 	contextInfo := ""
 	if snap.Metadata != nil {
 		if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
 			contextInfo += fmt.Sprintf("\nIteration: %s", iter)
 		}
-		if gid, ok := snap.Metadata["group_id"]; ok && gid != "" {
+		if gid, ok := snap.Metadata["group_name"]; ok && gid != "" {
 			contextInfo += fmt.Sprintf("\nGroup: %s", gid)
 		}
 	}
@@ -9573,7 +9573,7 @@ func buildWorkshopGroupInfo(
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
 	selectedRunFolder string,
-	enabledGroupIDs []string,
+	enabledGroupNames []string,
 ) string {
 	// Read variables manifest
 	varPath := workspacePath + "/variables/variables.json"
@@ -9598,27 +9598,23 @@ func buildWorkshopGroupInfo(
 		if !g.Enabled {
 			status = "disabled"
 		}
-		displayName := g.DisplayName
-		if displayName == "" {
-			displayName = g.GroupID
-		}
 		// Mark the user-selected group
 		selected := ""
-		for _, eid := range enabledGroupIDs {
-			if eid == g.GroupID {
+		for _, eid := range enabledGroupNames {
+			if eid == g.Name {
 				selected = " **[SELECTED]**"
 				break
 			}
 		}
-		sb.WriteString(fmt.Sprintf("- **%s** (group_id: `%s`, %s)%s\n", displayName, g.GroupID, status, selected))
+		sb.WriteString(fmt.Sprintf("- **%s** (group_name: `%s`, %s)%s\n", g.Name, g.Name, status, selected))
 	}
 
 	if selectedRunFolder != "" {
 		sb.WriteString(fmt.Sprintf("\nSelected run folder: `%s`\n", selectedRunFolder))
 	}
 
-	if len(enabledGroupIDs) > 0 {
-		sb.WriteString(fmt.Sprintf("\nUser has selected group(s): %v — use these as default for execute_step calls.\n", enabledGroupIDs))
+	if len(enabledGroupNames) > 0 {
+		sb.WriteString(fmt.Sprintf("\nUser has selected group(s): %v — use these as default for execute_step calls.\n", enabledGroupNames))
 	}
 
 	return sb.String()
@@ -9685,10 +9681,10 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	sessionID string,
 	apiKeys ...*llm.ProviderAPIKeys, // Optional pre-loaded keys (avoids cancelled context issues)
 ) (*todo_creation_human.WorkshopConfig, error) {
-	// Extract enabled group IDs from execution options (toolbar selection)
-	var enabledGroupIDs []string
-	if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
-		enabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
+	// Extract enabled group names from execution options (toolbar selection)
+	var enabledGroupNames []string
+	if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupNames) > 0 {
+		enabledGroupNames = req.ExecutionOptions.EnabledGroupNames
 	}
 
 	// Always use merged API keys (env + workspace) for workshop orchestrator
@@ -9712,7 +9708,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		LLMAllocationMode: "manual",
 		Logger:            api.logger,
 		SessionID:         sessionID,
-		EnabledGroupIDs:   enabledGroupIDs,
+		EnabledGroupNames: enabledGroupNames,
 	}
 
 	// Build base tools with session-aware workspace executors from the start.
@@ -10002,8 +9998,8 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 					}
 					sb.WriteString(fmt.Sprintf("- **Run Count**: %d\n", state.RunCount))
 				}
-				if len(sched.GroupIDs) > 0 {
-					sb.WriteString(fmt.Sprintf("- **Groups**: %v\n", sched.GroupIDs))
+				if len(sched.GroupNames) > 0 {
+					sb.WriteString(fmt.Sprintf("- **Groups**: %v\n", sched.GroupNames))
 				} else {
 					sb.WriteString("- **Groups**: all\n")
 				}
@@ -10011,7 +10007,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return sb.String(), nil
 		},
-		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string, workshopMode string) (string, error) {
+		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupNames []string, mode string, messages []string, workshopMode string) (string, error) {
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
@@ -10022,7 +10018,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if err != nil || !found {
 				return "", fmt.Errorf("workflow manifest not found at %s", workspacePath)
 			}
-			groupIDs, err = validateScheduleGroupIDsForWorkspace(ctx, workspacePath, groupIDs)
+			groupNames, err = validateScheduleGroupNamesForWorkspace(ctx, workspacePath, groupNames)
 			if err != nil {
 				return "", err
 			}
@@ -10031,7 +10027,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				Name:           name,
 				CronExpression: cronExpr,
 				Timezone:       timezone,
-				GroupIDs:       groupIDs,
+				GroupNames:     groupNames,
 				Enabled:        true,
 				Mode:           mode,
 				Messages:       messages,
@@ -10055,7 +10051,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, cronExpr, timezone, nextRunStr), nil
 		},
-		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error) {
+		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupNames []string, setGroupNames bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error) {
 			if cronExpr != "" {
 				if err := ValidateCronExpression(cronExpr); err != nil {
 					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
@@ -10075,12 +10071,12 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if timezone != "" {
 				sched.Timezone = timezone
 			}
-			if setGroupIDs {
-				validGroupIDs, err := validateScheduleGroupIDsForWorkspace(ctx, workspacePath, groupIDs)
+			if setGroupNames {
+				validGroupNames, err := validateScheduleGroupNamesForWorkspace(ctx, workspacePath, groupNames)
 				if err != nil {
 					return "", err
 				}
-				sched.GroupIDs = validGroupIDs
+				sched.GroupNames = validGroupNames
 			}
 			if enabled != nil {
 				sched.Enabled = *enabled
@@ -10094,11 +10090,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			if workshopMode != "" {
 				sched.WorkshopMode = workshopMode
 			}
-			validGroupIDs, err := validateScheduleGroupIDsForWorkspace(ctx, workspacePath, sched.GroupIDs)
+			validGroupNames, err := validateScheduleGroupNamesForWorkspace(ctx, workspacePath, sched.GroupNames)
 			if err != nil {
 				return "", err
 			}
-			sched.GroupIDs = validGroupIDs
+			sched.GroupNames = validGroupNames
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)
 			}

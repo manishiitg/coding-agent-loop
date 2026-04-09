@@ -3,7 +3,7 @@ import { X, FileText, RefreshCw, Copy, Check, Wand2, AlertCircle, Loader2 } from
 import { agentApi } from '../../services/api'
 import type { VariablesManifest, WorkflowFinalOutputConfig, WorkflowFinalOutputResponse } from '../../services/api-types'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import { extractGroupIdFromFolder, extractIterationFolder } from '../../utils/workflowUtils'
+import { extractGroupNameFromFolder, extractIterationFolder } from '../../utils/workflowUtils'
 
 interface FinalOutputPopupProps {
   isOpen: boolean
@@ -61,16 +61,16 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
     const entries = uniqueFolders.map(runFolder => {
       const iteration = extractIterationFolder(runFolder) || ''
       const groupFolderName = runFolder.split('/')[1] || ''
-      const groupId = extractGroupIdFromFolder(runFolder, variablesManifest)
-      const manifestGroup = groupId
-        ? variablesManifest?.groups?.find(group => group.group_id === groupId)
+      const groupName = extractGroupNameFromFolder(runFolder, variablesManifest)
+      const manifestGroup = groupName
+        ? variablesManifest?.groups?.find(group => group.name === groupName)
         : undefined
 
       return {
         runFolder,
         iteration,
-        groupKey: groupId || groupFolderName,
-        groupLabel: manifestGroup?.display_name || groupFolderName || groupId || 'Unknown group',
+        groupKey: groupName || groupFolderName,
+        groupLabel: manifestGroup?.name || groupFolderName || groupName || 'Unknown group',
       }
     })
 

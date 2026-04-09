@@ -1118,8 +1118,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             <Clock className="w-3 h-3" />
                             {cronDesc}
                           </span>
-                          {job.group_ids && job.group_ids.length > 0 && (
-                            <span>Groups: {job.group_ids.join(', ')}</span>
+                          {job.group_names && job.group_names.length > 0 && (
+                            <span>Groups: {job.group_names.join(', ')}</span>
                           )}
                           {job.mode === 'workshop' && (
                             <span className="px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium">
@@ -1361,9 +1361,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                   })()}
 
                                   {/* Groups */}
-                                  {run.group_ids && run.group_ids.length > 0 && (
-                                    <span className="text-gray-400 truncate" title={`Groups: ${run.group_ids.join(', ')}`}>
-                                      [{run.group_ids.length}g]
+                                  {run.group_names && run.group_names.length > 0 && (
+                                    <span className="text-gray-400 truncate" title={`Groups: ${run.group_names.join(', ')}`}>
+                                      [{run.group_names.length}g]
                                     </span>
                                   )}
 

@@ -26,7 +26,7 @@ const getEnabledGroups = (manifest: VariablesManifest | null): VariableGroup[] =
       values[v.name] = v.value || ''
     })
     return [{
-      group_id: 'group-1',
+      name: 'group-1',
       values,
       enabled: true
     }]
@@ -53,7 +53,7 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
 
   // Count how many groups are selected via checkboxes
   const selectedCount = selectedGroupIds.length > 0
-    ? selectedGroupIds.filter(id => manifest?.groups?.some(g => g.group_id === id && g.enabled)).length
+    ? selectedGroupIds.filter(id => manifest?.groups?.some(g => g.name === id && g.enabled)).length
     : 0
 
   // Handle node click to open sidebar
@@ -156,12 +156,12 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
             ? manifest.groups 
             : enabledGroups
           return allGroups.map((group) => {
-            const isRunning = currentRunningGroupId === group.group_id
-            const isChecked = selectedGroupIds.includes(group.group_id) // Selected via checkbox
+            const isRunning = currentRunningGroupId === group.name
+            const isChecked = selectedGroupIds.includes(group.name) // Selected via checkbox
 
             return (
             <div
-              key={group.group_id}
+              key={group.name}
               className={`space-y-1.5 ${
                 isRunning
                   ? 'bg-blue-50 dark:bg-blue-900/30 rounded p-1.5 border border-blue-200 dark:border-blue-700'
@@ -190,14 +190,9 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                     : isChecked
                     ? 'text-purple-700 dark:text-purple-300'
                     : 'text-purple-600 dark:text-purple-400'
-                } ${!group.display_name ? 'font-mono' : ''}`}>
-                  {group.display_name || group.group_id.toUpperCase()}
+                }`}>
+                  {group.name}
                 </span>
-                {group.display_name && (
-                  <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">
-                    ({group.group_id})
-                  </span>
-                )}
                 {isRunning && (
                   <span className="ml-auto text-[10px] text-blue-600 dark:text-blue-400 font-medium">
                     Running...
@@ -245,12 +240,12 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
         <div className="px-3 py-2 border-t border-purple-200 dark:border-purple-700">
           <div className="flex flex-wrap gap-1.5">
             {manifest.groups.slice(0, 6).map((group) => {
-              const isRunning = currentRunningGroupId === group.group_id
-              const isChecked = selectedGroupIds.includes(group.group_id) // Selected via checkbox
+              const isRunning = currentRunningGroupId === group.name
+              const isChecked = selectedGroupIds.includes(group.name) // Selected via checkbox
 
               return (
               <div
-                key={group.group_id}
+                key={group.name}
                 className={`
                   flex items-center gap-1 px-1.5 py-0.5 rounded text-xs
                   ${isRunning
@@ -275,14 +270,9 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   // When disabled, show empty circle
                   <Circle className="w-3 h-3" />
                 )}
-                <span className={group.display_name ? '' : 'font-mono'}>
-                  {group.display_name || group.group_id}
+                <span>
+                  {group.name}
                 </span>
-                {group.display_name && (
-                  <span className="text-[10px] font-mono opacity-70">
-                    ({group.group_id})
-                  </span>
-                )}
               </div>
             )
             })}

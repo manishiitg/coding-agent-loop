@@ -169,9 +169,9 @@ export const BatchExecutionCanceledEventDisplay: React.FC<BatchExecutionEventPro
         <div className="text-xs text-gray-700 dark:text-gray-300 font-medium mb-1">
           Stopped after {event.completed_groups} of {event.total_groups} groups
         </div>
-        {event.canceled_group_id && (
+        {event.canceled_group_name && (
           <div className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">
-            Interrupted Group: {event.canceled_group_id}
+            Interrupted Group: {event.canceled_group_name}
           </div>
         )}
       </div>

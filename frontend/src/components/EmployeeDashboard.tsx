@@ -199,90 +199,67 @@ export const EmployeeDashboard: React.FC = () => {
         }
       }
 
-      // Build workflow summaries from filesystem-backed workflow manifests
+      // Build workflow summaries using the batch summary endpoint (single API call)
       const summaries: Map<string, WorkflowSummary> = new Map()
-      await Promise.all(
-        discoveredWorkflows.map(async (workflow: DiscoveredWorkflow) => {
-          const wp = workflow.workspace_path
-          try {
-            const [wsState, evalResp] = await Promise.all([
-              agentApi.loadWorkspaceState(wp).catch(() => null),
-              agentApi.getEvaluationReports(wp).catch(() => null),
-            ])
-            const folders = wsState?.data?.run_folders || []
-            const activeExecutions = wsState?.data?.active_executions || []
-            let latestStatus = 'unknown'
-            let lastActive: string | null = null
-            let latestRunFolder: string | null = null
-            let latestRunTime: string | null = null
-            let latestRunCompletedSteps = 0
-            let latestRunTotalSteps = 0
-            for (const f of folders) {
-              const t = f.metadata?.created_at || f.progress?.last_updated || null
-              if (t && (!lastActive || t > lastActive)) lastActive = t
-              if (t && (!latestRunTime || t > latestRunTime)) {
-                latestRunTime = t
-                latestRunFolder = f.name
-                latestStatus = f.metadata?.status || 'unknown'
-                latestRunCompletedSteps = f.progress?.completed_step_indices?.length || 0
-                latestRunTotalSteps = f.progress?.total_steps || 0
-              }
-            }
-            if (!latestRunFolder && folders.length > 0) {
-              const fallbackFolder = folders[0]
-              latestRunFolder = fallbackFolder.name
-              latestStatus = fallbackFolder.metadata?.status || latestStatus
-              lastActive = lastActive || fallbackFolder.metadata?.created_at || fallbackFolder.progress?.last_updated || null
-              latestRunCompletedSteps = fallbackFolder.progress?.completed_step_indices?.length || 0
-              latestRunTotalSteps = fallbackFolder.progress?.total_steps || 0
-            }
+      const allWorkspacePaths = discoveredWorkflows.map((wf: DiscoveredWorkflow) => wf.workspace_path)
 
-            // Treat a workflow as live only when the backend's in-memory execution registry confirms it.
-            if (activeExecutions.length > 0) {
-              latestStatus = 'running'
-            } else if (latestStatus === 'running') {
-              if (latestRunTotalSteps > 0 && latestRunCompletedSteps >= latestRunTotalSteps) {
-                latestStatus = 'completed'
-              } else {
-                latestStatus = 'unknown'
-              }
-            }
-            let evalPercent: number | null = null
-            if (evalResp?.success && evalResp.aggregate && evalResp.aggregate.max_possible_score > 0) {
-              evalPercent = Math.round((evalResp.aggregate.average_score / evalResp.aggregate.max_possible_score) * 100)
-            }
-            const sched = scheduleByWorkspace.get(wp)
-            summaries.set(wp, {
-              id: workflow.manifest.id || wp,
-              label: workflow.manifest.label || wp.split('/').pop() || wp,
-              latestStatus,
-              totalRuns: folders.length,
-              lastActive,
-              totalCost: null,
-              evalPercent,
-              workspacePath: wp,
-              latestRunFolder,
-              scheduleCount: sched?.count || 0,
-              nextScheduleAt: sched?.nextRunAt || null,
-            })
-          } catch {
-            const sched = scheduleByWorkspace.get(wp)
-            summaries.set(wp, {
-              id: workflow.manifest.id || wp,
-              label: workflow.manifest.label || wp.split('/').pop() || wp,
-              latestStatus: 'unknown',
-              totalRuns: 0,
-              lastActive: null,
-              totalCost: null,
-              evalPercent: null,
-              workspacePath: wp,
-              latestRunFolder: null,
-              scheduleCount: sched?.count || 0,
-              nextScheduleAt: sched?.nextRunAt || null,
-            })
-          }
+      // Fetch summaries + eval reports in parallel (2 calls instead of N*2)
+      const [summaryResp, evalResults] = await Promise.all([
+        agentApi.getWorkflowsSummary(allWorkspacePaths).catch(() => null),
+        Promise.all(
+          discoveredWorkflows.map((wf: DiscoveredWorkflow) =>
+            agentApi.getEvaluationReports(wf.workspace_path).catch(() => null).then(r => ({ wp: wf.workspace_path, data: r }))
+          )
+        ),
+      ])
+
+      // Index summary results by workspace path
+      const summaryByPath = new Map<string, typeof summaryResp extends { workflows: Array<infer T> } ? T : never>()
+      if (summaryResp?.success && summaryResp.workflows) {
+        for (const ws of summaryResp.workflows) {
+          summaryByPath.set(ws.workspace_path, ws)
+        }
+      }
+
+      // Index eval results by workspace path
+      const evalByPath = new Map<string, typeof evalResults[number]['data']>()
+      for (const er of evalResults) {
+        evalByPath.set(er.wp, er.data)
+      }
+
+      for (const workflow of discoveredWorkflows as DiscoveredWorkflow[]) {
+        const wp = workflow.workspace_path
+        const ws = summaryByPath.get(wp)
+        const evalResp = evalByPath.get(wp)
+        const sched = scheduleByWorkspace.get(wp)
+
+        let latestStatus = ws?.latest_run?.status || 'unknown'
+        const lastActive = ws?.latest_run?.created_at || null
+        const latestRunFolder = ws?.latest_run?.folder || null
+
+        if (ws?.is_running) {
+          latestStatus = 'running'
+        }
+
+        let evalPercent: number | null = null
+        if (evalResp?.success && evalResp.aggregate && evalResp.aggregate.max_possible_score > 0) {
+          evalPercent = Math.round((evalResp.aggregate.average_score / evalResp.aggregate.max_possible_score) * 100)
+        }
+
+        summaries.set(wp, {
+          id: workflow.manifest.id || wp,
+          label: workflow.manifest.label || wp.split('/').pop() || wp,
+          latestStatus,
+          totalRuns: ws?.total_runs || 0,
+          lastActive,
+          totalCost: null,
+          evalPercent,
+          workspacePath: wp,
+          latestRunFolder,
+          scheduleCount: sched?.count || 0,
+          nextScheduleAt: sched?.nextRunAt || null,
         })
-      )
+      }
 
       const empMap: Map<string, EmployeeWithWorkflows> = new Map()
       for (const emp of emps) {

@@ -48,8 +48,8 @@ export interface WorkflowEventInfo {
   modelId?: string
   /** Final result text from the last unified_completion event */
   finalResult?: string
-  /** Current batch group ID (from batch_group_start events) */
-  currentGroupId?: string
+  /** Current batch group name (from batch_group_start events) */
+  currentGroupName?: string
   /** Current batch group index (from batch_group_start events) */
   currentGroupIndex?: number
   /** Total batch groups (from batch_group_start events) */
@@ -187,8 +187,8 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
       } else {
         const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
         if (batchGroupStartData) {
-          if (batchGroupStartData.group_id) {
-            info.currentGroupId = batchGroupStartData.group_id
+          if (batchGroupStartData.group_name) {
+            info.currentGroupName = batchGroupStartData.group_name
           }
           if (batchGroupStartData.group_index !== undefined) {
             info.currentGroupIndex = batchGroupStartData.group_index

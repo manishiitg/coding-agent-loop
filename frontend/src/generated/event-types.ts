@@ -163,8 +163,8 @@ export interface BatchExecutionCanceledEvent {
   };
   total_groups?: number;
   completed_groups?: number;
-  canceled_group_id?: string;
-  remaining_group_ids?: string[];
+  canceled_group_name?: string;
+  remaining_group_names?: string[];
   reason?: string;
 }
 

@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
+	"strings"
 	"sync"
-	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
@@ -203,8 +202,7 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 	q.Add("max_depth", "2")
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := workspaceHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call workspace API: %w", err)
 	}
@@ -276,21 +274,31 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 		return folderInfos[i].Name < folderInfos[j].Name
 	})
 
-	// Limit to 50 most recent folders/groups
-	const maxFolders = 50
+	// Limit to 10 most recent folders/groups
+	const maxFolders = 10
 	if len(folderInfos) > maxFolders {
 		folderInfos = folderInfos[:maxFolders]
 	}
 
-	// Load metadata for all iterations/groups
-	for i := range folderInfos {
-		folderName := folderInfos[i].Name
-		metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
-		metadata, _ := readRunMetadata(ctx, metadataPath)
-
-		if metadata != nil {
-			folderInfos[i].Metadata = metadata
+	// Load metadata for all iterations/groups in parallel (bounded concurrency)
+	{
+		var wgMeta sync.WaitGroup
+		sem := make(chan struct{}, 10) // max 10 concurrent reads
+		for i := range folderInfos {
+			wgMeta.Add(1)
+			go func(idx int) {
+				defer wgMeta.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				folderName := folderInfos[idx].Name
+				metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
+				metadata, _ := readRunMetadata(ctx, metadataPath)
+				if metadata != nil {
+					folderInfos[idx].Metadata = metadata
+				}
+			}(i)
 		}
+		wgMeta.Wait()
 	}
 
 	// Re-sort by created_at (most recent first) when metadata is available
@@ -317,8 +325,7 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 // extractIterationNumber extracts the iteration number from a folder name.
 // Supports both "iteration-X" and "iteration-X/group-Y" formats.
 func extractIterationNumber(name string) int {
-	re := regexp.MustCompile(`iteration-(\d+)`)
-	matches := re.FindStringSubmatch(name)
+	matches := iterationRe.FindStringSubmatch(name)
 	if len(matches) > 1 {
 		var num int
 		if _, err := fmt.Sscanf(matches[1], "%d", &num); err == nil {
@@ -358,4 +365,203 @@ func (api *StreamingAPI) handleGetActiveExecutions(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"executions": executions,
 	})
+}
+
+// WorkflowSummary is a lightweight per-workflow summary for dashboard pages.
+type WorkflowSummary struct {
+	WorkspacePath   string      `json:"workspace_path"`
+	TotalRuns       int         `json:"total_runs"`
+	LatestRun       *RunSummary `json:"latest_run,omitempty"`
+	IsRunning       bool        `json:"is_running"`
+	ActiveRunFolder string      `json:"active_run_folder,omitempty"`
+}
+
+// RunSummary is the minimal metadata for the most recent run folder.
+type RunSummary struct {
+	Folder         string  `json:"folder"`
+	Status         string  `json:"status"`
+	CreatedAt      string  `json:"created_at,omitempty"`
+	CompletedAt    *string `json:"completed_at,omitempty"`
+	CompletedSteps int     `json:"completed_steps"`
+	TotalSteps     int     `json:"total_steps"`
+}
+
+// handleGetWorkflowsSummary returns lightweight summaries for multiple workflows in one call.
+// GET /api/workflows/summary?workspace_paths=path1,path2,...
+func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	pathsParam := r.URL.Query().Get("workspace_paths")
+	if pathsParam == "" {
+		http.Error(w, "workspace_paths parameter is required (comma-separated)", http.StatusBadRequest)
+		return
+	}
+
+	workspacePaths := strings.Split(pathsParam, ",")
+	ctx := r.Context()
+
+	// Build active executions lookup from in-memory registry
+	activeByWorkspace := map[string]string{} // workspace_path -> run_folder
+	api.activeWorkflowExecutionsMux.RLock()
+	for _, exec := range api.activeWorkflowExecutions {
+		activeByWorkspace[exec.WorkspacePath] = exec.RunFolder
+	}
+	api.activeWorkflowExecutionsMux.RUnlock()
+
+	// Fetch summaries in parallel with bounded concurrency
+	summaries := make([]WorkflowSummary, len(workspacePaths))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5) // max 5 workflows concurrently
+
+	for i, wp := range workspacePaths {
+		wg.Add(1)
+		go func(idx int, workspacePath string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			summary := WorkflowSummary{WorkspacePath: workspacePath}
+
+			// Check active executions (free — from memory)
+			if runFolder, ok := activeByWorkspace[workspacePath]; ok {
+				summary.IsRunning = true
+				summary.ActiveRunFolder = runFolder
+			}
+
+			// List run folders (1 HTTP call to workspace API)
+			folders, err := api.listRunFolderNames(ctx, workspacePath)
+			if err != nil || len(folders) == 0 {
+				summaries[idx] = summary
+				return
+			}
+			summary.TotalRuns = len(folders)
+
+			// Sort by iteration number descending to find the latest
+			sort.Slice(folders, func(a, b int) bool {
+				return extractIterationNumber(folders[a]) > extractIterationNumber(folders[b])
+			})
+
+			// Read metadata only for the latest folder (1 HTTP call)
+			latestFolder := folders[0]
+			metadataPath := workspacePath + "/runs/" + latestFolder + "/run_metadata.json"
+			metadata, _ := readRunMetadata(ctx, metadataPath)
+
+			run := &RunSummary{Folder: latestFolder}
+			if metadata != nil {
+				run.Status = metadata.Status
+				if !metadata.CreatedAt.IsZero() {
+					run.CreatedAt = metadata.CreatedAt.Format("2006-01-02T15:04:05Z07:00")
+				}
+				if metadata.CompletedAt != nil {
+					formatted := metadata.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+					run.CompletedAt = &formatted
+				}
+			}
+
+			// Reconcile status with active executions
+			if summary.IsRunning && summary.ActiveRunFolder == latestFolder {
+				run.Status = "running"
+			} else if run.Status == "running" {
+				// Metadata says running but not in active executions — stale
+				run.Status = "unknown"
+			}
+
+			// Read progress for the latest folder (1 HTTP call)
+			stepsPath := workspacePath + "/runs/" + latestFolder + "/execution/steps_done.json"
+			progress, _ := readProgressForFolder(ctx, stepsPath)
+			if progress != nil {
+				run.CompletedSteps = len(progress.CompletedStepIndices)
+				run.TotalSteps = progress.TotalSteps
+				// If no metadata, infer status from progress
+				if run.Status == "" || run.Status == "unknown" {
+					if run.TotalSteps > 0 && run.CompletedSteps >= run.TotalSteps {
+						run.Status = "completed"
+					}
+				}
+			}
+
+			if run.Status == "" {
+				run.Status = "unknown"
+			}
+
+			summary.LatestRun = run
+			summaries[idx] = summary
+		}(i, wp)
+	}
+
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"workflows": summaries,
+	})
+}
+
+// listRunFolderNames returns just the folder names under /runs/ for a workspace.
+// Much cheaper than getRunFoldersFromWorkspace — no metadata reads.
+func (api *StreamingAPI) listRunFolderNames(ctx context.Context, workspacePath string) ([]string, error) {
+	runsPath := workspacePath + "/runs"
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	q := req.URL.Query()
+	q.Add("folder", runsPath)
+	q.Add("max_depth", "2")
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("workspace API returned status %d", resp.StatusCode)
+	}
+
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if !apiResp.Success {
+		return nil, nil
+	}
+
+	// Extract folder names using the same logic as getRunFoldersFromWorkspace
+	existingFolders := []string{}
+	var folderListing virtualtools.WorkspaceFolderListing
+	if dataBytes, err := json.Marshal(apiResp.Data); err == nil {
+		if err := json.Unmarshal(dataBytes, &folderListing); err == nil && len(folderListing) > 0 {
+			if len(folderListing[0].Children) > 0 {
+				existingFolders = extractIterationFoldersFromTypedChildren(folderListing[0].Children, existingFolders)
+			}
+		} else {
+			if dataArray, ok := apiResp.Data.([]interface{}); ok {
+				existingFolders = extractIterationFoldersFromInterfaceArray(dataArray, existingFolders)
+			} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+				if children, ok := dataMap["children"].([]interface{}); ok {
+					existingFolders = extractIterationFoldersFromChildren(children, existingFolders)
+				}
+			}
+		}
+	}
+
+	return existingFolders, nil
 }

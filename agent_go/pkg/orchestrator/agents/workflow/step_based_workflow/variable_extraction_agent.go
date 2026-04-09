@@ -20,10 +20,9 @@ type Variable struct {
 
 // VariableGroup represents a single set of variable values for batch execution
 type VariableGroup struct {
-	GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2" (used as fallback for folder names)
-	DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
-	Values      map[string]string `json:"values"`       // Variable name -> value mapping
-	Enabled     bool              `json:"enabled"`      // Whether to include in execution
+	Name    string            `json:"name"`    // Unique identifier and display label (e.g., "Production", "Staging")
+	Values  map[string]string `json:"values"`  // Variable name -> value mapping
+	Enabled bool              `json:"enabled"` // Whether to include in execution
 }
 
 // VariablesManifest contains all extracted variables
@@ -57,8 +56,8 @@ func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
 // GetVariableValues returns variable values for a specific group.
 // For grouped manifests, this includes manifest-level defaults plus the group's
 // overrides so shared values (for example common sheet IDs) are always present.
-// If groupID is empty and no groups exist, returns values from Variables directly.
-func (m *VariablesManifest) GetVariableValues(groupID string) map[string]string {
+// If groupName is empty and no groups exist, returns values from Variables directly.
+func (m *VariablesManifest) GetVariableValues(groupName string) map[string]string {
 	if !m.HasGroups() {
 		// Old format: values are in Variables[].Value
 		values := make(map[string]string)
@@ -68,9 +67,9 @@ func (m *VariablesManifest) GetVariableValues(groupID string) map[string]string 
 		return values
 	}
 
-	// New format: find group by ID
+	// Find group by name
 	for _, g := range m.Groups {
-		if g.GroupID == groupID {
+		if g.Name == groupName {
 			return MergeGroupWithDefaults(m, g.Values)
 		}
 	}
@@ -90,9 +89,9 @@ func (m *VariablesManifest) GetVariableNames() []string {
 // Values are copied from Variables[].Value so the group is immediately usable.
 // The caller can override specific values after creation.
 func (m *VariablesManifest) AddGroup() *VariableGroup {
-	// Generate next group ID
+	// Generate next group name
 	nextID := len(m.Groups) + 1
-	groupID := fmt.Sprintf("group-%d", nextID)
+	name := fmt.Sprintf("group-%d", nextID)
 
 	// Pre-populate values from global variable definitions so the group is ready to use.
 	// Empty string is only used when the global variable has no value set.
@@ -102,7 +101,7 @@ func (m *VariablesManifest) AddGroup() *VariableGroup {
 	}
 
 	newGroup := VariableGroup{
-		GroupID: groupID,
+		Name:    name,
 		Values:  values,
 		Enabled: true,
 	}
@@ -111,10 +110,10 @@ func (m *VariablesManifest) AddGroup() *VariableGroup {
 	return &m.Groups[len(m.Groups)-1]
 }
 
-// DeleteGroup removes a group by ID
-func (m *VariablesManifest) DeleteGroup(groupID string) bool {
+// DeleteGroup removes a group by name
+func (m *VariablesManifest) DeleteGroup(groupName string) bool {
 	for i, g := range m.Groups {
-		if g.GroupID == groupID {
+		if g.Name == groupName {
 			m.Groups = append(m.Groups[:i], m.Groups[i+1:]...)
 			return true
 		}
@@ -123,9 +122,9 @@ func (m *VariablesManifest) DeleteGroup(groupID string) bool {
 }
 
 // ToggleGroup enables or disables a group
-func (m *VariablesManifest) ToggleGroup(groupID string, enabled bool) bool {
+func (m *VariablesManifest) ToggleGroup(groupName string, enabled bool) bool {
 	for i := range m.Groups {
-		if m.Groups[i].GroupID == groupID {
+		if m.Groups[i].Name == groupName {
 			m.Groups[i].Enabled = enabled
 			return true
 		}
@@ -134,9 +133,9 @@ func (m *VariablesManifest) ToggleGroup(groupID string, enabled bool) bool {
 }
 
 // UpdateGroupValues updates the values for a specific group
-func (m *VariablesManifest) UpdateGroupValues(groupID string, values map[string]string) bool {
+func (m *VariablesManifest) UpdateGroupValues(groupName string, values map[string]string) bool {
 	for i := range m.Groups {
-		if m.Groups[i].GroupID == groupID {
+		if m.Groups[i].Name == groupName {
 			m.Groups[i].Values = values
 			return true
 		}

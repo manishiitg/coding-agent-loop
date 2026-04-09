@@ -83,7 +83,7 @@ type RunRecord struct {
 	Success       bool   `json:"success"`
 	ExitCode      int    `json:"exit_code"`
 	DurationMs    int64  `json:"duration_ms"`
-	GroupID       string `json:"group_id,omitempty"`
+	GroupName     string `json:"group_name,omitempty"`
 	RunFolder     string `json:"run_folder,omitempty"`
 	FailureReason string `json:"failure_reason,omitempty"` // "execution_error", "validation_error", or "execution_and_validation_error"
 	ErrorSummary  string `json:"error_summary,omitempty"`  // first ~200 chars of error
@@ -110,7 +110,7 @@ type LastFailureInfo struct {
 	Timestamp    string `json:"timestamp"`
 	Reason       string `json:"reason"`
 	ErrorSnippet string `json:"error_snippet"` // first ~300 chars
-	GroupID      string `json:"group_id,omitempty"`
+	GroupName    string `json:"group_name,omitempty"`
 	ExitCode     int    `json:"exit_code"`
 }
 
@@ -915,7 +915,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 			Success:       success,
 			ExitCode:      exitCode,
 			DurationMs:    scriptDurationMs,
-			GroupID:       hcpo.currentGroupId,
+			GroupName:     hcpo.currentGroupName,
 			RunFolder:     hcpo.selectedRunFolder,
 			FailureReason: failureReason,
 			ErrorSummary:  truncateStr(errSummary, 200),
@@ -1155,28 +1155,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 	}
 
 	oldMeta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
-	version := 1
-	createdAt := time.Now().UTC().Format(time.RFC3339)
-	relearnCount := 0
+	// Start from old metadata to preserve rich run history (RecentRuns, GroupStats, etc.)
+	var newMeta LearnCodeMetadata
 	if oldMeta != nil {
-		version = oldMeta.ScriptVersion + 1
-		if oldMeta.CreatedAt != "" {
-			createdAt = oldMeta.CreatedAt
-		}
-		relearnCount = oldMeta.RelearnCount + 1
+		newMeta = *oldMeta
+		newMeta.ScriptVersion = oldMeta.ScriptVersion + 1
+		newMeta.RelearnCount = oldMeta.RelearnCount + 1
+	} else {
+		newMeta.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		newMeta.ScriptVersion = 1
 	}
-
-	newMeta := LearnCodeMetadata{
-		StepID:        stepID,
-		ScriptVersion: version,
-		CreatedAt:     createdAt,
-		LastRunAt:     time.Now().UTC().Format(time.RFC3339),
-		RelearnCount:  relearnCount,
-	}
+	newMeta.StepID = stepID
+	newMeta.LastRunAt = time.Now().UTC().Format(time.RFC3339)
 	if err := hcpo.writeLearnCodeMetadataAPI(ctx, stepID, newMeta); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write script_metadata.json: %v", err))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Saved main.py to learnings for step (%s) — version %d", stepID, version))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Saved main.py to learnings for step (%s) — version %d", stepID, newMeta.ScriptVersion))
 	}
 
 	// Save diffs between old and new script files for debugging.
@@ -1194,11 +1188,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 					continue // no changes
 				}
 				diff := generateSimpleDiff(fileName, oldContent, newContent)
-				diffFileName := fmt.Sprintf("%s.v%d.diff", fileName, version)
+				diffFileName := fmt.Sprintf("%s.v%d.diff", fileName, newMeta.ScriptVersion)
 				if writeErr := hcpo.WriteWorkspaceFile(ctx, diffsDirRelPath+"/"+diffFileName, diff); writeErr != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to write diff %s: %v", diffFileName, writeErr))
 				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved diff for %s (v%d → v%d)", fileName, version-1, version))
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 [learn_code] Saved diff for %s (v%d → v%d)", fileName, newMeta.ScriptVersion-1, newMeta.ScriptVersion))
 				}
 			}
 		}
@@ -1286,18 +1280,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 	}
 
 	// Update per-group stats
-	if record.GroupID != "" {
+	if record.GroupName != "" {
 		if meta.GroupStats == nil {
 			meta.GroupStats = map[string]GroupStat{}
 		}
-		gs := meta.GroupStats[record.GroupID]
+		gs := meta.GroupStats[record.GroupName]
 		gs.Runs++
 		if record.Success {
 			gs.Successes++
 		} else {
 			gs.Failures++
 		}
-		meta.GroupStats[record.GroupID] = gs
+		meta.GroupStats[record.GroupName] = gs
 	}
 
 	// Update duration stats
@@ -1324,7 +1318,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 			Timestamp:    record.Timestamp,
 			Reason:       record.FailureReason,
 			ErrorSnippet: truncateStr(record.ErrorSummary, 300),
-			GroupID:      record.GroupID,
+			GroupName:    record.GroupName,
 			ExitCode:     record.ExitCode,
 		}
 	}
@@ -1427,7 +1421,8 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
 	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n")
-	sb.WriteString("- **ROBUSTNESS**: This script runs across different groups/users with different data. Handle edge cases: missing fields (use `.get()` with safe defaults for data fields), empty lists, None values, different data formats (e.g. dates as string vs number), missing files (check existence before reading optional files). Always print diagnostic context before failing so the error output explains what went wrong. Do not assume the shape of external data — validate and handle gracefully.\n\n")
+	sb.WriteString("- **ROBUSTNESS**: This script runs across different groups/users with different data. Handle edge cases: missing fields (use `.get()` with safe defaults for data fields), empty lists, None values, different data formats (e.g. dates as string vs number), missing files (check existence before reading optional files). Always print diagnostic context before failing so the error output explains what went wrong. Do not assume the shape of external data — validate and handle gracefully.\n")
+	sb.WriteString("- **GROUP-AWARE CODE**: The current group name is available via `os.environ.get('VAR_GROUP_NAME', '')`. If the same script keeps failing for specific groups, consider that different groups may require different logic (e.g. different page layouts, different APIs, different data formats). Use the group name to branch behavior when needed — e.g. `if group_name == 'xyz': ...`.\n\n")
 
 	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
 	if len(varMappingLines) > 0 {
@@ -1500,7 +1495,9 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 
 // BuildLearnCodePriorContext generates the prior script context section for inclusion
 // in the user message. Returns empty string if no prior context is needed.
-func BuildLearnCodePriorContext(priorScript, priorError string) string {
+// scriptMetadataJSON is optional — when non-empty and there's a failure, it's included
+// so the LLM can see run history, failure streaks, and per-group stats.
+func BuildLearnCodePriorContext(priorScript, priorError, scriptMetadataJSON string) string {
 	if priorScript == "" {
 		return ""
 	}
@@ -1514,6 +1511,13 @@ func BuildLearnCodePriorContext(priorScript, priorError string) string {
 		sb.WriteString("\n**Error:**\n```\n")
 		sb.WriteString(priorError)
 		sb.WriteString("\n```\n")
+		if scriptMetadataJSON != "" {
+			sb.WriteString("\n### Script Run History (`script_metadata.json`)\n\n")
+			sb.WriteString("Use this to understand failure patterns — check `recent_runs` for repeated errors, `group_stats` for which groups fail, `current_streak` for consecutive failures, and `last_failure` for the most recent error details.\n\n")
+			sb.WriteString("```json\n")
+			sb.WriteString(scriptMetadataJSON)
+			sb.WriteString("\n```\n")
+		}
 	} else {
 		sb.WriteString("\n### Existing Script (Update Required)\n\n")
 		sb.WriteString("A saved script already exists for this step. Adapt and improve this working script to match the current step description above. ")

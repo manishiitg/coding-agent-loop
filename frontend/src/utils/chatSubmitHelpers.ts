@@ -393,7 +393,7 @@ export function computeNewEventCount(
 }
 
 // ---------------------------------------------------------------------------
-// validateExecutionGroups — check enabled_group_ids for workflow mode
+// validateExecutionGroups — check enabled_group_names for workflow mode
 // ---------------------------------------------------------------------------
 
 export function validateExecutionGroups(
@@ -408,8 +408,8 @@ export function validateExecutionGroups(
     return 'Please create and enable at least one group before using workflow builder or execution.'
   }
 
-  const enabledGroupIds = executionOptions.enabled_group_ids
-  if (!enabledGroupIds || enabledGroupIds.length === 0) {
+  const enabledGroupNames = executionOptions.enabled_group_names
+  if (!enabledGroupNames || enabledGroupNames.length === 0) {
     return 'Please select at least one group before using workflow builder or execution.'
   }
 

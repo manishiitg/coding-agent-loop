@@ -66,7 +66,7 @@ type StepBasedWorkflowOrchestrator struct {
 	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
 	browserMode   string // Browser mode: "playwright", "stealth", "cdp", "headless", "" (auto-detect)
 
-	// Workshop MCP session cache: one reusable MCP session per group_id within a
+	// Workshop MCP session cache: one reusable MCP session per group name within a
 	// workshop session. This preserves browser/login state when the user runs
 	// multiple steps for the same group, while isolating different groups.
 	workshopGroupSessionsMu sync.Mutex
@@ -98,8 +98,8 @@ type StepBasedWorkflowOrchestrator struct {
 	selectedRunMode   string // Selected run mode (e.g., "use_same_run", "create_new_runs_always")
 
 	// Batch execution context (tracked for step_progress_updated events)
-	currentGroupId  string // Current group ID being executed
-	currentGroupIdx int    // 0-based index of current group
+	currentGroupName  string // Current group name being executed
+	currentGroupIdx   int    // 0-based index of current group
 	totalGroups     int    // Total number of groups in batch
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
@@ -125,7 +125,7 @@ type StepBasedWorkflowOrchestrator struct {
 	tierResolver *TierResolver // nil when no tiered config
 
 	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
-	enabledGroupIDs []string
+	enabledGroupNames []string
 
 	// Workshop: ad-hoc human input passed via execute_step (injected into PreviousStepsSummary as critical feedback)
 	interactiveWorkflowHumanInput string
@@ -217,13 +217,13 @@ func NewStepBasedWorkflowOrchestrator(
 
 	// Generate session ID for MCP connection sharing across all agents in this workflow
 	// This MUST be set before creating any agents to ensure connection reuse
-	// NOTE: We always run with groups, so include groupID in sessionID format
-	// If groupID is not available yet (will be set later in batch execution), use "default-group" placeholder
-	// The sessionID will be overridden in batch_execution.go when the actual groupID is known
-	groupID := "default-group" // Placeholder - will be overridden in batch execution with actual groupID
-	workflowSessionID := fmt.Sprintf("session-group-%s-%d", groupID, time.Now().UnixNano())
+	// NOTE: We always run with groups, so include group name in sessionID format
+	// If group name is not available yet (will be set later in batch execution), use "default-group" placeholder
+	// The sessionID will be overridden in batch_execution.go when the actual group name is known
+	groupName := "default-group" // Placeholder - will be overridden in batch execution with actual group name
+	workflowSessionID := fmt.Sprintf("session-group-%s-%d", groupName, time.Now().UnixNano())
 	baseOrchestrator.SetMCPSessionID(workflowSessionID)
-	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s (will be overridden with actual groupID in batch execution)", workflowSessionID))
+	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s (will be overridden with actual group name in batch execution)", workflowSessionID))
 
 	// NOTE: Default conditional agent is now created lazily when needed (in getConditionalAgentForStep)
 	// This ensures it's created after batch execution setup, with correct session ID and runtime overrides
@@ -271,18 +271,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string
 	hcpo.httpSessionID = httpSessionID
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) resolveWorkshopBrowserSessionID(groupID string) string {
-	groupID = strings.TrimSpace(groupID)
-	if groupID == "" {
-		groupID = "default-group"
+func (hcpo *StepBasedWorkflowOrchestrator) resolveWorkshopBrowserSessionID(groupName string) string {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		groupName = "default-group"
 	}
-	safeGroupID := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-").Replace(groupID)
+	safeGroupName := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-").Replace(groupName)
 	workspacePath := strings.TrimSpace(hcpo.GetWorkspacePath())
 	hasher := fnv.New64a()
 	_, _ = hasher.Write([]byte(workspacePath))
 	_, _ = hasher.Write([]byte("::"))
-	_, _ = hasher.Write([]byte(groupID))
-	return fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupID)
+	_, _ = hasher.Write([]byte(groupName))
+	return fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupName)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessionID, browserSessionID string) {
@@ -303,12 +303,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 }
 
 // switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
-// session per group_id instead of the controller's "default-group" placeholder.
+// session per group name instead of the controller's "default-group" placeholder.
 // Reusing a cached per-group session preserves browser/login state across steps
 // for the same group while keeping different groups isolated.
-func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID string) error {
-	groupID = strings.TrimSpace(groupID)
-	if groupID == "" {
+func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName string) error {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
 		return nil
 	}
 
@@ -316,10 +316,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID st
 	if hcpo.workshopGroupSessionIDs == nil {
 		hcpo.workshopGroupSessionIDs = make(map[string]string)
 	}
-	groupSessionID, exists := hcpo.workshopGroupSessionIDs[groupID]
+	groupSessionID, exists := hcpo.workshopGroupSessionIDs[groupName]
 	if !exists {
-		groupSessionID = fmt.Sprintf("session-group-%s-%d", groupID, time.Now().UnixNano())
-		hcpo.workshopGroupSessionIDs[groupID] = groupSessionID
+		groupSessionID = fmt.Sprintf("session-group-%s-%d", groupName, time.Now().UnixNano())
+		hcpo.workshopGroupSessionIDs[groupName] = groupSessionID
 		if hcpo.httpSessionID != "" {
 			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
 			// Inherit folder guard from parent HTTP session so tools called
@@ -338,18 +338,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupID st
 	if !exists {
 		cacheAction = "created"
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s)", cacheAction, groupID, groupSessionID, previousSessionID))
+	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s)", cacheAction, groupName, groupSessionID, previousSessionID))
 
-	browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupID)
+	browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupName)
 	hcpo.bindWorkshopBrowserSession(groupSessionID, browserSessionID)
 	if hcpo.httpSessionID != "" {
 		hcpo.bindWorkshopBrowserSession(hcpo.httpSessionID, browserSessionID)
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Bound tool sessions to shared browser session for group %s: browser=%s chat=%s run=%s",
-		groupID, browserSessionID, hcpo.httpSessionID, groupSessionID))
+		groupName, browserSessionID, hcpo.httpSessionID, groupSessionID))
 
 	if strings.Contains(hcpo.GetMCPSessionID(), "default-group") {
-		return fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupID, hcpo.GetMCPSessionID())
+		return fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupName, hcpo.GetMCPSessionID())
 	}
 	return nil
 }
@@ -533,33 +533,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// Load runtime variable values if provided and switch to templated objective
 	// If a specific group is selected via execution options, use that group's values
 	var variableValues map[string]string
-	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil {
+	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupNames) > 0 && hcpo.variablesManifest != nil {
 		// Specific group(s) selected - use the first group's values (for single group execution)
-		requestedGroupID := hcpo.executionOptions.EnabledGroupIDs[0]
+		requestedGroupName := hcpo.executionOptions.EnabledGroupNames[0]
 
 		// Log available groups for debugging
-		availableGroupIDs := make([]string, len(hcpo.variablesManifest.Groups))
+		availableGroupNames := make([]string, len(hcpo.variablesManifest.Groups))
 		for i, g := range hcpo.variablesManifest.Groups {
-			availableGroupIDs[i] = g.GroupID
+			availableGroupNames[i] = g.Name
 		}
 
-		variableValues = hcpo.variablesManifest.GetVariableValues(requestedGroupID)
+		variableValues = hcpo.variablesManifest.GetVariableValues(requestedGroupName)
 		if variableValues == nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Group %s not found in manifest, falling back to LoadVariableValues", requestedGroupID))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Group %s not found in manifest, falling back to LoadVariableValues", requestedGroupName))
 			var err error
 			variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 			if err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %v", err))
 			} else {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Loaded from fallback LoadVariableValues (may not match requested group %s)", requestedGroupID))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Loaded from fallback LoadVariableValues (may not match requested group %s)", requestedGroupName))
 			}
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Loaded variable values for selected group: %s (values: %v)", requestedGroupID, variableValues))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Loaded variable values for selected group: %s (values: %v)", requestedGroupName, variableValues))
 
 			// Validate: Double-check that we got the right group's values plus shared defaults.
 			// Find the group in manifest to verify.
 			for _, g := range hcpo.variablesManifest.Groups {
-				if g.GroupID == requestedGroupID {
+				if g.Name == requestedGroupName {
 					expectedValues := MergeGroupWithDefaults(hcpo.variablesManifest, g.Values)
 					// Compare values to ensure they match
 					valuesMatch := true
@@ -575,9 +575,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 						}
 					}
 					if !valuesMatch {
-						hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Variable values don't match merged values for group %s! Expected: %v, Got: %v", requestedGroupID, expectedValues, variableValues), nil)
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ [VARIABLE LOADING] Variable values don't match merged values for group %s! Expected: %v, Got: %v", requestedGroupName, expectedValues, variableValues), nil)
 					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Verified variable values match merged values for group %s", requestedGroupID))
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ [VARIABLE LOADING] Verified variable values match merged values for group %s", requestedGroupName))
 					}
 					break
 				}
@@ -627,11 +627,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// When running a subset of groups, keep iteration-0 in place so other groups' output is preserved.
 	// Batch execution handles per-group cleanup independently.
 	execOpts := hcpo.executionOptions
-	isPartialGroupRun := execOpts != nil && len(execOpts.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil && len(execOpts.EnabledGroupIDs) < len(hcpo.variablesManifest.GetEnabledGroups())
+	isPartialGroupRun := execOpts != nil && len(execOpts.EnabledGroupNames) > 0 && hcpo.variablesManifest != nil && len(execOpts.EnabledGroupNames) < len(hcpo.variablesManifest.GetEnabledGroups())
 	var selectedRunFolder string
 	if isPartialGroupRun {
 		// Partial group run — reuse iteration-0 without backup
-		hcpo.GetLogger().Info(fmt.Sprintf("📦 Partial group run (%d of %d groups) — reusing iteration-0 without backup", len(execOpts.EnabledGroupIDs), len(hcpo.variablesManifest.GetEnabledGroups())))
+		hcpo.GetLogger().Info(fmt.Sprintf("📦 Partial group run (%d of %d groups) — reusing iteration-0 without backup", len(execOpts.EnabledGroupNames), len(hcpo.variablesManifest.GetEnabledGroups())))
 		selectedRunFolder = "iteration-0"
 		// Ensure iteration-0 structure exists (no-op if already there)
 		iteration0Path := fmt.Sprintf("%s/runs/iteration-0", hcpo.GetWorkspacePath())
@@ -971,7 +971,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	execCtx := hcpo.buildExecutionContext()
 
 	// Always use batch execution mode (even for single group) to ensure:
-	// - Proper session ID management with actual groupID (not "default-group")
+	// - Proper session ID management with actual group name (not "default-group")
 	// - Consistent folder structure (runs/iteration-X/group-Y/)
 	// - Better isolation and cleanup per group
 	enabledGroups := hcpo.getEnabledGroupsForExecution()
@@ -984,18 +984,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		return "", fmt.Errorf("no enabled variable groups found for execution")
 	}
 
-	// Validate that all groups have valid GroupIDs
+	// Validate that all groups have valid Names
 	for i, group := range enabledGroups {
-		if group.GroupID == "" {
-			// PANIC for debugging: groupID is required for session ID and folder structure
-			panic(fmt.Sprintf("CRITICAL: Group at index %d has empty GroupID - all groups must have valid GroupIDs for batch execution. Group values: %v", i, group.Values))
+		if group.Name == "" {
+			// PANIC for debugging: name is required for session ID and folder structure
+			panic(fmt.Sprintf("CRITICAL: Group at index %d has empty Name - all groups must have valid names for batch execution. Group values: %v", i, group.Values))
 		}
 	}
 
 	if len(enabledGroups) > 1 {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Multiple variable groups detected (%d groups), using batch execution mode", len(enabledGroups)))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Single variable group detected (%s), using batch execution mode for consistent session ID and folder structure", enabledGroups[0].GroupID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Single variable group detected (%s), using batch execution mode for consistent session ID and folder structure", enabledGroups[0].Name))
 	}
 
 	batchResult, err := hcpo.runBatchExecution(ctx, breakdownSteps, 1, execCtx)
@@ -1008,7 +1008,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Human-controlled todo planning completed with failures in %v", duration))
 		errMsg := batchResult.Error
 		if errMsg == "" {
-			errMsg = fmt.Sprintf("failed group(s): %v", batchResult.FailedGroupIDs)
+			errMsg = fmt.Sprintf("failed group(s): %v", batchResult.FailedGroupNames)
 		}
 		return "", fmt.Errorf("%s", errMsg)
 	}

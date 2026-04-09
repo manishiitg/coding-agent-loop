@@ -129,7 +129,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
     // Scan events to find batch context, current step, and step statuses
     let latestBatchContext: {
-      groupId: string
+      groupName: string
       groupIndex: number
       totalGroups: number
       runFolder: string
@@ -147,15 +147,15 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
         // Try event.data.data first (standard format), then event.data (direct format)
         const eventData = event.data as Record<string, unknown>
         const data = (eventData?.data as Record<string, unknown>) || eventData
-        const groupId = data?.group_id as string
+        const groupName = data?.group_name as string
         const groupIndex = data?.group_index as number
         const totalGroups = data?.total_groups as number
         const runFolder = data?.run_folder as string
         const stepId = data?.current_step_id as string
         const status = data?.status as string
 
-        if (groupId && totalGroups > 0) {
-          latestBatchContext = { groupId, groupIndex, totalGroups, runFolder }
+        if (groupName && totalGroups > 0) {
+          latestBatchContext = { groupName, groupIndex, totalGroups, runFolder }
         }
 
         // Track step status
@@ -194,13 +194,13 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
       if (event.type === 'batch_group_start') {
         const eventData = event.data as Record<string, unknown>
         const data = (eventData?.data as Record<string, unknown>) || eventData
-        const groupId = data?.group_id as string
+        const groupName = data?.group_name as string
         const groupIndex = data?.group_index as number
         const totalGroups = data?.total_groups as number
         const runFolder = data?.run_folder as string
 
-        if (groupId && totalGroups > 0) {
-          latestBatchContext = { groupId, groupIndex, totalGroups, runFolder }
+        if (groupName && totalGroups > 0) {
+          latestBatchContext = { groupName, groupIndex, totalGroups, runFolder }
         }
       }
 
@@ -236,7 +236,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
       // Only restore if batch is still active (has remaining groups)
       if (remaining > 0) {
         workflowStore.handleBatchGroupStart(
-          latestBatchContext.groupId,
+          latestBatchContext.groupName,
           latestBatchContext.runFolder || '',
           undefined,
           latestBatchContext.groupIndex,
@@ -260,7 +260,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
         logger.debug('WorkflowLayout', 'Restored batch progress from events:', {
           sessionId,
-          groupId: latestBatchContext.groupId,
+          groupName: latestBatchContext.groupName,
           groupIndex: latestBatchContext.groupIndex,
           totalGroups: latestBatchContext.totalGroups,
           completedCount,
@@ -454,13 +454,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // If we have selected groups, expand all of them
         if (selectedGroupIds && selectedGroupIds.length > 0 && variablesManifest?.groups) {
           selectedGroupIds.forEach(groupId => {
-            // Find the group to get its display name
-            const group = variablesManifest.groups?.find(g => g.group_id === groupId)
+            // Find the group to get its name
+            const group = variablesManifest.groups?.find(g => g.name === groupId)
 
-            // Use sanitized display_name if available, otherwise use group_id
-            // Sanitization ensures consistent folder naming with backend
-            const folderName = group?.display_name
-              ? sanitizeDisplayNameForFolder(group.display_name)
+            // Use sanitized name for folder naming
+            const folderName = group?.name
+              ? sanitizeDisplayNameForFolder(group.name)
               : groupId
 
             // Build the full group path

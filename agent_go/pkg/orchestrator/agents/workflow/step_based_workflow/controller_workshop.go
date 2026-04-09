@@ -56,18 +56,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 }
 
 // WorkshopExecuteOptions holds per-call overrides for ExecuteStepForWorkshop.
-// When GroupID is set, the controller resolves the run folder and variable values
+// When GroupName is set, the controller resolves the run folder and variable values
 // for that group, making each execute_step call self-contained.
 type WorkshopExecuteOptions struct {
-	GroupID          string // e.g., "group-1" — overrides session-level group
-	GroupDisplayName string // e.g., "Production" — human-friendly label for UI/event display
-	Iteration        string // e.g., "iteration-3" — combined with group folder name to form RunFolder
-	RunFolder        string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
-	SkipLearning     bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
-	SavedScriptOnly  bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
-	Instructions     string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
-	HumanInput       string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
-	Tier             int    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
+	GroupID   string // Deprecated: use GroupName instead. Kept for backward compat; mapped to GroupName internally.
+	GroupName string // e.g., "production" — overrides session-level group
+	Iteration string // e.g., "iteration-3" — combined with group folder name to form RunFolder
+	RunFolder string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
+	SkipLearning    bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
+	SavedScriptOnly bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
+	Instructions    string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
+	HumanInput      string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
+	Tier            int    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
 }
 
 // cleanupWorkshopExecutionPath removes a specific workshop execution folder and archives
@@ -109,7 +109,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupWorkshopExecutionPath(ctx cont
 // It reuses the standard execution pipeline (PrepareExecution → ApplyCleanup → runExecutionPhase)
 // so that step execution behaves identically to the normal "run single step" UI action.
 //
-// If opts is non-nil and opts.GroupID is set, the controller resolves the run folder and
+// If opts is non-nil and opts.GroupName is set, the controller resolves the run folder and
 // variable values for that group before execution. This allows each execute_step call to
 // target a different group without changing session state.
 func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
@@ -119,9 +119,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 ) (string, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] ExecuteStepForWorkshop: stepID=%s, runFolder=%s, codeExec=%v",
 		stepID, hcpo.selectedRunFolder, hcpo.GetUseCodeExecutionMode()))
-	// 1. Apply per-call overrides (group_id, run_folder, human_input)
+	// 1. Apply per-call overrides (group name, run_folder, human_input)
 	if opts != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s, humanInput=%d chars, savedScriptOnly=%v", opts.GroupID, opts.RunFolder, len(opts.HumanInput), opts.SavedScriptOnly))
+		// Backward compat: map deprecated GroupID to GroupName
+		if opts.GroupName == "" && opts.GroupID != "" {
+			opts.GroupName = opts.GroupID
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupName=%s, runFolder=%s, humanInput=%d chars, savedScriptOnly=%v", opts.GroupName, opts.RunFolder, len(opts.HumanInput), opts.SavedScriptOnly))
 		if err := hcpo.applyWorkshopExecuteOptions(ctx, opts); err != nil {
 			return "", fmt.Errorf("failed to apply execute options: %w", err)
 		}
@@ -129,11 +133,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		hcpo.interactiveWorkflowHumanInput = opts.HumanInput
 	}
 	if hcpo.selectedRunFolder == "" {
-		return "", fmt.Errorf("no run folder selected; cannot execute step %q — pass group_id or run_folder in execute_step, or select a group first", stepID)
+		return "", fmt.Errorf("no run folder selected; cannot execute step %q — pass group_name or run_folder in execute_step, or select a group first", stepID)
 	}
 
 	// 1b. Ensure variable values are loaded (same as normal workflow's Execute method).
-	// If group_id was passed, applyWorkshopExecuteOptions already loaded group values.
+	// If group_name was passed, applyWorkshopExecuteOptions already loaded group values.
 	// Otherwise, fall back to LoadVariableValues (reads from variables.json).
 	if hcpo.variableValues == nil {
 		if hcpo.variablesManifest != nil && len(hcpo.variablesManifest.Groups) == 1 {
@@ -142,7 +146,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 			merged := MergeGroupWithDefaults(hcpo.variablesManifest, g.Values)
 			hcpo.variableValues = merged
 			SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, merged)
-			hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Auto-loaded variable values from single group %q (%d vars, %d after merge with defaults)", g.GroupID, len(g.Values), len(merged)))
+			hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Auto-loaded variable values from single group %q (%d vars, %d after merge with defaults)", g.Name, len(g.Values), len(merged)))
 		} else {
 			vals, loadErr := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 			if loadErr != nil {
@@ -351,12 +355,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 }
 
 // applyWorkshopExecuteOptions applies per-call group/run_folder overrides.
-// If GroupID is set, it resolves the run folder from the group and loads
+// If GroupName is set, it resolves the run folder from the group and loads
 // the group's variable values. If only RunFolder is set, it uses that directly.
 func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx context.Context, opts *WorkshopExecuteOptions) error {
-	if opts.GroupID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] applyWorkshopExecuteOptions: groupID=%s, manifestLoaded=%v", opts.GroupID, hcpo.variablesManifest != nil))
-		resolvedGroupID := opts.GroupID
+	// Backward compat: map deprecated GroupID to GroupName
+	if opts.GroupName == "" && opts.GroupID != "" {
+		opts.GroupName = opts.GroupID
+	}
+	if opts.GroupName != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] applyWorkshopExecuteOptions: groupName=%s, manifestLoaded=%v", opts.GroupName, hcpo.variablesManifest != nil))
+		resolvedGroupName := opts.GroupName
 
 		// Reload manifest from disk if not loaded (can happen on cached sessions)
 		if hcpo.variablesManifest == nil {
@@ -371,19 +379,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 		}
 
 		// Resolve variable values for this group.
-		// Try direct group ID match first, then fall back to matching by sanitized display name
-		// (agents often pass the folder name which is derived from the display name).
+		// Try direct group name match first, then fall back to matching by sanitized name
+		// (agents often pass the folder name which is derived from the group name).
 		if hcpo.variablesManifest != nil {
-			groupValues := hcpo.variablesManifest.GetVariableValues(opts.GroupID)
+			groupValues := hcpo.variablesManifest.GetVariableValues(opts.GroupName)
 			if groupValues == nil {
-				// Try matching by sanitized display name
+				// Try matching by sanitized name (folder name derivation)
 				for _, g := range hcpo.variablesManifest.Groups {
-					if g.DisplayName != "" {
-						sanitized := hcpo.sanitizeDisplayNameForFolder(g.DisplayName)
-						if sanitized == opts.GroupID {
+					if g.Name != "" {
+						sanitized := hcpo.sanitizeDisplayNameForFolder(g.Name)
+						if sanitized == opts.GroupName {
 							groupValues = g.Values
-							resolvedGroupID = g.GroupID
-							hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Resolved group %q by display name to group ID %q", opts.GroupID, resolvedGroupID))
+							resolvedGroupName = g.Name
+							hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Resolved group %q by sanitized name to %q", opts.GroupName, resolvedGroupName))
 							break
 						}
 					}
@@ -393,34 +401,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 				merged := MergeGroupWithDefaults(hcpo.variablesManifest, groupValues)
 				hcpo.variableValues = merged
 				SyncVariablesToWorkspaceEnv(hcpo.BaseOrchestrator, merged)
-				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s (resolved=%s, %d after merge with defaults): %v", len(groupValues), opts.GroupID, resolvedGroupID, len(merged), merged))
+				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s (resolved=%s, %d after merge with defaults): %v", len(groupValues), opts.GroupName, resolvedGroupName, len(merged), merged))
 			} else {
-				// Group not found — return a clear error so the agent asks the user for the correct group_id.
+				// Group not found — return a clear error so the agent asks the user for the correct group name.
 				var groupDescs []string
 				for _, g := range hcpo.variablesManifest.Groups {
-					if g.DisplayName != "" {
-						groupDescs = append(groupDescs, fmt.Sprintf("%s (%s)", g.GroupID, g.DisplayName))
-					} else {
-						groupDescs = append(groupDescs, g.GroupID)
-					}
+					groupDescs = append(groupDescs, g.Name)
 				}
-				return fmt.Errorf("group_id %q not found. Available groups: %s — ask the user which group to use", opts.GroupID, strings.Join(groupDescs, ", "))
+				return fmt.Errorf("group %q not found. Available groups: %s — ask the user which group to use", opts.GroupName, strings.Join(groupDescs, ", "))
 			}
 		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Cannot resolve group %q — variables manifest is nil even after reload attempt", opts.GroupID))
+			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Cannot resolve group %q — variables manifest is nil even after reload attempt", opts.GroupName))
 		}
 
-		if err := hcpo.switchWorkshopGroupSession(resolvedGroupID); err != nil {
-			return fmt.Errorf("failed to switch workshop MCP session for group %q: %w", resolvedGroupID, err)
+		if err := hcpo.switchWorkshopGroupSession(resolvedGroupName); err != nil {
+			return fmt.Errorf("failed to switch workshop MCP session for group %q: %w", resolvedGroupName, err)
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Active MCP session for group %s: %s", resolvedGroupID, hcpo.GetMCPSessionID()))
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Active MCP session for group %s: %s", resolvedGroupName, hcpo.GetMCPSessionID()))
 
 		// Resolve run folder if not explicitly provided
 		if opts.RunFolder == "" {
 			// Build run folder from group: use latest iteration + group folder name
-			runFolder, err := hcpo.resolveGroupRunFolder(ctx, opts.GroupID)
+			runFolder, err := hcpo.resolveGroupRunFolder(ctx, opts.GroupName)
 			if err != nil {
-				return fmt.Errorf("failed to resolve run folder for group %q: %w", opts.GroupID, err)
+				return fmt.Errorf("failed to resolve run folder for group %q: %w", opts.GroupName, err)
 			}
 			opts.RunFolder = runFolder
 		}
@@ -434,23 +438,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 	return nil
 }
 
-// resolveGroupRunFolder finds the run folder for a given group ID.
+// resolveGroupRunFolder finds the run folder for a given group name.
 // It looks for existing iteration folders that contain a subfolder matching the group.
-// Falls back to creating a path using the latest iteration + group display name or ID.
-func (hcpo *StepBasedWorkflowOrchestrator) resolveGroupRunFolder(ctx context.Context, groupID string) (string, error) {
+// Falls back to creating a path using the latest iteration + sanitized group name.
+func (hcpo *StepBasedWorkflowOrchestrator) resolveGroupRunFolder(ctx context.Context, groupName string) (string, error) {
 	workspacePath := hcpo.GetWorkspacePath()
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 
-	// Find the group's display name for folder resolution
-	groupFolderName := groupID
+	// Derive folder name from group name
+	groupFolderName := groupName
 	if hcpo.variablesManifest != nil {
 		for _, g := range hcpo.variablesManifest.Groups {
-			if g.GroupID == groupID {
-				if g.DisplayName != "" {
-					sanitized := hcpo.sanitizeDisplayNameForFolder(g.DisplayName)
-					if sanitized != "" {
-						groupFolderName = sanitized
-					}
+			if g.Name == groupName {
+				sanitized := hcpo.sanitizeDisplayNameForFolder(g.Name)
+				if sanitized != "" {
+					groupFolderName = sanitized
 				}
 				break
 			}

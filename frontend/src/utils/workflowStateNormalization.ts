@@ -1,36 +1,35 @@
 /**
  * Workflow State Normalization Utilities
- * 
+ *
  * Single source of truth for converting between different representations:
- * - UI Display: folder names, display names
- * - Canonical State: group_ids, step numbers
- * - API Format: group_ids, step numbers, folder paths
- * 
+ * - UI Display: folder names, group names
+ * - Canonical State: group names, step numbers
+ * - API Format: group names, step numbers, folder paths
+ *
  * All normalization happens here to ensure consistency.
  */
 
 import type { VariablesManifest } from '../services/api-types'
 
 /**
- * Sanitizes a display name for folder matching
+ * Sanitizes a name for folder matching
  */
 function sanitizeForMatch(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
 }
 
 /**
- * Normalizes group IDs from any format to canonical group_ids
- * 
+ * Normalizes group names from any format to canonical names
+ *
  * Input can be:
- * - group_ids (e.g., "group-1") ✅ Already canonical
- * - folder names (e.g., "manishiithuf") → needs lookup
- * - display names (e.g., "Manishi Ithuf") → needs lookup
- * 
- * @param input - Array of group IDs, folder names, or display names
- * @param manifest - Variables manifest to resolve folder/display names to group_ids
- * @returns Array of valid group_ids from manifest (filtered and normalized)
+ * - exact group names (e.g., "Production") -- already canonical
+ * - folder names (e.g., "production") -- needs lookup by sanitized match
+ *
+ * @param input - Array of group names or folder names
+ * @param manifest - Variables manifest to resolve folder names to group names
+ * @returns Array of valid group names from manifest (filtered and normalized)
  */
-export function normalizeGroupIds(
+export function normalizeGroupNames(
   input: string[],
   manifest: VariablesManifest | null
 ): string[] {
@@ -39,8 +38,7 @@ export function normalizeGroupIds(
   }
 
   if (!manifest?.groups || manifest.groups.length === 0) {
-    // No manifest - can't normalize, return empty (invalid state)
-    console.warn('[normalizeGroupIds] No manifest available, cannot normalize group IDs')
+    console.warn('[normalizeGroupNames] No manifest available, cannot normalize group names')
     return []
   }
 
@@ -48,34 +46,31 @@ export function normalizeGroupIds(
   const seen = new Set<string>()
 
   for (const item of input) {
-    // Skip if already processed (deduplication)
     if (seen.has(item)) continue
 
-    let matchedGroupId: string | null = null
+    let matchedName: string | null = null
 
-    // Strategy 1: Check if it's already a valid group_id
-    const exactMatch = manifest.groups.find(g => g.group_id === item)
+    // Strategy 1: Check if it's already an exact group name
+    const exactMatch = manifest.groups.find(g => g.name === item)
     if (exactMatch) {
-      matchedGroupId = exactMatch.group_id
+      matchedName = exactMatch.name
     } else {
-      // Strategy 2: Try to match by sanitized display_name (might be a folder name)
-      const displayNameMatch = manifest.groups.find(g => {
-        if (!g.display_name) return false
-        const sanitizedDisplayName = sanitizeForMatch(g.display_name)
+      // Strategy 2: Try to match by sanitized name (might be a folder name)
+      const sanitizedMatch = manifest.groups.find(g => {
+        const sanitizedName = sanitizeForMatch(g.name)
         const itemSanitized = sanitizeForMatch(item)
-        return sanitizedDisplayName === itemSanitized
+        return sanitizedName === itemSanitized
       })
-      if (displayNameMatch) {
-        matchedGroupId = displayNameMatch.group_id
+      if (sanitizedMatch) {
+        matchedName = sanitizedMatch.name
       }
     }
 
-    // Only add if we found a valid match
-    if (matchedGroupId) {
-      normalized.push(matchedGroupId)
-      seen.add(matchedGroupId) // Deduplicate by group_id
+    if (matchedName) {
+      normalized.push(matchedName)
+      seen.add(matchedName)
     } else {
-      console.warn('[normalizeGroupIds] Could not normalize group ID:', item)
+      console.warn('[normalizeGroupNames] Could not normalize group name:', item)
     }
   }
 
@@ -83,41 +78,40 @@ export function normalizeGroupIds(
 }
 
 /**
- * Validates that group IDs exist in manifest and are enabled
- * 
- * @param groupIds - Array of group_ids to validate
+ * Validates that group names exist in manifest and are enabled
+ *
+ * @param groupNames - Array of group names to validate
  * @param manifest - Variables manifest
- * @returns Array of valid, enabled group_ids
+ * @returns Array of valid, enabled group names
  */
-export function validateGroupIds(
-  groupIds: string[],
+export function validateGroupNames(
+  groupNames: string[],
   manifest: VariablesManifest | null
 ): string[] {
-  if (!manifest?.groups || groupIds.length === 0) {
+  if (!manifest?.groups || groupNames.length === 0) {
     return []
   }
 
-  return groupIds.filter(groupId => {
-    const group = manifest.groups!.find(g => g.group_id === groupId)
+  return groupNames.filter(name => {
+    const group = manifest.groups!.find(g => g.name === name)
     return group && group.enabled
   })
 }
 
 /**
- * Gets display information for a group ID
- * 
- * @param groupId - Canonical group_id
+ * Gets information for a group by name
+ *
+ * @param groupName - Group name
  * @param manifest - Variables manifest
  * @param iterationFolder - Optional iteration folder for building folder path
- * @returns Display information or null if group not found
+ * @returns Group information or null if group not found
  */
-export function getGroupDisplayInfo(
-  groupId: string,
+export function getGroupInfo(
+  groupName: string,
   manifest: VariablesManifest | null,
   iterationFolder?: string | null
 ): {
-  groupId: string
-  displayName: string
+  name: string
   folderName: string
   folderPath: string | null
 } | null {
@@ -125,22 +119,19 @@ export function getGroupDisplayInfo(
     return null
   }
 
-  const group = manifest.groups.find(g => g.group_id === groupId)
+  const group = manifest.groups.find(g => g.name === groupName)
   if (!group) {
     return null
   }
 
-  // Determine folder name (sanitized display_name or group_id)
-  const folderName = group.display_name
-    ? sanitizeForMatch(group.display_name) || group.group_id
-    : group.group_id
+  // Folder name is the sanitized group name
+  const folderName = sanitizeForMatch(group.name) || group.name
 
   // Build folder path if iteration is provided
   const folderPath = iterationFolder ? `${iterationFolder}/${folderName}` : null
 
   return {
-    groupId: group.group_id,
-    displayName: group.display_name || group.group_id,
+    name: group.name,
     folderName,
     folderPath
   }
@@ -197,17 +188,13 @@ export function normalizeRunFolder(
       // Check if group folder name matches any group in manifest
       if (manifest?.groups) {
         const groupExists = manifest.groups.some(g => {
-          // Match by group_id
-          if (g.group_id === groupFolderName) return true
-          
-          // Match by sanitized display_name
-          if (g.display_name) {
-            const sanitizedDisplayName = sanitizeForMatch(g.display_name)
-            const folderNameSanitized = sanitizeForMatch(groupFolderName)
-            return sanitizedDisplayName === folderNameSanitized
-          }
-          
-          return false
+          // Match by exact name
+          if (g.name === groupFolderName) return true
+
+          // Match by sanitized name
+          const sanitizedName = sanitizeForMatch(g.name)
+          const folderNameSanitized = sanitizeForMatch(groupFolderName)
+          return sanitizedName === folderNameSanitized
         })
         
         if (!groupExists) {
@@ -223,10 +210,9 @@ export function normalizeRunFolder(
 }
 
 /**
- * Type guard to check if a value is a valid group_id format
+ * Type guard to check if a value is a valid group name format
  */
-export function isValidGroupIdFormat(value: string): boolean {
-  // Group IDs typically start with "group-" followed by a number
-  // But we allow any string as long as it's not empty
+export function isValidGroupNameFormat(value: string): boolean {
+  // Any non-empty string is a valid group name
   return typeof value === 'string' && value.length > 0
 }

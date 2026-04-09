@@ -375,11 +375,11 @@ func (e *TempLLMSkippedEvent) GetEventType() events.EventType {
 // BatchExecutionStartEvent represents the start of batch execution across multiple variable groups
 type BatchExecutionStartEvent struct {
 	events.BaseEventData
-	TotalGroups      int                    `json:"total_groups"`      // Total number of enabled groups
-	EnabledGroupIDs  []string               `json:"enabled_group_ids"` // List of group IDs to execute
-	IterationNumber  int                    `json:"iteration_number"`  // Current iteration number
-	WorkspacePath    string                 `json:"workspace_path"`
-	ExecutionOptions map[string]interface{} `json:"execution_options,omitempty"` // Execution options (run_mode, execution_strategy, etc.)
+	TotalGroups       int                    `json:"total_groups"`        // Total number of enabled groups
+	EnabledGroupNames []string               `json:"enabled_group_names"` // List of group names to execute
+	IterationNumber   int                    `json:"iteration_number"`    // Current iteration number
+	WorkspacePath     string                 `json:"workspace_path"`
+	ExecutionOptions  map[string]interface{} `json:"execution_options,omitempty"` // Execution options (run_mode, execution_strategy, etc.)
 }
 
 func (e *BatchExecutionStartEvent) GetEventType() events.EventType {
@@ -387,23 +387,23 @@ func (e *BatchExecutionStartEvent) GetEventType() events.EventType {
 }
 
 // NewBatchExecutionStartEvent creates a new BatchExecutionStartEvent
-func NewBatchExecutionStartEvent(totalGroups int, enabledGroupIDs []string, iterationNumber int, workspacePath string, executionOptions map[string]interface{}) *BatchExecutionStartEvent {
+func NewBatchExecutionStartEvent(totalGroups int, enabledGroupNames []string, iterationNumber int, workspacePath string, executionOptions map[string]interface{}) *BatchExecutionStartEvent {
 	return &BatchExecutionStartEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		TotalGroups:      totalGroups,
-		EnabledGroupIDs:  enabledGroupIDs,
-		IterationNumber:  iterationNumber,
-		WorkspacePath:    workspacePath,
-		ExecutionOptions: executionOptions,
+		TotalGroups:       totalGroups,
+		EnabledGroupNames: enabledGroupNames,
+		IterationNumber:   iterationNumber,
+		WorkspacePath:     workspacePath,
+		ExecutionOptions:  executionOptions,
 	}
 }
 
 // BatchGroupStartEvent represents the start of execution for a specific variable group
 type BatchGroupStartEvent struct {
 	events.BaseEventData
-	GroupID         string            `json:"group_id"`         // Current group ID
+	GroupName       string            `json:"group_name"`       // Current group name
 	GroupIndex      int               `json:"group_index"`      // 0-based index in enabled groups
 	TotalGroups     int               `json:"total_groups"`     // Total number of enabled groups
 	VariableValues  map[string]string `json:"variable_values"`  // Values for this group
@@ -417,12 +417,12 @@ func (e *BatchGroupStartEvent) GetEventType() events.EventType {
 }
 
 // NewBatchGroupStartEvent creates a new BatchGroupStartEvent
-func NewBatchGroupStartEvent(groupID string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iterationNumber int, workspacePath string) *BatchGroupStartEvent {
+func NewBatchGroupStartEvent(groupName string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iterationNumber int, workspacePath string) *BatchGroupStartEvent {
 	return &BatchGroupStartEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		GroupID:         groupID,
+		GroupName:       groupName,
 		GroupIndex:      groupIndex,
 		TotalGroups:     totalGroups,
 		VariableValues:  variableValues,
@@ -435,7 +435,7 @@ func NewBatchGroupStartEvent(groupID string, groupIndex, totalGroups int, variab
 // BatchGroupEndEvent represents the completion of execution for a specific variable group
 type BatchGroupEndEvent struct {
 	events.BaseEventData
-	GroupID         string        `json:"group_id"`         // Current group ID
+	GroupName       string        `json:"group_name"`       // Current group name
 	GroupIndex      int           `json:"group_index"`      // 0-based index in enabled groups
 	TotalGroups     int           `json:"total_groups"`     // Total number of enabled groups
 	Success         bool          `json:"success"`          // Whether this group completed successfully
@@ -452,12 +452,12 @@ func (e *BatchGroupEndEvent) GetEventType() events.EventType {
 }
 
 // NewBatchGroupEndEvent creates a new BatchGroupEndEvent
-func NewBatchGroupEndEvent(groupID string, groupIndex, totalGroups int, success bool, errorMsg string, duration time.Duration, completedSteps, totalSteps int, runFolder string, remainingGroups int) *BatchGroupEndEvent {
+func NewBatchGroupEndEvent(groupName string, groupIndex, totalGroups int, success bool, errorMsg string, duration time.Duration, completedSteps, totalSteps int, runFolder string, remainingGroups int) *BatchGroupEndEvent {
 	return &BatchGroupEndEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		GroupID:         groupID,
+		GroupName:       groupName,
 		GroupIndex:      groupIndex,
 		TotalGroups:     totalGroups,
 		Success:         success,
@@ -473,16 +473,16 @@ func NewBatchGroupEndEvent(groupID string, groupIndex, totalGroups int, success 
 // BatchExecutionEndEvent represents the completion of all batch execution
 type BatchExecutionEndEvent struct {
 	events.BaseEventData
-	TotalGroups       int           `json:"total_groups"`        // Total number of enabled groups
-	CompletedGroups   int           `json:"completed_groups"`    // Number of groups that completed
-	FailedGroups      int           `json:"failed_groups"`       // Number of groups that failed
-	CanceledGroups    int           `json:"canceled_groups"`     // Number of groups that were canceled
-	Duration          time.Duration `json:"duration"`            // Total batch execution time
-	Success           bool          `json:"success"`             // Whether all groups succeeded
-	Error             string        `json:"error,omitempty"`     // Error message if batch failed
-	IterationNumber   int           `json:"iteration_number"`    // Current iteration number
-	CompletedGroupIDs []string      `json:"completed_group_ids"` // IDs of completed groups
-	FailedGroupIDs    []string      `json:"failed_group_ids"`    // IDs of failed groups
+	TotalGroups         int           `json:"total_groups"`          // Total number of enabled groups
+	CompletedGroups     int           `json:"completed_groups"`      // Number of groups that completed
+	FailedGroups        int           `json:"failed_groups"`         // Number of groups that failed
+	CanceledGroups      int           `json:"canceled_groups"`       // Number of groups that were canceled
+	Duration            time.Duration `json:"duration"`              // Total batch execution time
+	Success             bool          `json:"success"`               // Whether all groups succeeded
+	Error               string        `json:"error,omitempty"`       // Error message if batch failed
+	IterationNumber     int           `json:"iteration_number"`      // Current iteration number
+	CompletedGroupNames []string      `json:"completed_group_names"` // Names of completed groups
+	FailedGroupNames    []string      `json:"failed_group_names"`    // Names of failed groups
 }
 
 func (e *BatchExecutionEndEvent) GetEventType() events.EventType {
@@ -490,32 +490,32 @@ func (e *BatchExecutionEndEvent) GetEventType() events.EventType {
 }
 
 // NewBatchExecutionEndEvent creates a new BatchExecutionEndEvent
-func NewBatchExecutionEndEvent(totalGroups, completedGroups, failedGroups, canceledGroups int, duration time.Duration, success bool, errorMsg string, iterationNumber int, completedGroupIDs, failedGroupIDs []string) *BatchExecutionEndEvent {
+func NewBatchExecutionEndEvent(totalGroups, completedGroups, failedGroups, canceledGroups int, duration time.Duration, success bool, errorMsg string, iterationNumber int, completedGroupNames, failedGroupNames []string) *BatchExecutionEndEvent {
 	return &BatchExecutionEndEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		TotalGroups:       totalGroups,
-		CompletedGroups:   completedGroups,
-		FailedGroups:      failedGroups,
-		CanceledGroups:    canceledGroups,
-		Duration:          duration,
-		Success:           success,
-		Error:             errorMsg,
-		IterationNumber:   iterationNumber,
-		CompletedGroupIDs: completedGroupIDs,
-		FailedGroupIDs:    failedGroupIDs,
+		TotalGroups:         totalGroups,
+		CompletedGroups:     completedGroups,
+		FailedGroups:        failedGroups,
+		CanceledGroups:      canceledGroups,
+		Duration:            duration,
+		Success:             success,
+		Error:               errorMsg,
+		IterationNumber:     iterationNumber,
+		CompletedGroupNames: completedGroupNames,
+		FailedGroupNames:    failedGroupNames,
 	}
 }
 
 // BatchExecutionCanceledEvent represents when batch execution is canceled by user
 type BatchExecutionCanceledEvent struct {
 	events.BaseEventData
-	TotalGroups       int      `json:"total_groups"`        // Total number of enabled groups
-	CompletedGroups   int      `json:"completed_groups"`    // Number of groups that completed before cancel
-	CanceledGroupID   string   `json:"canceled_group_id"`   // ID of group that was running when canceled
-	RemainingGroupIDs []string `json:"remaining_group_ids"` // IDs of groups that were not executed
-	Reason            string   `json:"reason"`              // Reason for cancellation
+	TotalGroups         int      `json:"total_groups"`          // Total number of enabled groups
+	CompletedGroups     int      `json:"completed_groups"`      // Number of groups that completed before cancel
+	CanceledGroupName   string   `json:"canceled_group_name"`   // Name of group that was running when canceled
+	RemainingGroupNames []string `json:"remaining_group_names"` // Names of groups that were not executed
+	Reason              string   `json:"reason"`                // Reason for cancellation
 }
 
 func (e *BatchExecutionCanceledEvent) GetEventType() events.EventType {
@@ -523,16 +523,16 @@ func (e *BatchExecutionCanceledEvent) GetEventType() events.EventType {
 }
 
 // NewBatchExecutionCanceledEvent creates a new BatchExecutionCanceledEvent
-func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGroupID string, remainingGroupIDs []string, reason string) *BatchExecutionCanceledEvent {
+func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGroupName string, remainingGroupNames []string, reason string) *BatchExecutionCanceledEvent {
 	return &BatchExecutionCanceledEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		TotalGroups:       totalGroups,
-		CompletedGroups:   completedGroups,
-		CanceledGroupID:   canceledGroupID,
-		RemainingGroupIDs: remainingGroupIDs,
-		Reason:            reason,
+		TotalGroups:         totalGroups,
+		CompletedGroups:     completedGroups,
+		CanceledGroupName:   canceledGroupName,
+		RemainingGroupNames: remainingGroupNames,
+		Reason:              reason,
 	}
 }
 

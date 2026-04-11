@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -28,7 +27,6 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -41,6 +39,7 @@ var knownWorkspaceToolNames = map[string]bool{
 	"diff_patch_workspace_file": true,
 	"read_image":                true,
 	"read_pdf":                  true,
+	"generate_text_llm":         true,
 	"human_feedback":            true,
 	"agent_browser":             true,
 	"search_tools":              true,
@@ -776,6 +775,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"delete_workspace_file", "move_workspace_file",
 		// Workspace advanced tools
 		"execute_shell_command", "diff_patch_workspace_file",
+		"read_image", "read_pdf", "generate_text_llm",
 		// Human tools
 		"human_feedback",
 		// Browser (if registered)
@@ -1838,7 +1838,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — System prompt and user message for a step
-- **get_workflow_config** — Use this (not `+"`cat workflow.json`"+`) when you need to discover **all available** MCP servers (with descriptions), all installed skills, or all available secrets — not just the ones currently selected. `+"`workflow.json`"+` only shows what's already selected; `+"`get_workflow_config`"+` shows the full picture of what can be added.
+- **get_workflow_config** — Use this (not `+"`cat workflow.json`"+`) to inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. For the global installed skill catalog, use `+"`list_skills`"+`.
 - **get_llm_config** — Per-step LLM overrides
 
 {{if eq .WorkshopMode "builder"}}
@@ -1855,7 +1855,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 ### Variables & Config
 - **update_variable(action, name?, value?, description?)** — Add, update, or delete a variable
 - **add_group / update_group / delete_group** — Manage variable groups
-- **MCP Servers workflow**: (1) `+"`get_workflow_config`"+` to see all available servers + which are selected, (2) `+"`update_workflow_config(add_servers=[\"server-name\"])`"+` to add to workflow — **do NOT edit workflow.json manually**, (3) `+"`update_step_config(step_id, servers=[\"server-name\"])`"+` to scope specific servers to a step
+- **MCP Servers workflow**: (1) `+"`get_workflow_config`"+` to inspect which servers are currently selected, (2) `+"`update_workflow_config(add_servers=[\"server-name\"])`"+` to add to workflow — **do NOT edit workflow.json manually**, (3) `+"`update_step_config(step_id, servers=[\"server-name\"])`"+` to scope specific servers to a step
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow MCP servers, skills, or secrets
 
 ### Schedule Management
@@ -1925,7 +1925,7 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"folder-name\"])`"+`
 6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes files from workspace entirely
 
-Use `+"`get_workflow_config`"+` to see selected skills and all available installed skills.
+Use `+"`get_workflow_config`"+` to see the workflow's selected skills. Use `+"`list_skills`"+` to see all installed skills.
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "debugger")}}
 ### Human-Assisted Learning
@@ -3276,12 +3276,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_pdf), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Skill folder names to enable for this step (overrides workflow-level skills). Use list_skills or get_workflow_config to see available skills. Set to empty array to use workflow defaults.",
+					"description": "Skill folder names to enable for this step (overrides workflow-level skills). Use list_skills to see installed skills and get_workflow_config to see the workflow's currently selected skills. Set to empty array to use workflow defaults.",
 				},
 				"disable_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
@@ -4349,9 +4349,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(configuredCustomTools) == 0 {
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
-						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf\n")
+						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm\n")
 						result.WriteString("   - `human_tools:*` → human_feedback\n")
-						result.WriteString("   Consider: does this step need `read_image`? `read_pdf`? `human_feedback`?\n")
+						result.WriteString("   Consider: does this step need `read_image`? `read_pdf`? `generate_text_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
 						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")
 					} else {
@@ -6441,7 +6441,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: MCP servers (selected + all available with descriptions), skills, secrets (names only, no values), and LLM config (tiered allocation with fallbacks, preset defaults).",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), and LLM config (tiered allocation with fallbacks, preset defaults).",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -6462,41 +6462,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			// Load all discoverable servers from MCP config (with descriptions)
-			configPath := ctrl.GetMCPConfigPath()
-			if configPath != "" {
-				mergedCfg, err := mcpclient.LoadMergedConfig(configPath, nil)
-				if err == nil && mergedCfg != nil {
-					allServers := mergedCfg.ListServers()
-					if len(allServers) > 0 {
-						selectedSet := make(map[string]bool, len(selected))
-						for _, s := range selected {
-							selectedSet[s] = true
-						}
-						sb.WriteString("\n### All Available MCP Servers\n")
-						for _, s := range allServers {
-							desc := ""
-							if cfg, ok := mergedCfg.MCPServers[s]; ok && cfg.Description != "" {
-								desc = " — " + cfg.Description
-							}
-							if selectedSet[s] {
-								sb.WriteString(fmt.Sprintf("- %s ✓ (selected)%s\n", s, desc))
-							} else {
-								sb.WriteString(fmt.Sprintf("- %s%s\n", s, desc))
-							}
-						}
-					}
-				} else if err != nil {
-					sb.WriteString(fmt.Sprintf("\n_Could not load available servers: %v_\n", err))
-				}
-			}
-
 			// --- Skills ---
 			selectedSkills := ctrl.GetSelectedSkills()
-			selectedSkillSet := make(map[string]bool, len(selectedSkills))
-			for _, sk := range selectedSkills {
-				selectedSkillSet[sk] = true
-			}
 
 			sb.WriteString("\n### Selected Skills\n")
 			if len(selectedSkills) == 0 {
@@ -6505,29 +6472,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				for _, sk := range selectedSkills {
 					sb.WriteString(fmt.Sprintf("- **%s** — instructions at `skills/%s/SKILL.md`\n", sk, sk))
 				}
-			}
-
-			// Discover all available skills from workspace
-			workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
-			if workspaceAPIURL == "" {
-				workspaceAPIURL = "http://localhost:8081"
-			}
-			allSkills, discoverErr := skills.DiscoverSkills(workspaceAPIURL)
-			if discoverErr == nil && len(allSkills) > 0 {
-				sb.WriteString("\n### All Available Skills\n")
-				for _, sk := range allSkills {
-					desc := sk.Frontmatter.Description
-					if desc == "" {
-						desc = sk.Frontmatter.Name
-					}
-					if selectedSkillSet[sk.FolderName] {
-						sb.WriteString(fmt.Sprintf("- %s ✓ (selected) — %s\n", sk.FolderName, desc))
-					} else {
-						sb.WriteString(fmt.Sprintf("- %s — %s\n", sk.FolderName, desc))
-					}
-				}
-			} else if discoverErr != nil {
-				sb.WriteString(fmt.Sprintf("\n_Could not discover available skills: %v_\n", discoverErr))
 			}
 
 			// --- Secrets (names only) ---
@@ -6636,7 +6580,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: update_workflow_config — add/remove MCP servers, skills, and secrets
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets. Use get_workflow_config first to see available options. Changes take effect immediately for subsequent step executions.",
+		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Changes take effect immediately for subsequent step executions.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6653,7 +6597,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"add_skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Skill folder names to add to the workflow (use get_workflow_config to see available skills)",
+					"description": "Skill folder names to add to the workflow (use list_skills to see installed skills)",
 				},
 				"remove_skills": map[string]interface{}{
 					"type":        "array",

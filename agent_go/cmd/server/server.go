@@ -831,6 +831,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
 	apiRouter.HandleFunc("/image-gen/test", api.handleTestImageGen).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
+	apiRouter.HandleFunc("/session/cancel-turn", api.handleCancelCurrentTurn).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
 
@@ -2884,59 +2885,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.ExecutionOptions.RunMode = "use_same_run"
 
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
-				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_names=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
-					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupNames, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
+				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_names=%v, save_validation_responses=%v",
+					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupNames, req.ExecutionOptions.SaveValidationResponses)
 
 				// Convert to controller ExecutionOptions and pass to workflow orchestrator
 				controllerOpts := &todo_creation_human.ExecutionOptions{
-					RunMode:                        req.ExecutionOptions.RunMode,
-					SelectedRunFolder:              req.ExecutionOptions.SelectedRunFolder,
-					ExecutionStrategy:              req.ExecutionOptions.ExecutionStrategy,
-					ResumeFromStep:                 req.ExecutionOptions.ResumeFromStep,
-					PlanChangeAction:               req.ExecutionOptions.PlanChangeAction,
-					FallbackToOriginalLLMOnFailure: req.ExecutionOptions.FallbackToOriginalLLMOnFailure,
-					SkipLearningWhenTempLLM1:       req.ExecutionOptions.SkipLearningWhenTempLLM1,
-					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
-					EnabledGroupNames:              req.ExecutionOptions.EnabledGroupNames,
-				}
-
-				// Convert TempOverrideLLM if present
-				if req.ExecutionOptions.TempOverrideLLM != nil {
-					controllerOpts.TempOverrideLLM = &todo_creation_human.AgentLLMConfig{
-						Provider: req.ExecutionOptions.TempOverrideLLM.Provider,
-						ModelID:  req.ExecutionOptions.TempOverrideLLM.ModelID,
-					}
-					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 1 included: %s/%s", controllerOpts.TempOverrideLLM.Provider, controllerOpts.TempOverrideLLM.ModelID)
-				} else {
-					// Explicitly set to nil to ensure backend clears any existing override
-					controllerOpts.TempOverrideLLM = nil
-					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 1 not provided (disabled or not set) - will clear existing override")
-				}
-
-				// Convert TempOverrideLLM2 if present
-				if req.ExecutionOptions.TempOverrideLLM2 != nil {
-					controllerOpts.TempOverrideLLM2 = &todo_creation_human.AgentLLMConfig{
-						Provider: req.ExecutionOptions.TempOverrideLLM2.Provider,
-						ModelID:  req.ExecutionOptions.TempOverrideLLM2.ModelID,
-					}
-					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 included: %s/%s", controllerOpts.TempOverrideLLM2.Provider, controllerOpts.TempOverrideLLM2.ModelID)
-				} else {
-					// Explicitly set to nil to ensure backend clears any existing override
-					controllerOpts.TempOverrideLLM2 = nil
-					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 not provided (disabled or not set) - will clear existing override")
-				}
-
-				// Convert TempLearningLLM if present
-				if req.ExecutionOptions.TempLearningLLM != nil {
-					controllerOpts.TempLearningLLM = &todo_creation_human.AgentLLMConfig{
-						Provider: req.ExecutionOptions.TempLearningLLM.Provider,
-						ModelID:  req.ExecutionOptions.TempLearningLLM.ModelID,
-					}
-					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM included: %s/%s", controllerOpts.TempLearningLLM.Provider, controllerOpts.TempLearningLLM.ModelID)
-				} else {
-					// Explicitly set to nil to ensure backend clears any existing override
-					controllerOpts.TempLearningLLM = nil
-					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM not provided - will clear existing override")
+					RunMode:           req.ExecutionOptions.RunMode,
+					SelectedRunFolder: req.ExecutionOptions.SelectedRunFolder,
+					ExecutionStrategy: req.ExecutionOptions.ExecutionStrategy,
+					ResumeFromStep:    req.ExecutionOptions.ResumeFromStep,
+					PlanChangeAction:  req.ExecutionOptions.PlanChangeAction,
+					EnabledGroupNames: req.ExecutionOptions.EnabledGroupNames,
 				}
 
 				// Set execution options on the workflow orchestrator
@@ -2965,9 +2924,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						models := &RunMetadataModels{}
 						if presetLLMConfig != nil {
 							models.AllocationMode = presetLLMConfig.LLMAllocationMode
-							if presetLLMConfig.ExecutionLLM != nil {
-								models.ExecutionLLM = &RunMetadataLLM{Provider: presetLLMConfig.ExecutionLLM.Provider, ModelID: presetLLMConfig.ExecutionLLM.ModelID}
-							}
 							if presetLLMConfig.LearningLLM != nil {
 								models.LearningLLM = &RunMetadataLLM{Provider: presetLLMConfig.LearningLLM.Provider, ModelID: presetLLMConfig.LearningLLM.ModelID}
 							}
@@ -2985,12 +2941,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									models.Tier3 = &RunMetadataLLM{Provider: presetLLMConfig.TieredConfig.Tier3.Provider, ModelID: presetLLMConfig.TieredConfig.Tier3.ModelID}
 								}
 							}
-						}
-						if req.ExecutionOptions.TempOverrideLLM != nil {
-							models.TempOverride = &RunMetadataLLM{Provider: req.ExecutionOptions.TempOverrideLLM.Provider, ModelID: req.ExecutionOptions.TempOverrideLLM.ModelID}
-						}
-						if req.ExecutionOptions.TempOverrideLLM2 != nil {
-							models.TempOverride2 = &RunMetadataLLM{Provider: req.ExecutionOptions.TempOverrideLLM2.Provider, ModelID: req.ExecutionOptions.TempOverrideLLM2.ModelID}
 						}
 						existingMeta.Models = models
 						_ = writeRunMetadata(workflowCtx, metaPath, existingMeta)
@@ -4816,6 +4766,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				switch workflowPhaseID {
 				case "workflow-builder":
 					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
+					// FATAL on failure: the workflow-builder system prompt advertises these tools,
+					// so a half-registered builder silently hallucinates missing tools to the LLM.
+					// Schemas are covered by TestAllSchemaFunctionsReturnValidJSON — this should
+					// never fire in a healthy build.
 					if err := todo_creation_human.RegisterPlanModificationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4825,10 +4779,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseMoveFile,
 						fmt.Sprintf("%s chat agent", workflowPhaseID),
 					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register plan modification tools for workshop: %v", err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for %s", workflowPhaseID)
+						log.Fatalf("[WORKFLOW_PHASE] FATAL: Failed to register plan modification tools for workflow-builder: %v", err)
 					}
+					log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for %s", workflowPhaseID)
 
 					// STOP-RACE GUARD: Check if the session was stopped while this goroutine
 					// was in flight. Without this check, the goroutine would create a new
@@ -4848,7 +4801,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for %s", sessionID)
 
 						// Always refresh API keys on session reuse (workspace keys may have changed)
-						// Use mergedAPIKeys loaded before goroutine (r.Context() is cancelled inside goroutine)
+						// Use mergedAPIKeys loaded before goroutine (r.Context() is canceled inside goroutine)
 						workshopSession.UpdateAPIKeys(mergedAPIKeys)
 
 						// Refresh enabled group IDs from current request (toolbar selection may have changed)
@@ -5070,6 +5023,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				default:
 					// planning: plan modification tools
+					// FATAL on failure — see workflow-builder case above for rationale.
 					if err := todo_creation_human.RegisterPlanModificationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -5079,10 +5033,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseMoveFile,
 						fmt.Sprintf("%s chat agent", workflowPhaseID),
 					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register plan modification tools: %v", err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for phase=%s", workflowPhaseID)
+						log.Fatalf("[WORKFLOW_PHASE] FATAL: Failed to register plan modification tools for phase=%s: %v", workflowPhaseID, err)
 					}
+					log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for phase=%s", workflowPhaseID)
 				}
 
 				// Apply per-turn tool allow list based on current workshop mode.
@@ -5627,6 +5580,55 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+func (api *StreamingAPI) verifySessionAccess(r *http.Request, sessionID string) error {
+	currentUserID := GetUserIDFromContext(r.Context())
+	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
+	if err == nil {
+		return nil
+	}
+
+	// Workflow sessions (mode=workflow/workflow_phase) are tracked in-memory only.
+	api.activeSessionsMux.RLock()
+	activeSession, exists := api.activeSessions[sessionID]
+	api.activeSessionsMux.RUnlock()
+	if !exists || (currentUserID != "" && activeSession.UserID != "" && activeSession.UserID != currentUserID) {
+		return fmt.Errorf("session not found or access denied")
+	}
+
+	log.Printf("[SESSION STOP] Workflow session %s not in DB, verified via activeSessions (mode=%s)", sessionID, activeSession.AgentMode)
+	return nil
+}
+
+// handleCancelCurrentTurn cancels only the currently running LLM turn for a session.
+// It must not mark the session stopped or tear down workshop/background state.
+func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Header.Get("X-Session-ID")
+	if sessionID == "" {
+		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+
+	if err := api.verifySessionAccess(r, sessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	api.agentCancelMux.Lock()
+	cancelFunc, exists := api.agentCancelFuncs[sessionID]
+	if exists {
+		cancelFunc()
+		delete(api.agentCancelFuncs, sessionID)
+		log.Printf("[SESSION DEBUG] Canceled current LLM turn for session %s", sessionID)
+	}
+	api.agentCancelMux.Unlock()
+
+	if !exists {
+		log.Printf("[SESSION DEBUG] No active LLM turn to cancel for session %s", sessionID)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Add endpoint to stop/clear a session
 func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-ID")
@@ -5635,21 +5637,9 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify session ownership for multi-user isolation.
-	// Workflow sessions (mode=workflow/workflow_phase) skip DB creation and are tracked
-	// in-memory only via activeSessions. Fall back to that map if the DB lookup fails.
-	currentUserID := GetUserIDFromContext(r.Context())
-	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	if err != nil {
-		// Check in-memory active sessions (workflow sessions are not in DB)
-		api.activeSessionsMux.RLock()
-		activeSession, exists := api.activeSessions[sessionID]
-		api.activeSessionsMux.RUnlock()
-		if !exists || (currentUserID != "" && activeSession.UserID != "" && activeSession.UserID != currentUserID) {
-			http.Error(w, "Session not found or access denied", http.StatusNotFound)
-			return
-		}
-		log.Printf("[SESSION STOP] Workflow session %s not in DB, verified via activeSessions (mode=%s)", sessionID, activeSession.AgentMode)
+	if err := api.verifySessionAccess(r, sessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
 	}
 
 	// Mark session as stopped FIRST, before any cancellation, so that in-flight
@@ -9620,53 +9610,6 @@ func buildWorkshopGroupInfo(
 	return sb.String()
 }
 
-// resolveLatestRunFolder lists the runs/ directory and returns the name of the latest
-// iteration folder (e.g. "iteration-27"). Returns "" if no runs exist or on error.
-func resolveLatestRunFolder(ctx context.Context, workspacePath string, wsClient *workspace.Client) string {
-	runsPath := workspacePath + "/runs"
-	maxDepth := 1
-	resp, err := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{
-		Folder:   runsPath,
-		MaxDepth: &maxDepth,
-	})
-	if err != nil {
-		return ""
-	}
-
-	// Parse response using shared helper that handles all known formats
-	parsed, parseErr := virtualtools.ParseWorkspaceFilesList(string(resp.Raw))
-	if parseErr != nil {
-		return ""
-	}
-	type wsFile struct {
-		FilePath string
-		Type     string
-	}
-	var files []wsFile
-	for _, f := range parsed {
-		files = append(files, wsFile{FilePath: f.FilePath, Type: f.Type})
-	}
-
-	maxIter := 0
-	for _, f := range files {
-		if f.Type != "folder" {
-			continue
-		}
-		name := f.FilePath
-		if idx := strings.LastIndex(name, "/"); idx >= 0 {
-			name = name[idx+1:]
-		}
-		var n int
-		if _, err := fmt.Sscanf(name, "iteration-%d", &n); err == nil && n > maxIter {
-			maxIter = n
-		}
-	}
-	if maxIter == 0 {
-		return ""
-	}
-	return fmt.Sprintf("iteration-%d", maxIter)
-}
-
 // buildWorkshopConfig loads the full preset and builds a WorkshopConfig that replicates
 // the exact same tool/LLM/browser/image-gen setup as a normal workflow execution.
 // This mirrors the logic in the /api/workflow handler (lines ~2003-2260) so the workshop
@@ -9679,7 +9622,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	runFolder string,
 	selectedServers []string,
 	sessionID string,
-	apiKeys ...*llm.ProviderAPIKeys, // Optional pre-loaded keys (avoids cancelled context issues)
+	apiKeys ...*llm.ProviderAPIKeys, // Optional pre-loaded keys (avoids canceled context issues)
 ) (*todo_creation_human.WorkshopConfig, error) {
 	// Extract enabled group names from execution options (toolbar selection)
 	var enabledGroupNames []string

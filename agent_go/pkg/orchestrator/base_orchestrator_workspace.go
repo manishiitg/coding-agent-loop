@@ -285,15 +285,3 @@ func unwrapWorkspaceFilesList(filesList []virtualtools.WorkspaceFile, dirPath st
 
 	return filesList
 }
-
-// flattenWorkspaceFiles recursively flattens a nested tree of WorkspaceFile entries.
-func flattenWorkspaceFiles(files []virtualtools.WorkspaceFile) []virtualtools.WorkspaceFile {
-	var result []virtualtools.WorkspaceFile
-	for _, f := range files {
-		result = append(result, f)
-		if len(f.Children) > 0 {
-			result = append(result, flattenWorkspaceFiles(f.Children)...)
-		}
-	}
-	return result
-}

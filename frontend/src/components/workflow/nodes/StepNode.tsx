@@ -162,12 +162,11 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     const presetLLMConfig = activePreset?.llmConfig
     const overrideLLMConfig = stepOverride?.execution_llm  // Global step override (highest priority)
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
 
-    // Priority: global override > step config > preset execution > preset default
-    const llmConfig = overrideLLMConfig || stepLLMConfig || presetExecutionLLM || presetDefaultLLM
+    // Priority: global override > step config > preset default
+    const llmConfig = overrideLLMConfig || stepLLMConfig || presetDefaultLLM
 
     // If we have a valid config, use it
     if (llmConfig?.provider && llmConfig?.model_id) {

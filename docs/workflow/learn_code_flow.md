@@ -174,20 +174,45 @@ If fast path fails or no saved script exists:
 
 Repair loop behavior:
 
-- up to 3 fix iterations
-- fresh repair agent each iteration
-- current `main.py`, prior output, review findings, and validation errors are injected into the repair prompt
+- up to 3 fix iterations (configurable via `LearnCodeMaxFixIter`)
+- fresh Tier 1 (High) repair agent each iteration
+- feedback message includes: task description, pointer to current `main.py` on disk (not inlined), static code review issues, last execution output + exit code, and attempt counter
+- validation details are intentionally omitted from feedback to prevent the LLM from fabricating outputs that match the schema
 - diffs are written under `execution/{step-path}/code/fix-diffs/`
 
 ### Save-back behavior
 
-After learn-code execution, the controller saves the latest script back into `learnings/{step-id}/` unless the script is too broken to keep, such as syntax-error cases called out by the controller.
+After learn-code execution, the controller saves the latest script back into `learnings/{step-id}/` unless:
+
+- the script has syntax errors (definitely worse than the saved version)
+- `lock_learnings` is true (user has frozen the script intentionally)
 
 This means `learn_code` is not only a fast path. It is also the persistent script-maintenance path.
 
+### Lock code vs lock learnings
+
+There are two separate locks:
+
+| Setting | Controls | Effect |
+|---|---|---|
+| `lock_learnings: true` | SKILL.md | Prevents the learning agent from running. Existing SKILL.md is still used by execution agents. |
+| `lock_code: true` | main.py | Prevents LLM-rewritten scripts from being saved back to learnings. Skips the fix loop entirely (falls back directly to code_exec mode). |
+
+When `lock_code: true` is set on a step:
+
+- **Fast path**: Saved script is still copied from learnings to execution and run normally
+- **Fix loop**: Skipped entirely (`maxFixIter = -1`) — no repair agents are created, no tokens spent on fixes that would be discarded
+- **Save-back**: Blocked — the LLM's rewritten script is NOT copied back to learnings
+- **Fallback**: Falls through directly to code_exec mode (tools directly, no main.py)
+- **Metadata**: `script_metadata.json` is still updated (run history, failure patterns) for observability
+
+This means a locked script that keeps failing will repeat the same failure every run. The user must manually fix `learnings/{step-id}/main.py` or set `lock_code: false` to let the system fix it.
+
+To force a complete rewrite: delete `learnings/{step-id}/main.py` (not the execution copy), then run `execute_step`. The LLM will generate fresh.
+
 ### Fallback after repair exhaustion
 
-If the learn-code repair loop is exhausted, the controller disables persistent scripted mode for the remaining outer retries and continues in plain `code_exec` mode.
+If the learn-code repair loop is exhausted (or skipped due to locked learnings), the controller disables persistent scripted mode for the remaining outer retries and continues in plain `code_exec` mode.
 
 That fallback is important:
 
@@ -216,7 +241,13 @@ The controller prompt for scripted execution expects:
 - variables to be passed through env vars or runtime args, not hardcoded
 - diagnostic output to go to stdout/stderr so repair loops can reason over failures
 
-For `learn_code`, the prompt also emphasizes maintaining a reusable `main.py` and repairing it incrementally instead of rethinking the whole step from scratch every time.
+For `learn_code`, the prompt also emphasizes:
+
+- maintaining a reusable `main.py` and repairing it incrementally
+- **no fabricated data**: every output value must trace to a real data source (MCP tool call, API response, or input file)
+- **browser automation rules**: snapshot-first, ref-based interaction, no JavaScript injection via `browser_evaluate`, no CSS selectors — applies to both playwright MCP and agent_browser tools
+- **tool discovery**: call `get_api_spec` before writing browser/MCP code to learn exact parameter schemas instead of guessing
+- `script_metadata.json` is referenced by path (not inlined) so the LLM reads it on demand
 
 ## When to Use Which Mode
 
@@ -236,8 +267,10 @@ Choose `code_exec` when:
 ## Operational Notes
 
 - CLI providers may force code execution behavior because they route tools through the HTTP bridge.
+- `learn_code` steps force `UseCodeExecutionMode = true` regardless of provider — this ensures the agent gets the tool index and `get_api_spec` virtual tool for proper tool discovery when writing `main.py`.
 - Learning agents are still separate from execution agents; code execution mode mainly affects execution-time tool access and scripting behavior.
 - `learn_code_script_execution` events exist specifically for saved-script runs and repair visibility in the UI.
+- `error_summary` in `script_metadata.json` run records is stored in full (not truncated). `error_snippet` in `last_failure` is capped at 2000 chars for prompt inclusion.
 
 ## Key Files
 

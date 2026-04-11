@@ -66,7 +66,6 @@ const (
 
 	// Learning events
 	LearningSkipped events.EventType = "learning_skipped"
-	TempLLMSkipped  events.EventType = "temp_llm_skipped"
 
 	// Decision step evaluation events
 	DecisionEvaluated events.EventType = "decision_evaluated"
@@ -81,11 +80,11 @@ const (
 	LearnCodeScriptExecution events.EventType = "learn_code_script_execution" // When controller runs python3 main.py
 
 	// Todo task orchestration events
-	TodoTaskRouteSelected  events.EventType = "todo_task_route_selected"  // When orchestrator selects a route/sub-agent
-	TodoTaskItemCreated    events.EventType = "todo_task_item_created"    // When a todo item is created
-	TodoTaskItemUpdated    events.EventType = "todo_task_item_updated"    // When a todo item is updated
-	TodoTaskItemCompleted  events.EventType = "todo_task_item_completed"  // When a todo item is completed
-	TodoTaskStepCompleted  events.EventType = "todo_task_step_completed"  // When the entire todo task step is completed
+	TodoTaskRouteSelected events.EventType = "todo_task_route_selected" // When orchestrator selects a route/sub-agent
+	TodoTaskItemCreated   events.EventType = "todo_task_item_created"   // When a todo item is created
+	TodoTaskItemUpdated   events.EventType = "todo_task_item_updated"   // When a todo item is updated
+	TodoTaskItemCompleted events.EventType = "todo_task_item_completed" // When a todo item is completed
+	TodoTaskStepCompleted events.EventType = "todo_task_step_completed" // When the entire todo task step is completed
 
 )
 
@@ -98,7 +97,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		StepTokenUsage, StepProgressUpdated,
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, BlockingHumanQuestions, PlanApproval,
-		LearningSkipped, TempLLMSkipped,
+		LearningSkipped,
 		DecisionEvaluated, RoutingEvaluated, PreValidationCompleted,
 		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
 		return "orchestrator"

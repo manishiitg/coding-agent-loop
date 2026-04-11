@@ -24,12 +24,12 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -154,16 +154,6 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 		return false
 	}
 	return cfg.DeclaredExecutionMode == "learn_code"
-}
-
-func deriveExecutionModeFromConfig(cfg *AgentConfigs) string {
-	if cfg == nil {
-		return "code_exec"
-	}
-	if cfg.DeclaredExecutionMode == "learn_code" {
-		return "learn_code"
-	}
-	return "code_exec"
 }
 
 func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
@@ -1388,7 +1378,7 @@ Use `+"`optimize_report_step`"+` for read-only analysis of the report step when 
 {{if and .StepSummary (ne .WorkshopMode "output")}}### Plan Steps
 {{.StepSummary}}
 {{end}}
-{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`decision_step`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`.
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`decision_step`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
 
 Use `+"`execute_shell_command`"+` with focused queries like:
 - **Top-level overview only**: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`
@@ -1488,13 +1478,20 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Decision** (type: "decision"): Executes a step, then branches based on evidence in context. Contains **if_true_steps** and **if_false_steps**.
 - **Conditional** (type: "conditional"): Inspection-only branch (no execution). Contains **if_true_steps** and **if_false_steps** — evaluated based on prior context.
-- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning). Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
+- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
-- **Orphan** (is_orphan: true): Not part of the main execution flow — only triggered manually via execute_step in the workshop. Use orphan steps as **reusable utility agents** for the builder: data checks, environment validation, one-off investigations, or any task you want to run on-demand without adding it to the main workflow sequence.
+- **Orphan** (is_orphan: true): Not part of the main execution flow. Orphan steps are plan-local reusable definitions and manual utility agents. Use them for data checks, environment validation, one-off investigations, or shared sub-agent definitions that multiple orchestrators in the same plan may reuse. Reuse is explicit: an orphan step must declare `+"`shared_with.orchestrator_ids`"+`, and a todo_task route must point to it with `+"`orphan_step_ref`"+`. Do not assume every orphan step is shared with every orchestrator.
 
 ### Inner Steps
 Inner steps live inside conditional branches, orchestration routes, or todo_task routes. They have their own step IDs and can be individually executed and configured via **execute_step**, **update_step_config** using the inner step ID.
+
+### Reusable Orphan Route Pattern
+When a todo_task route should reuse an orphan step:
+- Put the reusable step definition in `+"`orphan_steps[]`"+`.
+- On that orphan step, set `+"`shared_with.orchestrator_ids`"+` to the IDs of the todo_task orchestrators allowed to reuse it.
+- On the route, set `+"`orphan_step_ref`"+` to the orphan step ID instead of embedding an inline `+"`sub_agent_step`"+`.
+- Use inline `+"`sub_agent_step`"+` only when the route needs its own dedicated definition.
 {{end}}
 
 ## RUNNING STEPS
@@ -1643,6 +1640,11 @@ For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}
 - `+"`update_step_config(step_id, lock_learnings=true)`"+` to prevent the learning agent from overwriting your fix
 
 **Key principle**: Always edit `+"`learnings/{step-id}/main.py`"+`, never `+"`execution/{step-id}/code/main.py`"+`. The execution copy is overwritten from learnings on every run.
+
+**Force complete rewrite**: If the saved script has fundamental issues (wrong approach, bad patterns like JavaScript injection instead of ref-based browser interaction), delete the learnings script to force the LLM to write from scratch:
+- `+"`rm learnings/{step-id}/main.py`"+` — deletes the saved script
+- Then run `+"`execute_step(step_id, group_name)`"+` — the LLM will generate a fresh main.py using the step description, skill files, and proper tool discovery via get_api_spec
+- Do NOT just delete `+"`execution/{step-id}/code/main.py`"+` — the controller copies from learnings on every run, so the execution copy gets restored automatically
 
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, review the execution logs to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
@@ -1845,6 +1847,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
+  For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
 - **Validation**: update_validation_schema
 - **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
   To inspect available versions before restoring, use **execute_shell_command** with relative paths like `+"`ls versions/`"+` and `+"`cat versions/v3/version_meta.json`"+`.
@@ -2420,14 +2423,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execOpts := &WorkshopExecuteOptions{
-				GroupName:        resolvedGroupName,
-				Iteration:        iteration,
-				RunFolder:        runFolder,
-				SkipLearning:     skipLearning,
-				SavedScriptOnly:  fastPathOnly,
-				Instructions:     instructions,
-				HumanInput:       humanInput,
-				Tier:             tierValue,
+				GroupName:       resolvedGroupName,
+				Iteration:       iteration,
+				RunFolder:       runFolder,
+				SkipLearning:    skipLearning,
+				SavedScriptOnly: fastPathOnly,
+				Instructions:    instructions,
+				HumanInput:      humanInput,
+				Tier:            tierValue,
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
@@ -2563,8 +2566,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					if !skipNotify && iwm.executionNotifier != nil {
 						execMeta := map[string]string{
-							"iteration": iteration,
-							"group_name":  groupName,
+							"iteration":  iteration,
+							"group_name": groupName,
 						}
 						if isOptimized {
 							execMeta["step_optimized"] = "true"
@@ -3260,7 +3263,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true, lock learnings — prevents learning agent from running but still uses existing learnings. Use this when learnings are stable and don't need updates.",
+					"description": "If true, lock SKILL.md learnings — prevents the learning agent from running but still uses existing SKILL.md. Does NOT affect saved main.py scripts — use lock_code for that.",
+				},
+				"lock_code": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to code_exec mode). Use this when the saved script is stable and should not be overwritten. Only applies to learn_code steps.",
 				},
 				"learning_detail_level": map[string]interface{}{
 					"type":        "string",
@@ -3454,6 +3461,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						targetConfig.AgentConfigs.LockLearnings = &b
 						// Sync: lock_learnings and optimized move together
 						targetConfig.AgentConfigs.Optimized = &b
+					}
+				}
+			}
+			if val, ok := args["lock_code"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					if b || targetConfig.AgentConfigs.LockCode == nil || !*targetConfig.AgentConfigs.LockCode {
+						targetConfig.AgentConfigs.LockCode = &b
 					}
 				}
 			}
@@ -4378,7 +4392,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register analyze_step tool: %v", err))
 	}
-
 
 	// Tool 7a: organize_global_learnings — reorganize and consolidate the global skill folder
 	if err := mcpAgent.RegisterCustomTool(
@@ -8366,14 +8379,14 @@ The plan JSON uses these nested structures — analyze ALL of them:
 
 | Step type | Nested field | What to check |
 |-----------|-------------|---------------|
-| `+"`todo_task`"+` | `+"`todo_task_step`"+` (orchestrator) + `+"`predefined_routes[].sub_agent_step`"+` | Do routes cover all cases? Any missing route? Is the orchestrator description clear enough to dispatch correctly? |
+| `+"`todo_task`"+` | `+"`todo_task_step`"+` (orchestrator) + routes using either `+"`predefined_routes[].sub_agent_step`"+` or `+"`predefined_routes[].orphan_step_ref`"+` | Do routes cover all cases? Any missing route? Is the orchestrator description clear enough to dispatch correctly? Are reusable routes pointing at the right orphan definitions? |
 | `+"`orchestration`"+` | `+"`orchestration_step`"+` + `+"`orchestration_routes[].sub_agent_step`"+` | Same as todo_task |
 | `+"`conditional`"+` | `+"`if_true_steps[]`"+` + `+"`if_false_steps[]`"+` | Is each branch populated correctly? Is a branch empty when it should have steps? |
 | `+"`decision`"+` | `+"`decision_step`"+` + branch steps | Is the decision logic right for the objective? |
 | `+"`routing`"+` | `+"`routes[]`"+` (each with `+"`sub_agent_step`"+`) | Are all necessary routes present? Any route that should be split or merged? |
 
 Reference nested steps as `+"`parent-id > sub-id`"+`.
-Also check `+"`orphan_steps`"+` if present — orphan steps are not in the main flow but may reveal missing routes or forgotten cleanup steps.
+Also check `+"`orphan_steps`"+` if present — orphan steps are not in the main flow but may reveal missing routes or forgotten cleanup steps. If an orphan step is meant to be reusable, verify its `+"`shared_with.orchestrator_ids`"+` matches the todo_task IDs that reference it.
 
 ## ANALYSIS PROCEDURE
 
@@ -8561,6 +8574,8 @@ Your job is to compare each step's **current description** with its **saved main
 2. **Extra functionality** — things main.py does that are no longer in the description
 3. **Incorrect behavior** — things main.py does differently than what the description specifies
 4. **Anti-patterns** — hardcoded paths, hardcoded credentials, missing env var usage, non-portable code
+5. **Fabricated data** — script writes output data without actually fetching/computing it from real sources (MCP tools, APIs, input files)
+6. **MCP tool usage** — incorrect server/tool names in call_mcp(), missing API discovery, guessed parameter names instead of using get_api_spec
 
 This is a **read-only review** — do not modify any files.
 
@@ -8570,6 +8585,87 @@ This is a **read-only review** — do not modify any files.
 3. **Severity matters**: Flag critical drift (wrong output, missing steps) higher than cosmetic issues.
 4. **Consider reusability**: The script runs across different groups/users — flag anything that would break portability.
 5. **Check output contract**: Verify that main.py produces the exact output files, field names, and formats specified in the validation schema.
+6. **Check data authenticity**: Verify that every value written to output files traces back to a real data source (MCP tool call, API response, or input file). Flag any hardcoded/fabricated data in output construction.
+7. **Check MCP tool usage**: Verify that call_mcp() calls use consistent server/tool naming. Flag suspicious tool names that look guessed rather than discovered via get_api_spec.
+8. **Check browser automation quality**: For scripts using playwright MCP tools, verify:
+   - Uses browser_snapshot before interacting — never clicks or types blindly
+   - Uses ref-based interaction (ref= from snapshots) instead of CSS selectors or raw JavaScript injection
+   - Does NOT use browser_evaluate for interactions that have dedicated playwright tools (browser_click, browser_type, browser_select_option, browser_navigate)
+   - Uses wait loops that check page state via browser_snapshot, not hardcoded time.sleep()
+   - Prints diagnostic snapshots/state on failure so the fix loop can debug what went wrong
+   - Does NOT inject large JavaScript blobs to fill forms, click buttons, or navigate
+
+## CORRECT BROWSER AUTOMATION PATTERNS
+
+There are TWO browser tools. Scripts use one or the other, never both. Flag any code that deviates from the correct patterns below.
+
+### Option A: Playwright MCP (server='playwright')
+
+**Correct usage:**
+`+"```"+`python
+# CORRECT: Snapshot first, then use ref-based interaction
+snapshot = call_mcp('playwright', 'browser_snapshot', {})
+# Parse snapshot to find ref= values, then:
+call_mcp('playwright', 'browser_click', {'ref': 'abc123'})
+call_mcp('playwright', 'browser_type', {'ref': 'def456', 'text': 'hello'})
+call_mcp('playwright', 'browser_select_option', {'ref': 'ghi789', 'values': ['option1']})
+call_mcp('playwright', 'browser_navigate', {'url': 'https://example.com'})
+
+# CORRECT: Wait by polling snapshots
+for i in range(10):
+    snapshot = call_mcp('playwright', 'browser_snapshot', {})
+    if 'expected text' in snapshot:
+        break
+    time.sleep(2)
+`+"```"+`
+
+**Anti-patterns to flag (WRONG):**
+`+"```"+`python
+# WRONG: JavaScript injection for clicking (use browser_click with ref instead)
+call_mcp('playwright', 'browser_evaluate', {'function': '() => { document.querySelector("button").click() }'})
+
+# WRONG: JavaScript injection for typing (use browser_type with ref instead)
+call_mcp('playwright', 'browser_evaluate', {'function': '() => { document.querySelector("input").value = "text" }'})
+
+# WRONG: CSS selector-based clicking (use ref from snapshot instead)
+call_mcp('playwright', 'browser_click', {'selector': 'button.submit'})
+
+# WRONG: Blind interaction without snapshot
+call_mcp('playwright', 'browser_click', {'ref': 'abc'})  # Where did 'abc' come from?
+
+# WRONG: Hardcoded sleep instead of polling
+time.sleep(15)  # Should poll with browser_snapshot instead
+`+"```"+`
+
+### Option B: Agent Browser (tool='agent_browser')
+
+This is a direct tool call (NOT via call_mcp). Uses command + args pattern with @ref elements.
+
+**Correct usage:**
+`+"```"+`python
+# CORRECT: Snapshot first to discover @refs
+snapshot = agent_browser(command='snapshot', args=['-i'], session='main')
+# Parse snapshot for @e1, @e2, etc., then:
+agent_browser(command='click', args=['@e1'], session='main')
+agent_browser(command='fill', args=['@e2', 'search text'], session='main')
+agent_browser(command='open', args=['https://example.com'], session='main')
+agent_browser(command='select', args=['@e3', 'option1'], session='main')
+
+# In code execution mode, called via HTTP API:
+# call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})
+
+# CORRECT: Wait for specific state
+agent_browser(command='wait', args=['text', 'Dashboard'], session='main')
+`+"```"+`
+
+**Anti-patterns for agent_browser (WRONG):**
+`+"```"+`python
+# WRONG: Using eval for interactions (use click/fill/select commands instead)
+agent_browser(command='eval', args=['document.querySelector("button").click()'], session='main')
+
+# WRONG: Blind interaction without snapshot
+agent_browser(command='click', args=['@e1'], session='main')  # What is @e1? Snapshot first!
+`+"```"+`
 
 ## CONTEXT
 
@@ -8585,7 +8681,7 @@ This is a **read-only review** — do not modify any files.
 For each step reviewed, output:
 
 ### [step-id]: <step title>
-- **Status**: ` + "`IN_SYNC`" + ` | ` + "`DRIFTED`" + ` | ` + "`NO_SCRIPT`" + `
+- **Status**: `+"`IN_SYNC`"+` | `+"`DRIFTED`"+` | `+"`NO_SCRIPT`"+`
 - **Findings** (if drifted):
   1. **[severity: high|medium|low]**: <what is mismatched>
      - **Description says**: <relevant excerpt>
@@ -8606,7 +8702,10 @@ For each step listed above, carefully compare the description with the script an
 1. Does the script do everything the description asks?
 2. Does the script produce the correct output format?
 3. Are there hardcoded values that should use environment variables?
-4. Would the script work correctly for a different group/user?`)
+4. Would the script work correctly for a different group/user?
+5. Does the script actually fetch/compute data from real sources, or does it fabricate/hardcode output values?
+6. Are MCP tool calls using correct server names, tool names, and parameters?
+7. For browser automation: does the script use browser_snapshot + ref-based clicks, or does it blindly inject JavaScript?`)
 
 var replanWorkflowFromResultsAgentSystemTemplate = MustRegisterTemplate("replanWorkflowFromResultsAgentSystem", `# Workflow Replanning Agent
 
@@ -9760,7 +9859,11 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
 				}
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, disableLearning, descriptionReviewed, descriptionNoSecrets))
+			lockCode := false
+			if sc.AgentConfigs != nil && sc.AgentConfigs.LockCode != nil {
+				lockCode = *sc.AgentConfigs.LockCode
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, disableLearning, descriptionReviewed, descriptionNoSecrets))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -9878,7 +9981,11 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
 				}
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, disableLearning, descriptionReviewed, descriptionNoSecrets))
+			lockCode := false
+			if sc.AgentConfigs != nil && sc.AgentConfigs.LockCode != nil {
+				lockCode = *sc.AgentConfigs.LockCode
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, disableLearning, descriptionReviewed, descriptionNoSecrets))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -10318,58 +10425,6 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		return "", fmt.Errorf("harden_workflow agent failed: %w", err)
 	}
 	return result, nil
-}
-
-// updateWorkshopLearningMetadata updates .learning_metadata.json after workshop generate_learnings completes.
-// This ensures tiered mode and keepLearningFull thresholds work for workshop-generated learnings.
-func (iwm *InteractiveWorkshopManager) updateWorkshopLearningMetadata(
-	ctx context.Context,
-	learningPathIdentifier string,
-	stepPath string,
-	stepID string,
-	hasLearningFiles bool,
-) {
-	logger := iwm.controller.GetLogger()
-	learningsBase := iwm.controller.getLearningsBasePath()
-	metadataPath := fmt.Sprintf("%s/%s/.learning_metadata.json", learningsBase, learningPathIdentifier)
-
-	// Read existing metadata or create new
-	var metadata LearningMetadata
-	content, err := iwm.controller.ReadWorkspaceFile(ctx, metadataPath)
-	if err != nil {
-		metadata = LearningMetadata{
-			StepID:   stepID,
-			StepPath: stepPath,
-		}
-	} else {
-		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata for %s: %v (creating new)", stepID, err))
-			metadata = LearningMetadata{
-				StepID:   stepID,
-				StepPath: stepPath,
-			}
-		}
-	}
-
-	// Update fields
-	metadata.TotalIterations++
-	if hasLearningFiles {
-		metadata.LastLearningDetectedAt = time.Now().Format(time.RFC3339)
-		metadata.LastDetectionReasoning = "workshop generate_learnings"
-		metadata.LastDetectionConfidence = 1.0
-	}
-
-	// Write updated metadata
-	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to marshal learning metadata for %s: %v", stepID, err))
-		return
-	}
-	if err := iwm.controller.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to write learning metadata for %s: %v", stepID, err))
-	} else {
-		logger.Info(fmt.Sprintf("📝 Updated learning metadata for %s (iterations: %d)", stepID, metadata.TotalIterations))
-	}
 }
 
 // ============================================================================

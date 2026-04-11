@@ -104,9 +104,11 @@ function WorkflowLLMConfigModalContent({ onClose }: { onClose: () => void }) {
       const tieredConfig = tier1 && tier2 && tier3
         ? { tier_1: tier1, tier_2: tier2, tier_3: tier3 }
         : undefined
+      const existingWithoutExecution = { ...((existing ?? {}) as PresetLLMConfig & { execution_llm?: unknown }) }
+      delete existingWithoutExecution.execution_llm
 
       const newLLMConfig: PresetLLMConfig = {
-        ...(existing ?? {}),
+        ...existingWithoutExecution,
         phase_llm: phaseLLM ?? undefined,
         llm_allocation_mode: tieredConfig ? 'tiered' : 'manual',
         ...(tieredConfig ? { tiered_config: tieredConfig } : {}),

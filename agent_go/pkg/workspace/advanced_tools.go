@@ -5,28 +5,28 @@ import (
 )
 
 // shellToolDef returns the execute_shell_command tool definition (single source of truth).
-	func shellToolDef() llmtypes.Tool {
-		return llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "execute_shell_command",
-				Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) and may be subject to workspace access restrictions.",
-				Parameters: llmtypes.NewParameters(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM.
-						// It is now hardcoded to true internally in ExecuteShellCommand.
-						"command": map[string]interface{}{
-							"type":        "string",
-							"description": "Shell command to execute as a single string, including any arguments and shell operators.",
-						},
-						"timeout": map[string]interface{}{
-							"type":        "integer",
-							"description": "Optional timeout in seconds.",
-						},
+func shellToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "execute_shell_command",
+			Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) and may be subject to workspace access restrictions.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM.
+					// It is now hardcoded to true internally in ExecuteShellCommand.
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Shell command to execute as a single string, including any arguments and shell operators.",
 					},
-					"required": []string{"command"},
-				}),
+					"timeout": map[string]interface{}{
+						"type":        "integer",
+						"description": "Optional timeout in seconds.",
+					},
+				},
+				"required": []string{"command"},
+			}),
 		},
 	}
 }
@@ -89,6 +89,57 @@ func pdfToolDef() llmtypes.Tool {
 	}
 }
 
+// generateTextLLMToolDef returns the generate_text_llm tool definition (single source of truth).
+func generateTextLLMToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "generate_text_llm",
+			Description: "Generate text with the workspace tiered LLM configuration. Provide the user message and choose the 'high', 'medium', or 'low' tier to run it.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"user_message": map[string]interface{}{
+						"type":        "string",
+						"description": "The prompt to send to the selected tier model.",
+					},
+					"tier": map[string]interface{}{
+						"type":        "string",
+						"description": "Reasoning tier to use for text generation.",
+						"enum":        []string{"high", "medium", "low"},
+					},
+				},
+				"required": []string{"user_message", "tier"},
+			}),
+		},
+	}
+}
+
+// diffPatchToolDef returns the diff_patch_workspace_file tool definition.
+func diffPatchToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "diff_patch_workspace_file",
+			Description: "Apply a unified diff patch to a file and return the result.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"filepath": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file to patch.",
+					},
+					"diff": map[string]interface{}{
+						"type":        "string",
+						"description": "Unified diff patch string to apply.\n\nFormat:\n- Headers: --- a/file and +++ b/file\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (space + content)\n- Removals: '-' prefix\n- Additions: '+' prefix\n- End with a trailing newline\n\nExample:\n--- a/file\n+++ b/file\n@@ -5,1 +5,1 @@\n-- [ ] task-1\n+- [x] task-1\n",
+					},
+				},
+				"required": []string{"filepath", "diff"},
+			}),
+		},
+	}
+}
+
 // GetShellToolDefinitions returns only the shell (execute_shell_command) tool.
 func GetShellToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{shellToolDef()}
@@ -104,41 +155,23 @@ func GetPDFToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{pdfToolDef()}
 }
 
-// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, PDF, diff_patch). No duplication: built from the single-tool getters.
+// GetGenerateTextLLMToolDefinitions returns only the text generation tool.
+func GetGenerateTextLLMToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{generateTextLLMToolDef()}
+}
+
+// GetDiffPatchToolDefinitions returns only the diff_patch_workspace_file tool definition.
+func GetDiffPatchToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{diffPatchToolDef()}
+}
+
+// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, PDF, text generation, diff patch).
 func GetAdvancedToolDefinitions() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 	tools = append(tools, GetShellToolDefinitions()...)
 	tools = append(tools, GetImageToolDefinitions()...)
 	tools = append(tools, GetPDFToolDefinitions()...)
+	tools = append(tools, GetGenerateTextLLMToolDefinitions()...)
 	tools = append(tools, GetDiffPatchToolDefinitions()...)
 	return tools
-}
-
-// GetDiffPatchToolDefinitions returns the diff_patch_workspace_file tool definition.
-func GetDiffPatchToolDefinitions() []llmtypes.Tool {
-	return []llmtypes.Tool{diffPatchToolDef()}
-}
-
-	func diffPatchToolDef() llmtypes.Tool {
-		return llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "diff_patch_workspace_file",
-				Description: "Apply a unified diff patch to a file and return the result.",
-				Parameters: llmtypes.NewParameters(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"filepath": map[string]interface{}{
-							"type":        "string",
-							"description": "Path to the file to patch.",
-						},
-						"diff": map[string]interface{}{
-							"type":        "string",
-							"description": "Unified diff patch string to apply.\n\nFormat:\n- Headers: --- a/file and +++ b/file\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (space + content)\n- Removals: '-' prefix\n- Additions: '+' prefix\n- End with a trailing newline\n\nExample:\n--- a/file\n+++ b/file\n@@ -5,1 +5,1 @@\n-- [ ] task-1\n+- [x] task-1\n",
-						},
-					},
-					"required": []string{"filepath", "diff"},
-				}),
-		},
-	}
 }

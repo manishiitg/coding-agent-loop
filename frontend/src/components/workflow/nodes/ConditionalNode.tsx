@@ -120,16 +120,15 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       ? stepCodeExecSetting === true
       : presetUseCodeExecutionMode
 
-  // Execution LLM: global override > step config > preset execution_llm > preset default
+  // Execution LLM: global override > step config > preset default
   const executionLLM = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
     const overrideLLMConfig = stepOverride?.execution_llm
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
 
-    const llmConfig = overrideLLMConfig || stepLLMConfig || presetExecutionLLM || presetDefaultLLM
+    const llmConfig = overrideLLMConfig || stepLLMConfig || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
 
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
@@ -141,12 +140,11 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     const presetLLMConfig = activePreset?.llmConfig
     const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
     const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
     
-    // Priority: step conditional_llm > step execution_llm > preset execution_llm > preset default
-    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetExecutionLLM || presetDefaultLLM
+    // Priority: step conditional_llm > step execution_llm > preset default
+    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)

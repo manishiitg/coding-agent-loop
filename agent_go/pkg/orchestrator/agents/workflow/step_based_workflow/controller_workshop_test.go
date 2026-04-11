@@ -3,6 +3,7 @@ package step_based_workflow
 import (
 	"strings"
 	"testing"
+	"time"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -21,6 +22,7 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 		nil,
 		nil,
 		false,
+		&orchestrator.LLMConfig{},
 		1,
 		nil,
 		nil,
@@ -38,13 +40,17 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 	base.SetWorkspaceEnvRef(envRef)
 
 	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator:        base,
-		workshopGroupSessionIDs: make(map[string]string),
+		BaseOrchestrator:         base,
+		workshopGroupSessionIDs:  make(map[string]string),
+		workshopGroupSessionRefs: make(map[string]int),
+		workshopGroupLastUsed:    make(map[string]time.Time),
 	}
 
-	if err := hcpo.switchWorkshopGroupSession("group-1"); err != nil {
+	releaseGroup1, err := hcpo.switchWorkshopGroupSession("group-1")
+	if err != nil {
 		t.Fatalf("switchWorkshopGroupSession(group-1) returned error: %v", err)
 	}
+	defer releaseGroup1()
 	group1Session := hcpo.GetMCPSessionID()
 	if !strings.Contains(group1Session, "session-group-group-1-") {
 		t.Fatalf("expected group-1 session id, got %q", group1Session)
@@ -53,16 +59,20 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 		t.Fatalf("expected workspace env MCP_SESSION_ID %q, got %q", group1Session, envRef["MCP_SESSION_ID"])
 	}
 
-	if err := hcpo.switchWorkshopGroupSession("group-1"); err != nil {
+	releaseGroup1Again, err := hcpo.switchWorkshopGroupSession("group-1")
+	if err != nil {
 		t.Fatalf("switchWorkshopGroupSession(group-1) second call returned error: %v", err)
 	}
+	defer releaseGroup1Again()
 	if hcpo.GetMCPSessionID() != group1Session {
 		t.Fatalf("expected group-1 session to be reused, got %q want %q", hcpo.GetMCPSessionID(), group1Session)
 	}
 
-	if err := hcpo.switchWorkshopGroupSession("group-2"); err != nil {
+	releaseGroup2, err := hcpo.switchWorkshopGroupSession("group-2")
+	if err != nil {
 		t.Fatalf("switchWorkshopGroupSession(group-2) returned error: %v", err)
 	}
+	defer releaseGroup2()
 	group2Session := hcpo.GetMCPSessionID()
 	if !strings.Contains(group2Session, "session-group-group-2-") {
 		t.Fatalf("expected group-2 session id, got %q", group2Session)
@@ -73,5 +83,54 @@ func TestSwitchWorkshopGroupSessionCachesPerGroup(t *testing.T) {
 
 	if len(hcpo.workshopGroupSessionIDs) != 2 {
 		t.Fatalf("expected 2 cached group sessions, got %d", len(hcpo.workshopGroupSessionIDs))
+	}
+}
+
+func TestSwitchWorkshopGroupSessionRejectsThirdActiveGroup(t *testing.T) {
+	t.Setenv("MCP_API_URL", "http://example.test")
+
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewDefault(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator:         base,
+		workshopGroupSessionIDs:  make(map[string]string),
+		workshopGroupSessionRefs: make(map[string]int),
+		workshopGroupLastUsed:    make(map[string]time.Time),
+	}
+
+	releaseGroup1, err := hcpo.switchWorkshopGroupSession("group-1")
+	if err != nil {
+		t.Fatalf("switchWorkshopGroupSession(group-1) returned error: %v", err)
+	}
+	defer releaseGroup1()
+
+	releaseGroup2, err := hcpo.switchWorkshopGroupSession("group-2")
+	if err != nil {
+		t.Fatalf("switchWorkshopGroupSession(group-2) returned error: %v", err)
+	}
+	defer releaseGroup2()
+
+	if _, err := hcpo.switchWorkshopGroupSession("group-3"); err == nil {
+		t.Fatal("expected third active workshop group session to be rejected")
+	} else if !strings.Contains(err.Error(), "max 2") {
+		t.Fatalf("expected max-2 error, got %v", err)
 	}
 }

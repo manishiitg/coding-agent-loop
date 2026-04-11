@@ -79,11 +79,10 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
     const presetLLMConfig = activePreset?.llmConfig
     const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
     const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
 
-    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetExecutionLLM || presetDefaultLLM
+    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
 
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)

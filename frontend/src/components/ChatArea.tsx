@@ -2112,9 +2112,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       chatStore.setTabStreaming(activeTab.tabId, false) // UI: Hide stop button, show send button
     }
 
-    // Call backend to stop the agent execution (preserves conversation history)
-    // CRITICAL: Only use the active tab's session ID - never fall back to global sessionId
-    // Falling back to global sessionId could stop a different tab's session
+    // Cancel only the current LLM turn for this tab.
+    // CRITICAL: Only use the active tab's session ID - never fall back to global sessionId.
     const sessionIdToStop = activeTab?.sessionId
     if (!sessionIdToStop) {
       logger.warn('ChatArea', 'No session ID available for active tab')
@@ -2122,9 +2121,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
     try {
-      await agentApi.stopSession(sessionIdToStop, true)
+      await agentApi.cancelCurrentTurn(sessionIdToStop)
     } catch (error) {
-      logger.error('ChatArea', 'Failed to stop session:', error)
+      logger.error('ChatArea', 'Failed to cancel current turn:', error)
     }
 
     // Mark tab as completed so queued messages get auto-sent

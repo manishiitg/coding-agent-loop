@@ -296,19 +296,17 @@ func NewStepTokenUsageEventWithPricing(phase string, step int, stepTitle string,
 	}
 }
 
-// LearningSkippedEvent represents the event when learning is skipped due to temp LLM override
+// LearningSkippedEvent represents the event when learning is skipped.
 type LearningSkippedEvent struct {
 	events.BaseEventData
-	StepID          string `json:"step_id"`                     // Step ID from plan
-	StepIndex       int    `json:"step_index"`                  // 0-based step index
-	StepTitle       string `json:"step_title"`                  // Step title
-	StepPath        string `json:"step_path"`                   // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep    bool   `json:"is_branch_step"`              // Whether this is a branch step
-	Reason          string `json:"reason"`                      // Reason for skipping (e.g., "temp_llm_override")
-	TempLLMProvider string `json:"temp_llm_provider,omitempty"` // Temp override LLM provider
-	TempLLMModel    string `json:"temp_llm_model,omitempty"`    // Temp override LLM model
-	RunFolder       string `json:"run_folder"`                  // Run folder name (e.g., "iteration-1")
-	WorkspacePath   string `json:"workspace_path"`              // Workspace path
+	StepID        string `json:"step_id"`        // Step ID from plan
+	StepIndex     int    `json:"step_index"`     // 0-based step index
+	StepTitle     string `json:"step_title"`     // Step title
+	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
+	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
+	Reason        string `json:"reason"`         // Reason for skipping
+	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
+	WorkspacePath string `json:"workspace_path"` // Workspace path
 }
 
 func (e *LearningSkippedEvent) GetEventType() events.EventType {
@@ -346,26 +344,6 @@ type DecisionEvaluatedEvent struct {
 
 func (e *DecisionEvaluatedEvent) GetEventType() events.EventType {
 	return DecisionEvaluated
-}
-
-// TempLLMSkippedEvent represents the event when temp LLM override is skipped due to learnings folder having files
-type TempLLMSkippedEvent struct {
-	events.BaseEventData
-	StepID          string `json:"step_id"`
-	StepIndex       int    `json:"step_index"`
-	StepTitle       string `json:"step_title"`
-	StepPath        string `json:"step_path"`
-	IsBranchStep    bool   `json:"is_branch_step"`
-	Reason          string `json:"reason"`
-	TempLLMProvider string `json:"temp_llm_provider,omitempty"`
-	TempLLMModel    string `json:"temp_llm_model,omitempty"`
-	LearningsPath   string `json:"learnings_path,omitempty"`
-	RunFolder       string `json:"run_folder"`
-	WorkspacePath   string `json:"workspace_path"`
-}
-
-func (e *TempLLMSkippedEvent) GetEventType() events.EventType {
-	return TempLLMSkipped
 }
 
 // =============================================================================

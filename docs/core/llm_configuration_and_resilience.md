@@ -139,16 +139,16 @@ refreshAvailableLLMs() → builds from savedLLMs with metadata
 
 ---
 
-## 2. Temporary LLM Cascading Flow
+## 2. Execution Model Selection
 
 ### 📋 Overview
 
-The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM models when execution fails, using a cascading sequence: tempLLM1 → tempLLM2 → original LLM. This enables recovery from model-specific failures while maintaining execution quality.
+Execution agents now select models from a fixed priority chain: step override, sub-agent override, tiered resolution, then workflow fallback. Retry state still matters for control flow, but it no longer changes the execution model.
 
 **Key Benefits:**
-- **Automatic recovery**: Retries with different models on failure
-- **Learning-based**: Uses learnings folder to determine available temp LLMs
-- **Configurable fallback**: Supports skipping tempLLM1 while keeping tempLLM2
+- **Explicit overrides**: Step `execution_llm` wins whenever it is set
+- **Predictable tiering**: Tiered mode resolves only when no higher-priority override exists
+- **Stable retries**: Retry handling is separate from model selection
 
 ### 📁 Key Files & Locations
 
@@ -163,43 +163,30 @@ The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM 
 ```mermaid
 graph TD
     A[Execution Start] --> B{Check Conditions}
-    B -->|retryAttempt == 2 OR<br/>isRetryAfterValidationFailure && retryAttempt == 1| C[tempLLM2<br/>Checked FIRST]
-    B -->|retryAttempt == 1 AND<br/>NOT shouldSkipTempOverride| D[tempLLM1]
-    B -->|Otherwise| E[Original LLM Chain]
-    C -->|FAILED| F[Continue Retry]
-    C -->|SUCCESS| G[Complete]
-    D -->|FAILED| F
-    D -->|SUCCESS| G
-    E -->|FAILED| F
-    E -->|SUCCESS| G
-    F -->|Next Attempt| B
+    B -->|step execution_llm set| C[Step Override]
+    B -->|sub_agent_llm available| D[Sub-agent Override]
+    B -->|tier resolver active| E[Tiered Resolution]
+    B -->|otherwise| F[Workflow Execution LLM]
+    C --> G[Run Step]
+    D --> G
+    E --> G
+    F --> G
+    G -->|retry if needed| B
 ```
-
-**Note**: tempLLM2 is checked FIRST (before tempLLM1) when conditions match. This ensures tempLLM2 is used even if tempLLM1 was blocked by `shouldSkipTempOverride`.
 
 ### Attempt Sequence
 
-**File**: [`controller_agent_factory.go:228-270`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L228)
+**File**: [`controller_agent_factory.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go)
 
 **Priority Order** (checked in this sequence):
-1. **tempLLM2** (checked FIRST) - Used when:
-   - `retryAttempt == 2` (normal retry), OR
-   - `isRetryAfterValidationFailure && retryAttempt == 1` (new loop iteration after failure)
-   - Learnings folder not empty
-   - NOT blocked by `shouldSkipTempOverride` (tempLLM2 bypasses this check)
-2. **tempLLM1** - Used when:
-   - `retryAttempt == 1` (first attempt)
-   - Learnings folder not empty
-   - NOT blocked by `shouldSkipTempOverride`
-3. **Original LLM chain** (step LLM → preset LLM) - Used when:
-   - No tempLLM available, OR
-   - Learnings folder empty, OR
-   - Blocked by `shouldSkipTempOverride` (for tempLLM1 only), OR
-   - Step config has `disable_temp_llm: true`
+1. **Step execution LLM** - Used when `agent_configs.execution_llm` is set for the step.
+2. **Sub-agent override** - Used when execution is running inside a sub-agent context that supplies `sub_agent_llm`.
+3. **Tiered execution resolution** - Used when tiered mode is active and no step override is present.
+4. **Original LLM chain** (preset/workflow execution LLM) - Used as the remaining fallback.
 
 ### ⚙️ Failure Criteria
 
-#### For tempLLM Purposes
+#### For retry purposes
 
 **Only `ExecutionStatus == "FAILED"` counts as failure:**
 
@@ -218,13 +205,13 @@ graph TD
 - If `IsSuccessCriteriaMet == true`: Stop retry, step passes
 - If `IsSuccessCriteriaMet == false`: Continue retry (regardless of status)
 
-**tempLLM Fallback**: Uses `ExecutionStatus == "FAILED"` via `isValidationFailure()`
+**Retry handling**: Uses `ExecutionStatus == "FAILED"` via `isValidationFailure()`
 - Only `ExecutionStatus == "FAILED"` triggers `isRetryAfterValidationFailure`
-- `PARTIAL`/`INCOMPLETE`/`COMPLETED` with unmet criteria still retry but don't trigger tempLLM fallback
+- `PARTIAL`/`INCOMPLETE`/`COMPLETED` with unmet criteria still retry, but they do not change model selection
 
 **Special Cases**:
-- **Decision Step False Result**: Steps routed from decision step with `false` result are treated as validation failure (skip tempLLM)
-- **Loop Iterations**: New loop iterations after failure (`loopIterationCount > 1`) trigger `isRetryAfterValidationFailure`
+- **Decision Step False Result**: Steps routed from decision step with `false` result are treated as validation failure.
+- **Loop Iterations**: New loop iterations after failure (`loopIterationCount > 1`) trigger `isRetryAfterValidationFailure`.
 
 ### 🔄 Implementation Details
 
@@ -237,37 +224,24 @@ graph TD
 isRetryAfterValidationFailure := isValidationFailure(previousValidationResponse) &&
     (retryAttempt > 1 || (hasLoop(step) && loopIterationCount > 1))
 
-// Also treat decision step false result as validation failure (skip tempLLM)
+// Also treat decision step false result as validation failure
 isDecisionStepFalse := decisionContext != nil && !decisionContext.DecisionResult
 if isDecisionStepFalse {
     isRetryAfterValidationFailure = true
 }
 ```
 
-**File:** [`controller_agent_factory.go:131-236`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L131)
+**File:** [`controller_agent_factory.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go)
 
 ```go
-// Calculate shouldSkipTempOverride (only blocks tempLLM1, not tempLLM2)
-shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
-
-// Check step config disable flag
-disableTempLLM := stepConfig != nil && stepConfig.DisableTempLLM != nil && *stepConfig.DisableTempLLM
-
-// Check tempLLM2 FIRST (priority order)
-shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && 
-    (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
-if shouldUseTempLLM2 {
-    // Use tempLLM2 (NOT blocked by shouldSkipTempOverride)
-}
-
-// Then check tempLLM1
-else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
-    // Use tempLLM1 (blocked by shouldSkipTempOverride)
-}
-
-// Finally fall back to original LLM chain
-else {
-    // Use step LLM → preset LLM
+if stepConfig.ExecutionLLM != nil {
+    // Use explicit step execution LLM
+} else if subAgentLLMFromContext != nil {
+    // Use sub-agent override when allowed
+} else if tierResolver != nil {
+    // Resolve execution tier from context and learning maturity
+} else {
+    // Use workflow/preset execution LLM fallback
 }
 ```
 
@@ -275,74 +249,65 @@ else {
 
 **File**: [`controller_agent_factory.go:131-236`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go#L131)
 
-| Condition | Purpose | Blocks | Notes |
+| Condition | Purpose | Effect | Notes |
 |-----------|---------|--------|-------|
-| `learningsFolderEmpty == false` | Required for tempLLM usage | All tempLLMs if true | Emits `temp_llm_skipped` event when skipped |
-| `shouldSkipTempOverride` | Skip tempLLM1 after validation failure | Only tempLLM1 | Calculated as: `isRetryAfterValidationFailure && fallbackToOriginalLLMOnFailure` |
-| `fallbackToOriginalLLMOnFailure` | Skip tempLLM1 when enabled | Only tempLLM1 | tempLLM2 still used (part of cascading fallback) |
-| `disableTempLLM` (step config) | Step-level override to disable tempLLM | All tempLLMs | From `step_config.json`: `agent_configs.disable_temp_llm: true` |
-| `isRetryAfterValidationFailure` | Indicates previous attempt failed | tempLLM1 (if fallback enabled) | Triggered by: validation failure OR decision step false OR new loop iteration after failure |
-| `retryAttempt == 2` | Second retry attempt | None | Always uses tempLLM2 if available (checked first) |
-| `isRetryAfterValidationFailure && retryAttempt == 1` | New loop iteration after failure | None | Uses tempLLM2 if available (checked first) |
+| Step `execution_llm` set | Explicit per-step model choice | Overrides all runtime execution model selection | Applies in both manual and tiered modes |
+| `sub_agent_llm` present in context | Use parent-selected model for nested execution | Overrides tiered/preset selection when step config is absent | Only applies to sub-agent executions |
+| Tier resolver configured | Use maturity-based execution tier | Selects tiered execution model when no step override is present | Active in tiered mode |
+| No step override and no tier resolver result | Fall back to workflow execution LLM | Uses preset/workflow execution config | Final execution fallback |
 
 ### 🛠️ Common Issues & Solutions
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| tempLLM not used | Learnings folder is empty | Ensure learnings exist before execution (check `learnings/step-{N}/` folder) |
-| tempLLM1 skipped | `shouldSkipTempOverride` is true | Check `fallback_to_original_llm_on_failure` configuration in execution options |
-| tempLLM2 not used | Not on attempt 2 or new loop iteration | Verify retry attempt number and loop iteration count |
-| Always uses original LLM | No learnings available OR `disable_temp_llm: true` | Generate learnings first or check step config for `disable_temp_llm` flag |
-| tempLLM skipped after decision step false | Decision step false result triggers `isRetryAfterValidationFailure` | This is expected behavior - decision step false is treated as validation failure |
-| tempLLM skipped on loop iteration | New loop iteration after failure triggers `isRetryAfterValidationFailure` | This is expected behavior - uses tempLLM2 if available, otherwise original LLM |
+| Step model not used | `execution_llm` not set on the step | Set `agent_configs.execution_llm` for that step |
+| Tiered model used unexpectedly | Tiered mode is active and the step has no `execution_llm` | Set a step execution LLM or change workflow allocation mode |
+| Sub-agent model used unexpectedly | Execution is happening inside a sub-agent context | Check the calling sub-agent configuration and context |
+| Always uses preset/workflow model | No step override and no tier resolver match/override | Verify workflow LLM allocation and step config |
 
 ### 🔍 For LLMs: Quick Reference
 
 **Constraints:**
-- ✅ **Allowed**: Retry with tempLLM1 on attempt 1 (if learnings exist and not blocked)
-- ✅ **Allowed**: Retry with tempLLM2 on attempt 2 OR new loop iteration after failure
-- ✅ **Allowed**: Fall back to original LLM when tempLLMs unavailable or blocked
-- ❌ **Forbidden**: Using tempLLM when learnings folder is empty (emits `temp_llm_skipped` event)
-- ❌ **Forbidden**: Using tempLLM when `disable_temp_llm: true` in step config
-- ✅ **Note**: tempLLM2 is NOT blocked by `shouldSkipTempOverride` (only tempLLM1 is blocked)
+- ✅ **Allowed**: Set `execution_llm` on a step to force that execution model.
+- ✅ **Allowed**: Let tiered mode select execution models when no step override is present.
+- ✅ **Allowed**: Fall back to the workflow execution LLM when no higher-priority override exists.
 
 **Failure Detection:**
 - Only `ExecutionStatus == "FAILED"` triggers `isRetryAfterValidationFailure`
 - Decision step false result also triggers `isRetryAfterValidationFailure`
 - New loop iteration after failure (`loopIterationCount > 1`) triggers `isRetryAfterValidationFailure`
-- `PARTIAL`/`INCOMPLETE`/`COMPLETED` with unmet criteria continue retry but don't trigger tempLLM fallback
+- `PARTIAL`/`INCOMPLETE`/`COMPLETED` with unmet criteria continue retry but do not change model selection
 
 **Priority Order:**
-1. Check tempLLM2 FIRST (attempt 2 or new loop iteration)
-2. Check tempLLM1 (attempt 1, not blocked)
-3. Fall back to original LLM chain
+1. Step `execution_llm`
+2. `sub_agent_llm`
+3. Tiered execution resolution
+4. Workflow execution LLM fallback
 
 **Example Flows:**
 
-**Normal Retry:**
+**Step override present:**
 ```
-Attempt 1: tempLLM1 → FAILED → Continue
-Attempt 2: tempLLM2 → FAILED → Continue  
-Attempt 3: Original LLM → SUCCESS → Complete
+Attempt 1: Step execution LLM → FAILED → Continue
+Attempt 2: Step execution LLM → SUCCESS → Complete
 ```
 
-**With Fallback Enabled:**
+**Tiered execution:**
 ```
-Attempt 1: tempLLM1 → FAILED → Continue (fallback enabled)
-Attempt 2: tempLLM2 → FAILED → Continue (tempLLM2 still used)
-Attempt 3: Original LLM → SUCCESS → Complete
+Attempt 1: Tier-selected model → FAILED → Continue
+Attempt 2: Tier-selected model → SUCCESS → Complete
 ```
 
 **Decision Step False:**
 ```
 Decision Step: FALSE → isRetryAfterValidationFailure = true
-Attempt 1: Original LLM (tempLLM skipped) → SUCCESS → Complete
+Attempt 1: Selected execution model → SUCCESS → Complete
 ```
 
 **Loop Iteration After Failure:**
 ```
-Loop Iteration 1: tempLLM1 → FAILED
-Loop Iteration 2: tempLLM2 (isRetryAfterValidationFailure && retryAttempt == 1) → SUCCESS
+Loop Iteration 1: Selected execution model → FAILED
+Loop Iteration 2: Selected execution model → SUCCESS
 ```
 
 ---

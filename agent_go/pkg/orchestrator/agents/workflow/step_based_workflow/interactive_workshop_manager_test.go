@@ -32,9 +32,9 @@ func TestWorkshopSubAgentNotifierRegistersCancelableExecution(t *testing.T) {
 		t.Fatal("expected registered execution to keep its cancel function")
 	}
 
-	cancelled := registry.CancelAll()
-	if len(cancelled) != 1 {
-		t.Fatalf("expected 1 cancelled execution, got %d", len(cancelled))
+	canceled := registry.CancelAll()
+	if len(canceled) != 1 {
+		t.Fatalf("expected 1 canceled execution, got %d", len(canceled))
 	}
 
 	select {
@@ -53,9 +53,9 @@ func TestWorkshopStepRegistryCancelAllMarksLegacyExecutionsCancelled(t *testing.
 		cancel: nil,
 	})
 
-	cancelled := registry.CancelAll()
-	if len(cancelled) != 1 {
-		t.Fatalf("expected 1 cancelled execution, got %d", len(cancelled))
+	canceled := registry.CancelAll()
+	if len(canceled) != 1 {
+		t.Fatalf("expected 1 canceled execution, got %d", len(canceled))
 	}
 
 	exec := registry.Get("legacy-sub-agent")
@@ -93,7 +93,7 @@ func TestWorkshopStepRegistryCancelReturnsRawExecutionSnapshot(t *testing.T) {
 		t.Fatalf("expected step ID to be preserved, got %q", snap.StepID)
 	}
 	if snap.Status != WorkshopStepCancelled {
-		t.Fatalf("expected cancelled status, got %q", snap.Status)
+		t.Fatalf("expected canceled status, got %q", snap.Status)
 	}
 
 	select {

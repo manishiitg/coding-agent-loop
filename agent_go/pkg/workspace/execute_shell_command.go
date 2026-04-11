@@ -87,8 +87,14 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Block agent-browser CLI calls via shell — catches direct calls, bash -c wrapping, piping, etc.
 	// The agent_browser tool handles CDP URL resolution, session tracking, and folder guard.
 	// Calling agent-browser directly via shell bypasses all of this.
+	//
+	// We strip heredoc bodies and quoted string literals before the substring check so that
+	// commands embedding the literal text "agent-browser" as data (e.g. a python3 <<PYEOF
+	// script rewriting plan descriptions that mention the CLI, or `echo "use agent-browser"`)
+	// don't trip the guard. What remains after stripping is the executable part of the
+	// command, where a real invocation would appear.
 	cmdTrimmed := strings.TrimSpace(params.Command)
-	if strings.Contains(cmdTrimmed, "agent-browser") {
+	if containsAgentBrowserInvocation(cmdTrimmed) {
 		log.Printf("[SHELL] Blocked agent-browser CLI call. Command: %s", params.Command)
 
 		// Context-aware error: guide LLM to the correct browser tool
@@ -235,6 +241,114 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	return result, nil
 }
 
+// containsAgentBrowserInvocation reports whether cmd appears to invoke the agent-browser
+// CLI as an executable, rather than merely mentioning the string "agent-browser" inside
+// data regions (heredoc bodies, quoted string literals).
+//
+// It strips heredoc bodies (<<EOF / <<'EOF' / <<"EOF" / <<-EOF) and single/double-quoted
+// string literals, then does a substring check on what remains. This is a guardrail for
+// a well-intentioned LLM, not a security boundary — adversarial constructs like
+// $(printf agent)-browser are out of scope.
+func containsAgentBrowserInvocation(cmd string) bool {
+	return strings.Contains(stripShellDataRegions(cmd), "agent-browser")
+}
+
+// heredocStartRe matches the start of a heredoc redirection and captures the delimiter.
+// Handles <<WORD, <<-WORD, <<'WORD', <<"WORD" (the <<- form strips leading tabs but the
+// delimiter word itself is the same).
+var heredocStartRe = regexp.MustCompile(`<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// stripShellDataRegions removes heredoc bodies and single/double-quoted string literals
+// from a shell command, leaving the executable skeleton for substring inspection.
+func stripShellDataRegions(cmd string) string {
+	var out strings.Builder
+	out.Grow(len(cmd))
+
+	i := 0
+	n := len(cmd)
+	for i < n {
+		// Heredoc: <<EOF ... \nEOF\n — strip body through matching delimiter line.
+		if i+2 <= n && cmd[i] == '<' && cmd[i+1] == '<' {
+			if loc := heredocStartRe.FindStringSubmatchIndex(cmd[i:]); loc != nil && loc[0] == 0 {
+				full := cmd[i : i+loc[1]]
+				var delim string
+				for g := 1; g <= 3; g++ {
+					if loc[2*g] >= 0 {
+						delim = cmd[i+loc[2*g] : i+loc[2*g+1]]
+						break
+					}
+				}
+				out.WriteString(full)
+				i += loc[1]
+				// Advance to end of the current line (the heredoc body starts on the next line).
+				for i < n && cmd[i] != '\n' {
+					out.WriteByte(cmd[i])
+					i++
+				}
+				if i < n {
+					out.WriteByte('\n')
+					i++
+				}
+				// Consume body up to a line whose trimmed content equals the delimiter.
+				for i < n {
+					lineStart := i
+					for i < n && cmd[i] != '\n' {
+						i++
+					}
+					line := cmd[lineStart:i]
+					if i < n {
+						i++ // consume newline
+					}
+					if strings.TrimSpace(line) == delim {
+						// Preserve the delimiter line so later logic can still see command structure.
+						out.WriteString(line)
+						out.WriteByte('\n')
+						break
+					}
+					// Body line — drop.
+				}
+				continue
+			}
+		}
+
+		ch := cmd[i]
+		// Single-quoted string: everything until the next single quote is literal.
+		if ch == '\'' {
+			out.WriteByte('\'')
+			i++
+			for i < n && cmd[i] != '\'' {
+				i++
+			}
+			if i < n {
+				out.WriteByte('\'')
+				i++
+			}
+			continue
+		}
+		// Double-quoted string: strip body but keep the quotes. We don't try to honor
+		// $(...) / `...` expansions inside — the guard is a guardrail, not a parser.
+		if ch == '"' {
+			out.WriteByte('"')
+			i++
+			for i < n && cmd[i] != '"' {
+				if cmd[i] == '\\' && i+1 < n {
+					i += 2
+					continue
+				}
+				i++
+			}
+			if i < n {
+				out.WriteByte('"')
+				i++
+			}
+			continue
+		}
+		out.WriteByte(ch)
+		i++
+	}
+	return out.String()
+}
+
 // parseShellResponse parses the workspace API shell response into a typed ShellCommandResult.
 func parseShellResponse(respBody []byte) ShellCommandResult {
 	var resp map[string]json.RawMessage
@@ -280,17 +394,6 @@ func parseShellResponse(respBody []byte) ShellCommandResult {
 	}
 
 	return result
-}
-
-// formatShellResponse is a backward-compatible wrapper that returns the JSON string form.
-// Used by executor wrappers that need to return strings to the LLM.
-func formatShellResponse(respBody []byte) (string, bool) {
-	result := parseShellResponse(respBody)
-	jsonBytes, err := json.Marshal(result)
-	if err != nil {
-		return string(respBody), false
-	}
-	return string(jsonBytes), result.CommandFailed()
 }
 
 // tryUnwrapMCPAPIResponse attempts to unwrap a nested MCP API response.

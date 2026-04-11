@@ -12,7 +12,6 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/codeexec"
-	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
@@ -328,13 +327,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 // for the current tool session before running a saved main.py fast path.
 //
 // Why this is needed:
-// - Normal execution agents preload lazy-connect server configs (with runtime overrides)
-//   during agent startup, so the first Playwright/Camofox tool call uses the workflow's
-//   run-specific browser settings.
-// - Saved-script fast path skips execution-agent startup and goes straight to main.py.
-// - Without this priming, the first browser call falls through to mcpcache and creates
-//   a connection from the default MCP config (e.g. global Downloads/), bypassing the
-//   workflow's run-specific override.
+//   - Normal execution agents preload lazy-connect server configs (with runtime overrides)
+//     during agent startup, so the first Playwright/Camofox tool call uses the workflow's
+//     run-specific browser settings.
+//   - Saved-script fast path skips execution-agent startup and goes straight to main.py.
+//   - Without this priming, the first browser call falls through to mcpcache and creates
+//     a connection from the default MCP config (e.g. global Downloads/), bypassing the
+//     workflow's run-specific override.
 func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScript(ctx context.Context, stepConfig *AgentConfigs) {
 	sessionID := strings.TrimSpace(hcpo.GetMCPSessionID())
 	if sessionID == "" {
@@ -480,23 +479,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
 //
-// Priority for sub-agents (sub_agent_llm set in context):
-//  1. sub_agent_llm from context  — skipped if enable_dynamic_tier_selection=true
-//  2. (falls through to main step chain below)
-//
 // Priority for main step execution:
-//  1. tempLLM2 / tempLLM1        — highest; requires learnings exist and disable_temp_llm=false
-//  2. step config ExecutionLLM   — explicit per-step override; used when tempLLM is off/unavailable
+//  1. step config ExecutionLLM   — explicit per-step override; always wins when set
+//  2. sub_agent_llm from context — skipped if enable_dynamic_tier_selection=true
 //  3. tiered mode                — maturity-based tier resolution (preferred_tier ctx > maturity)
 //  4. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
-	isRetryAfterValidationFailure bool,
-	retryAttempt int,
-	stepID string,
 	stepPath string,
-	learningsFolderEmpty bool,
 ) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
@@ -504,7 +495,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
 	}
 
-	// ── 1. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
+	// ── 1. STEP CONFIG ExecutionLLM ──────────────────────────────────────────
+	// Explicit per-step execution model always wins, including in tiered mode.
+	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step ExecutionLLM for step %s: %s/%s",
+			stepPath, stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.ExecutionLLM.Provider,
+				ModelID:  stepConfig.ExecutionLLM.ModelID,
+			},
+			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
+		}
+	}
+
+	// ── 2. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
 	// When the todo-task orchestrator spawns a child agent, sub_agent_llm is
 	// injected into context. Skip it when dynamic tier selection is active —
 	// the orchestrator picks tiers dynamically via preferred_tier instead.
@@ -533,119 +539,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		}
 	}
 
-	// ── 2. TEMP LLM ──────────────────────────────────────────────────────────
-	// tempLLM takes highest priority for main-step execution.
-	// Skipped entirely when: disable_temp_llm=true, learnings folder is empty,
-	// or fallback_to_original_llm_on_failure is triggered on tempLLM1.
-	disableTempLLM := stepConfig != nil && stepConfig.DisableTempLLM != nil && *stepConfig.DisableTempLLM
-	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
-	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
-	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
-
-	if !disableTempLLM {
-		if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
-			hcpo.GetLogger().Info("🔄 Validation failed - skipping temp override LLM and falling back (fallback_to_original_llm_on_failure enabled)")
-		}
-
-		if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
-			hcpo.GetLogger().Info(fmt.Sprintf("📚 Step %s has no learnings - skipping temp override LLM (learnings folder is empty)", stepPath))
-
-			// Emit event so UI shows why tempLLM was skipped
-			eventBridge := hcpo.GetContextAwareBridge()
-			if eventBridge != nil {
-				stepId := stepID
-				if stepId == "" {
-					stepId = stepPath
-				}
-				var tempLLMProvider, tempLLMModel string
-				if retryAttempt == 1 && hasTempLLM1 {
-					tempLLMProvider = hcpo.tempOverrideLLM.Provider
-					tempLLMModel = hcpo.tempOverrideLLM.ModelID
-				} else if retryAttempt == 2 && hasTempLLM2 {
-					tempLLMProvider = hcpo.tempOverrideLLM2.Provider
-					tempLLMModel = hcpo.tempOverrideLLM2.ModelID
-				} else if hasTempLLM1 {
-					tempLLMProvider = hcpo.tempOverrideLLM.Provider
-					tempLLMModel = hcpo.tempOverrideLLM.ModelID
-				}
-				baseWorkspacePath := hcpo.GetWorkspacePath()
-				pathInfo := parseStepPath(stepPath)
-				eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
-					Type:      orchestrator_events.TempLLMSkipped,
-					Timestamp: time.Now(),
-					Data: &orchestrator_events.TempLLMSkippedEvent{
-						BaseEventData: baseevents.BaseEventData{
-							Timestamp: time.Now(),
-							Component: "orchestrator",
-						},
-						StepID:          stepId,
-						StepIndex:       pathInfo.ParentStepNumber - 1,
-						StepPath:        stepPath,
-						IsBranchStep:    pathInfo.IsBranchStep,
-						Reason:          "learnings_folder_empty",
-						TempLLMProvider: tempLLMProvider,
-						TempLLMModel:    tempLLMModel,
-						LearningsPath:   fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath),
-						RunFolder:       hcpo.selectedRunFolder,
-						WorkspacePath:   baseWorkspacePath,
-					},
-				})
-				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted temp_llm_skipped event for %s (skipped tempLLM: %s/%s)", stepPath, tempLLMProvider, tempLLMModel))
-			}
-		}
-
-		// tempLLM2: attempt 2, or new loop iteration after validation failure
-		shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
-		if shouldUseTempLLM2 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, learnings exist): %s/%s",
-				retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: hcpo.tempOverrideLLM2.Provider,
-					ModelID:  hcpo.tempOverrideLLM2.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys,
-			}
-		}
-
-		// tempLLM1: attempt 1 (not blocked by shouldSkipTempOverride)
-		if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d, learnings exist): %s/%s",
-				retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: hcpo.tempOverrideLLM.Provider,
-					ModelID:  hcpo.tempOverrideLLM.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys,
-			}
-		}
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM", stepPath))
-	}
-
-	// ── 3. STEP CONFIG ExecutionLLM ──────────────────────────────────────────
-	// Skipped when tiered mode is active — tiered resolver handles model selection.
-	// Only used as fallback when no tier resolver is configured (legacy/manual mode).
-	if hcpo.tierResolver == nil && stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step ExecutionLLM for step %s: %s/%s (no tier resolver)",
-			stepPath, stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ExecutionLLM.Provider,
-				ModelID:  stepConfig.ExecutionLLM.ModelID,
-			},
-			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
-		}
-	} else if hcpo.tierResolver != nil && stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] step ExecutionLLM (%s/%s) skipped for step %s — tiered mode is active",
-			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID, stepPath))
-	}
-
-	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
+	// ── 3. TIERED MODE ───────────────────────────────────────────────────────
 	// Maturity-based tier resolution when no explicit step override is set.
 	if hcpo.tierResolver != nil {
+		stepID := hcpo.resolveStepID(stepPath, "")
+
 		// Workshop execute_step tier override (e.g., execute_step(step_id, tier="medium"))
 		if workshopTier, ok := ctx.Value(WorkshopTierOverrideKey).(int); ok && workshopTier >= 1 && workshopTier <= 3 {
 			tier := TierLevel(workshopTier)
@@ -703,7 +601,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		return llmConfig
 	}
 
-	// ── 5. NO VALID CONFIG ──────────────────────────────────────────────────
+	// ── 4. NO VALID CONFIG ──────────────────────────────────────────────────
 	// Return nil so the caller can surface a user-visible error instead of crashing.
 	hcpo.GetLogger().Warn(fmt.Sprintf("❌ selectExecutionLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
 	return nil
@@ -740,11 +638,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 
-	// Determine execution mode: CLI providers always use code execution mode
+	// Determine execution mode: CLI providers and learn_code steps always use code execution mode.
+	// learn_code steps need code execution mode so the agent gets the tool index and get_api_spec
+	// virtual tool — without these, the LLM has to guess MCP server/tool names when writing main.py.
 	actualProvider := config.LLMConfig.Primary.Provider
+	isLearnCode := isScriptedExecutionModeConfig(stepConfig)
 	if actualProvider == "claude-code" || actualProvider == "gemini-cli" || actualProvider == "codex-cli" {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
+	} else if isLearnCode {
+		config.UseCodeExecutionMode = true
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for learn_code step — LLM needs tool index and get_api_spec to write main.py"))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", config.UseCodeExecutionMode))
@@ -967,59 +871,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 // selectLearningLLM selects the LLM config for learning agents
 //
 // Priority:
-//  1. tempLearningLLM            — if learnings already exist for this step
-//  2. cost-optimization tempLLM  — if stability threshold reached (>50% of runs stable)
-//  3. step config LearningLLM    — explicit per-step override; beats tiered mode
-//  4. tiered mode                — maturity-based tier resolution
-//  5. presetLearningLLM          — workflow-level default
+//  1. step config LearningLLM    — explicit per-step override; beats tiered mode
+//  2. tiered mode                — maturity-based tier resolution
+//  3. presetLearningLLM          — workflow-level default
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if orchestratorLLMConfig == nil {
 		orchestratorLLMConfig = &orchestrator.LLMConfig{}
 	}
 
-	// ── 1. TEMP LEARNING LLM ─────────────────────────────────────────────────
-	// If tempLearningLLM is configured, always use it for all learning phases (first run or incremental).
-	if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
-		hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Using temp learning LLM for step %s: %s/%s",
-			stepID, hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.executionOptions.TempLearningLLM.Provider,
-				ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
-		}
-	}
-
-	// ── 2. COST-OPTIMIZATION TEMP LLM ────────────────────────────────────────
-	// Switch to cheaper tempLLM once a step reaches 50% of its stability threshold.
-	// TODO: Turn-based classification is unreliable across models — needs a better metric.
-	if stepID != "" {
-		metadata, err := hcpo.readStepLearningMetadata(ctx, stepID, stepPath)
-		if err == nil {
-			shouldUseTempLLM := false
-			reason := ""
-			if metadata.SuccessfulRuns >= 2 {
-				shouldUseTempLLM = true
-				reason = fmt.Sprintf("stability threshold reached (%d successful runs)", metadata.SuccessfulRuns)
-			}
-			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
-				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Learning agent using cheaper tempLLM (%s/%s): %s",
-					hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID, reason))
-				return &orchestrator.LLMConfig{
-					Primary: orchestrator.LLMModel{
-						Provider: hcpo.tempOverrideLLM.Provider,
-						ModelID:  hcpo.tempOverrideLLM.ModelID,
-					},
-					APIKeys: orchestratorLLMConfig.APIKeys,
-				}
-			}
-		}
-	}
-
-	// ── 3. STEP CONFIG LearningLLM ───────────────────────────────────────────
+	// ── 1. STEP CONFIG LearningLLM ───────────────────────────────────────────
 	// Skipped when tiered mode is active — tiered resolver handles model selection.
 	// Only used as fallback when no tier resolver is configured (legacy/manual mode).
 	if hcpo.tierResolver == nil && stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
@@ -1038,7 +899,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 			stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID, stepPath))
 	}
 
-	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
+	// ── 2. TIERED MODE ───────────────────────────────────────────────────────
 	if hcpo.tierResolver != nil {
 		learningMode := ""
 		if stepConfig != nil {
@@ -1101,14 +962,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // Phase 2: Refactored Agent Creators (Using Base Factory)
 // ============================================================================
 
-// createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history
-// isRetryAfterValidationFailure: if true and fallbackToOriginalLLMOnFailure is enabled, will skip tempOverrideLLM and use original LLM
+// createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history.
 // stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps, "step-2-sub-agent-1" for sub-agents)
-// retryAttempt: current retry attempt number (1 = first attempt, 2 = second attempt, etc.) - used for cascading LLM fallback
-// stepIDOverride: Optional explicit step ID to use for learnings / tempLLM selection (e.g., sub-agent step ID).
+// stepIDOverride: Optional explicit step ID to use for learnings / metadata selection (e.g., sub-agent step ID).
 //
 //	When empty, the step ID will be derived from stepPath.
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, stepIDOverride string) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, stepIDOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
 
@@ -1146,16 +1005,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	maxTurns := hcpo.getExecutionMaxTurns(stepConfig)
 
 	// 4. Select LLM (extracted method)
-	pathInfo := parseStepPath(stepPath)
-	stepIndexForCheck := pathInfo.ParentStepNumber - 1 // Convert to 0-based
-	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndexForCheck, stepPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step %s learnings folder is empty: %v, assuming empty (will skip tempLLM)", stepID, err))
-		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
-	}
-	llmConfig := hcpo.selectExecutionLLM(ctx, stepConfig, isRetryAfterValidationFailure, retryAttempt, stepID, stepPath, learningsFolderEmpty)
+	llmConfig := hcpo.selectExecutionLLM(ctx, stepConfig, stepPath)
 	if llmConfig == nil {
-		return nil, fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for execution agent: step config and tier/preset execution LLM are all empty or invalid")
 	}
 
 	// 4. Create config
@@ -1207,7 +1059,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	}
 
 	// 6. Use base factory! (This handles all setup automatically)
-	pathInfo = parseStepPath(stepPath)
+	pathInfo := parseStepPath(stepPath)
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,

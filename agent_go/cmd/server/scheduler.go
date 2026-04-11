@@ -828,52 +828,6 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	return reqMap
 }
 
-func sanitizeGroupNameForFolder(name string) string {
-	sanitized := strings.TrimSpace(name)
-	if sanitized == "" {
-		return ""
-	}
-
-	whitespacePattern := regexp.MustCompile(`\s+`)
-	sanitized = whitespacePattern.ReplaceAllString(sanitized, "-")
-
-	specialCharPattern := regexp.MustCompile(`[^a-zA-Z0-9-]`)
-	sanitized = specialCharPattern.ReplaceAllString(sanitized, "-")
-
-	multiDashPattern := regexp.MustCompile(`-+`)
-	sanitized = multiDashPattern.ReplaceAllString(sanitized, "-")
-
-	sanitized = strings.Trim(sanitized, "-")
-	sanitized = strings.ToLower(sanitized)
-	if sanitized == "" {
-		return ""
-	}
-
-	return sanitized
-}
-
-func resolveWorkshopScheduleRunFolder(ctx context.Context, workspacePath string, groupNames []string) string {
-	baseRunFolder := "iteration-0"
-	if strings.TrimSpace(workspacePath) == "" {
-		return baseRunFolder
-	}
-
-	if len(groupNames) != 1 {
-		return baseRunFolder
-	}
-
-	groupFolderName := strings.TrimSpace(groupNames[0])
-	if groupFolderName == "" {
-		return baseRunFolder
-	}
-
-	if sanitized := sanitizeGroupNameForFolder(groupFolderName); sanitized != "" {
-		groupFolderName = sanitized
-	}
-
-	return fmt.Sprintf("%s/%s", baseRunFolder, groupFolderName)
-}
-
 // waitForWorkshopIdle polls until all background agents and synthetic turns have completed.
 func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID string) error {
 	ticker := time.NewTicker(3 * time.Second)

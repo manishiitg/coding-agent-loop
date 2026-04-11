@@ -48,8 +48,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendOrchestrationLogEntry(ctx conte
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-// usedTempLLM: Which tempLLM was used during execution ("tempLLM1", "tempLLM2", or "" for original LLM)
-func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, usedTempLLM string, turnCount int, executionLLM string, triggerReason string) error {
+func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, turnCount int, executionLLM string, triggerReason string) error {
 	// Get agent configs once at the start
 	agentConfigs := getAgentConfigs(step)
 
@@ -376,7 +375,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	return nil
 }
 
-
 // startTrackedSuccessLearningPhase launches success learning as a background workshop execution
 // when workshop tracking is available. Returns true when tracking was set up and the launch
 // was handled here; callers should fall back to the legacy fire-and-forget path when it returns false.
@@ -389,7 +387,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	executionHistory []llmtypes.MessageContent,
 	validationResponse *ValidationResponse,
 	isCodeExecutionMode bool,
-	usedTempLLM string,
 	turnCount int,
 	executionLLM string,
 	triggerReason string,
@@ -443,7 +440,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 			}
 		}()
 
-		execErr = hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+		execErr = hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
 		if execErr != nil {
 			result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, execErr)
 		} else {
@@ -643,7 +640,6 @@ func extractSkillLearningContent(content string) (string, string) {
 
 	return name, body
 }
-
 
 // logLearningExecution appends a learning execution entry to the learning log file (JSONL format)
 func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Context, stepID string, stepPath string, entry map[string]interface{}) error {

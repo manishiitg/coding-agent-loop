@@ -11,6 +11,7 @@ import { DocxRenderer } from "./components/ui/DocxRenderer";
 import { PdfRenderer } from "./components/ui/PdfRenderer";
 import { HtmlRenderer } from "./components/ui/HtmlRenderer";
 import { ConversationRenderer, isConversationJSON } from "./components/ui/ConversationRenderer";
+import { DiffRenderer } from "./components/ui/DiffRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -20,6 +21,7 @@ import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { convertToSlackMarkdown } from "./utils/slackMarkdown";
+import { isDiffFilePath, looksLikeDiffContent } from "./utils/diff";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
@@ -1513,21 +1515,23 @@ function App() {
                               </div>
                             )
                           } 
+
+                          if ((selectedFile?.path && isDiffFilePath(selectedFile.path)) || looksLikeDiffContent(fileContent)) {
+                            return <DiffRenderer content={fileContent} />
+                          }
  
                           // Default: render as markdown
-                          else {
-                            return (
-                              <div ref={markdownContentRef} className="max-w-4xl mx-auto">
-                                <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-gray-100 prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-700 dark:prose-blockquote:text-gray-300">
-                                  <MarkdownRenderer 
-                                    content={fileContent} 
-                                    className="max-w-none"
-                                    showScrollbar={true}
-                                  />
-                                </div>
+                          return (
+                            <div ref={markdownContentRef} className="max-w-4xl mx-auto">
+                              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-gray-100 prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-700 dark:prose-blockquote:text-gray-300">
+                                <MarkdownRenderer 
+                                  content={fileContent} 
+                                  className="max-w-none"
+                                  showScrollbar={true}
+                                />
                               </div>
-                            )
-                          }
+                            </div>
+                          )
                         })()}
                       </div>
                     )}

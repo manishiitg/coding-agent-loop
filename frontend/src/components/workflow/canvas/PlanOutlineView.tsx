@@ -616,19 +616,22 @@ function StepTreeNode({
 
       {todoRoutes.length > 0 && (
         <TreeFolder label="routes" depth={fileDepth} accent="text-teal-500/80">
-          {todoRoutes.map((route, ri) => (
-            <StepTreeNode
-              key={route.route_id}
-              step={route.sub_agent_step}
-              index={ri}
-              depth={fileDepth + 1}
-              activeFileKey={activeFileKey}
-              onSelectFile={onSelectFile}
-              onSelectWorkspaceFile={onSelectWorkspaceFile}
-              onStepClick={onStepClick}
-              workspacePath={workspacePath}
-            />
-          ))}
+          {todoRoutes.map((route, ri) => {
+            if (!route.sub_agent_step) return null
+            return (
+              <StepTreeNode
+                key={route.route_id}
+                step={route.sub_agent_step}
+                index={ri}
+                depth={fileDepth + 1}
+                activeFileKey={activeFileKey}
+                onSelectFile={onSelectFile}
+                onSelectWorkspaceFile={onSelectWorkspaceFile}
+                onStepClick={onStepClick}
+                workspacePath={workspacePath}
+              />
+            )
+          })}
         </TreeFolder>
       )}
     </TreeFolder>

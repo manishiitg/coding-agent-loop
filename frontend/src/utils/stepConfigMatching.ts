@@ -28,7 +28,6 @@ export interface AgentConfigs {
   use_tool_search_mode?: boolean;             // Legacy field still cleaned up by older editor flows
   pre_discovered_tools?: string[];            // Legacy field still cleaned up by older editor flows
   keep_learning_full?: boolean;
-  disable_temp_llm?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
   enable_dynamic_tier_selection?: boolean;    // allow orchestrator to choose tier for sub-agents
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
@@ -157,6 +156,10 @@ export interface ConsistencyRule {
   compare_with_path: string;         // JSONPath to compare with
 }
 
+export interface StepSharing {
+  orchestrator_ids?: string[];
+}
+
 // Common fields shared by all step types
 interface CommonStepFields {
   id: string;                        // Stable step ID (required, always provided by backend)
@@ -167,6 +170,7 @@ interface CommonStepFields {
   context_output?: string | string[];
   validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
   agent_configs?: AgentConfigs;       // Merged from step_config.json
+  shared_with?: StepSharing;
 }
 
 // Regular step (may have loops)
@@ -252,7 +256,8 @@ export interface PlanRoutingRoute {
   route_id: string;                   // Unique ID for this route
   route_name: string;                 // Human-readable name
   condition: string;                  // Condition description
-  sub_agent_step: PlanStep;            // The sub-agent step to execute
+  sub_agent_step?: PlanStep;           // The sub-agent step to execute
+  orphan_step_ref?: string;           // Optional reference to a reusable orphan step in the same plan
   context_to_pass?: string;           // Optional: specific context to pass to sub-agent
 }
 

@@ -376,7 +376,7 @@ The TodoTaskOrchestratorAgent uses the **execution LLM** (same as the regular Or
 
 ### LLM Selection Implementation
 
-All orchestrator and control agents (TodoTaskOrchestrator, OrchestrationOrchestrator, ConditionalAgent) use the shared `selectExecutionLLM` helper function with `learningsFolderEmpty=true` (since these agents don't accumulate learnings). This ensures consistent behavior and skips tempLLM logic.
+All orchestrator and control agents (TodoTaskOrchestrator, OrchestrationOrchestrator, ConditionalAgent) use the shared `selectExecutionLLM` helper function. This keeps execution model selection consistent with the main workflow runtime.
 
 For conditional agents, there's an additional priority check for `ConditionalLLM` before falling back to `selectExecutionLLM`.
 

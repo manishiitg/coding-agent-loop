@@ -16,16 +16,16 @@ import (
 
 // WorkspaceStateResponse is the consolidated response containing all workspace data
 type WorkspaceStateResponse struct {
-	Success bool           `json:"success"`
+	Success bool            `json:"success"`
 	Data    *WorkspaceState `json:"data,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
 // WorkspaceState contains all workspace-related data in a single structure
 type WorkspaceState struct {
 	// Run folders and progress
-	RunFolders       []RunFolderInfo  `json:"run_folders"`
-	SelectedProgress *StepProgress    `json:"selected_progress,omitempty"`
+	RunFolders       []RunFolderInfo `json:"run_folders"`
+	SelectedProgress *StepProgress   `json:"selected_progress,omitempty"`
 
 	// Variables manifest
 	VariablesManifest *VariablesManifest `json:"variables_manifest,omitempty"`
@@ -165,22 +165,6 @@ func (api *StreamingAPI) loadVariablesManifestInternal(ctx context.Context, work
 	}
 
 	return &manifest, nil
-}
-
-// loadProgressInternal loads progress for a specific folder (extracted from handleGetProgress)
-func (api *StreamingAPI) loadProgressInternal(ctx context.Context, workspacePath, folderName string) (*StepProgress, error) {
-	// Use the same file and helper function as the folder loading logic
-	stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
-	fmt.Printf("[DEBUG] loadProgressInternal: workspacePath=%s, folderName=%s, stepsFilePath=%s\n", workspacePath, folderName, stepsFilePath)
-	progress, err := readProgressForFolder(ctx, stepsFilePath)
-	if err != nil {
-		return nil, err
-	}
-	if progress == nil {
-		return nil, nil // No progress file - return nil, not error
-	}
-
-	return progress, nil
 }
 
 // getRunFoldersFromWorkspace gets run folders by calling workspace API

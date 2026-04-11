@@ -226,21 +226,6 @@ type TodoVerificationResponse struct {
 	ModifiedTodoListMarkdown string    `json:"modified_todo_list_markdown,omitempty"`
 }
 
-// convertDBFallbacks converts a slice of database.AgentLLMFallback to step_based_workflow.AgentLLMFallback.
-func convertDBFallbacks(fallbacks []database.AgentLLMFallback) []step_based_workflow.AgentLLMFallback {
-	if len(fallbacks) == 0 {
-		return nil
-	}
-	result := make([]step_based_workflow.AgentLLMFallback, len(fallbacks))
-	for i, fb := range fallbacks {
-		result[i] = step_based_workflow.AgentLLMFallback{
-			Provider: fb.Provider,
-			ModelID:  fb.ModelID,
-		}
-	}
-	return result
-}
-
 // convertDBAgentLLMConfig converts a database.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
 // including fallback models.
 func convertDBAgentLLMConfig(dbConfig *database.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
@@ -325,20 +310,6 @@ func NewWorkflowOrchestrator(
 		tier1 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier1)
 		tier2 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier2)
 		tier3 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier3)
-		// If a tier has no fallbacks configured, inherit from the ExecutionLLM fallbacks.
-		// This covers the common case where the user sets fallbacks on the main execution LLM
-		// but not explicitly on each tier.
-		if presetLLMConfig.ExecutionLLM != nil && len(presetLLMConfig.ExecutionLLM.Fallbacks) > 0 {
-			if tier1 != nil && len(tier1.Fallbacks) == 0 {
-				tier1.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
-			}
-			if tier2 != nil && len(tier2.Fallbacks) == 0 {
-				tier2.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
-			}
-			if tier3 != nil && len(tier3.Fallbacks) == 0 {
-				tier3.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
-			}
-		}
 		tieredConfig = &step_based_workflow.TieredLLMConfig{
 			Tier1: tier1,
 			Tier2: tier2,

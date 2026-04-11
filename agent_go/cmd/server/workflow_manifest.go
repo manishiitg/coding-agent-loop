@@ -282,25 +282,6 @@ func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *Workflo
 
 // --- Internal helpers ---
 
-// cleanLLMConfigForManifest strips legacy fields from LLM config when tiered mode is active.
-// In tiered mode, execution uses tier_1/tier_2/tier_3 — the legacy provider/model_id,
-// execution_llm, and learning_llm fields are unused noise. Only phase_llm is kept
-// (used by the workflow builder phase chat).
-func cleanLLMConfigForManifest(cfg *database.PresetLLMConfig) {
-	if cfg == nil {
-		return
-	}
-	if cfg.LLMAllocationMode == "tiered" && cfg.TieredConfig != nil {
-		cfg.Provider = ""
-		cfg.ModelID = ""
-		cfg.ExecutionLLM = nil
-		cfg.LearningLLM = nil
-		// Keep PhaseLLM — used by workflow_phase builder chat
-		// Keep TieredConfig — the actual execution config
-		// Keep feature toggles (UseKnowledgebase, etc.)
-	}
-}
-
 // applyManifestDefaults fills in defaults for fields that may be missing from older schema versions.
 func applyManifestDefaults(m *WorkflowManifest) {
 	if m.SchemaVersion == 0 {

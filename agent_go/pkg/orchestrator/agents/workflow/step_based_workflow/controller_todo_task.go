@@ -646,34 +646,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	executionPath := getExecutionFolderPath(executionWorkspacePath, genericStepPath, genericStepPath)
-	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
-
-	// Setup folder guard for generic agent
-	// Include parent step execution path so sub-agents can write output files
-	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
-	parentStepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
-	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
-	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
-
-	// Add knowledgebase folder paths if enabled
-	if hcpo.UseKnowledgebase() {
-		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-		readPaths = append(readPaths, knowledgebasePath)
-		writePaths = append(writePaths, knowledgebasePath)
-	}
-
-	// Add skill folder paths to read paths (skills are read-only)
-	genericStepConfig := getAgentConfigs(genericStep)
-	genericEffectiveSkills := GetEffectiveSkills(genericStepConfig, hcpo.BaseOrchestrator)
-	if len(genericEffectiveSkills) > 0 {
-		skillReadPaths, _ := BuildSkillFolderGuardPaths(genericEffectiveSkills)
-		readPaths = append(readPaths, skillReadPaths...)
-	}
-
-	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
-	// The per-agent folder guard paths are set on the agent config inside createExecutionOnlyAgent,
-	// preventing race conditions when parallel sub-agents share the same orchestrator instance.
 
 	// Build execution context
 	var capturedHistory []llmtypes.MessageContent
@@ -802,7 +774,6 @@ func cloneStepWithDelegationOverrides(
 		return step, nil
 	}
 }
-
 
 func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 	ctx context.Context,
@@ -936,35 +907,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	executionPath := getExecutionFolderPath(executionWorkspacePath, route.SubAgentStep.GetID(), subAgentStepPath)
-	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
-	parentStepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
-
-	// Setup folder guard for sub-agent
-	// Include parent step execution path so sub-agents can write output files
-	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
-	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
-	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
-
-	// Add knowledgebase folder paths if enabled
-	if hcpo.UseKnowledgebase() {
-		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-		readPaths = append(readPaths, knowledgebasePath)
-		writePaths = append(writePaths, knowledgebasePath)
-	}
-
-	// Add skill folder paths to read paths (skills are read-only)
-	subAgentStepConfig := getAgentConfigs(stepToExecute)
-	subAgentEffectiveSkills := GetEffectiveSkills(subAgentStepConfig, hcpo.BaseOrchestrator)
-	if len(subAgentEffectiveSkills) > 0 {
-		skillReadPaths, _ := BuildSkillFolderGuardPaths(subAgentEffectiveSkills)
-		readPaths = append(readPaths, skillReadPaths...)
-	}
-
-	// NOTE: We no longer call hcpo.SetWorkspacePathForFolderGuard here.
-	// The per-agent folder guard paths are set on the agent config inside createExecutionOnlyAgent,
-	// preventing race conditions when parallel sub-agents share the same orchestrator instance.
-
 	// Build orchestration routes for sub-agent (so it knows about other agents)
 	var orchestrationRoutesForSubAgent []OrchestrationRoute
 	for _, r := range step.PredefinedRoutes {
@@ -1179,7 +1121,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 			stepPath, totalIterations, completedCount, totalTodos))
 	}
 }
-
 
 // saveTodoTaskExecutionLog saves the execution log for a todo task iteration
 // This allows the UI to show the full execution history (conversation, tool calls) for each iteration

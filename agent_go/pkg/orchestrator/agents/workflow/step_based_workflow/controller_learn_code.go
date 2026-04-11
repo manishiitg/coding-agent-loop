@@ -74,7 +74,10 @@ type LearnCodeMetadata struct {
 	GroupStats    map[string]GroupStat `json:"group_stats,omitempty"`    // per-group success/failure counts
 	DurationStats *DurationStats       `json:"duration_stats,omitempty"` // execution time statistics
 	LastFailure   *LastFailureInfo     `json:"last_failure,omitempty"`   // details of most recent failure
-	CurrentStreak *StreakInfo           `json:"current_streak,omitempty"` // consecutive success/failure streak
+	CurrentStreak *StreakInfo          `json:"current_streak,omitempty"` // consecutive success/failure streak
+
+	// TODO: Auto lock_code tracking — auto-unlock when main.py changes (hash mismatch),
+	// auto-lock after N consecutive successes across M+ groups.
 }
 
 // RunRecord captures details of a single script execution.
@@ -86,7 +89,7 @@ type RunRecord struct {
 	GroupName     string `json:"group_name,omitempty"`
 	RunFolder     string `json:"run_folder,omitempty"`
 	FailureReason string `json:"failure_reason,omitempty"` // "execution_error", "validation_error", or "execution_and_validation_error"
-	ErrorSummary  string `json:"error_summary,omitempty"`  // first ~200 chars of error
+	ErrorSummary  string `json:"error_summary,omitempty"`  // full error message
 }
 
 // GroupStat tracks per-group run statistics.
@@ -109,14 +112,14 @@ type DurationStats struct {
 type LastFailureInfo struct {
 	Timestamp    string `json:"timestamp"`
 	Reason       string `json:"reason"`
-	ErrorSnippet string `json:"error_snippet"` // first ~300 chars
+	ErrorSnippet string `json:"error_snippet"` // first ~2000 chars
 	GroupName    string `json:"group_name,omitempty"`
 	ExitCode     int    `json:"exit_code"`
 }
 
 // StreakInfo tracks consecutive success/failure runs.
 type StreakInfo struct {
-	Type  string `json:"type"`  // "success" or "failure"
+	Type  string `json:"type"` // "success" or "failure"
 	Count int    `json:"count"`
 }
 
@@ -694,7 +697,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execLearnCodeScript(
 	stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
 	extraEnv := map[string]string{
 		"STEP_OUTPUT_DIR":         stepOutputAbsPath,
-		"STEP_EXECUTION_DIR":     stepExecutionAbsPath,
+		"STEP_EXECUTION_DIR":      stepExecutionAbsPath,
 		"PYTHONDONTWRITEBYTECODE": "1",
 		"SCRIPT_VERBOSE":          "1", // Enable verbose logging in scripts — stdout is only read on failure
 	}
@@ -918,7 +921,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 			GroupName:     hcpo.currentGroupName,
 			RunFolder:     hcpo.selectedRunFolder,
 			FailureReason: failureReason,
-			ErrorSummary:  truncateStr(errSummary, 200),
+			ErrorSummary:  errSummary,
 		}
 	}
 
@@ -996,60 +999,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
 	hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""))
 	return &LearnCodeFastPathResult{RanScript: true, Success: true, Output: output}
-}
-
-// runLearnCodeMainPyFromExecution runs main.py written by the LLM in the step execution code folder.
-// Returns nil if main.py has not been written yet (LLM hasn't finished writing).
-// The LLM writes to execution/step-x/code/; STEP_OUTPUT_DIR is execution/step-x/.
-func (hcpo *StepBasedWorkflowOrchestrator) runLearnCodeMainPyFromExecution(
-	ctx context.Context,
-	step PlanStepInterface,
-	stepIndex int,
-	stepPath string,
-	allSteps []PlanStepInterface,
-	stepExecutionRelPath string,
-	executionWorkspacePath string,
-) *LearnCodeFastPathResult {
-	docsRoot := GetPromptDocsRoot()
-	stepExecutionAbsPath := filepath.Join(docsRoot, stepExecutionRelPath)
-	codeDirAbsPath := filepath.Join(stepExecutionAbsPath, "code")
-	mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
-
-	// Check if main.py exists via workspace API (not os.Stat — Go server runs on Mac, files are in Docker).
-	mainPyRelPath := stepExecutionRelPath + "/code/main.py"
-	if _, err := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath); err != nil {
-		return nil // main.py not yet written
-	}
-
-	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
-
-	// Clean previous output files before running so pre-validation tests fresh output only.
-	// Preserve code/ — main.py lives there and we're about to run it.
-	hcpo.cleanStepOutputDir(ctx, stepExecutionRelPath, "code")
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Running main.py from code/ folder for step %d (LLM phase)", stepIndex+1))
-	output, exitCode, execErr := hcpo.execLearnCodeScript(ctx, step, stepIndex, stepPath, mainPyPath, inputArgs, stepExecutionAbsPath, codeDirAbsPath, stepExecutionRelPath)
-	if execErr != nil || exitCode != 0 {
-		var execErrMsg string
-		if execErr != nil {
-			execErrMsg = fmt.Sprintf("execution error: %v\n%s", execErr, output)
-		} else {
-			execErrMsg = fmt.Sprintf("exit code %d:\n%s", exitCode, output)
-		}
-		// Run pre-validation even on failure — the LLM needs feedback about both
-		// runtime errors AND missing/malformed output files to fix the script properly.
-		validationErrMsg := ""
-		preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
-		if preValResults != nil && !preValResults.OverallPass {
-			validationErrMsg = formatWorkspaceResults(preValResults)
-		}
-		errMsg := execErrMsg
-		if validationErrMsg != "" {
-			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
-		}
-		return &LearnCodeFastPathResult{RanScript: true, Success: false, ExitCode: exitCode, Error: errMsg}
-	}
-	return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: 0, Output: output}
 }
 
 // saveLearnCodeScriptToLearnings copies all files from the step's code/ subfolder to learnings/{step-id}/.
@@ -1317,7 +1266,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 		meta.LastFailure = &LastFailureInfo{
 			Timestamp:    record.Timestamp,
 			Reason:       record.FailureReason,
-			ErrorSnippet: truncateStr(record.ErrorSummary, 300),
+			ErrorSnippet: truncateStr(record.ErrorSummary, 2000),
 			GroupName:    record.GroupName,
 			ExitCode:     record.ExitCode,
 		}
@@ -1422,7 +1371,19 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
 	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n")
 	sb.WriteString("- **ROBUSTNESS**: This script runs across different groups/users with different data. Handle edge cases: missing fields (use `.get()` with safe defaults for data fields), empty lists, None values, different data formats (e.g. dates as string vs number), missing files (check existence before reading optional files). Always print diagnostic context before failing so the error output explains what went wrong. Do not assume the shape of external data — validate and handle gracefully.\n")
-	sb.WriteString("- **GROUP-AWARE CODE**: The current group name is available via `os.environ.get('VAR_GROUP_NAME', '')`. If the same script keeps failing for specific groups, consider that different groups may require different logic (e.g. different page layouts, different APIs, different data formats). Use the group name to branch behavior when needed — e.g. `if group_name == 'xyz': ...`.\n\n")
+	sb.WriteString("- **GROUP-AWARE CODE**: The current group name is available via `os.environ.get('VAR_GROUP_NAME', '')`. If the same script keeps failing for specific groups, consider that different groups may require different logic (e.g. different page layouts, different APIs, different data formats). Use the group name to branch behavior when needed — e.g. `if group_name == 'xyz': ...`.\n")
+	sb.WriteString("- **NO FABRICATED DATA**: Your script MUST actually fetch/compute data by calling MCP tools, APIs, or processing real input files. Do NOT hardcode, fabricate, or invent output data. If your script writes output files without making any external calls or reading real input data, it will be rejected. Every value in the output must be traceable to a real data source.\n")
+	sb.WriteString("- **BROWSER AUTOMATION**: When using browser tools (playwright MCP or agent_browser), follow these rules:\n")
+	sb.WriteString("  1. **Always snapshot first**: Take a snapshot before any interaction to see the page state and available refs.\n")
+	sb.WriteString("     - Playwright: `call_mcp('playwright', 'browser_snapshot', {})`\n")
+	sb.WriteString("     - Agent Browser: `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
+	sb.WriteString("  2. **Use ref-based interaction**: Click/type using refs from snapshots. Do NOT use CSS selectors or JavaScript injection.\n")
+	sb.WriteString("     - Playwright: `call_mcp('playwright', 'browser_click', {'ref': 'abc123'})`\n")
+	sb.WriteString("     - Agent Browser: `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['@e1'], 'session': 'main'})`\n")
+	sb.WriteString("  3. **Do NOT use evaluate/eval for interactions**: Never inject JavaScript to click, fill forms, or navigate. Use dedicated commands: click, type/fill, select, navigate/open.\n")
+	sb.WriteString("  4. **Wait by polling snapshots**: Instead of `time.sleep(N)`, poll with snapshots in a loop and check for expected content. Use short sleeps (1-2s) between polls.\n")
+	sb.WriteString("  5. **Discover tools first**: Call `get_api_spec` to learn the exact parameter schemas before writing browser code. Do NOT guess parameter names.\n")
+	sb.WriteString("  6. **Print diagnostics on failure**: When an expected element isn't found, print the snapshot so the fix loop can see what the page looked like.\n\n")
 
 	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
 	if len(varMappingLines) > 0 {
@@ -1495,36 +1456,27 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 
 // BuildLearnCodePriorContext generates the prior script context section for inclusion
 // in the user message. Returns empty string if no prior context is needed.
-// scriptMetadataJSON is optional — when non-empty and there's a failure, it's included
-// so the LLM can see run history, failure streaks, and per-group stats.
-func BuildLearnCodePriorContext(priorScript, priorError, scriptMetadataJSON string) string {
+// scriptMetadataPath is optional — when non-empty and there's a failure, the LLM is
+// told to read it to see run history, failure streaks, and per-group stats.
+func BuildLearnCodePriorContext(priorScript, priorError, scriptMetadataPath string) string {
 	if priorScript == "" {
 		return ""
 	}
 	var sb strings.Builder
 	if priorError != "" {
 		sb.WriteString("\n### Previous Script (Failed)\n\n")
-		sb.WriteString("The previously saved script failed. Fix the bug and rewrite main.py:\n\n")
-		sb.WriteString("```python\n")
-		sb.WriteString(priorScript)
-		sb.WriteString("\n```\n")
-		sb.WriteString("\n**Error:**\n```\n")
+		sb.WriteString("The previously saved script failed. Read the current main.py in your working directory, fix the bug, and rewrite it.\n\n")
+		sb.WriteString("**Error:**\n```\n")
 		sb.WriteString(priorError)
 		sb.WriteString("\n```\n")
-		if scriptMetadataJSON != "" {
-			sb.WriteString("\n### Script Run History (`script_metadata.json`)\n\n")
-			sb.WriteString("Use this to understand failure patterns — check `recent_runs` for repeated errors, `group_stats` for which groups fail, `current_streak` for consecutive failures, and `last_failure` for the most recent error details.\n\n")
-			sb.WriteString("```json\n")
-			sb.WriteString(scriptMetadataJSON)
-			sb.WriteString("\n```\n")
+		if scriptMetadataPath != "" {
+			sb.WriteString("\n### Script Run History\n\n")
+			sb.WriteString(fmt.Sprintf("Read `%s` to understand failure patterns — check `recent_runs` for repeated errors, `group_stats` for which groups fail, `current_streak` for consecutive failures, and `last_failure` for the most recent error details.\n", scriptMetadataPath))
 		}
 	} else {
 		sb.WriteString("\n### Existing Script (Update Required)\n\n")
-		sb.WriteString("A saved script already exists for this step. Adapt and improve this working script to match the current step description above. ")
-		sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change:\n\n")
-		sb.WriteString("```python\n")
-		sb.WriteString(priorScript)
-		sb.WriteString("\n```\n")
+		sb.WriteString("A saved script already exists at your working directory's main.py. Read it, then adapt and improve it to match the current step description above. ")
+		sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change.\n")
 	}
 	return sb.String()
 }

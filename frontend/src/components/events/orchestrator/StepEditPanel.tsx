@@ -302,21 +302,21 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     let config: AgentLLMConfig | undefined;
     if (agentType === 'execution') {
-      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+      config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
-      } : undefined);
+      } : undefined;
     } else if (agentType === 'learning') {
       config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
       } : undefined);
     } else if (agentType === 'conditional') {
-      // Conditional LLM uses the same default as execution LLM (or preset default)
-      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+      // Conditional LLM uses the same default as the workflow preset default.
+      config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
-      } : undefined);
+      } : undefined;
     }
     if (config) {
       return llmConfigToOption(config);

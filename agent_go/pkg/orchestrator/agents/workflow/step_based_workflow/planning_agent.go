@@ -25,6 +25,7 @@ type PlanOrchestrationRoute struct {
 	RouteName     string            `json:"route_name"`                // Human-readable name
 	Condition     string            `json:"condition"`                 // Condition description (e.g., "If error is authentication-related")
 	SubAgentStep  PlanStepInterface `json:"sub_agent_step"`            // The sub-agent step to execute (private, not in main workflow) - must have "type" field
+	OrphanStepRef string            `json:"orphan_step_ref,omitempty"` // Optional: reference to a reusable orphan step definition in the same plan
 	ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
 }
 
@@ -35,7 +36,8 @@ func (r PlanOrchestrationRoute) MarshalJSON() ([]byte, error) {
 		RouteID       string          `json:"route_id"`
 		RouteName     string          `json:"route_name"`
 		Condition     string          `json:"condition"`
-		SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+		SubAgentStep  json.RawMessage `json:"sub_agent_step,omitempty"`
+		OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 		ContextToPass string          `json:"context_to_pass,omitempty"`
 	}
 
@@ -43,18 +45,19 @@ func (r PlanOrchestrationRoute) MarshalJSON() ([]byte, error) {
 		RouteID:       r.RouteID,
 		RouteName:     r.RouteName,
 		Condition:     r.Condition,
+		OrphanStepRef: r.OrphanStepRef,
 		ContextToPass: r.ContextToPass,
 	}
 
-	// Marshal SubAgentStep if it exists
-	if r.SubAgentStep != nil {
+	// For reusable orphan step references, persist only the reference in plan.json.
+	if r.OrphanStepRef != "" {
+		result.SubAgentStep = nil
+	} else if r.SubAgentStep != nil {
 		subAgentJSON, err := json.Marshal(r.SubAgentStep)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal sub_agent_step: %w", err)
 		}
 		result.SubAgentStep = subAgentJSON
-	} else {
-		result.SubAgentStep = []byte("null")
 	}
 
 	return json.Marshal(result)
@@ -69,6 +72,7 @@ func (r *PlanOrchestrationRoute) UnmarshalJSON(data []byte) error {
 		RouteName     string          `json:"route_name"`
 		Condition     string          `json:"condition"`
 		SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+		OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 		ContextToPass string          `json:"context_to_pass,omitempty"`
 	}
 
@@ -80,6 +84,7 @@ func (r *PlanOrchestrationRoute) UnmarshalJSON(data []byte) error {
 	r.RouteID = temp.RouteID
 	r.RouteName = temp.RouteName
 	r.Condition = temp.Condition
+	r.OrphanStepRef = temp.OrphanStepRef
 	r.ContextToPass = temp.ContextToPass
 
 	// Unmarshal nested SubAgentStep
@@ -207,7 +212,8 @@ type AgentConfigs struct {
 	LearningMaxTurns                    *int            `json:"learning_max_turns,omitempty"`                     // default: 100
 	OrchestrationMaxIterations          *int            `json:"orchestration_max_iterations,omitempty"`           // default: orchestrator max turns (typically 100)
 	DisableLearning                     *bool           `json:"disable_learning,omitempty"`                       // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LockCode                            *bool           `json:"lock_code,omitempty"`                              // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration          bool            `json:"learning_after_loop_iteration,omitempty"`          // DEPRECATED: loop feature removed
 	LearningDetailLevel                 string          `json:"learning_detail_level,omitempty"`                  // "exact" or "none" (default: "exact")
 	LearningMode                        string          `json:"learning_mode,omitempty"`                          // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
@@ -219,7 +225,6 @@ type AgentConfigs struct {
 	EnabledSkills                       []string        `json:"enabled_skills,omitempty"`                         // Step-level skill selection (skill folder names, overrides preset if specified)
 	KeepLearningFull                    *bool           `json:"keep_learning_full,omitempty"`                     // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
 	DisableKnowledgebase                *bool           `json:"disable_knowledgebase,omitempty"`                  // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
-	DisableTempLLM                      *bool           `json:"disable_temp_llm,omitempty"`                       // If true, skip tempLLM override and use the normal workflow LLM path (step config > tiered)
 	TodoTaskOrchestratorTier            *int            `json:"todo_task_orchestrator_tier,omitempty"`            // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	EnableDynamicTierSelection          *bool           `json:"enable_dynamic_tier_selection,omitempty"`          // Allow todo task orchestrator to choose tier for sub-agents
 	OrchestratorLLM                     *AgentLLMConfig `json:"orchestrator_llm,omitempty"`                       // Direct LLM override for orchestrator (works in both tiered and manual modes)
@@ -248,12 +253,12 @@ type AgentConfigs struct {
 type StepType string
 
 const (
-	StepTypeRegular       StepType = "regular"
-	StepTypeConditional   StepType = "conditional"
-	StepTypeDecision      StepType = "decision"
-	StepTypeHumanInput StepType = "human_input"
-	StepTypeTodoTask      StepType = "todo_task"
-	StepTypeRouting       StepType = "routing"
+	StepTypeRegular     StepType = "regular"
+	StepTypeConditional StepType = "conditional"
+	StepTypeDecision    StepType = "decision"
+	StepTypeHumanInput  StepType = "human_input"
+	StepTypeTodoTask    StepType = "todo_task"
+	StepTypeRouting     StepType = "routing"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -265,6 +270,12 @@ type CommonStepFields struct {
 	ContextDependencies []string              `json:"context_dependencies"`
 	ContextOutput       FlexibleContextOutput `json:"context_output"`              // Use flexible type to handle string or array
 	ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
+	SharedWith          *StepSharing          `json:"shared_with,omitempty"`       // Optional: visibility rules for reusable orphan steps
+}
+
+// StepSharing defines which orchestrators in the same plan may reuse an orphan step.
+type StepSharing struct {
+	OrchestratorIDs []string `json:"orchestrator_ids,omitempty"`
 }
 
 // PlanStepInterface is the interface that all step types must implement
@@ -348,6 +359,7 @@ func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 		ContextDependencies: c.ContextDependencies,
 		ContextOutput:       c.ContextOutput,
 		ValidationSchema:    c.ValidationSchema,
+		SharedWith:          c.SharedWith,
 	}
 }
 
@@ -490,6 +502,7 @@ func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 		ContextDependencies: d.ContextDependencies,
 		ContextOutput:       d.ContextOutput,
 		ValidationSchema:    d.ValidationSchema,
+		SharedWith:          d.SharedWith,
 	}
 }
 
@@ -654,6 +667,7 @@ func (r *RoutingPlanStep) GetCommonFields() CommonStepFields {
 		ContextDependencies: r.ContextDependencies,
 		ContextOutput:       r.ContextOutput,
 		ValidationSchema:    r.ValidationSchema,
+		SharedWith:          r.SharedWith,
 	}
 }
 
@@ -718,15 +732,15 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 // NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
 // Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
 type TodoTaskPlanStep struct {
-	Type StepType `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
-	CommonStepFields                             // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
-	HasLoop            bool                      `json:"has_loop"`                       // DEPRECATED: loop feature removed, kept for JSON backward compatibility
-	LoopCondition      string                    `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
-	PredefinedRoutes   []PlanOrchestrationRoute  `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
-	EnableGenericAgent bool                      `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
-	NextStepID         string                    `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
-	TodoTaskResponse   *TodoTaskResponse         `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
-	AgentConfigs       *AgentConfigs             `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
+	Type               StepType                 `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
+	CommonStepFields                            // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
+	HasLoop            bool                     `json:"has_loop"`                       // DEPRECATED: loop feature removed, kept for JSON backward compatibility
+	LoopCondition      string                   `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
+	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
+	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
+	NextStepID         string                   `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
+	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
+	AgentConfigs       *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
 }
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
@@ -779,9 +793,9 @@ func (t *TodoTaskPlanStep) MarshalJSON() ([]byte, error) {
 func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	// First, unmarshal into a temporary struct to extract nested steps as raw JSON
 	var temp struct {
-		Type StepType `json:"type"`
-		ID   string   `json:"id"`
-		Title string  `json:"title"`
+		Type  StepType `json:"type"`
+		ID    string   `json:"id"`
+		Title string   `json:"title"`
 		// Flat format fields (new)
 		Description         string                `json:"description"`
 		SuccessCriteria     string                `json:"success_criteria"`
@@ -797,6 +811,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			RouteName     string          `json:"route_name"`
 			Condition     string          `json:"condition"`
 			SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+			OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"predefined_routes,omitempty"`
 		EnableGenericAgent bool   `json:"enable_generic_agent,omitempty"`
@@ -854,6 +869,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			t.PredefinedRoutes[i].RouteID = route.RouteID
 			t.PredefinedRoutes[i].RouteName = route.RouteName
 			t.PredefinedRoutes[i].Condition = route.Condition
+			t.PredefinedRoutes[i].OrphanStepRef = route.OrphanStepRef
 			t.PredefinedRoutes[i].ContextToPass = route.ContextToPass
 
 			// Unmarshal nested sub_agent_step
@@ -1108,7 +1124,7 @@ func getUpdateRegularStepSchema() string {
 						"context_output": {
 							"type": "string",
 							"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
-						},
+						}
 					},
 					"required": ["existing_step_id"]
 	}`
@@ -1716,9 +1732,13 @@ func getAddTodoTaskRouteSchema() string {
 						"type": "string",
 						"description": "REQUIRED: Description of when to use this predefined agent (e.g., 'For tasks requiring API calls')"
 					},
+					"orphan_step_ref": {
+						"type": "string",
+						"description": "OPTIONAL: ID of a reusable orphan step from orphan_steps in this same plan. Use this instead of sub_agent_step when you want the route to reuse a shared orphan step definition that is shared_with this parent orchestrator."
+					},
 					"sub_agent_step": {
 						"type": "object",
-						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent. Use type='todo_task' ONLY when this route needs its own nested multi-phase orchestrator (1 level of nesting supported). IMPORTANT: A nested todo_task's routes must use type='regular' — do NOT nest a todo_task inside a todo_task inside a todo_task (2+ levels not supported).",
+						"description": "OPTIONAL: The inline sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent. Use type='todo_task' ONLY when this route needs its own nested multi-phase orchestrator (1 level of nesting supported). IMPORTANT: A nested todo_task's routes must use type='regular' — do NOT nest a todo_task inside a todo_task inside a todo_task (2+ levels not supported). Omit this when using orphan_step_ref.",
 						"properties": {
 							"type": {"type": "string", "description": "REQUIRED: Step type. Use 'regular' for standard execution. Use 'todo_task' for a nested orchestrator that manages multiple phases via its own routes. Maximum 1 level of todo_task nesting — a nested todo_task's sub_agent_step routes must always be 'regular'."},
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
@@ -1743,7 +1763,7 @@ func getAddTodoTaskRouteSchema() string {
 						"description": "OPTIONAL: Specific context to pass to the sub-agent"
 					}
 				},
-				"required": ["route_id", "route_name", "condition", "sub_agent_step"]
+				"required": ["route_id", "route_name", "condition"]
 			}
 		},
 		"required": ["parent_step_id", "new_route"]
@@ -1771,9 +1791,13 @@ func getUpdateTodoTaskRouteSchema() string {
 				"type": "string",
 				"description": "OPTIONAL: Updated condition description. Only include if you want to change it."
 			},
+			"orphan_step_ref": {
+				"type": "string",
+				"description": "OPTIONAL: Reference a reusable orphan step from orphan_steps in this same plan. When set, the route will resolve that orphan step for this orchestrator instead of using an inline sub_agent_step."
+			},
 			"sub_agent_step": {
 				"type": "object",
-				"description": "OPTIONAL: Updated sub-agent step. Use type='regular' for standard execution. Use type='todo_task' for a 1-level nested orchestrator. A nested todo_task's own routes must be type='regular' (2+ levels not supported).",
+				"description": "OPTIONAL: Updated inline sub-agent step. Use type='regular' for standard execution. Use type='todo_task' for a 1-level nested orchestrator. A nested todo_task's own routes must be type='regular' (2+ levels not supported). Omit this when using orphan_step_ref.",
 				"properties": {
 					"type": {"type": "string", "description": "Use 'regular' or 'todo_task' (1 level max). A nested todo_task's routes must use 'regular'."},
 					"id": {"type": "string"},
@@ -2011,6 +2035,9 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 	if err := json.Unmarshal([]byte(content), &plan); err != nil {
 		return nil, fmt.Errorf("failed to parse plan.json: %w", err)
 	}
+	if err := resolvePlanOrphanStepRefs(&plan); err != nil {
+		return nil, fmt.Errorf("failed to resolve orphan step references in plan.json: %w", err)
+	}
 	if err := validateLoadedPlanStructure(&plan); err != nil {
 		return nil, fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
 	}
@@ -2027,8 +2054,18 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
 
-	// Validate that all steps have IDs (planning agent should always generate them)
-	if err := validatePlanStepIDs(plan.Steps); err != nil {
+	validationJSON, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plan for validation: %w", err)
+	}
+	var validationPlan PlanningResponse
+	if err := json.Unmarshal(validationJSON, &validationPlan); err != nil {
+		return fmt.Errorf("failed to unmarshal plan for validation: %w", err)
+	}
+	if err := resolvePlanOrphanStepRefs(&validationPlan); err != nil {
+		return fmt.Errorf("plan validation failed: %w", err)
+	}
+	if err := validateLoadedPlanStructure(&validationPlan); err != nil {
 		return fmt.Errorf("plan validation failed: %w", err)
 	}
 
@@ -4732,7 +4769,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_todo_task_route",
-		"Add a new predefined route (sub-agent) to an Orchestrator step (todo_task type). Provide parent_step_id and new_route with all required fields (route_id, route_name, condition, sub_agent_step). The plan.json file is updated immediately when this tool is called.",
+		"Add a new predefined route (sub-agent) to an Orchestrator step (todo_task type). Provide parent_step_id and new_route with route_id, route_name, and condition, plus either sub_agent_step for an inline route definition or orphan_step_ref to reuse a shared orphan step from the same plan. The plan.json file is updated immediately when this tool is called.",
 		addTodoTaskRouteParams,
 		createAddTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -4747,7 +4784,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_todo_task_route",
-		"Update an existing predefined route (sub-agent) within an Orchestrator step (todo_task type). Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, sub_agent_step, context_to_pass). The plan.json file is updated immediately when this tool is called.",
+		"Update an existing predefined route (sub-agent) within an Orchestrator step (todo_task type). Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, orphan_step_ref, sub_agent_step, context_to_pass). Use orphan_step_ref to point the route at a reusable orphan step from the same plan. The plan.json file is updated immediately when this tool is called.",
 		updateTodoTaskRouteParams,
 		createUpdateTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -4915,7 +4952,10 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 			}
 		}
 
-		// Validate that sub_agent_step has required fields
+		// Validate inline sub_agent_step identity when provided.
+		if newRoute.OrphanStepRef != "" && newRoute.SubAgentStep != nil {
+			return "", fmt.Errorf("new route %q cannot define both orphan_step_ref and sub_agent_step", newRoute.RouteID)
+		}
 		if newRoute.SubAgentStep != nil {
 			if newRoute.SubAgentStep.GetID() != "" && newRoute.SubAgentStep.GetID() != newRoute.RouteID {
 				return "", fmt.Errorf("sub_agent_step.id %q must exactly match route_id %q for predefined todo routes", newRoute.SubAgentStep.GetID(), newRoute.RouteID)
@@ -4927,6 +4967,9 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 
 		// Add new route
 		todoTaskStep.PredefinedRoutes = append(todoTaskStep.PredefinedRoutes, newRoute)
+		if err := resolvePlanOrphanStepRefs(plan); err != nil {
+			return "", fmt.Errorf("failed to resolve orphan step references after adding route: %w", err)
+		}
 		if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
 			return "", fmt.Errorf("validation failed after adding route: %w", err)
 		}
@@ -5017,8 +5060,18 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			routeToUpdate.ContextToPass = contextToPass
 		}
 
+		if orphanStepRef, ok := args["orphan_step_ref"].(string); ok {
+			routeToUpdate.OrphanStepRef = strings.TrimSpace(orphanStepRef)
+			if routeToUpdate.OrphanStepRef != "" {
+				routeToUpdate.SubAgentStep = nil
+			}
+		}
+
 		// Handle sub_agent_step update
 		if subAgentStepRaw, ok := args["sub_agent_step"].(map[string]interface{}); ok {
+			if routeToUpdate.OrphanStepRef != "" {
+				return "", fmt.Errorf("route %q uses orphan_step_ref %q, so sub_agent_step cannot be updated inline", routeToUpdate.RouteID, routeToUpdate.OrphanStepRef)
+			}
 			if providedID, ok := subAgentStepRaw["id"].(string); ok && providedID != "" && providedID != routeToUpdate.RouteID {
 				return "", fmt.Errorf("sub_agent_step.id %q must exactly match route_id %q for predefined todo routes", providedID, routeToUpdate.RouteID)
 			}
@@ -5050,6 +5103,9 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			routeToUpdate.SubAgentStep = updatedSubAgentStep
 		}
 
+		if err := resolvePlanOrphanStepRefs(plan); err != nil {
+			return "", fmt.Errorf("failed to resolve orphan step references after route update: %w", err)
+		}
 		if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
 			return "", fmt.Errorf("validation failed after route update: %w", err)
 		}

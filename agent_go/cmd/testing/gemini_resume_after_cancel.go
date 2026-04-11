@@ -149,7 +149,7 @@ func cancelResumedGeminiTurn(llmInstance llmtypes.Model, sessionID string, proje
 	select {
 	case err := <-errCh:
 		if !isCancellationLikeError(err) {
-			return fmt.Errorf("expected cancellation error after interrupting resumed Gemini turn, got: %v", err)
+			return fmt.Errorf("expected cancellation error after interrupting resumed Gemini turn, got: %w", err)
 		}
 		logger.Info(fmt.Sprintf("Canceled resumed Gemini turn as expected: %v", err))
 		return nil

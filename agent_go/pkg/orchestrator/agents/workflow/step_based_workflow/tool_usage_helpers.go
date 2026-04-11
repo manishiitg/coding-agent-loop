@@ -10,17 +10,6 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// isCodeExecutionModeEnabled checks if code execution mode is enabled for a step's agent configs
-func isCodeExecutionModeEnabled(agentConfigs *AgentConfigs, presetCodeExecMode bool) bool {
-	// If step has explicit code exec mode setting, use it
-	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
-		return *agentConfigs.UseCodeExecutionMode
-	}
-
-	// Otherwise, use preset default
-	return presetCodeExecMode
-}
-
 // ToolUsageEntry represents a single tool's usage statistics
 type ToolUsageEntry struct {
 	ToolName   string `json:"tool_name"`

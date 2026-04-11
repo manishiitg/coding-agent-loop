@@ -47,6 +47,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 	if err := json.Unmarshal([]byte(planContent), &plan); err != nil {
 		return fmt.Errorf("cannot parse plan.json: %w", err)
 	}
+	if err := resolvePlanOrphanStepRefs(&plan); err != nil {
+		return fmt.Errorf("cannot resolve orphan step references in plan.json: %w", err)
+	}
 	if err := validateLoadedPlanStructure(&plan); err != nil {
 		return fmt.Errorf("plan.json uses an invalid or legacy format: %w", err)
 	}
@@ -59,10 +62,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 // When GroupName is set, the controller resolves the run folder and variable values
 // for that group, making each execute_step call self-contained.
 type WorkshopExecuteOptions struct {
-	GroupID   string // Deprecated: use GroupName instead. Kept for backward compat; mapped to GroupName internally.
-	GroupName string // e.g., "production" — overrides session-level group
-	Iteration string // e.g., "iteration-3" — combined with group folder name to form RunFolder
-	RunFolder string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
+	GroupID         string // Deprecated: use GroupName instead. Kept for backward compat; mapped to GroupName internally.
+	GroupName       string // e.g., "production" — overrides session-level group
+	Iteration       string // e.g., "iteration-3" — combined with group folder name to form RunFolder
+	RunFolder       string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
 	SkipLearning    bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
 	SavedScriptOnly bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
 	Instructions    string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
@@ -119,6 +122,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 ) (string, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] ExecuteStepForWorkshop: stepID=%s, runFolder=%s, codeExec=%v",
 		stepID, hcpo.selectedRunFolder, hcpo.GetUseCodeExecutionMode()))
+	releaseGroupSession := func() {}
+	defer func() { releaseGroupSession() }()
+
 	// 1. Apply per-call overrides (group name, run_folder, human_input)
 	if opts != nil {
 		// Backward compat: map deprecated GroupID to GroupName
@@ -126,9 +132,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 			opts.GroupName = opts.GroupID
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupName=%s, runFolder=%s, humanInput=%d chars, savedScriptOnly=%v", opts.GroupName, opts.RunFolder, len(opts.HumanInput), opts.SavedScriptOnly))
-		if err := hcpo.applyWorkshopExecuteOptions(ctx, opts); err != nil {
+		releaseFn, err := hcpo.applyWorkshopExecuteOptions(ctx, opts)
+		if err != nil {
+			releaseFn()
 			return "", fmt.Errorf("failed to apply execute options: %w", err)
 		}
+		releaseGroupSession = releaseFn
 		// Set workshop human input (cleared after execution)
 		hcpo.interactiveWorkflowHumanInput = opts.HumanInput
 	}
@@ -357,7 +366,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 // applyWorkshopExecuteOptions applies per-call group/run_folder overrides.
 // If GroupName is set, it resolves the run folder from the group and loads
 // the group's variable values. If only RunFolder is set, it uses that directly.
-func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx context.Context, opts *WorkshopExecuteOptions) error {
+func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx context.Context, opts *WorkshopExecuteOptions) (func(), error) {
+	releaseGroupSession := func() {}
+
 	// Backward compat: map deprecated GroupID to GroupName
 	if opts.GroupName == "" && opts.GroupID != "" {
 		opts.GroupName = opts.GroupID
@@ -408,15 +419,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 				for _, g := range hcpo.variablesManifest.Groups {
 					groupDescs = append(groupDescs, g.Name)
 				}
-				return fmt.Errorf("group %q not found. Available groups: %s — ask the user which group to use", opts.GroupName, strings.Join(groupDescs, ", "))
+				return releaseGroupSession, fmt.Errorf("group %q not found. Available groups: %s — ask the user which group to use", opts.GroupName, strings.Join(groupDescs, ", "))
 			}
 		} else {
 			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Cannot resolve group %q — variables manifest is nil even after reload attempt", opts.GroupName))
 		}
 
-		if err := hcpo.switchWorkshopGroupSession(resolvedGroupName); err != nil {
-			return fmt.Errorf("failed to switch workshop MCP session for group %q: %w", resolvedGroupName, err)
+		releaseFn, err := hcpo.switchWorkshopGroupSession(resolvedGroupName)
+		if err != nil {
+			return releaseGroupSession, fmt.Errorf("failed to switch workshop MCP session for group %q: %w", resolvedGroupName, err)
 		}
+		releaseGroupSession = releaseFn
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Active MCP session for group %s: %s", resolvedGroupName, hcpo.GetMCPSessionID()))
 
 		// Resolve run folder if not explicitly provided
@@ -424,7 +437,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 			// Build run folder from group: use latest iteration + group folder name
 			runFolder, err := hcpo.resolveGroupRunFolder(ctx, opts.GroupName)
 			if err != nil {
-				return fmt.Errorf("failed to resolve run folder for group %q: %w", opts.GroupName, err)
+				return releaseGroupSession, fmt.Errorf("failed to resolve run folder for group %q: %w", opts.GroupName, err)
 			}
 			opts.RunFolder = runFolder
 		}
@@ -435,7 +448,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 		hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP_DEBUG] Set run folder to %s", opts.RunFolder))
 	}
 
-	return nil
+	return releaseGroupSession, nil
 }
 
 // resolveGroupRunFolder finds the run folder for a given group name.

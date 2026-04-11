@@ -51,36 +51,6 @@ func validateWhereClause(whereClause string) error {
 	return nil
 }
 
-// validateUpdateFields ensures UPDATE field names are from a whitelist
-var allowedUpdateFields = map[string]bool{
-	"label":                        true,
-	"query":                        true,
-	"selected_servers":             true,
-	"selected_tools":               true,
-	"selected_folder":              true,
-	"agent_mode":                   true,
-	"llm_config":                   true,
-	"use_code_execution_mode":      true,
-	"selected_skills":              true,
-	"selected_secrets":             true,
-	"selected_global_secret_names": true,
-	"enable_browser_access":        true,
-	"browser_mode":                 true,
-	"workflow_status":              true,
-	"selected_options":             true,
-	"updated_at":                   true,
-}
-
-func validateUpdateField(field string) bool {
-	// Extract field name from "field_name = ?" pattern
-	parts := strings.Split(field, "=")
-	if len(parts) != 2 {
-		return false
-	}
-	fieldName := strings.TrimSpace(parts[0])
-	return allowedUpdateFields[fieldName]
-}
-
 // NewSQLiteDB creates a new SQLite database connection
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 	// Default to 10 connections for multi-user support

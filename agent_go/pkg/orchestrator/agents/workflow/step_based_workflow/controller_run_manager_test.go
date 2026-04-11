@@ -64,6 +64,7 @@ func TestCreateRunFolderStructureDoesNotCreateGitignore(t *testing.T) {
 		nil,
 		nil,
 		false,
+		&orchestrator.LLMConfig{},
 		1,
 		nil,
 		nil,

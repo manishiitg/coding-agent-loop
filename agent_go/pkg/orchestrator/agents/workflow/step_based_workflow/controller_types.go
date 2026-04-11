@@ -50,31 +50,12 @@ type BranchStepResumeTarget struct {
 // ExecutionOptions represents user-selected execution options from frontend
 // When provided, backend will use these options instead of asking interactively
 type ExecutionOptions struct {
-	RunMode                 string                  `json:"run_mode"`                             // "use_same_run" or "create_new_runs_always"
-	SelectedRunFolder       string                  `json:"selected_run_folder,omitempty"`        // If use_same_run and user selected specific folder
-	ExecutionStrategy       string                  `json:"execution_strategy"`                   // Execution strategy (see constants below)
-	ResumeFromStep          int                     `json:"resume_from_step,omitempty"`           // 1-based step number to resume from (for top-level steps)
-	ResumeFromBranchStep    *BranchStepResumeTarget `json:"resume_from_branch_step,omitempty"`    // For resuming from branch steps
-	PlanChangeAction string `json:"plan_change_action,omitempty"` // "keep_old_progress" or "delete_old_progress"
-
-	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
-	// Only applies to execution agents (not validation or learning agents)
-	// Takes highest priority over step configs and tiered execution selection
-	// Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
-	TempOverrideLLM  *AgentLLMConfig `json:"temp_override_llm,omitempty"`  // First override LLM (used on first attempt)
-	TempOverrideLLM2 *AgentLLMConfig `json:"temp_override_llm2,omitempty"` // Second override LLM (used on second attempt if tempLLM1 fails)
-
-	// Fallback behavior when validation fails
-	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use the normal workflow LLM path (step config > tiered) instead of temp override when validation fails
-
-	// Learning behavior when tempLLM is active (per-model control)
-	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
-	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
-
-	// Temporary LLM for learning agents (optional, used when learnings already exist for a step)
-	// If learnings exist for a step_id, use TempLearningLLM if configured
-	// If no learnings exist (new learning), always use default LLM (step config → preset)
-	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
+	RunMode              string                  `json:"run_mode"`                          // "use_same_run" or "create_new_runs_always"
+	SelectedRunFolder    string                  `json:"selected_run_folder,omitempty"`     // If use_same_run and user selected specific folder
+	ExecutionStrategy    string                  `json:"execution_strategy"`                // Execution strategy (see constants below)
+	ResumeFromStep       int                     `json:"resume_from_step,omitempty"`        // 1-based step number to resume from (for top-level steps)
+	ResumeFromBranchStep *BranchStepResumeTarget `json:"resume_from_branch_step,omitempty"` // For resuming from branch steps
+	PlanChangeAction     string                  `json:"plan_change_action,omitempty"`      // "keep_old_progress" or "delete_old_progress"
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupNames []string `json:"enabled_group_names,omitempty"` // Group names to execute (if empty, uses groups' enabled flags)
@@ -98,13 +79,13 @@ type BatchExecutionProgress struct {
 // ExecutionContext represents immutable execution configuration
 // Created once at execution start and passed through the call chain
 type ExecutionContext struct {
-	SkipHumanInput     bool                    // Whether to skip human feedback requests (auto-approve steps)
-	RunSingleStepOnly  bool                    // Whether to run only a single step and stop
-	SingleStepTarget   int                     // Target step index to run (0-based)
-	SavedScriptOnly    bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
-	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
-	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
-	StepPathOverride   string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
+	SkipHumanInput    bool                    // Whether to skip human feedback requests (auto-approve steps)
+	RunSingleStepOnly bool                    // Whether to run only a single step and stop
+	SingleStepTarget  int                     // Target step index to run (0-based)
+	SavedScriptOnly   bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
+	ResumeBranchStep  *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
+	IsEvaluationMode  bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
+	StepPathOverride  string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
 	// Propagated from ExecutionOptions.HumanInputs to controller.humanInputOverrides.
@@ -139,11 +120,9 @@ const (
 	// Single step execution
 	ExecutionStrategyRunSingleStep = "run_single_step" // Run only the specified step and stop
 
-
 	// Plan change actions
 	PlanChangeActionKeepOldProgress   = "keep_old_progress"
 	PlanChangeActionDeleteOldProgress = "delete_old_progress"
-
 )
 
 // TodoStep has been removed - use PlanStepInterface instead

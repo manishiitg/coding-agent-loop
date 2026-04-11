@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -23,10 +25,11 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 		return DiffPatchResult{}, fmt.Errorf("diff is required")
 	}
 
-	// Validate path against folder guard (write operation).
-	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
-		return DiffPatchResult{}, err
-	}
+	// Normalize absolute paths to workspace-relative before building the URL.
+	// LLMs often send absolute paths (e.g. "/app/workspace-docs/Workflow/...").
+	// The workspace HTTP handler does its own validation with the real docs-dir,
+	// but the filepath goes into the URL path so it must be relative.
+	params.Filepath = stripWorkspacePrefix(params.Filepath)
 
 	// Build API URL for diff patching
 	apiURL := c.BaseURL + "/api/documents/" + params.Filepath + "/diff"
@@ -70,4 +73,23 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	return DiffPatchResult{
 		Data: apiResp.Data,
 	}, nil
+}
+
+// stripWorkspacePrefix converts absolute workspace paths to relative.
+// Checks WORKSPACE_DOCS_PATH env first (desktop/Mac), then Docker defaults.
+func stripWorkspacePrefix(p string) string {
+	if !filepath.IsAbs(p) {
+		return p
+	}
+	var prefixes []string
+	if envRoot := os.Getenv("WORKSPACE_DOCS_PATH"); envRoot != "" {
+		prefixes = append(prefixes, strings.TrimSuffix(envRoot, "/")+"/")
+	}
+	prefixes = append(prefixes, "/app/workspace-docs/", "/workspace-docs/")
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(p, prefix) {
+			return strings.TrimPrefix(p, prefix)
+		}
+	}
+	return p
 }

@@ -203,9 +203,8 @@ type PresetLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"`
 
 	// New: Agent-specific default models (takes priority over legacy fields)
-	ExecutionLLM *AgentLLMConfig `json:"execution_llm,omitempty"` // Default for execution agents
-	LearningLLM  *AgentLLMConfig `json:"learning_llm,omitempty"`  // Default for learning agents
-	PhaseLLM     *AgentLLMConfig `json:"phase_llm,omitempty"`     // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+	LearningLLM *AgentLLMConfig `json:"learning_llm,omitempty"` // Default for learning agents
+	PhaseLLM    *AgentLLMConfig `json:"phase_llm,omitempty"`    // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 
 	// Feature toggles
 	UseKnowledgebase           *bool `json:"use_knowledgebase,omitempty"`            // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
@@ -299,7 +298,6 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		config *AgentLLMConfig
 		name   string
 	}{
-		{config.ExecutionLLM, "execution_llm"},
 		{config.LearningLLM, "learning_llm"},
 		{config.PhaseLLM, "phase_llm"},
 	}

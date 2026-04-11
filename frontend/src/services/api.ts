@@ -331,6 +331,13 @@ export const agentApi = {
     })
   },
 
+  // Cancel only the currently running LLM turn for a session.
+  cancelCurrentTurn: async (sessionId: string): Promise<void> => {
+    await api.post('/api/session/cancel-turn', {}, {
+      headers: { 'X-Session-ID': sessionId }
+    })
+  },
+
   // Dismiss session so it won't be auto-restored on page refresh
   dismissSession: async (sessionId: string): Promise<void> => {
     await api.post(`/api/sessions/${sessionId}/dismiss`)

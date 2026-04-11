@@ -109,7 +109,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, [])
 
-  const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
@@ -242,7 +241,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       }
       setCamofoxHeaded(editingPreset.camofoxHeaded !== false); // Default true
       // Load agent-specific configs if available
-      setExecutionLLM(presetLLM.execution_llm || null);
       setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
       // Load tiered LLM allocation config
@@ -274,7 +272,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setBrowserModeState('none'); // Default no browser
       setCamofoxHeaded(true); // Default headed
       // Initialize agent-specific configs to null (will use legacy default)
-      setExecutionLLM(null);
       setLearningLLM(null);
       setPhaseLLM(null);
       // Initialize tiered config
@@ -334,21 +331,22 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         agentMode: effectiveAgentMode
       });
       
-      // Build LLM config with agent-specific defaults for workflow mode
-      // Save execution_llm, learning_llm, and phase_llm (validation_llm removed — LLM validation is deprecated)
+      // Build LLM config with workflow-level defaults
+      // execution_llm is step-only and is not persisted at the workflow level.
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
       if (effectiveAgentMode === 'workflow') {
-        // For workflow mode, always include all 4 agent configs
+        // For workflow mode, keep tiered defaults plus phase/learning settings.
         // Use the displayed fallback value (from llmConfig) if user didn't explicitly select
         // This ensures the visual selection is saved even if user didn't explicitly click the dropdown
         const defaultAgentLLM: AgentLLMConfig | undefined = llmConfig?.provider && llmConfig?.model_id ? {
           provider: llmConfig.provider,
           model_id: llmConfig.model_id
         } : undefined;
+        const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown }) };
+        delete workflowBaseLLMConfig.execution_llm;
 
         finalLLMConfig = {
-          ...(llmConfig || {}),
-          execution_llm: executionLLM || defaultAgentLLM,
+          ...workflowBaseLLMConfig,
           learning_llm: learningLLM || defaultAgentLLM,
           phase_llm: phaseLLM || (tier1LLM ? tier1LLM : defaultAgentLLM),
           use_knowledgebase: useKnowledgebase,
@@ -363,7 +361,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         };
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
-        executionLLM: executionLLM,
         learningLLM: learningLLM,
         phaseLLM: phaseLLM,
         defaultAgentLLM: llmConfig?.provider && llmConfig?.model_id ? { provider: llmConfig.provider, model_id: llmConfig.model_id } : undefined,
@@ -388,7 +385,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {

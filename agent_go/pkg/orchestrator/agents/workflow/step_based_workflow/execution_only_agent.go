@@ -148,8 +148,9 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 1. Review all **Inputs** above. Inlined files are ready to use. For any marked "read via tool", read them first.
 {{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
-4. Verify the required outputs are fully produced before finishing.
-5. Create the output file.`)
+4. **NO FABRICATED DATA**: Every value in the output must come from a real data source (MCP tools, APIs, or input files). Do NOT hardcode or invent output data.
+5. Verify the required outputs are fully produced before finishing.
+6. Create the output file.`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
@@ -391,7 +392,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),
-		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataJSON"]),
+		LearnCodePriorContext:    BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataPath"]),
 	}
 
 	// Execute the pre-parsed template

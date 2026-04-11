@@ -2,23 +2,12 @@ package step_based_workflow
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
-
-// getStepsProgressPath returns the RELATIVE path to steps_done.json file in the run folder
-// NOTE: Returns relative path (without workspacePath) because ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
-func (hcpo *StepBasedWorkflowOrchestrator) getStepsProgressPath() (string, error) {
-	if hcpo.selectedRunFolder == "" {
-		return "", fmt.Errorf(fmt.Sprintf("selectedRunFolder not set - run folder must be resolved before accessing steps_done.json"), nil)
-	}
-	// Return relative path - ReadWorkspaceFile/WriteWorkspaceFile will prepend workspacePath
-	return fmt.Sprintf("runs/%s/execution/steps_done.json", hcpo.selectedRunFolder), nil
-}
 
 // loadStepProgress is a no-op — steps_done.json is no longer used.
 // Returns nil to signal no existing progress (iteration-0 is always fresh).

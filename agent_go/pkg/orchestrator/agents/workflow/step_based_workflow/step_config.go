@@ -313,10 +313,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.KeepLearningFull != nil {
 		target.KeepLearningFull = source.KeepLearningFull
 	}
-	if source.DisableTempLLM != nil {
-		target.DisableTempLLM = source.DisableTempLLM
-		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_temp_llm: %v", stepID, *source.DisableTempLLM))
-	}
 	if source.DisableParallelToolExecution != nil {
 		target.DisableParallelToolExecution = source.DisableParallelToolExecution
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_parallel_tool_execution: %v", stepID, *source.DisableParallelToolExecution))

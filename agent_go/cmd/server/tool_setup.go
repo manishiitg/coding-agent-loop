@@ -177,20 +177,6 @@ func extractRootCauseError(err error) string {
 	return deepestErr.Error()
 }
 
-// collectVirtualToolNames extracts tool names from a list of llmtypes.Tool definitions.
-// Used by server.go for agent config setup.
-func collectVirtualToolNames(toolSets ...[]llmtypes.Tool) []string {
-	var names []string
-	for _, tools := range toolSets {
-		for _, t := range tools {
-			if t.Function != nil && t.Function.Name != "" {
-				names = append(names, t.Function.Name)
-			}
-		}
-	}
-	return names
-}
-
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
 // workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //

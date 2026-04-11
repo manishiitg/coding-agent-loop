@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/internal/events"
-	"mcp-agent-builder-go/agent_go/pkg/database"
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/pkg/database"
 )
 
 // EventBridge defines the interface for event bridges
@@ -42,16 +42,16 @@ var DB_SKIP_EVENTS = map[string]bool{
 	// High volume / low value
 	"step_progress_updated": true,
 	"step_token_usage":      true,
-	
+
 	// Detailed LLM logs (huge content)
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
 	// NOTE: llm_generation_end is NOT skipped — it's needed by the frontend to clear "Generating..." state.
 	// If this event is missing from the DB, reconnecting clients stay stuck in "Generating..." forever.
-	"llm_generation_error":      true, // Covered by agent_error/orchestrator_error
-	"llm_messages":              true,
-	"llm_token_usage":           true,
-	"unified_completion":        true,
+	"llm_generation_error": true, // Covered by agent_error/orchestrator_error
+	"llm_messages":         true,
+	"llm_token_usage":      true,
+	"unified_completion":   true,
 
 	// Conversation flow (redundant or hidden in micro)
 	"conversation_start":    true,
@@ -61,12 +61,12 @@ var DB_SKIP_EVENTS = map[string]bool{
 	"conversation_error":    true,
 
 	// Note: user_message and system_prompt are NOT skipped — essential for conversation restore
-	"agent_processing":               true,
-	"large_tool_output_detected":     true,
-	"large_tool_output_file_written": true,
-	"large_tool_output_file_write_error":     true,
-	"large_tool_output_server_unavailable":   true,
-	
+	"agent_processing":                     true,
+	"large_tool_output_detected":           true,
+	"large_tool_output_file_written":       true,
+	"large_tool_output_file_write_error":   true,
+	"large_tool_output_server_unavailable": true,
+
 	// Streaming (should be skipped by SKIP_EVENTS mostly, but explicit here)
 	"streaming_start":           true,
 	"streaming_chunk":           true,
@@ -114,7 +114,6 @@ var DB_SKIP_EVENTS = map[string]bool{
 	"batch_group_start":          true,
 	"batch_group_end":            true,
 	"learning_skipped":           true,
-	"temp_llm_skipped":           true,
 	"decision_evaluated":         true,
 	"pre_validation_completed":   true,
 
@@ -194,16 +193,16 @@ func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.Agen
 
 		// Convert unified event to database-compatible agent event
 		agentEvent := &pkgevents.AgentEvent{
-			Type:            event.Type,
-			Timestamp:       event.Timestamp,
-			EventIndex:      0, // Will be set by database
-			TraceID:         event.TraceID,
-			SpanID:          event.SpanID,
-			ParentID:        event.ParentID,
-			CorrelationID:   event.CorrelationID, // Preserve delegation hierarchy
-			HierarchyLevel:  hierarchyLevel,      // Use extracted hierarchy level
-			SessionID:       b.SessionID,          // Use sessionID for database storage
-			Component:       component,            // Use extracted component
+			Type:           event.Type,
+			Timestamp:      event.Timestamp,
+			EventIndex:     0, // Will be set by database
+			TraceID:        event.TraceID,
+			SpanID:         event.SpanID,
+			ParentID:       event.ParentID,
+			CorrelationID:  event.CorrelationID, // Preserve delegation hierarchy
+			HierarchyLevel: hierarchyLevel,      // Use extracted hierarchy level
+			SessionID:      b.SessionID,         // Use sessionID for database storage
+			Component:      component,           // Use extracted component
 		}
 
 		// Store in database using the session ID (same as chat session)

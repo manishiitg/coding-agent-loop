@@ -158,9 +158,9 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
     if (!presetLLMConfig) return null
     let config: AgentLLMConfig | undefined
     if (agentType === 'execution') {
-      config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+      config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id
-      } : undefined)
+      } : undefined
     } else if (agentType === 'learning') {
       config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id

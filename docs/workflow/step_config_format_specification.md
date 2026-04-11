@@ -80,8 +80,7 @@ Both frontend and backend **read and write** only the object format with `steps`
             "depends_on_step": "step-0",
             "description": "If login session is missing or expired, go back to step 0"
           }
-        ],
-        "disable_temp_llm": false
+        ]
       }
     }
   ]
@@ -221,14 +220,6 @@ Legacy note:
 |-------|------|---------|---------|
 | `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite failure detection for this step |
 | `prerequisite_rules` | `array` | `[]` | Array of prerequisite rules, each with `depends_on_step` (string) and `description` (string) |
-
-### Temporary LLM Override Configuration
-
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `disable_temp_llm` | `boolean` | `false` | If true, skip tempLLM override and use step's base LLM (step config > preset) |
-
----
 
 ## 🛠️ Common Issues & Solutions
 

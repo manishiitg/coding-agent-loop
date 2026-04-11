@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { Loader2, FileText, ArrowLeft, LogIn } from 'lucide-react'
 import { MarkdownRenderer } from '../components/ui/MarkdownRenderer'
 import { CsvRenderer } from '../components/ui/CsvRenderer'
+import { DiffRenderer } from '../components/ui/DiffRenderer'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
+import { isDiffFilePath, looksLikeDiffContent } from '../utils/diff'
 import { isValidJSON } from '../utils/event-helpers'
 
 interface SharedFileProps {
@@ -76,7 +78,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
     }
 
     loadFile()
-  }, [encodedPath, filePath])
+  }, [encodedPath, filePath, uid])
 
   if (loading) {
     return (
@@ -144,6 +146,10 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
           </pre>
         </div>
       )
+    }
+
+    if (isDiffFilePath(filePath || '') || looksLikeDiffContent(content)) {
+      return <DiffRenderer content={content} />
     }
 
     if (language) {

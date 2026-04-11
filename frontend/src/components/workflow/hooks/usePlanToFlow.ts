@@ -82,7 +82,7 @@ export interface TodoTaskNodeData extends Record<string, unknown> {
   id: string
   title: string
   todo_task_step?: PlanStep  // DEPRECATED: kept for backwards compat
-  predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
+  predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step?: PlanStep; orphan_step_ref?: string; context_to_pass?: string }>
   enable_generic_agent?: boolean
   status: 'pending' | 'running' | 'failed' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
   stepIndex: number

@@ -58,11 +58,10 @@ Notes:
 
 Current priority in `selectExecutionLLM()`:
 
-1. `sub_agent_llm` from context, unless dynamic tier selection is enabled
-2. temp LLM override (`tempLLM1` / `tempLLM2`) when allowed
-3. step `execution_llm`, only when tiered mode is **not** active
-4. tiered resolution
-5. no valid config => error
+1. step `execution_llm`, always when set
+2. `sub_agent_llm` from context, unless dynamic tier selection is enabled
+3. tiered resolution
+4. no valid config => error
 
 Inside tiered resolution, execution uses this order:
 
@@ -76,11 +75,9 @@ Inside tiered resolution, execution uses this order:
 
 Current priority in `selectLearningLLM()`:
 
-1. `temp_learning_llm`
-2. cost-optimization temp LLM after stability threshold
-3. step `learning_llm`, only when tiered mode is **not** active
-4. tiered learning resolution
-5. no valid config => error
+1. step `learning_llm`, only when tiered mode is **not** active
+2. tiered learning resolution
+3. no valid config => error
 
 ### Conditional agents
 
@@ -138,8 +135,9 @@ If dynamic selection is disabled:
 
 In tiered mode:
 
-- per-step `execution_llm` and `learning_llm` are ignored by the main selectors
-- runtime uses the tier resolver instead
+- per-step `execution_llm` still overrides the execution selector directly
+- per-step `learning_llm` is still ignored by the main learning selector
+- runtime otherwise uses the tier resolver
 - `orchestrator_llm` and `sub_agent_llm` still work because they are separate todo-task overrides
 
 In manual mode:

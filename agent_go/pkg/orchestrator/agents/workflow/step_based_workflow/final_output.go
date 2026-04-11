@@ -549,7 +549,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildFinalOutputExecutionStep(
 	llmConfig *orchestrator.LLMConfig,
 ) *RegularPlanStep {
 	disableLearning := true
-	disableTempLLM := true
 	executionMaxTurns := 30
 	selectedServers := []string{mcpclient.NoServers}
 	stepID := outputStep.ID
@@ -597,7 +596,6 @@ Rules:
 			ExecutionLLM:         convertLLMConfigToAgentLLMConfig(llmConfig),
 			ExecutionMaxTurns:    &executionMaxTurns,
 			DisableLearning:      &disableLearning,
-			DisableTempLLM:       &disableTempLLM,
 			SelectedServers:      selectedServers,
 			EnabledCustomTools:   []string{"workspace_advanced:execute_shell_command"},
 			SelectedTools:        []string{},

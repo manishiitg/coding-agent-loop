@@ -2,30 +2,9 @@ package step_based_workflow
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 )
-
-// readStepLearningMetadata reads and parses the learning metadata file for a step.
-func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningMetadata(ctx context.Context, stepID string, stepPath string) (LearningMetadata, error) {
-	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
-	learningsBase := hcpo.getLearningsBasePath()
-	metadataPath := filepath.Join(learningsBase, stepID, ".learning_metadata.json")
-
-	var metadata LearningMetadata
-	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
-	if err != nil {
-		return metadata, err
-	}
-
-	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
-		return metadata, fmt.Errorf("failed to parse learning metadata: %w", err)
-	}
-
-	return metadata, nil
-}
 
 // getEffectiveToolsForStep returns the list of effective MCP server/tool names for a step.
 // Uses step-level filtering against the workflow cap, or workflow defaults.
@@ -77,12 +56,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterf
 		}
 	}
 	return nil
-}
-
-// isGlobalLearningEnabled is kept for backward compatibility but always returns true.
-// Global learning is now the only learning mode — per-step learning has been deprecated.
-func isGlobalLearningEnabled(agentConfigs *AgentConfigs) bool {
-	return true
 }
 
 // LoadGlobalLearningHistory loads and formats the global workflow-level learning history.

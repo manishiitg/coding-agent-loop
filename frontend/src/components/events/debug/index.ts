@@ -34,6 +34,3 @@ export { ContextSummarizationErrorEventDisplay } from './ContextSummarizationErr
 // Context editing event components
 export { ContextEditingCompletedEventDisplay } from './ContextEditingCompletedEvent'
 export { ContextEditingErrorEventDisplay } from './ContextEditingErrorEvent'
-
-// Temp LLM skipped event component
-export { TempLLMSkippedEventDisplay } from './TempLLMSkippedEvent'

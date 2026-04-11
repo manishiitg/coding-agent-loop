@@ -13,6 +13,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 
@@ -69,8 +70,10 @@ type StepBasedWorkflowOrchestrator struct {
 	// Workshop MCP session cache: one reusable MCP session per group name within a
 	// workshop session. This preserves browser/login state when the user runs
 	// multiple steps for the same group, while isolating different groups.
-	workshopGroupSessionsMu sync.Mutex
-	workshopGroupSessionIDs map[string]string
+	workshopGroupSessionsMu  sync.Mutex
+	workshopGroupSessionIDs  map[string]string
+	workshopGroupSessionRefs map[string]int
+	workshopGroupLastUsed    map[string]time.Time
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
@@ -98,25 +101,15 @@ type StepBasedWorkflowOrchestrator struct {
 	selectedRunMode   string // Selected run mode (e.g., "use_same_run", "create_new_runs_always")
 
 	// Batch execution context (tracked for step_progress_updated events)
-	currentGroupName  string // Current group name being executed
-	currentGroupIdx   int    // 0-based index of current group
-	totalGroups     int    // Total number of groups in batch
+	currentGroupName string // Current group name being executed
+	currentGroupIdx  int    // 0-based index of current group
+	totalGroups      int    // Total number of groups in batch
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *ExecutionOptions
 
 	// Preset-level agent defaults (used when step config doesn't specify)
 	presetPhaseLLM *AgentLLMConfig // Default for all phase agents (planning, evaluation, plan improvement, etc.)
-
-	// Temporary LLM overrides (highest priority, from ExecutionOptions)
-	// Only applies to execution agents (not validation or learning agents) for all steps during this execution
-	// Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
-	tempOverrideLLM  *AgentLLMConfig // First override LLM (used on first attempt)
-	tempOverrideLLM2 *AgentLLMConfig // Second override LLM (used on second attempt if tempLLM1 fails)
-
-	// Fallback to original LLM on validation failure (from ExecutionOptions)
-	// If true, when validation fails, use original LLM instead of temp override for retry attempts
-	fallbackToOriginalLLMOnFailure bool
 
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
@@ -194,7 +187,7 @@ func NewStepBasedWorkflowOrchestrator(
 ) (*StepBasedWorkflowOrchestrator, error) {
 
 	// Create base workflow orchestrator
-	// Note: provider and model parameters removed - not used (LLM comes from temp override/step config/preset)
+	// Note: provider and model parameters removed - not used (LLM comes from step config/tiered/preset)
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
 		eventBridge,
@@ -306,29 +299,73 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 // session per group name instead of the controller's "default-group" placeholder.
 // Reusing a cached per-group session preserves browser/login state across steps
 // for the same group while keeping different groups isolated.
-func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName string) error {
+func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName string) (func(), error) {
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
-		return nil
+		return func() {}, nil
 	}
+
+	now := time.Now()
+	var (
+		groupSessionID string
+		exists         bool
+		created        bool
+		evicted        map[string]string
+		refCount       int
+	)
 
 	hcpo.workshopGroupSessionsMu.Lock()
 	if hcpo.workshopGroupSessionIDs == nil {
 		hcpo.workshopGroupSessionIDs = make(map[string]string)
 	}
-	groupSessionID, exists := hcpo.workshopGroupSessionIDs[groupName]
+	if hcpo.workshopGroupSessionRefs == nil {
+		hcpo.workshopGroupSessionRefs = make(map[string]int)
+	}
+	if hcpo.workshopGroupLastUsed == nil {
+		hcpo.workshopGroupLastUsed = make(map[string]time.Time)
+	}
+
+	groupSessionID, exists = hcpo.workshopGroupSessionIDs[groupName]
 	if !exists {
+		for len(hcpo.workshopGroupSessionIDs) >= browser.MaxBrowserSessionsPerWorkflow {
+			evictGroupName, evictSessionID, ok := hcpo.oldestIdleWorkshopGroupSessionLocked()
+			if !ok {
+				activeGroups := hcpo.activeWorkshopGroupsLocked()
+				hcpo.workshopGroupSessionsMu.Unlock()
+				return nil, fmt.Errorf(
+					"cannot open workshop browser session for group %q: session already has %d active Playwright group sessions (max %d): %s",
+					groupName,
+					len(activeGroups),
+					browser.MaxBrowserSessionsPerWorkflow,
+					strings.Join(activeGroups, ", "),
+				)
+			}
+			if evicted == nil {
+				evicted = make(map[string]string)
+			}
+			evicted[evictGroupName] = evictSessionID
+			delete(hcpo.workshopGroupSessionIDs, evictGroupName)
+			delete(hcpo.workshopGroupSessionRefs, evictGroupName)
+			delete(hcpo.workshopGroupLastUsed, evictGroupName)
+		}
+
 		groupSessionID = fmt.Sprintf("session-group-%s-%d", groupName, time.Now().UnixNano())
 		hcpo.workshopGroupSessionIDs[groupName] = groupSessionID
-		if hcpo.httpSessionID != "" {
-			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
-			// Inherit folder guard from parent HTTP session so tools called
-			// under the group session enforce the same write restrictions
-			// (e.g., planning/ is read-only in workflow-builder mode).
-			common.CopySessionFolderGuard(hcpo.httpSessionID, groupSessionID)
-		}
+		created = true
 	}
+	hcpo.workshopGroupSessionRefs[groupName]++
+	refCount = hcpo.workshopGroupSessionRefs[groupName]
+	hcpo.workshopGroupLastUsed[groupName] = now
 	hcpo.workshopGroupSessionsMu.Unlock()
+
+	hcpo.closeWorkshopGroupSessions(evicted, "Evicting idle cached group MCP session")
+	if created && hcpo.httpSessionID != "" {
+		mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
+		// Inherit folder guard from parent HTTP session so tools called
+		// under the group session enforce the same write restrictions
+		// (e.g., planning/ is read-only in workflow-builder mode).
+		common.CopySessionFolderGuard(hcpo.httpSessionID, groupSessionID)
+	}
 
 	previousSessionID := hcpo.GetMCPSessionID()
 	hcpo.sessionID = groupSessionID
@@ -338,7 +375,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 	if !exists {
 		cacheAction = "created"
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s)", cacheAction, groupName, groupSessionID, previousSessionID))
+	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s MCP session for group %s: %s (previous=%s, refs=%d)", cacheAction, groupName, groupSessionID, previousSessionID, refCount))
 
 	browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupName)
 	hcpo.bindWorkshopBrowserSession(groupSessionID, browserSessionID)
@@ -349,9 +386,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 		groupName, browserSessionID, hcpo.httpSessionID, groupSessionID))
 
 	if strings.Contains(hcpo.GetMCPSessionID(), "default-group") {
-		return fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupName, hcpo.GetMCPSessionID())
+		return nil, fmt.Errorf("workshop execution for group %q still has placeholder MCP session %q", groupName, hcpo.GetMCPSessionID())
 	}
-	return nil
+	return func() {
+		hcpo.releaseWorkshopGroupSession(groupName)
+	}, nil
 }
 
 // CloseWorkshopGroupSessions closes all cached workshop group MCP sessions.
@@ -362,20 +401,100 @@ func (hcpo *StepBasedWorkflowOrchestrator) CloseWorkshopGroupSessions() {
 		hcpo.workshopGroupSessionsMu.Unlock()
 		return
 	}
-	sessionIDs := make([]string, 0, len(hcpo.workshopGroupSessionIDs))
-	for _, sessionID := range hcpo.workshopGroupSessionIDs {
-		sessionIDs = append(sessionIDs, sessionID)
+	sessionsByGroup := make(map[string]string, len(hcpo.workshopGroupSessionIDs))
+	for groupName, sessionID := range hcpo.workshopGroupSessionIDs {
+		sessionsByGroup[groupName] = sessionID
 	}
 	hcpo.workshopGroupSessionIDs = make(map[string]string)
+	hcpo.workshopGroupSessionRefs = make(map[string]int)
+	hcpo.workshopGroupLastUsed = make(map[string]time.Time)
 	hcpo.workshopGroupSessionsMu.Unlock()
 
-	sort.Strings(sessionIDs)
-	// Mark all sessions as stopped BEFORE closing to prevent in-flight tool calls
-	// from resurrecting connections via broken pipe handlers.
-	mcpagent.MarkSessionsStopped(sessionIDs)
-	for _, sessionID := range sessionIDs {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Closing cached group MCP session: %s", sessionID))
+	hcpo.closeWorkshopGroupSessions(sessionsByGroup, "Closing cached group MCP session")
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) oldestIdleWorkshopGroupSessionLocked() (string, string, bool) {
+	var (
+		oldestGroup     string
+		oldestSessionID string
+		oldestTime      time.Time
+	)
+	for groupName, sessionID := range hcpo.workshopGroupSessionIDs {
+		if hcpo.workshopGroupSessionRefs[groupName] > 0 {
+			continue
+		}
+		lastUsed := hcpo.workshopGroupLastUsed[groupName]
+		if oldestGroup == "" || lastUsed.Before(oldestTime) {
+			oldestGroup = groupName
+			oldestSessionID = sessionID
+			oldestTime = lastUsed
+		}
+	}
+	return oldestGroup, oldestSessionID, oldestGroup != ""
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) activeWorkshopGroupsLocked() []string {
+	activeGroups := make([]string, 0, len(hcpo.workshopGroupSessionRefs))
+	for groupName, refs := range hcpo.workshopGroupSessionRefs {
+		if refs > 0 {
+			activeGroups = append(activeGroups, groupName)
+		}
+	}
+	sort.Strings(activeGroups)
+	return activeGroups
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) releaseWorkshopGroupSession(groupName string) {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return
+	}
+
+	hcpo.workshopGroupSessionsMu.Lock()
+	defer hcpo.workshopGroupSessionsMu.Unlock()
+
+	if hcpo.workshopGroupSessionRefs == nil {
+		return
+	}
+	refs := hcpo.workshopGroupSessionRefs[groupName]
+	if refs <= 1 {
+		delete(hcpo.workshopGroupSessionRefs, groupName)
+		if hcpo.workshopGroupLastUsed == nil {
+			hcpo.workshopGroupLastUsed = make(map[string]time.Time)
+		}
+		hcpo.workshopGroupLastUsed[groupName] = time.Now()
+		hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP] Released group session %s (refs=0)", groupName))
+		return
+	}
+	hcpo.workshopGroupSessionRefs[groupName] = refs - 1
+	hcpo.workshopGroupLastUsed[groupName] = time.Now()
+	hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP] Released group session %s (refs=%d)", groupName, refs-1))
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) closeWorkshopGroupSessions(sessionsByGroup map[string]string, action string) {
+	if len(sessionsByGroup) == 0 {
+		return
+	}
+
+	groupNames := make([]string, 0, len(sessionsByGroup))
+	for groupName := range sessionsByGroup {
+		groupNames = append(groupNames, groupName)
+	}
+	sort.Strings(groupNames)
+
+	tracker := browser.GetSessionTracker()
+	browserClient := browser.NewClient(getWorkspaceAPIURL())
+
+	for _, groupName := range groupNames {
+		sessionID := sessionsByGroup[groupName]
+		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupName)
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s: group=%s session=%s browser=%s", action, groupName, sessionID, browserSessionID))
+		// Mark all sessions as stopped BEFORE closing to prevent in-flight tool calls
+		// from resurrecting connections via broken pipe handlers.
+		mcpagent.MarkSessionsStopped([]string{sessionID, browserSessionID})
 		mcpagent.CloseSession(sessionID)
+		mcpagent.CloseSession(browserSessionID)
+		tracker.CloseSession(browserSessionID, browserClient)
 	}
 }
 
@@ -1107,38 +1226,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) IsSkipHumanInput() bool {
 // When set, backend will use these options instead of asking interactively
 func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *ExecutionOptions) {
 	hcpo.executionOptions = options
-	if options != nil {
-
-		// Apply temporary LLM overrides (highest priority for execution agents only)
-		// Cascading fallback: tempLLM1 → tempLLM2 → step LLM
-		if options.TempOverrideLLM != nil && options.TempOverrideLLM.Provider != "" && options.TempOverrideLLM.ModelID != "" {
-			hcpo.tempOverrideLLM = options.TempOverrideLLM
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temporary execution agent LLM override 1 set: %s/%s (applies to execution agents only, not validation/learning)", options.TempOverrideLLM.Provider, options.TempOverrideLLM.ModelID))
-		} else {
-			// Clear any previous temporary override
-			hcpo.tempOverrideLLM = nil
-		}
-		if options.TempOverrideLLM2 != nil && options.TempOverrideLLM2.Provider != "" && options.TempOverrideLLM2.ModelID != "" {
-			hcpo.tempOverrideLLM2 = options.TempOverrideLLM2
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temporary execution agent LLM override 2 set: %s/%s (will be used on second attempt if tempLLM1 fails)", options.TempOverrideLLM2.Provider, options.TempOverrideLLM2.ModelID))
-		} else {
-			// Clear any previous temporary override
-			hcpo.tempOverrideLLM2 = nil
-		}
-
-		// Store fallback to original LLM on failure flag
-		hcpo.fallbackToOriginalLLMOnFailure = options.FallbackToOriginalLLMOnFailure
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure flag: %v (from ExecutionOptions: %v)", hcpo.fallbackToOriginalLLMOnFailure, options.FallbackToOriginalLLMOnFailure))
-		if hcpo.fallbackToOriginalLLMOnFailure {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
-		}
-
-	} else {
-		// Clear temporary overrides when options are cleared
-		hcpo.tempOverrideLLM = nil
-		hcpo.tempOverrideLLM2 = nil
-		hcpo.fallbackToOriginalLLMOnFailure = false
-	}
 }
 
 // GetExecutionOptions returns the current execution options

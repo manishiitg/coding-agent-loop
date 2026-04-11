@@ -1,261 +1,290 @@
-# Learn Code (Scripted Code) Execution Flow
+# Learn Code and Code Execution Modes
+
+This is the current source of truth for scripted workflow execution.
+
+`learn_code` and `code_exec` are not separate systems. They are two execution modes built on the same code-execution foundation:
+
+- `code_exec`: the agent writes and runs code for the current run only.
+- `learn_code`: the agent writes and maintains a reusable `main.py` that is retried on future runs before the LLM is called.
 
 ## Overview
 
-Learn code mode makes step execution **reproducible**. The LLM writes a `main.py` script that gets saved to `learnings/{step-id}/`. On subsequent runs, the saved script runs first (0 LLM tokens). If it fails, the LLM fixes it.
+At the workflow step level, scripted execution is controlled by two fields in `agent_configs`:
 
-## Modes
+- `use_code_execution_mode`
+- `declared_execution_mode`
 
-There are two code execution modes, set via `AgentConfigs.DeclaredExecutionMode`:
+The current behavior is:
 
-| Mode | Config | Script Persisted | Fast Path | When to Use |
-|------|--------|-----------------|-----------|-------------|
-| `learn_code` | `DeclaredExecutionMode: "learn_code"` | Yes → `learnings/{step-id}/` | Yes (0 tokens) | Steps that should be reusable across runs |
-| `code_exec` | `UseCodeExecutionMode: true` | No (ephemeral) | No (always calls LLM) | One-off steps, exploration |
+| Setting | Effect |
+|---|---|
+| `use_code_execution_mode: false` | Step uses normal direct-tool execution, not scripted code execution |
+| `use_code_execution_mode: true` + `declared_execution_mode: "code_exec"` | Step uses ephemeral code execution only |
+| `use_code_execution_mode: true` + `declared_execution_mode: "learn_code"` | Step uses persistent scripted execution with saved `main.py` fast path |
 
-The mode is set per-step via the interactive workshop manager or `step_configs.json`. There is **no automatic promotion** from `code_exec` to `learn_code` — it's always config-driven.
+Important implementation detail:
 
-`learn_code` implies `code_exec` (forces `isCodeExecutionMode = true`).
+- `learn_code` is detected only when `declared_execution_mode == "learn_code"`.
+- `code_exec` is the fallback mode whenever scripted execution is enabled but the step is not explicitly marked as `learn_code`.
+- `syncDeclaredExecutionModeConfig()` forces `use_code_execution_mode=true` when `declared_execution_mode` is `learn_code` or `code_exec`.
 
-## Key Paths
+That means the recommended workflow config is to set both fields explicitly for every optimized scripted step.
 
-| Path | Purpose | Persistence |
-|------|---------|-------------|
-| `learnings/{step-id}/main.py` | Saved script (best known version) | Persistent across runs |
-| `learnings/{step-id}/diffs/` | Version diffs between saved scripts | Persistent |
-| `execution/{step-path}/code/main.py` | Working copy (LLM writes/fixes here) | Preserved within a run, cleaned between runs |
-| `execution/{step-path}/code/fix-diffs/` | Diffs between fix iterations within a run | Per-run |
-| `execution/{step-path}/` | Step output files (STEP_OUTPUT_DIR) | Cleaned before each script run (code/ preserved) |
-| `learnings/_global/SKILL.md` | Global skill file | Persistent |
+## Recommended Usage
 
-## Execution Flow
+Prefer `learn_code` for most stable workflow steps:
 
-### Phase 1: Static Code Review
+- structured data transforms
+- report building
+- deterministic validation logic
+- fixed API call sequences
+- repeatable file processing
+- browser flows with stable selectors and predictable navigation
 
-Before running the saved script, `reviewMainPyScript()` performs static checks:
+Use `code_exec` when the step still benefits from scripting, but the exact logic changes from run to run:
 
-1. **Hardcoded execution paths** — `/app/workspace-docs/.../runs/iteration-N/.../execution` patterns
-2. **`os.environ.get()` with hardcoded fallback** for declared `VAR_*`/`SECRET_*` variables
-3. **`os.environ.get()` with fallback** for system env vars (`STEP_OUTPUT_DIR`, `MCP_API_URL`, etc.)
-4. **Sibling step folder references** without `STEP_EXECUTION_DIR`
-5. **Long hardcoded workspace paths** (`/app/workspace-docs/...` 20+ chars)
-6. **File writes without `STEP_OUTPUT_DIR`** — `open('file', 'w')` not using env var
-7. **Manual sibling paths when `sys.argv` available** — constructs paths instead of using argv
-8. **Writes to system-managed directories** — scripts writing to `knowledgebase/` or `learnings/` (cache shortcuts)
-9. **Hardcoded cache/shortcut variables** — `CACHE_DIR = '/app/...'` patterns that bypass actual work
+- exploratory browser work
+- adaptive investigations
+- tasks where the agent must improvise heavily based on page state or live results
+- one-off data collection patterns that are unlikely to stabilize into a reusable script
 
-If any issues are found → **fast path is skipped**, LLM is called with the issues listed.
+## Configuration
 
-### Phase 2: Saved Script (Fast Path)
+### Preferred `learn_code` config
 
-```
-tryRunSavedLearnCodeScript()
-  1. Check: does learnings/{step-id}/main.py exist?
-     - No  -> skip to Phase 3 (LLM generates from scratch)
-     - Yes -> continue
-
-  2. Static code review (Phase 1)
-     - Issues found -> skip to Phase 3 (LLM fixes issues)
-
-  3. Check: does execution/{step-path}/code/main.py already exist?
-     - Yes -> use it (may be LLM-fixed from previous attempt)
-     - No  -> copy all files from learnings/{step-id}/ to execution/{step-path}/code/
-
-  4. Clean output files in execution/{step-path}/ (preserve code/)
-
-  5. Run main.py from execution/{step-path}/code/
-     - STEP_OUTPUT_DIR = execution/{step-path}/
-     - SCRIPT_VERBOSE=1 (always set for debug output)
-     - All SECRET_*, VAR_*, MCP_API_URL, MCP_API_TOKEN injected as env vars
-
-  6. Run pre-validation on outputs
-     - Script exit 0 + validation passes -> SUCCESS (skip LLM entirely)
-     - Script fails or validation fails -> Phase 3
+```json
+{
+  "id": "step-id",
+  "agent_configs": {
+    "use_code_execution_mode": true,
+    "declared_execution_mode": "learn_code",
+    "declared_execution_mode_reason": "Stable scripted flow with reusable Python"
+  }
+}
 ```
 
-### Phase 3: LLM Execution
+### Ephemeral `code_exec` config
 
-```
-executionAgent.Execute()
-  - System prompt: code execution instructions, Python best practices, env var mappings
-  - User message: task description, orchestrator instructions, prior script + error (if relearn)
-  - LLM writes main.py to execution/{step-path}/code/main.py
-  - LLM runs it, calls MCP tools via API, debugs as needed
-  - LLM's turn ends
-```
-
-### Phase 4: Validation Fix Loop (up to 3 fix iterations)
-
-```
-After LLM's turn:
-  for fixIter 0..maxFixIter (default 3):
-
-    1. Run pre-validation on outputs
-       - Passes + main.py exists -> SUCCESS
-       - fixIter == maxFixIter -> EXHAUSTED, go to Phase 5
-
-    2. Build feedback message (self-contained):
-       - Task description
-       - Current main.py content (read from disk)
-       - Static code review issues (reviewMainPyScript)
-       - Last execution output + exit code
-       - Validation errors (which files missing, which checks failed)
-       - Fix attempt counter (N/max)
-
-    3. Create NEW repair agent (Tier 1/High) — fresh agent each iteration
-       - Fresh conversation (no history from prior attempts)
-       - Feedback message contains all context needed
-       - Avoids accumulated confusion from prior failed attempts
-
-    4. LLM fixes main.py, re-runs it
-
-    5. Capture diff between fix iterations
-       - Saved to execution/{step-path}/code/fix-diffs/fix-{N}-to-{N+1}.diff
-
-    6. Repeat (back to step 1)
+```json
+{
+  "id": "step-id",
+  "agent_configs": {
+    "use_code_execution_mode": true,
+    "declared_execution_mode": "code_exec",
+    "declared_execution_mode_reason": "Adaptive step that changes between runs"
+  }
+}
 ```
 
-### Phase 5: Fallback to Code Exec (outer retry)
+### Workshop defaults
 
-```
-If learn_code fix loop exhausted:
-  - isLearnCodeMode = false (disabled for remaining retries)
-  - Save main.py to learnings (unless syntax errors) — latest attempt is 
-    likely better than the known-broken version
-  - LLM uses tools directly (no main.py requirement)
-  - Pre-validation still checks outputs
-  - Up to 2 more attempts (3 outer retries total)
-```
+Workshop guidance treats `learn_code` as the preferred default for optimized scripted steps. The workshop tools also expose:
 
-## Complete Retry Structure
+- `update_step_config(...)`
+- `run_saved_main_py(step_id, group_id?)`
 
-```
-Retry Attempt 1 (learn_code mode):
-  ├─ Fast path: run saved learnings/main.py (0 tokens)
-  │   ├─ Success → DONE
-  │   └─ Fail → LLM execution
-  ├─ LLM writes/runs main.py (Phase 3)
-  ├─ Fix iter 0: pre-validation fails → NEW repair agent (Tier 1)
-  ├─ Fix iter 1: pre-validation fails → NEW repair agent (Tier 1)
-  ├─ Fix iter 2: pre-validation fails → NEW repair agent (Tier 1)
-  ├─ Fix iter 3: pre-validation fails → EXHAUSTED
-  ├─ Save main.py to learnings (unless syntax errors)
-  └─ Switch to code_exec mode
+`run_saved_main_py` is valid only for `learn_code` steps, because only those steps have a persistent saved-script fast path.
 
-Retry Attempt 2 (code_exec mode — no main.py required):
-  ├─ Fresh execution agent, LLM calls MCP tools directly
-  └─ Pre-validation check → pass/fail
+## Shared Architecture
 
-Retry Attempt 3 (code_exec mode):
-  ├─ Fresh execution agent
-  └─ Pre-validation check → pass/fail → if still failing, step fails
-```
+Both modes use the same bridge-based execution model.
 
-## Script Persistence
+The execution agent does not call most MCP tools directly. Instead it:
 
-### When is execution/code/ → learnings/ saved?
+1. Uses `get_api_spec(server_name, tool_name)` to inspect a tool's HTTP contract.
+2. Uses `execute_shell_command` to write and run Python or shell code.
+3. Calls per-tool HTTP endpoints such as:
+   - `POST /tools/mcp/{server}/{tool}`
+   - `POST /tools/custom/{tool}`
 
-**Always after the fix loop**, regardless of success or failure (unless syntax errors). The rationale: the learnings script already failed, so any LLM-produced version is a newer attempt and likely better.
+Core env vars injected into scripted runs include:
 
-- Fix loop succeeds → save to learnings (working script)
-- Fix loop fails → save to learnings (latest attempt, unless SyntaxError)
-- Fast path succeeds → save to learnings (may be LLM-fixed from previous run)
+- `MCP_API_URL`
+- `MCP_API_TOKEN`
+- `STEP_OUTPUT_DIR`
+- `STEP_EXECUTION_DIR`
+- resolved `SECRET_*` and `VAR_*` values
 
-### When is execution/code/ cleaned?
+This is the same bridge used by CLI-style providers that require HTTP tool routing.
 
-- **Output files** (execution/{step-path}/): cleaned before each script run
-- **Code directory** (execution/{step-path}/code/): **never cleaned** — preserved across retries so LLM fixes survive
-- Code directory is only cleaned when the outer workflow starts a fresh iteration
+## Mode Resolution and Precedence
 
-### Diff Tracking
+The execution loop resolves mode in two layers:
 
-Two levels of diff tracking:
+1. Determine whether the step is in persistent scripted mode:
+   - `isScriptedExecutionModeConfig(cfg)` returns true only for `declared_execution_mode == "learn_code"`.
+2. Determine whether code execution is enabled at all:
+   - step config `use_code_execution_mode`
+   - otherwise workflow/preset default
+   - then `learn_code` forces code execution on
 
-1. **Version diffs** (`learnings/{step-id}/diffs/main.py.v{N}.diff`): what changed between saved versions across runs
-2. **Fix iteration diffs** (`execution/{step-path}/code/fix-diffs/fix-{N}-to-{N+1}.diff`): what changed between fix attempts within a single run
+Additional behavior:
 
-## Success Learning
+- Step config overrides workflow default.
+- Workflow default no longer auto-enables code execution globally.
+- Provider-specific auto-enable is handled per agent for CLI providers such as `claude-code`, `gemini-cli`, and `codex-cli`.
 
-After a step passes pre-validation, success learning may run:
+## `learn_code` Flow
 
-```
-Execution succeeds → Pre-validation passes → validationResponse.IsSuccessCriteriaMet = true
-  │
-  ├─ Learning disabled?           → Skip
-  ├─ Learnings locked?            → Skip
-  ├─ tempLLM override used?       → Skip (but update metadata for auto-lock threshold)
-  │
-  └─ Otherwise → runSuccessLearningPhase (runs in BACKGROUND)
-       ├─ Analyzes conversation history
-       ├─ Updates plan.json learnings
-       └─ Updates learning metadata (success count, turn count, etc.)
-```
+`learn_code` adds persistence and a saved-script fast path on top of normal code execution.
 
-When learning is skipped due to tempLLM, metadata is still updated so the success count increments toward the auto-lock threshold (3 successes).
+### Persistent paths
 
-## Prompt Structure
+| Path | Purpose |
+|---|---|
+| `learnings/{step-id}/main.py` | Canonical saved script for future runs |
+| `learnings/{step-id}/diffs/` | Diffs between saved versions |
+| `execution/{step-path}/code/main.py` | Per-run working copy that the LLM edits |
+| `execution/{step-path}/code/fix-diffs/` | Diffs between repair iterations in the same run |
+| `execution/{step-path}/` | Output folder for artifacts validated by the step |
 
-### System Prompt (execution-only agent)
-- Role & identity
-- Code execution mode instructions (MCP API access)
-- Learn code mode rules:
-  - Write main.py to `execution/{step-path}/code/`
-  - Use `diff_patch_workspace_file` to update existing main.py (prefer over full rewrites)
-  - May call tools via API to inspect state before writing
-  - Use SCRIPT_VERBOSE for debug logging
-  - Fallback: can use tools directly if unable to write main.py
-- Python best practices (env vars, call_mcp helper with verbose logging)
-- Error diagnostics (print to stdout, not just files)
-- Validation schema (output requirements)
-- Variables (env var mappings only, never actual values)
-- Workspace paths, folder guard
+### Fast path
 
-### User Message
-- Orchestrator instructions (task description)
-- Prior script + error (if relearn — moved from system prompt for higher salience)
-- Saved script reference (points to `execution/{step-path}/code/main.py`, NOT learnings/)
-- Input dependencies
-- Output requirements
-- Execution checklist
+Before the LLM runs, the controller attempts `tryRunSavedLearnCodeScript(...)`.
 
-### Fix Loop Feedback (injected as user messages)
-Each fix iteration gets a self-contained feedback message:
-- Task description
-- Current main.py content (read from disk)
-- Static code review issues (if any)
-- Last execution output + exit code
-- Validation errors (which files missing, which checks failed)
-- Fix attempt counter
+High-level flow:
 
-## Tier Selection
+1. Check whether `learnings/{step-id}/main.py` exists.
+2. Run static review on the saved script.
+3. Copy the saved script into `execution/{step-path}/code/` when needed.
+4. Clean the step output directory while preserving `code/`.
+5. Run `python3 main.py` with workflow env vars and step arguments.
+6. Run pre-validation on outputs.
+7. If script execution and validation pass, finish with zero LLM tokens for that run.
 
-| Agent | Tier | Rationale |
-|-------|------|-----------|
-| Original execution | From context (preferredTier or maturity-based) | Normal selection |
-| Repair agent (fix loop) | Tier 1 (High) forced | Needs stronger model to fix failures |
-| Code exec fallback | Re-runs selection | Fresh agent, normal tier |
+### Static review before fast path
 
-## Logging
+The controller reviews the saved script before trusting it. It rejects fast path when it sees patterns such as:
 
-### Prompt Logs (logs/agent_prompts/)
-- `{seq}_{timestamp}_{agent}_{provider}_{model}.md` — system prompt + user message (at start)
-- `{seq}_{timestamp}_{agent}_{provider}_{model}_conversation.md` — tool calls + responses (at end)
+- hardcoded execution paths
+- hardcoded fallbacks for required env vars
+- sibling-step path hacks
+- writes outside the managed step output area
+- direct writes into system-managed directories like `knowledgebase/` or `learnings/`
 
-### Tool Call Events
-- Collected via EmitTypedEvent (works for all providers including gemini-cli)
-- Includes tool name, server, args, result, duration
+When static review fails, the system skips the fast path and falls back to LLM repair/generation.
 
-### SCRIPT_VERBOSE
-- Always set to "1" when controller runs scripts
-- call_mcp helper logs: request args, response content, errors
-- Scripts should use `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'` for conditional debug output
+### LLM generation and repair
 
-## Key Source Files
+If fast path fails or no saved script exists:
 
-| File | What |
-|------|------|
-| `controller_execution.go` | Main execution loop, retry logic, fix loop, code_exec fallback |
-| `controller_learn_code.go` | `tryRunSavedLearnCodeScript`, `saveLearnCodeScriptToLearnings`, `reviewMainPyScript`, `GetLearnCodeModeInstructions`, `generateSimpleDiff` |
-| `interactive_workshop_manager.go` | `isScriptedExecutionModeConfig`, mode config helpers |
-| `execution_manager.go` | Execution context, saved-script-only mode |
-| `controller_agent_factory.go` | Agent creation for execution and repair agents |
+1. The execution agent writes or repairs `execution/{step-path}/code/main.py`.
+2. The controller reruns pre-validation.
+3. On failure, it starts a learn-code repair loop.
+
+Repair loop behavior:
+
+- up to 3 fix iterations (configurable via `LearnCodeMaxFixIter`)
+- fresh Tier 1 (High) repair agent each iteration
+- feedback message includes: task description, pointer to current `main.py` on disk (not inlined), static code review issues, last execution output + exit code, and attempt counter
+- validation details are intentionally omitted from feedback to prevent the LLM from fabricating outputs that match the schema
+- diffs are written under `execution/{step-path}/code/fix-diffs/`
+
+### Save-back behavior
+
+After learn-code execution, the controller saves the latest script back into `learnings/{step-id}/` unless:
+
+- the script has syntax errors (definitely worse than the saved version)
+- `lock_learnings` is true (user has frozen the script intentionally)
+
+This means `learn_code` is not only a fast path. It is also the persistent script-maintenance path.
+
+### Lock code vs lock learnings
+
+There are two separate locks:
+
+| Setting | Controls | Effect |
+|---|---|---|
+| `lock_learnings: true` | SKILL.md | Prevents the learning agent from running. Existing SKILL.md is still used by execution agents. |
+| `lock_code: true` | main.py | Prevents LLM-rewritten scripts from being saved back to learnings. Skips the fix loop entirely (falls back directly to code_exec mode). |
+
+When `lock_code: true` is set on a step:
+
+- **Fast path**: Saved script is still copied from learnings to execution and run normally
+- **Fix loop**: Skipped entirely (`maxFixIter = -1`) — no repair agents are created, no tokens spent on fixes that would be discarded
+- **Save-back**: Blocked — the LLM's rewritten script is NOT copied back to learnings
+- **Fallback**: Falls through directly to code_exec mode (tools directly, no main.py)
+- **Metadata**: `script_metadata.json` is still updated (run history, failure patterns) for observability
+
+This means a locked script that keeps failing will repeat the same failure every run. The user must manually fix `learnings/{step-id}/main.py` or set `lock_code: false` to let the system fix it.
+
+To force a complete rewrite: delete `learnings/{step-id}/main.py` (not the execution copy), then run `execute_step`. The LLM will generate fresh.
+
+### Fallback after repair exhaustion
+
+If the learn-code repair loop is exhausted (or skipped due to locked learnings), the controller disables persistent scripted mode for the remaining outer retries and continues in plain `code_exec` mode.
+
+That fallback is important:
+
+- `learn_code` is the preferred stable path
+- `code_exec` is the recovery path when the saved script is not currently salvageable within the repair budget
+
+## `code_exec` Flow
+
+`code_exec` uses the same bridge and env model, but it does not rely on a persistent saved script.
+
+Behavior:
+
+- the agent writes and runs code for the current step run
+- no saved `learnings/{step-id}/main.py` fast path is attempted
+- no `run_saved_main_py` support
+- the step still benefits from script-based batching, loops, parsing, and multi-tool orchestration
+
+This is the correct mode when scripting is useful but persistence would create more churn than value.
+
+## Prompting Expectations for Scripted Steps
+
+The controller prompt for scripted execution expects:
+
+- outputs to be written under `STEP_OUTPUT_DIR`
+- script working files to live under `STEP_EXECUTION_DIR` / `code/`
+- variables to be passed through env vars or runtime args, not hardcoded
+- diagnostic output to go to stdout/stderr so repair loops can reason over failures
+
+For `learn_code`, the prompt also emphasizes:
+
+- maintaining a reusable `main.py` and repairing it incrementally
+- **no fabricated data**: every output value must trace to a real data source (MCP tool call, API response, or input file)
+- **browser automation rules**: snapshot-first, ref-based interaction, no JavaScript injection via `browser_evaluate`, no CSS selectors — applies to both playwright MCP and agent_browser tools
+- **tool discovery**: call `get_api_spec` before writing browser/MCP code to learn exact parameter schemas instead of guessing
+- `script_metadata.json` is referenced by path (not inlined) so the LLM reads it on demand
+
+## When to Use Which Mode
+
+Choose `learn_code` when:
+
+- the task shape is stable
+- the script should improve over time
+- you want future runs to be cheap and fast
+- you want a reviewable `main.py` artifact in learnings
+
+Choose `code_exec` when:
+
+- the task shape changes too much between runs
+- persistence would encode brittle assumptions
+- the agent needs exploratory or dynamic behavior each time
+
+## Operational Notes
+
+- CLI providers may force code execution behavior because they route tools through the HTTP bridge.
+- `learn_code` steps force `UseCodeExecutionMode = true` regardless of provider — this ensures the agent gets the tool index and `get_api_spec` virtual tool for proper tool discovery when writing `main.py`.
+- Learning agents are still separate from execution agents; code execution mode mainly affects execution-time tool access and scripting behavior.
+- `learn_code_script_execution` events exist specifically for saved-script runs and repair visibility in the UI.
+- `error_summary` in `script_metadata.json` run records is stored in full (not truncated). `error_snippet` in `last_failure` is capped at 2000 chars for prompt inclusion.
+
+## Key Files
+
+| File | Role |
+|---|---|
+| `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go` | Main execution loop, fast-path invocation, repair loop, fallback handling |
+| `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learn_code.go` | Saved-script execution, static review, save-back, diff capture |
+| `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go` | Mode semantics, workshop guidance, `run_saved_main_py`, config sync helpers |
+| `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go` | Applies step config and syncs declared mode to boolean flags |
+| `agent_go/cmd/server/server.go` | Per-tool HTTP endpoints and bridge env setup |
+| `agent_go/pkg/workspace/execute_shell_command.go` | Shell execution guardrails and tool-routing constraints |
+
+## Related Docs
+
+- [Step Config Specification](step_config_format_specification.md)
+- [Tool Search Mode](../core/tool_search_mode.md)
+- [Learning Architecture](learning_architecture.md)

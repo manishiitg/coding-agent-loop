@@ -134,7 +134,7 @@ func cancelResumedTurn(llmInstance llmtypes.Model, sessionID string, logger logg
 	select {
 	case err := <-errCh:
 		if !isCancellationLikeError(err) {
-			return fmt.Errorf("expected cancellation error after interrupting resumed turn, got: %v", err)
+			return fmt.Errorf("expected cancellation error after interrupting resumed turn, got: %w", err)
 		}
 		logger.Info(fmt.Sprintf("Canceled resumed turn as expected: %v", err))
 		return nil
@@ -238,7 +238,7 @@ func isCancellationLikeError(err error) bool {
 	}
 	errText := strings.ToLower(err.Error())
 	return strings.Contains(errText, "context canceled") ||
-		strings.Contains(errText, "context cancelled") ||
+		strings.Contains(errText, "context canceled") ||
 		strings.Contains(errText, "operation canceled") ||
 		strings.Contains(errText, "execution failed: context canceled")
 }

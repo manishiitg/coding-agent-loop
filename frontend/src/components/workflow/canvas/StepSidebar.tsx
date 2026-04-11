@@ -143,7 +143,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Create execution options to run only this single step
     // Read from workflow store directly (not from props which might be null/stale)
-    // Use buildExecutionOptions to include all flags (including fallback_to_original_llm_on_failure)
+    // Use buildExecutionOptions so execution starts with the current workflow store settings.
     const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
     const baseOptions = buildExecutionOptions()
     const executionOptions: ExecutionOptions = {
@@ -708,10 +708,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       }
       let config: AgentLLMConfig | undefined
       if (agentType === 'execution') {
-        config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
+        config = presetLLMConfig.provider && presetLLMConfig.model_id ? {
           provider: presetLLMConfig.provider,
           model_id: presetLLMConfig.model_id
-        } : undefined)
+        } : undefined
       } else if (agentType === 'learning') {
         config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
           provider: presetLLMConfig.provider,

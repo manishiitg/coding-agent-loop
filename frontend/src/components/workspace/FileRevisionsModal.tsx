@@ -3,6 +3,7 @@ import { X, Clock, User, GitCommit, Eye, RotateCcw, FileText } from 'lucide-reac
 import { agentApi } from '../../services/api'
 import type { FileVersion } from '../../services/api-types'
 import FileEditor from './FileEditor'
+import { DiffRenderer } from '../ui/DiffRenderer'
 
 interface FileRevisionsModalProps {
   isOpen: boolean
@@ -305,11 +306,7 @@ export default function FileRevisionsModal({
                         <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
                           Diff
                         </h4>
-                        <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded max-h-40 overflow-y-auto">
-                          <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                            {selectedVersion.diff}
-                          </pre>
-                        </div>
+                        <DiffRenderer content={selectedVersion.diff} maxHeightClassName="max-h-40" />
                       </div>
                     )}
                   </div>
@@ -350,27 +347,7 @@ export default function FileRevisionsModal({
 
               {/* Diff Content */}
               <div className="flex-1 overflow-y-auto p-4">
-                <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm overflow-x-auto">
-                  <pre className="whitespace-pre-wrap">
-                    {selectedVersion.diff?.split('\n').map((line, index) => {
-                      let className = 'text-gray-300'
-                      if (line.startsWith('+')) {
-                        className = 'text-green-400 bg-green-900/20'
-                      } else if (line.startsWith('-')) {
-                        className = 'text-red-400 bg-red-900/20'
-                      } else if (line.startsWith('@@')) {
-                        className = 'text-blue-400 bg-blue-900/20'
-                      } else if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
-                        className = 'text-yellow-400'
-                      }
-                      return (
-                        <div key={index} className={className}>
-                          {line}
-                        </div>
-                      )
-                    })}
-                  </pre>
-                </div>
+                <DiffRenderer content={selectedVersion.diff || ''} className="h-full" maxHeightClassName="max-h-none h-full" />
               </div>
             </div>
           </div>

@@ -7,21 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // BatchExecutionResult contains the result of batch execution
 type BatchExecutionResult struct {
-	TotalGroups       int
-	CompletedGroups   int
-	FailedGroups      int
-	CanceledGroups    int
-	Duration          time.Duration
-	Success           bool
-	Error             string
+	TotalGroups         int
+	CompletedGroups     int
+	FailedGroups        int
+	CanceledGroups      int
+	Duration            time.Duration
+	Success             bool
+	Error               string
 	CompletedGroupNames []string
 	FailedGroupNames    []string
 }
@@ -194,7 +194,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	hcpo.emitBatchExecutionStartEvent(ctx, totalGroups, enabledGroupNames, iteration)
 
 	result := &BatchExecutionResult{
-		TotalGroups:       totalGroups,
+		TotalGroups:         totalGroups,
 		CompletedGroupNames: make([]string, 0),
 		FailedGroupNames:    make([]string, 0),
 	}
@@ -669,21 +669,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executionOptionsToMap() map[string]in
 	}
 	if opts.PlanChangeAction != "" {
 		result["plan_change_action"] = opts.PlanChangeAction
-	}
-	if opts.TempOverrideLLM != nil {
-		result["temp_override_llm"] = map[string]interface{}{
-			"provider": opts.TempOverrideLLM.Provider,
-			"model_id": opts.TempOverrideLLM.ModelID,
-		}
-	}
-	if opts.TempOverrideLLM2 != nil {
-		result["temp_override_llm2"] = map[string]interface{}{
-			"provider": opts.TempOverrideLLM2.Provider,
-			"model_id": opts.TempOverrideLLM2.ModelID,
-		}
-	}
-	if opts.FallbackToOriginalLLMOnFailure {
-		result["fallback_to_original_llm_on_failure"] = opts.FallbackToOriginalLLMOnFailure
 	}
 
 	return result

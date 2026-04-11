@@ -779,7 +779,6 @@ export interface PresetLLMConfig {
   model_id?: string
 
   // New: Agent-specific default models (takes priority over legacy fields)
-  execution_llm?: AgentLLMConfig        // Default for execution agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 
@@ -929,24 +928,6 @@ export interface ExecutionOptions {
     branch_step_index: number;  // 0-based index within the branch
   };
   plan_change_action?: 'keep_old_progress' | 'delete_old_progress';
-
-  // Temporary LLM overrides (optional, overrides step-level configs for this execution only)
-  // Only applies to execution agents (not validation or learning agents)
-  // Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
-  temp_override_llm?: AgentLLMConfig;  // First override LLM (used on first attempt)
-  temp_override_llm2?: AgentLLMConfig;  // Second override LLM (used on second attempt if tempLLM1 fails)
-  
-  // Fallback behavior when validation fails
-  fallback_to_original_llm_on_failure?: boolean;  // If true, use original LLM instead of temp override when validation fails
-  
-  // Learning behavior when tempLLM is active (per-model control)
-  skip_learning_when_temp_llm1?: boolean;  // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
-  skip_learning_when_temp_llm2?: boolean;  // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
-  
-  // Temporary LLM for learning agents (optional, used when learnings already exist for a step)
-  // If learnings exist for a step_id, use temp_learning_llm if configured
-  // If no learnings exist (new learning), always use default LLM (step config → preset)
-  temp_learning_llm?: AgentLLMConfig;
   
   // Validation response persistence
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)

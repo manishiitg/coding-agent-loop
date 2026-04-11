@@ -21,12 +21,13 @@ export const WORKSPACE_GIT_TOOLS = [
   'get_workspace_github_status',
 ] as const;
 
-// workspace_advanced: 4 advanced tools (shell, image, PDF, diff patch)
+// workspace_advanced: advanced tools (shell, image, PDF, text generation, diff patch)
 // Maps to backend "workspace_advanced" category
 export const WORKSPACE_ADVANCED_TOOLS = [
   'execute_shell_command',
   'read_image',
   'read_pdf',
+  'generate_text_llm',
   'diff_patch_workspace_file',
 ] as const;
 
@@ -80,7 +81,7 @@ export function getToolsByCategory(category: string, capabilities?: { semantic_s
       // GitHub sync tools (2 tools)
       return isGitEnabled ? [...WORKSPACE_GIT_TOOLS] : [];
     case 'workspace_advanced':
-      // Advanced tools (4 tools: shell + image + PDF + diff patch)
+      // Advanced tools (shell + image + PDF + text generation + diff patch)
       return [...WORKSPACE_ADVANCED_TOOLS];
     case 'human_tools':
       return [...HUMAN_TOOLS];

@@ -129,16 +129,15 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
       ? stepCodeExecSetting === true
       : presetUseCodeExecutionMode
 
-  // Execution LLM: global override > step config > preset execution_llm > preset default
+  // Execution LLM: global override > step config > preset default
   const executionLLM = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
     const overrideLLMConfig = stepOverride?.execution_llm
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
 
-    const llmConfig = overrideLLMConfig || stepLLMConfig || presetExecutionLLM || presetDefaultLLM
+    const llmConfig = overrideLLMConfig || stepLLMConfig || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
 
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
@@ -150,11 +149,10 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     const presetLLMConfig = activePreset?.llmConfig
     const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
     const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
     
-    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetExecutionLLM || presetDefaultLLM
+    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)

@@ -39,7 +39,6 @@ function buildWorkflowPresetsFromManifests(): CustomPreset[] {
       llmConfig: caps?.llm_config ? {
         provider: caps.llm_config.provider,
         model_id: caps.llm_config.model_id,
-        execution_llm: caps.llm_config.execution_llm,
         learning_llm: caps.llm_config.learning_llm,
         phase_llm: caps.llm_config.phase_llm,
         use_knowledgebase: caps.llm_config.use_knowledgebase,

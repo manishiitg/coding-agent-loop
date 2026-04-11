@@ -166,12 +166,12 @@ type WorkshopChatSession struct {
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
-	workshopNotifier     SubAgentNotifier
+	workshopNotifier      SubAgentNotifier
 	executionNotifier     WorkshopExecutionNotifier // optional: notifies server when executions start/complete
-	hasPendingCompletions func() bool                // optional: server-level check for queued completions
-	hasRunningAgents      func() bool                // optional: server-level check for running background agents
-	cancelAllServerAgents func()                     // optional: cancel all running agents in server registry
-	listServerAgents      func() []ServerAgentInfo   // optional: list all agents from server registry
+	hasPendingCompletions func() bool               // optional: server-level check for queued completions
+	hasRunningAgents      func() bool               // optional: server-level check for running background agents
+	cancelAllServerAgents func()                    // optional: cancel all running agents in server registry
+	listServerAgents      func() []ServerAgentInfo  // optional: list all agents from server registry
 	workshopModeOverride  string                    // frontend-selected workshop mode
 }
 
@@ -768,6 +768,7 @@ func RegisterRunFullEvaluationTool(
 					execErr = fmt.Errorf("failed to create evaluation controller: %w", err)
 					return
 				}
+				defer evalController.CloseWorkshopGroupSessions()
 
 				// Propagate HTTP session ID only — do NOT overwrite MCP session ID.
 				// Same reasoning as main controller above: eval controller needs its own
@@ -897,7 +898,7 @@ func RegisterRunFullReportTool(
 						}
 						if execErr != nil {
 							if skipNotify || execCtx.Err() != nil {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+								endEvent.Result = fmt.Sprintf("Canceled: %v", execErr)
 							} else {
 								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
 							}
@@ -964,6 +965,7 @@ func RegisterRunFullReportTool(
 					execErr = fmt.Errorf("failed to create report controller: %w", err)
 					return
 				}
+				defer reportController.CloseWorkshopGroupSessions()
 
 				if cfg.SessionID != "" {
 					reportController.SetHTTPSessionID(cfg.SessionID)
@@ -1246,7 +1248,7 @@ func RegisterRunFullWorkflowTool(
 						}
 						if execErr != nil {
 							if skipNotify || execCtx.Err() != nil {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+								endEvent.Result = fmt.Sprintf("Canceled: %v", execErr)
 							} else {
 								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
 							}
@@ -1314,6 +1316,7 @@ func RegisterRunFullWorkflowTool(
 					execErr = fmt.Errorf("failed to create workflow controller: %w", err)
 					return
 				}
+				defer workflowController.CloseWorkshopGroupSessions()
 
 				// Wire sub-agent tracking so generic/predefined sub-agents spawned by the
 				// runner controller appear in the session's stepRegistry and are visible
@@ -1345,7 +1348,7 @@ func RegisterRunFullWorkflowTool(
 					SelectedRunFolder: iteration,
 					ExecutionStrategy: strategy,
 					EnabledGroupNames: enabledGroupNames,
-					HumanInputs:      humanInputs,
+					HumanInputs:       humanInputs,
 				}
 				workflowController.SetExecutionOptions(execOpts)
 

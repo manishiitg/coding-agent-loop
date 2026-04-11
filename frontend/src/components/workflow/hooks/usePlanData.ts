@@ -151,7 +151,89 @@ function mergeStepConfigs(
 
   return {
     ...plan,
-    steps: mergeIntoSteps(plan.steps)
+    steps: mergeIntoSteps(plan.steps),
+    orphan_steps: plan.orphan_steps ? mergeIntoSteps(plan.orphan_steps) : plan.orphan_steps,
+  }
+}
+
+function resolveOrphanStepRefs(plan: PlanningResponse): PlanningResponse {
+  if (!plan.orphan_steps || plan.orphan_steps.length === 0) return plan
+
+  const orphanMap = new Map(plan.orphan_steps.map(step => [step.id, step]))
+
+  const cloneStep = (step: PlanStep): PlanStep => JSON.parse(JSON.stringify(step)) as PlanStep
+
+  const resolveStep = (step: PlanStep, orphanChain: string[] = []): PlanStep => {
+    if (isConditionalStep(step)) {
+      return {
+        ...step,
+        if_true_steps: step.if_true_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
+        if_false_steps: step.if_false_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
+      }
+    }
+
+    if (isDecisionStep(step)) {
+      return {
+        ...step,
+        decision_step: step.decision_step ? resolveStep(step.decision_step, orphanChain) : step.decision_step,
+      }
+    }
+
+    if (isTodoTaskStep(step)) {
+      return {
+        ...step,
+        predefined_routes: step.predefined_routes?.map(route => {
+          let resolvedSubAgent = route.sub_agent_step ? resolveStep(route.sub_agent_step, orphanChain) : undefined
+
+          if (!resolvedSubAgent && route.orphan_step_ref) {
+            if (orphanChain.includes(route.orphan_step_ref)) {
+              console.warn('[usePlanData] Detected cyclic orphan_step_ref chain', {
+                parentStepId: step.id,
+                routeId: route.route_id,
+                orphanChain,
+                orphanStepRef: route.orphan_step_ref,
+              })
+              return {
+                ...route,
+                sub_agent_step: undefined,
+              }
+            }
+            const orphanStep = orphanMap.get(route.orphan_step_ref)
+            const allowedOrchestrators = orphanStep?.shared_with?.orchestrator_ids ?? []
+            const isAllowed = !!orphanStep && allowedOrchestrators.includes(step.id)
+
+            if (orphanStep && isAllowed) {
+              resolvedSubAgent = cloneStep(orphanStep)
+              resolvedSubAgent.id = route.route_id || resolvedSubAgent.id
+              if (!resolvedSubAgent.title?.trim()) {
+                resolvedSubAgent.title = route.route_name || resolvedSubAgent.title
+              }
+              resolvedSubAgent = resolveStep(resolvedSubAgent, [...orphanChain, route.orphan_step_ref])
+            } else if (route.orphan_step_ref) {
+              console.warn('[usePlanData] Failed to resolve orphan_step_ref for route', {
+                parentStepId: step.id,
+                routeId: route.route_id,
+                orphanStepRef: route.orphan_step_ref,
+                isAllowed,
+              })
+            }
+          }
+
+          return {
+            ...route,
+            sub_agent_step: resolvedSubAgent,
+          }
+        }),
+      }
+    }
+
+    return step
+  }
+
+  return {
+    ...plan,
+    steps: plan.steps.map(step => resolveStep(step)),
+    orphan_steps: plan.orphan_steps.map(step => resolveStep(step, [step.id])),
   }
 }
 
@@ -209,7 +291,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
 
       // Step overrides are now loaded from workflow.json in WorkflowLayout.tsx
 
-      return planData
+      return resolveOrphanStepRefs(planData)
     }
 
     return null

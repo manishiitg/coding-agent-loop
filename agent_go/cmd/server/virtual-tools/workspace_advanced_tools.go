@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
@@ -28,15 +30,16 @@ func CreateWorkspaceAdvancedTools() []llmtypes.Tool {
 // Includes FolderGuard to restrict LLM writes
 // The read_image executor is wrapped with LLM analysis (config read from context at execution time)
 func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context, args map[string]any) (string, error) {
+	wsURL := getWorkspaceAPIURL()
 	env := getMCPExtraEnv()
 	client := workspace.NewClient(
-		getWorkspaceAPIURL(),
+		wsURL,
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
 		workspace.WithExtraEnv(env),
 	)
 	log.Printf("[GLOBAL_CLIENT_DEBUG] Created global workspace client=%p (no session) MCP_API_URL=%s", client, env["MCP_API_URL"])
 	executors := workspace.NewAdvancedExecutor(client)
-	wrapReadImageExecutor(executors)
+	attachWorkspaceAdvancedLLMExecutors(executors, wsURL)
 	return executors
 }
 
@@ -45,14 +48,15 @@ func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context,
 // even if the context doesn't carry the user ID.
 // The read_image executor is wrapped with LLM analysis (config read from context at execution time)
 func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]func(ctx context.Context, args map[string]any) (string, error) {
+	wsURL := getWorkspaceAPIURL()
 	client := workspace.NewClient(
-		getWorkspaceAPIURL(),
+		wsURL,
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
 		workspace.WithUserID(userID),
 		workspace.WithExtraEnv(getMCPExtraEnv()),
 	)
 	executors := workspace.NewAdvancedExecutor(client)
-	wrapReadImageExecutor(executors)
+	attachWorkspaceAdvancedLLMExecutors(executors, wsURL)
 	return executors
 }
 
@@ -73,6 +77,7 @@ func CreateWorkspaceAdvancedToolExecutorsWithSession(userID, sessionID string) (
 // so callers can update MCP_API_URL/MCP_SESSION_ID in-place and the changes propagate to all
 // subsequent executor calls (Go maps are reference types).
 func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID string, extraEnvVars map[string]string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {
+	wsURL := getWorkspaceAPIURL()
 	env := getMCPExtraEnv(sessionID)
 	// Merge additional env vars (secrets, etc.) — these don't override MCP vars
 	for k, v := range extraEnvVars {
@@ -81,14 +86,14 @@ func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID str
 		}
 	}
 	client := workspace.NewClient(
-		getWorkspaceAPIURL(),
+		wsURL,
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
 		workspace.WithUserID(userID),
 		workspace.WithExtraEnv(env),
 	)
 	log.Printf("[SESSION_CLIENT_DEBUG] Created session-aware workspace client=%p sessionID=%s MCP_API_URL=%s", client, sessionID, env["MCP_API_URL"])
 	executors := workspace.NewAdvancedExecutor(client)
-	wrapReadImageExecutor(executors)
+	attachWorkspaceAdvancedLLMExecutors(executors, wsURL)
 	return executors, env
 }
 
@@ -103,8 +108,13 @@ func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string
 		workspace.WithExtraEnv(env),
 	)
 	executors := workspace.NewAdvancedExecutor(client)
-	wrapReadImageExecutor(executors)
+	attachWorkspaceAdvancedLLMExecutors(executors, wsURL)
 	return executors, env
+}
+
+func attachWorkspaceAdvancedLLMExecutors(executors map[string]func(ctx context.Context, args map[string]any) (string, error), workspaceURL string) {
+	wrapReadImageExecutor(executors)
+	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL)
 }
 
 // getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
@@ -136,6 +146,290 @@ func getMCPExtraEnv(sessionID ...string) map[string]string {
 	}
 	log.Printf("[MCP_ENV_DEBUG] getMCPExtraEnv: baseURL=%s sessionID=%s final_MCP_API_URL=%s", baseURL, sid, env["MCP_API_URL"])
 	return env
+}
+
+type generateTextLLMResult struct {
+	Tier     string `json:"tier"`
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+	Response string `json:"response"`
+}
+
+func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context, args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		userMessage := strings.TrimSpace(fmt.Sprintf("%v", args["user_message"]))
+		if userMessage == "" {
+			return "", fmt.Errorf("user_message is required")
+		}
+
+		tier := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", args["tier"])))
+		if tier != "high" && tier != "medium" && tier != "low" {
+			return "", fmt.Errorf("tier must be one of: high, medium, low")
+		}
+
+		tierModel, err := loadWorkspaceTierModel(ctx, workspaceURL, tier)
+		if err != nil {
+			return "", err
+		}
+
+		llmModel, err := createLLMFromTierModel(ctx, tierModel, loadWorkspaceProviderAPIKeys(ctx, workspaceURL))
+		if err != nil {
+			return "", fmt.Errorf("failed to initialize LLM for tier %q: %w", tier, err)
+		}
+
+		resp, err := llmModel.GenerateContent(ctx, []llmtypes.MessageContent{
+			{
+				Role: llmtypes.ChatMessageTypeHuman,
+				Parts: []llmtypes.ContentPart{
+					llmtypes.TextContent{Text: userMessage},
+				},
+			},
+		})
+		if err != nil {
+			return "", fmt.Errorf("generate_text_llm failed for tier %q: %w", tier, err)
+		}
+
+		responseText := ""
+		if len(resp.Choices) > 0 {
+			responseText = strings.TrimSpace(resp.Choices[0].Content)
+		}
+		if responseText == "" {
+			responseText = "(No response generated)"
+		}
+
+		payload, err := json.Marshal(generateTextLLMResult{
+			Tier:     tier,
+			Provider: tierModel.Provider,
+			ModelID:  tierModel.ModelID,
+			Response: responseText,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal generate_text_llm result: %w", err)
+		}
+
+		return string(payload), nil
+	}
+}
+
+func loadWorkspaceTierModel(ctx context.Context, workspaceURL, tier string) (*TierModel, error) {
+	cfg := loadWorkspaceTierConfig(ctx, workspaceURL)
+
+	var model *TierModel
+	switch tier {
+	case "high":
+		model = cfg.High
+	case "medium":
+		model = cfg.Medium
+	case "low":
+		model = cfg.Low
+	}
+
+	if model == nil || strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.ModelID) == "" {
+		return nil, fmt.Errorf("tier %q is not configured in workspace tier config", tier)
+	}
+
+	return model, nil
+}
+
+func loadWorkspaceTierConfig(ctx context.Context, workspaceURL string) *DelegationTierConfig {
+	cfg := &DelegationTierConfig{
+		High:   envTierModel("DELEGATION_TIER_HIGH_PROVIDER", "DELEGATION_TIER_HIGH_MODEL"),
+		Medium: envTierModel("DELEGATION_TIER_MEDIUM_PROVIDER", "DELEGATION_TIER_MEDIUM_MODEL"),
+		Low:    envTierModel("DELEGATION_TIER_LOW_PROVIDER", "DELEGATION_TIER_LOW_MODEL"),
+	}
+
+	if workspaceURL == "" {
+		return cfg
+	}
+
+	rawCfg, exists, err := services.LoadDelegationTierConfig(ctx, workspaceURL)
+	if err != nil {
+		log.Printf("[GENERATE_TEXT_LLM] Failed to load workspace tier config: %v", err)
+		return cfg
+	}
+	if !exists || len(rawCfg) == 0 {
+		return cfg
+	}
+
+	data, err := json.Marshal(rawCfg)
+	if err != nil {
+		log.Printf("[GENERATE_TEXT_LLM] Failed to marshal workspace tier config: %v", err)
+		return cfg
+	}
+
+	var workspaceCfg DelegationTierConfig
+	if err := json.Unmarshal(data, &workspaceCfg); err != nil {
+		log.Printf("[GENERATE_TEXT_LLM] Failed to parse workspace tier config: %v", err)
+		return cfg
+	}
+
+	if sanitized := sanitizeTierModelLocal(workspaceCfg.High); sanitized != nil {
+		cfg.High = sanitized
+	}
+	if sanitized := sanitizeTierModelLocal(workspaceCfg.Medium); sanitized != nil {
+		cfg.Medium = sanitized
+	}
+	if sanitized := sanitizeTierModelLocal(workspaceCfg.Low); sanitized != nil {
+		cfg.Low = sanitized
+	}
+
+	return cfg
+}
+
+func envTierModel(providerEnv, modelEnv string) *TierModel {
+	provider := strings.TrimSpace(os.Getenv(providerEnv))
+	modelID := strings.TrimSpace(os.Getenv(modelEnv))
+	if provider == "" || modelID == "" {
+		return nil
+	}
+	return &TierModel{
+		Provider: provider,
+		ModelID:  modelID,
+	}
+}
+
+func sanitizeTierModelLocal(model *TierModel) *TierModel {
+	if model == nil {
+		return nil
+	}
+
+	provider := strings.TrimSpace(model.Provider)
+	modelID := strings.TrimSpace(model.ModelID)
+	if provider == "" || modelID == "" {
+		return nil
+	}
+
+	sanitized := &TierModel{
+		Provider:  provider,
+		ModelID:   modelID,
+		Fallbacks: nil,
+	}
+
+	for _, fb := range model.Fallbacks {
+		fallbackModelID := strings.TrimSpace(fb.ModelID)
+		if fallbackModelID == "" {
+			continue
+		}
+		sanitized.Fallbacks = append(sanitized.Fallbacks, TierModelFallback{
+			Provider: strings.TrimSpace(fb.Provider),
+			ModelID:  fallbackModelID,
+		})
+	}
+
+	if len(sanitized.Fallbacks) == 0 {
+		sanitized.Fallbacks = nil
+	}
+
+	return sanitized
+}
+
+func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm.ProviderAPIKeys {
+	if workspaceURL == "" {
+		return nil
+	}
+
+	rawKeys, exists, err := services.LoadProviderKeys(ctx, workspaceURL)
+	if err != nil {
+		log.Printf("[GENERATE_TEXT_LLM] Failed to load provider keys from workspace: %v", err)
+		return nil
+	}
+	if !exists || len(rawKeys) == 0 {
+		return nil
+	}
+
+	keys := &llm.ProviderAPIKeys{}
+	if value, ok := rawKeys["openrouter"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.OpenRouter = &v
+	}
+	if value, ok := rawKeys["openai"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.OpenAI = &v
+	}
+	if value, ok := rawKeys["anthropic"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.Anthropic = &v
+	}
+	if value, ok := rawKeys["vertex"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.Vertex = &v
+	}
+	if value, ok := rawKeys["gemini_cli"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.GeminiCLI = &v
+	}
+	if value, ok := rawKeys["minimax"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.MiniMax = &v
+	}
+	if value, ok := rawKeys["minimax-coding-plan"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.MiniMaxCodingPlan = &v
+	}
+	if value, ok := rawKeys["bedrock"].(map[string]interface{}); ok {
+		if region, ok := value["region"].(string); ok && strings.TrimSpace(region) != "" {
+			keys.Bedrock = &llm.BedrockConfig{Region: region}
+		}
+	}
+	if value, ok := rawKeys["azure"].(map[string]interface{}); ok {
+		cfg := &llm.AzureAPIConfig{}
+		if endpoint, ok := value["endpoint"].(string); ok {
+			cfg.Endpoint = endpoint
+		}
+		if apiKey, ok := value["api_key"].(string); ok {
+			cfg.APIKey = apiKey
+		}
+		if apiVersion, ok := value["api_version"].(string); ok {
+			cfg.APIVersion = apiVersion
+		}
+		if region, ok := value["region"].(string); ok {
+			cfg.Region = region
+		}
+		if cfg.Endpoint != "" || cfg.APIKey != "" || cfg.APIVersion != "" || cfg.Region != "" {
+			keys.Azure = cfg
+		}
+	}
+
+	return keys
+}
+
+func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
+	llmCfg := llm.Config{
+		Provider:       llm.Provider(model.Provider),
+		ModelID:        model.ModelID,
+		Context:        ctx,
+		APIKeys:        apiKeys,
+		FallbackModels: formatTierFallbackModels(model),
+		MaxRetries:     3,
+	}
+
+	return llm.InitializeLLM(llmCfg)
+}
+
+func formatTierFallbackModels(model *TierModel) []string {
+	if model == nil || len(model.Fallbacks) == 0 {
+		return nil
+	}
+
+	fallbacks := make([]string, 0, len(model.Fallbacks))
+	defaultProvider := strings.TrimSpace(model.Provider)
+	for _, fb := range model.Fallbacks {
+		modelID := strings.TrimSpace(fb.ModelID)
+		if modelID == "" {
+			continue
+		}
+		provider := strings.TrimSpace(fb.Provider)
+		if provider == "" || provider == defaultProvider {
+			fallbacks = append(fallbacks, modelID)
+			continue
+		}
+		fallbacks = append(fallbacks, provider+"/"+modelID)
+	}
+
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	return fallbacks
 }
 
 // wrapReadImageExecutor wraps the read_image executor in the map with LLM analysis.

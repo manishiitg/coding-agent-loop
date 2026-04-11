@@ -11,7 +11,7 @@ import {
   type OnSelectionChangeParams,
   SelectionMode
 } from '@xyflow/react'
-import { Brain, Settings, X, Workflow, List, ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
+import { Workflow, List, ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { nodeTypes } from '../nodes'
@@ -22,7 +22,6 @@ import { StepLegend } from './StepLegend'
 import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { PlanOutlineView } from './PlanOutlineView'
-import LLMOverrideModal from '../LLMOverrideModal'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { useOutputPlanData } from '../hooks/useOutputPlanData'
@@ -108,14 +107,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
-  const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
-  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
-  const tempLearningLLM = useWorkflowStore(state => state.tempLearningLLM)
-  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
-  const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
-  const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
-  const clearTempOverrideLLM2 = useWorkflowStore(state => state.clearTempOverrideLLM2)
-  const clearTempLearningLLM = useWorkflowStore(state => state.clearTempLearningLLM)
 
   const isExecutionWorkspace =
     workflowWorkspaceView === 'execution' ||
@@ -127,13 +118,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
       currentPhase === 'workflow-builder')
-  const hasTempLLMOverrides = !!(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM)
-  const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
-  const [showTempLLMPanel, setShowTempLLMPanel] = useState(true)
-
-  useEffect(() => {
-    setShowTempLLMPanel(true)
-  }, [workspacePath, isExecutionWorkspace])
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
@@ -1138,7 +1122,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
     if (onStartPhase) {
       // Create execution options to run only this single step
-      // Use buildExecutionOptions to include all flags (including fallback_to_original_llm_on_failure)
+      // Use buildExecutionOptions so execution starts with the current workflow store settings.
       const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
       const baseOptions = buildExecutionOptions()
       const executionOptions: ExecutionOptions = {
@@ -2355,112 +2339,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Batch Progress Header - Above Legend */}
         <BatchProgressHeader position="canvas" />
 
-        {isExecutionWorkspace && showTempLLMPanel && (
-          <div className="absolute top-3 right-3 z-20 w-[260px] rounded-xl border border-border/80 bg-background/95 backdrop-blur shadow-lg">
-            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/70">
-              <Brain className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <div className="text-xs font-semibold text-foreground">Temp LLM Override</div>
-                <div className="text-[11px] text-muted-foreground">Execution override settings</div>
-              </div>
-              <button
-                onClick={() => setShowTempLLMPanel(false)}
-                className="ml-auto p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
-                title="Hide temp LLM panel"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="p-2 space-y-2">
-              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Brain className={`w-4 h-4 flex-shrink-0 ${hasTempLLMOverrides && tempOverrideLLMEnabled ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-foreground">Temp LLM Override</div>
-                      <div className="text-[11px] text-muted-foreground truncate">
-                        {hasTempLLMOverrides
-                          ? tempOverrideLLMEnabled
-                            ? 'Active during execution'
-                            : 'Configured but disabled'
-                          : 'Not configured'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setShowLLMOverrideModal(true)}
-                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
-                    title={hasTempLLMOverrides ? 'Change temp LLM overrides' : 'Configure temp LLM overrides'}
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {hasTempLLMOverrides ? (
-                  <>
-                    <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <span className={tempOverrideLLM ? 'text-foreground' : ''}>L1</span>
-                      <span>→</span>
-                      <span className={tempOverrideLLM2 ? 'text-foreground' : ''}>L2</span>
-                      {tempLearningLLM && (
-                        <>
-                          <span>|</span>
-                          <span className="text-foreground">Learn</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
-                        className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                          tempOverrideLLMEnabled
-                            ? 'bg-primary/15 text-primary hover:bg-primary/20'
-                            : 'bg-background text-muted-foreground hover:bg-muted'
-                        }`}
-                        title={tempOverrideLLMEnabled ? 'Disable overrides' : 'Enable overrides'}
-                      >
-                        {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          clearTempOverrideLLM()
-                          clearTempOverrideLLM2()
-                          clearTempLearningLLM()
-                        }}
-                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
-                        title="Clear overrides"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <button
-                    onClick={() => setShowLLMOverrideModal(true)}
-                    className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-background hover:bg-muted transition-colors text-xs font-medium text-foreground"
-                  >
-                    <Brain className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span>Configure Temp LLM</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {isExecutionWorkspace && !showTempLLMPanel && (
-          <button
-            onClick={() => setShowTempLLMPanel(true)}
-            className="absolute top-3 right-3 z-20 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg backdrop-blur hover:bg-muted transition-colors"
-            title="Show temp LLM panel"
-          >
-            <Brain className="w-3.5 h-3.5 text-muted-foreground" />
-            <span>Temp LLM</span>
-          </button>
-        )}
-
         {/* Step Legend - Bottom Left */}
         {plan && plan.steps && plan.steps.length > 0 && (
           <StepLegend
@@ -2576,11 +2454,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
       </div>}
-
-      <LLMOverrideModal
-        isOpen={showLLMOverrideModal}
-        onClose={() => setShowLLMOverrideModal(false)}
-      />
 
     </div>
   )

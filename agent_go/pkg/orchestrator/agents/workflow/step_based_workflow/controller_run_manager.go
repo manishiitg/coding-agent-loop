@@ -8,13 +8,6 @@ import (
 	"sort"
 )
 
-// resolveRunFolder determines which run folder to use.
-// Always runs in iteration-0. If iteration-0 already exists, it is moved to the
-// next available iteration-N as a backup before creating a fresh iteration-0.
-func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolder(ctx context.Context, workspacePath, runMode string) (string, error) {
-	return hcpo.resolveRunFolderWithOptions(ctx, workspacePath, runMode, "")
-}
-
 // resolveRunFolderWithOptions always resolves to iteration-0.
 // If iteration-0 exists and has content, it is moved to iteration-N (next available) as a backup.
 // A fresh iteration-0 is then created for the new run.
@@ -148,17 +141,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) isStepLearningsFolderEmpty(ctx contex
 	// Use readStepLearningFiles to check for learning files (it already excludes metadata)
 	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 	if err != nil {
-		// If folder doesn't exist or can't be read, assume empty (conservative approach - will use tempLLM)
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %s learnings folder does not exist or cannot be read: %s (will use tempLLM if available)", stepID, stepLearningsPath))
+		// If folder doesn't exist or can't be read, assume empty so selection falls back conservatively.
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %s learnings folder does not exist or cannot be read: %s (treating as empty for execution model selection)", stepID, stepLearningsPath))
 		return true, err
 	}
 
 	if len(learningFiles) == 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %s learnings folder has no learning files (only metadata or empty): %s (will use tempLLM if available)", stepID, stepLearningsPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %s learnings folder has no learning files (only metadata or empty): %s", stepID, stepLearningsPath))
 		return true, nil
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %s learnings folder has %d learning file(s): %s (will use tempLLM if available)", stepID, len(learningFiles), stepLearningsPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %s learnings folder has %d learning file(s): %s", stepID, len(learningFiles), stepLearningsPath))
 	return false, nil
 }
 

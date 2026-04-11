@@ -100,11 +100,21 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
         }
       }
 
-      // Check if it's a structured response with text field
-      if (parsed && typeof parsed === 'object' && parsed.text) {
+      // Check if it's a structured response with a primary text field
+      if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
         return {
           isJson: true,
           textContent: parsed.text,
+          formattedJson: JSON.stringify(parsed, null, 2),
+          hasTextField: true
+        }
+      }
+
+      // Some workspace tools return "response" instead of "text"
+      if (parsed && typeof parsed === 'object' && typeof parsed.response === 'string') {
+        return {
+          isJson: true,
+          textContent: parsed.response,
           formattedJson: JSON.stringify(parsed, null, 2),
           hasTextField: true
         }

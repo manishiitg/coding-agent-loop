@@ -168,6 +168,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing plan.json: %v", err))
 		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
 	}
+	if err := resolvePlanOrphanStepRefs(&planResponse); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve orphan step references in existing plan.json: %v", err))
+		return false, nil, fmt.Errorf("failed to resolve orphan step references in plan.json: %w", err)
+	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
 	return true, &planResponse, nil

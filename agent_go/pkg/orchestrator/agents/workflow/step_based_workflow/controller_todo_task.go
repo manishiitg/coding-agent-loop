@@ -637,16 +637,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	// Build generic step path
 	genericStepPath := fmt.Sprintf("%s-generic-%s", stepPath, response.TodoIDToExecute)
 
-	// Get execution path using full workspace-relative paths (consistent with setupExecutionFolderGuard)
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	var runWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = baseWorkspacePath
-	}
-	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-
 	// Build execution context
 	var capturedHistory []llmtypes.MessageContent
 	execCtx := &ExecutionContext{
@@ -897,16 +887,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 
 	// Build sub-agent step path
 	subAgentStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
-
-	// Get execution path using full workspace-relative paths (consistent with setupExecutionFolderGuard)
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	var runWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = baseWorkspacePath
-	}
-	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Build orchestration routes for sub-agent (so it knows about other agents)
 	var orchestrationRoutesForSubAgent []OrchestrationRoute
 	for _, r := range step.PredefinedRoutes {

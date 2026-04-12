@@ -12,8 +12,8 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
-	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -53,25 +53,25 @@ func GetWorkflowConstants() WorkflowConstants {
 	return WorkflowConstants{
 		Phases: []WorkflowPhase{
 			{
-				ID:          "workflow-builder",
+				ID:          workflowtypes.WorkflowStatusWorkflowBuilder,
 				Title:       "Workflow Builder",
 				Description: "Execute steps, update the plan, tweak configs, generate learnings, debug, manage schedules, and run evaluations — all in one conversation.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          database.WorkflowStatusPreVerification,
+				ID:          workflowtypes.WorkflowStatusPreVerification,
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
-				Options:     []WorkflowPhaseOption{}, // No options for execution phase
+				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "evaluation-execution",
+				ID:          workflowtypes.WorkflowStatusEvalExecution,
 				Title:       "Evaluation Execution",
 				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "report-execution",
+				ID:          workflowtypes.WorkflowStatusReportExecution,
 				Title:       "Report Execution",
 				Description: "Generate the final workflow report for a completed group run.",
 				Options:     []WorkflowPhaseOption{},
@@ -226,9 +226,9 @@ type TodoVerificationResponse struct {
 	ModifiedTodoListMarkdown string    `json:"modified_todo_list_markdown,omitempty"`
 }
 
-// convertDBAgentLLMConfig converts a database.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
+// convertDBAgentLLMConfig converts a workflowtypes.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
 // including fallback models.
-func convertDBAgentLLMConfig(dbConfig *database.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
+func convertDBAgentLLMConfig(dbConfig *workflowtypes.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
 	if dbConfig == nil {
 		return nil
 	}
@@ -265,7 +265,7 @@ func NewWorkflowOrchestrator(
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
 	toolCategories map[string]string, // NEW: tool category map
-	presetLLMConfig *database.PresetLLMConfig, // Optional preset LLM config for agent defaults
+	presetLLMConfig *workflowtypes.PresetLLMConfig, // Optional preset LLM config for agent defaults
 ) (*WorkflowOrchestrator, error) {
 
 	// Create base orchestrator
@@ -357,7 +357,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	objective string,
 	workspacePath string,
 	workflowStatus string,
-	selectedOptions *database.WorkflowSelectedOptions,
+	selectedOptions *workflowtypes.WorkflowSelectedOptions,
 	stepID string, // Optional step ID for step-specific phase execution
 ) (string, error) {
 	// Initialize MCP session ID early so all agents share connections
@@ -382,17 +382,15 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
 	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
-	if workflowStatus == "evaluation-execution" {
+	if workflowStatus == workflowtypes.WorkflowStatusEvalExecution {
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "report-execution" {
+	if workflowStatus == workflowtypes.WorkflowStatusReportExecution {
 		return wo.runReportExecutionOnly(ctx, objective, selectedOptions)
 	}
 
-	// workflow-builder is a chat-only phase and should never reach the orchestrator path.
-	// If it does, return an error.
-	if workflowStatus == "workflow-builder" {
+	if workflowStatus == workflowtypes.WorkflowStatusWorkflowBuilder {
 		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
 
@@ -402,7 +400,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 }
 
 // runEvaluationExecutionOnly runs only the evaluation execution phase
-func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *workflowtypes.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info("🚀 Starting Evaluation Execution Phase")
 
 	// Check execution options state BEFORE creating orchestrator
@@ -518,7 +516,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 }
 
 // runReportExecutionOnly runs only the report execution phase.
-func (wo *WorkflowOrchestrator) runReportExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+func (wo *WorkflowOrchestrator) runReportExecutionOnly(ctx context.Context, objective string, selectedOptions *workflowtypes.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info("🚀 Starting Report Execution Phase")
 
 	outputPlanPath := step_based_workflow.DefaultOutputPlanPath
@@ -612,7 +610,7 @@ func (wo *WorkflowOrchestrator) runReportExecutionOnly(ctx context.Context, obje
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
 // This is called for execution status and executes the approved plan
-func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *workflowtypes.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info(fmt.Sprintf("🚀 Starting Execution Phase"))
 
 	return wo.runHumanControlledPlanning(ctx, objective)
@@ -752,10 +750,10 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 			} else {
 				// Validate it's a known workflow status
 				validStatuses := []string{
-					database.WorkflowStatusPreVerification, // Execution phase
-					"evaluation-execution",                 // Evaluation execution phase
-					"report-execution",                     // Final report execution phase
-					"workflow-builder",                     // Interactive workshop phase
+					workflowtypes.WorkflowStatusPreVerification,
+					workflowtypes.WorkflowStatusEvalExecution,
+					workflowtypes.WorkflowStatusReportExecution,
+					workflowtypes.WorkflowStatusWorkflowBuilder,
 				}
 				valid := false
 				for _, status := range validStatuses {
@@ -773,8 +771,8 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 		// Validate selectedOptions if provided
 		if selectedOptsVal, exists := options["selectedOptions"]; exists {
 			if selectedOptsVal != nil {
-				if _, ok := selectedOptsVal.(*database.WorkflowSelectedOptions); !ok {
-					return "", fmt.Errorf("invalid selectedOptions: expected *database.WorkflowSelectedOptions, got %T", selectedOptsVal)
+				if _, ok := selectedOptsVal.(*workflowtypes.WorkflowSelectedOptions); !ok {
+					return "", fmt.Errorf("invalid selectedOptions: expected *workflowtypes.WorkflowSelectedOptions, got %T", selectedOptsVal)
 				}
 			}
 		}
@@ -785,12 +783,12 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 	if ws, ok := options["workflowStatus"].(string); ok && ws != "" {
 		workflowStatus = ws
 	} else {
-		workflowStatus = database.WorkflowStatusPreVerification // Default to planning phase
+		workflowStatus = workflowtypes.WorkflowStatusPreVerification // Default to planning phase
 	}
 
-	var selectedOptions *database.WorkflowSelectedOptions
+	var selectedOptions *workflowtypes.WorkflowSelectedOptions
 	if opts, ok := options["selectedOptions"]; ok && opts != nil {
-		if so, ok := opts.(*database.WorkflowSelectedOptions); ok {
+		if so, ok := opts.(*workflowtypes.WorkflowSelectedOptions); ok {
 			selectedOptions = so
 		}
 	}

@@ -28,11 +28,14 @@ import (
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
-	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/chathistory"
+	"mcp-agent-builder-go/agent_go/pkg/costledger"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchEvents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/executor"
@@ -105,7 +108,8 @@ type ActiveSessionInfo struct {
 	CreatedAt       time.Time `json:"created_at"`
 	Query           string    `json:"query,omitempty"`
 	LLMGuidance     string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
-	MemoryFolder    string    `json:"memory_folder,omitempty"` // Override memory folder (default: Chats/memories)
+	MemoryFolder    string    `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
+	ChatsFolder     string    `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
 	UserID          string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
 	IsSyntheticTurn bool      `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
 }
@@ -148,8 +152,11 @@ type StreamingAPI struct {
 	conversationHistory map[string][]llmtypes.MessageContent
 	conversationMux     sync.RWMutex
 
-	// Database for chat history storage
-	chatDB database.Database
+	// Operator-state store: bot connector configs + per-user encrypted secrets.
+	chatStore chathistory.Store
+
+	// Global append-only cost ledger — one line per token_usage event.
+	costLedger *costledger.Ledger
 
 	// Polling system components
 	eventStore *events.EventStore
@@ -164,10 +171,6 @@ type StreamingAPI struct {
 	// Active session tracking for page refresh recovery
 	activeSessions    map[string]*ActiveSessionInfo
 	activeSessionsMux sync.RWMutex
-
-	// Per-session plan phase tracking for multi-agent mode
-	planSessionStates    map[string]*virtualtools.PlanSessionState
-	planSessionStatesMux sync.RWMutex
 
 	// Session reactivation lock: prevents race conditions when calculating baseIndex
 	// and initializing the event store for reactivated sessions
@@ -306,8 +309,8 @@ type QueryRequest struct {
 	EnableContextEditing        *bool `json:"enable_context_editing,omitempty"`         // Enable context editing (nil = inherit default, true/false = explicit override)
 	ContextEditingThreshold     int   `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int   `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
-	// Workspace access configuration
-	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
+	// Workspace access configuration (legacy field, ignored — workspace is always enabled)
+	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"`
 	// Browser automation access configuration
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Explicit browser mode from frontend: none|headless|cdp|playwright|stealth
@@ -323,12 +326,6 @@ type QueryRequest struct {
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
 	// Selected sub-agent templates to make available for delegation
 	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
-	// Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, '' = disabled
-	DelegationMode string `json:"delegation_mode,omitempty"`
-	// Plan phase override: 'planning' = plan first (default), 'execution' = skip planning and execute directly
-	PlanPhase string `json:"plan_phase,omitempty"`
-	// Existing plan folder to reuse (pre-seeds PlanSessionState so LLM reuses it)
-	PlanFolder string `json:"plan_folder,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -608,56 +605,19 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Initialize polling system (activity callback will be set after api is created)
 	eventStore := events.NewEventStore(10000) // Max 10000 events per session
 
-	// Initialize chat history database
-	dbType := viper.GetString("db-type")
-	if dbType == "" {
-		dbType = "sqlite"
-	}
-
-	var chatDB database.Database
-	var connInfo string
-
-	if dbType == "postgres" {
-		connStr := os.Getenv("DATABASE_URL")
-		if connStr == "" {
-			log.Fatalf("DATABASE_URL environment variable is required for postgres")
-		}
-		chatDB, err = database.NewSupabaseDB(connStr)
-		connInfo = "PostgreSQL (Supabase)"
-	} else {
-		dbPath := os.Getenv("DB_PATH")
-		if dbPath == "" {
-			dbPath = viper.GetString("db-path")
-		}
-		if dbPath == "" {
-			dbPath = "/app/chat_history.db" // Default SQLite database path
-		}
-		chatDB, err = database.NewSQLiteDB(dbPath)
-		connInfo = fmt.Sprintf("SQLite (%s)", dbPath)
-	}
-
+	// Initialize the operator-state store (bot connector configs + user
+	// secrets) and the global cost ledger.
+	workspaceDocsAbs := getWorkspaceDocsAbsPath()
+	chatStore, err := chathistory.NewFilesystemStore(workspaceDocsAbs)
 	if err != nil {
-		log.Printf("⚠️  Failed to initialize chat history database: %v", err)
-		if dbType == "sqlite" {
-			// SQLite may fail on network storage (Azure Files/SMB) which doesn't support
-			// POSIX file locking. Fall back to local ephemeral storage.
-			fallbackPath := "/tmp/chat_history.db"
-			log.Printf("⚠️  Retrying with local ephemeral storage: %s", fallbackPath)
-			chatDB, err = database.NewSQLiteDB(fallbackPath)
-			if err != nil {
-				log.Fatalf("Failed to initialize chat history database after fallback: %v", err)
-			}
-			connInfo = fmt.Sprintf("SQLite (%s) [fallback from network storage]", fallbackPath)
-		} else {
-			log.Fatalf("Failed to initialize chat history database: %v", err)
-		}
+		log.Fatalf("Failed to initialize filesystem operator store: %v", err)
 	}
-	defer chatDB.Close()
-
-	fmt.Printf("💾 Chat History Database: %s\n", connInfo)
+	defer chatStore.Close()
+	costLedger := costledger.NewLedger(workspaceDocsAbs)
+	fmt.Printf("💾 Operator store: filesystem (%s)\n", workspaceDocsAbs)
 
 	// Initialize Slack service for human feedback
-	slackSvc, err := slackservice.InitSlackService(chatDB.GetDB())
+	slackSvc, err := slackservice.InitSlackService()
 	if err != nil {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
 	} else {
@@ -699,7 +659,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionQueryIDs:              make(map[string][]string),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
-		chatDB:                       chatDB,
+		chatStore:                    chatStore,
+		costLedger:                   costLedger,
 		eventStore:                   eventStore,
 		provider:                     config.Provider,
 		model:                        config.ModelID,
@@ -718,8 +679,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		discoveryFailedServers: make(map[string]string),
 		// Initialize active session tracking
 		activeSessions: make(map[string]*ActiveSessionInfo),
-		// Initialize plan session state tracking for multi-agent mode
-		planSessionStates: make(map[string]*virtualtools.PlanSessionState),
 		// Initialize orchestrator storage
 		workflowOrchestrators: make(map[string]orchestrator.Orchestrator),
 		// Initialize workflow step ID storage
@@ -810,16 +769,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/auth/start", api.handleAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/callback", api.handleAuthCallback).Methods("GET")
 
-	// Session sharing routes
-	apiRouter.HandleFunc("/sessions/{session_id}/share", api.handleCreateShare).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/sessions/{session_id}/shares", api.handleListShares).Methods("GET")
-	apiRouter.HandleFunc("/sessions/{session_id}/share/{share_id}", api.handleRevokeShare).Methods("DELETE", "OPTIONS")
-
-	// Public shared session access (no auth required)
-	apiRouter.HandleFunc("/shared/{share_token}", api.handleGetSharedSession).Methods("GET")
 	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/chat", api.handleQuery).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/chat/stream", api.handleQuery).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
@@ -852,7 +802,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// but this covers any direct HTTP /api/mcp/execute calls that bypass the agent.
 	// Resolves workspace-relative paths (e.g. "Downloads/file.pdf") to absolute host paths
 	// so Playwright MCP can find them — Playwright requires absolute paths for browser_file_upload.
-	workspaceAbsPath := getWorkspaceDocsAbsPath()
+	// Use WorkspaceShellRoot() since Playwright runs inside the Docker container.
+	workspaceAbsPath := fsutil.WorkspaceShellRoot()
 	log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
 	executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 		paths, ok := args["paths"].([]interface{})
@@ -885,8 +836,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// categories and redirects to the correct handler (custom or virtual).
 	customToolCategories := map[string]bool{
 		"workspace": true, "workspace_basic": true, "workspace_browser": true,
-		"workspace_advanced": true, "workspace_git": true, "workspace_image_gen": true,
-		"workspace_image_edit": true, "human": true,
+		"workspace_advanced": true, "workspace_git": true, "workspace_image": true,
+		"workspace_image_gen": true, "workspace_image_edit": true, "human": true,
 		"workflow": true,
 	}
 	virtualToolCategories := map[string]bool{
@@ -1012,30 +963,26 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
 
-	// Chat History API routes
-	apiRouter.HandleFunc("/chat-history/sessions", createChatSessionHandler(chatDB)).Methods("POST")
-	apiRouter.HandleFunc("/chat-history/sessions", listChatSessionsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}", getChatSessionHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}", updateChatSessionHandler(chatDB)).Methods("PUT")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}", deleteChatSessionHandler(chatDB)).Methods("DELETE")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/events", getSessionEventsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/events", searchEventsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/health", chatHistoryHealthCheckHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/costs", getAllSessionCostsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/costs", getSessionCostsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/delegation-logs", getAllDelegationLogsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs", getDelegationLogsHandler(chatDB)).Methods("GET")
-	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs/{delegation_id}/events", getDelegationEventsHandler(chatDB)).Methods("GET")
+	// Workflow running-session API (decoupled from chat session storage).
+	apiRouter.HandleFunc("/workflow/running", api.handleListRunningWorkflows).Methods("GET")
+	apiRouter.HandleFunc("/workflow/running/{session_id}", api.handleGetRunningWorkflow).Methods("GET")
+	apiRouter.HandleFunc("/workflow/running/{session_id}", api.handleUpdateRunningWorkflow).Methods("PATCH", "OPTIONS")
+
+	// Global cost ledger summary.
+	apiRouter.HandleFunc("/cost/summary", api.handleCostSummary).Methods("GET")
+
+	// Chat history (read-only, persisted to workspace)
+	ChatHistoryRoutes(router, api)
 
 	// Slack Feedback API routes
-	SlackFeedbackRoutes(router, api, chatDB)
+	SlackFeedbackRoutes(router, api)
 
 	// Initialize Bot Conversation Manager
 	workspaceURL := os.Getenv("WORKSPACE_API_URL")
 	if workspaceURL == "" {
 		workspaceURL = "http://localhost:8081"
 	}
-	botManager := slackservice.NewBotConversationManager(chatDB, configPath, workspaceURL)
+	botManager := slackservice.NewBotConversationManager(chatStore, configPath, workspaceURL)
 	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
 	// Bot sessions use ONLY delegation tier config from DB for LLM selection — no server defaults needed
 	api.botManager = botManager
@@ -1043,7 +990,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetStartSessionFunc(api.startSessionInternal)
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
 	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]slackservice.DecryptedSecret, error) {
-		stored, err := chatDB.ListUserSecrets(ctx, userID)
+		stored, err := chatStore.ListUserSecrets(ctx, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -1069,7 +1016,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Register Slack as a bot connector if bot_mode is enabled
 	if slackSvc != nil {
-		botConfig, _ := chatDB.GetBotConnectorConfig(context.Background(), "slack")
+		botConfig, _ := chatStore.GetBotConnectorConfig(context.Background(), "slack")
 		if botConfig != nil && botConfig.BotMode {
 			botManager.RegisterConnector(slackSvc)
 			slackSvc.StartListening(context.Background())
@@ -1084,8 +1031,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	log.Printf("✅ Web bot simulator enabled")
 
 	// Register bot routes
-	BotRoutes(router, api, chatDB)
-	BotSimulatorRoutes(router, api, chatDB)
+	BotRoutes(router, api)
+	BotSimulatorRoutes(router, api)
 
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
@@ -1338,18 +1285,19 @@ func mergeGlobalSecrets(userSecrets []struct {
 	return merged
 }
 
-// loadSelectedUserSecrets decrypts the named user-stored secrets from the DB.
-// Workflow manifests store only selected secret names, so runtime must rehydrate
-// the actual values server-side instead of relying on stale request payloads.
+// loadSelectedUserSecrets decrypts the named user-stored secrets from the
+// filesystem chat store. Workflow manifests store only selected secret names,
+// so runtime must rehydrate the actual values server-side instead of relying
+// on stale request payloads.
 func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID string, selectedNames []string) []struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 } {
-	if userID == "" || len(selectedNames) == 0 || api.chatDB == nil {
+	if userID == "" || len(selectedNames) == 0 {
 		return nil
 	}
 
-	stored, err := api.chatDB.ListUserSecrets(ctx, userID)
+	stored, err := api.chatStore.ListUserSecrets(ctx, userID)
 	if err != nil {
 		log.Printf("[SECRETS] Failed to list stored user secrets for %s: %v", userID, err)
 		return nil
@@ -1380,36 +1328,6 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 	}
 
 	return result
-}
-
-// getOrCreatePlanSessionState returns the session-level plan state, creating one if needed.
-// On first access for a session, it restores plan state from the database if available,
-// allowing resumed sessions to pick up existing plans.
-func (api *StreamingAPI) getOrCreatePlanSessionState(sessionID string) *virtualtools.PlanSessionState {
-	api.planSessionStatesMux.Lock()
-	defer api.planSessionStatesMux.Unlock()
-	if state, exists := api.planSessionStates[sessionID]; exists {
-		return state
-	}
-	state := virtualtools.NewPlanSessionState()
-
-	// Try to restore plan state from database session config
-	if api.chatDB != nil {
-		if chatSession, err := api.chatDB.GetChatSession(context.Background(), sessionID); err == nil && chatSession != nil {
-			if config, err := chatSession.GetConfig(); err == nil && config != nil && config.PlanID != "" {
-				state.PlanID = config.PlanID
-				state.PlanFolder = config.PlanFolder
-				if config.PlanPhase != "" {
-					state.Phase = config.PlanPhase
-				}
-				log.Printf("[PLAN STATE] Restored plan state from DB for session %s: plan=%s folder=%s phase=%s",
-					sessionID, config.PlanID, config.PlanFolder, state.Phase)
-			}
-		}
-	}
-
-	api.planSessionStates[sessionID] = state
-	return state
 }
 
 // CORS middleware
@@ -1657,7 +1575,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"providers":   []string{"bedrock", "openai", "anthropic"},
 		"streaming":   true,
 		"sse":         true,
-		"agent_modes": []string{"simple", "orchestrator", "workflow"},
+		"agent_modes": []string{"simple", "workflow"},
 		"tracing": map[string]interface{}{
 			"enabled":  tracingProvider != "noop",
 			"provider": tracingProvider,
@@ -1913,263 +1831,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	currentUserID := GetUserIDFromContext(r.Context())
 	log.Printf("[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
-	// Create or get chat session for this query
-	// Workflow sessions (workflow/workflow_phase) don't store chats in DB — they use
-	// in-memory tracking only (activeSessions map). Skip DB chat session for these modes.
-	var chatSession *database.ChatSession
-	if req.AgentMode != "workflow" && req.AgentMode != "workflow_phase" {
-		chatSession, _ = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	} else {
-		log.Printf("[SESSION CREATE] Skipping DB chat session for workflow session %s (mode=%s)", sessionID, req.AgentMode)
-	}
-	if chatSession == nil && req.AgentMode != "workflow" && req.AgentMode != "workflow_phase" {
-		// Chat session doesn't exist, create a new one
-		// Extract title from req.Query (user message)
-		// Remove file context suffix if present (format: "...\n\n📁 Files in context: ...")
-		title := req.Query
-		if idx := strings.Index(title, "\n\n📁 Files in context:"); idx != -1 {
-			title = title[:idx]
-		}
-		title = strings.TrimSpace(title)
-		// Truncate to 50 characters
-		if len(title) > 50 {
-			title = title[:50] + "..."
-		}
-
-		// Build typed config from request
-		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase"
-		if hasConfig {
-			config := &database.ChatSessionConfig{
-				SelectedServers:      req.Servers,
-				EnabledServers:       req.EnabledServers,
-				UseCodeExecutionMode: req.UseCodeExecutionMode,
-				SelectedSkills:       req.SelectedSkills,
-				SelectedSubAgents:    req.SelectedSubAgents,
-				EnableContextSummarization: func() *bool {
-					if req.EnableContextSummarization != nil {
-						val := *req.EnableContextSummarization
-						return &val
-					}
-					return nil
-				}(),
-			}
-
-			// Extract LLM config (prefer LLMConfig field, fallback to Provider/ModelID)
-			if req.LLMConfig != nil {
-				config.LLMConfig = &database.LLMConfigForStorage{
-					Provider: req.LLMConfig.Primary.Provider,
-					ModelID:  req.LLMConfig.Primary.ModelID,
-				}
-				// Convert Fallbacks to FallbackModels for storage
-				if len(req.LLMConfig.Fallbacks) > 0 {
-					for _, fallback := range req.LLMConfig.Fallbacks {
-						config.LLMConfig.FallbackModels = append(config.LLMConfig.FallbackModels, fallback.ModelID)
-					}
-				}
-			} else if req.Provider != "" || req.ModelID != "" {
-				config.LLMConfig = &database.LLMConfigForStorage{
-					Provider: req.Provider,
-					ModelID:  req.ModelID,
-				}
-			}
-
-			// Store delegation mode and tier config for session persistence
-			if req.DelegationMode != "" {
-				config.DelegationMode = req.DelegationMode
-			}
-			if req.DelegationTierConfig != nil {
-				tierJSON, marshalErr := json.Marshal(req.DelegationTierConfig)
-				if marshalErr == nil {
-					config.DelegationTierConfig = tierJSON
-				}
-			}
-
-			// Populate workflow metadata for workflow sessions (enables restore after refresh)
-			if (req.AgentMode == "workflow" || req.AgentMode == "workflow_phase") && req.PresetQueryID != "" {
-				wfMeta := &database.WorkflowMetadata{
-					PresetID: req.PresetQueryID,
-				}
-				// Resolve workspace path and load manifest for metadata
-				wsPath := req.SelectedFolder
-				if wsPath == "" {
-					if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
-						wsPath = p
-					}
-				}
-				if wsPath != "" {
-					wfMeta.WorkspacePath = wsPath
-					if manifest, found, mErr := ReadWorkflowManifest(context.Background(), wsPath); mErr == nil && found {
-						wfMeta.WorkflowID = manifest.ID
-						wfMeta.PresetName = manifest.Label
-					}
-				}
-				if req.PhaseID != "" {
-					wfMeta.PhaseID = req.PhaseID
-					wfMeta.PhaseName = req.PhaseID
-				}
-				config.WorkflowMetadata = wfMeta
-			}
-
-			// If LLM config is locked and not provided by frontend, use server defaults from env
-			if config.LLMConfig == nil && isGlobalLLMConfigLocked() {
-				provider, modelID := getPrimaryProviderAndModelFromDefaults()
-				if provider != "" && modelID != "" {
-					config.LLMConfig = &database.LLMConfigForStorage{
-						Provider: provider,
-						ModelID:  modelID,
-					}
-					log.Printf("[CONFIG DEBUG] Using locked LLM config from env: provider=%s, model=%s", provider, modelID)
-				}
-			}
-
-			var err error
-			configJSON, err = config.ToJSON()
-			if err != nil {
-				log.Printf("[CONFIG DEBUG] Failed to marshal config: %v", err)
-				configJSON = nil
-			}
-		}
-
-		// Ensure preset_query_id is set for workflow sessions
-		presetQueryID := req.PresetQueryID
-		if presetQueryID == "" && (req.AgentMode == "workflow" || req.AgentMode == "workflow_phase") {
-			log.Printf("[SESSION CREATE] WARNING: No preset_query_id for workflow session %s (mode=%s, query=%s)", sessionID, req.AgentMode, title)
-		}
-
-		var createErr error
-		chatSession, createErr = api.chatDB.CreateChatSessionWithUser(r.Context(), &database.CreateChatSessionRequest{
-			SessionID:     sessionID,
-			Title:         title,
-			AgentMode:     req.AgentMode,
-			PresetQueryID: presetQueryID,
-			Config:        configJSON,
-		}, currentUserID)
-		if createErr != nil {
-			log.Printf("[DATABASE DEBUG] Failed to create chat session: %v", createErr)
-			// Continue without chat session - events won't be stored but query can proceed
-		}
-	} else if chatSession != nil {
-		// Existing non-workflow session — update if needed
-		updateReq := &database.UpdateChatSessionRequest{}
-		shouldUpdate := false
-
-		// 1. Update PresetQueryID if provided and currently missing or different
-		// This fixes "orphan" sessions by associating them with the current preset
-		if req.PresetQueryID != "" {
-			currentID := ""
-			if chatSession.PresetQueryID != nil {
-				currentID = *chatSession.PresetQueryID
-			}
-			if currentID != req.PresetQueryID {
-				updateReq.PresetQueryID = req.PresetQueryID
-				shouldUpdate = true
-				log.Printf("[SESSION UPDATE] Updating session %s PresetQueryID from '%s' to '%s'", sessionID, currentID, req.PresetQueryID)
-			}
-		}
-
-		// 2. Reactivate session if it was completed/error (but NOT stopped - user-stopped sessions should not auto-resume)
-		if chatSession.Status == "completed" || chatSession.Status == "error" {
-			updateReq.Status = "active"
-			updateReq.CompletedAt = nil // Clear completion timestamp when reactivating
-			shouldUpdate = true
-			log.Printf("[SESSION REACTIVATION] Reactivating session %s (old status: %s)", sessionID, chatSession.Status)
-		}
-
-		// 3. Update config if skills or other settings changed
-		// This ensures selected_skills and other settings are persisted on each query
-		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil || req.DelegationMode != ""
-		if hasConfigToUpdate {
-			config := &database.ChatSessionConfig{
-				SelectedServers:      req.Servers,
-				EnabledServers:       req.EnabledServers,
-				UseCodeExecutionMode: req.UseCodeExecutionMode,
-				SelectedSkills:       req.SelectedSkills,
-				SelectedSubAgents:    req.SelectedSubAgents,
-				EnableContextSummarization: func() *bool {
-					if req.EnableContextSummarization != nil {
-						val := *req.EnableContextSummarization
-						return &val
-					}
-					return nil
-				}(),
-			}
-
-			// Extract LLM config
-			if req.LLMConfig != nil {
-				config.LLMConfig = &database.LLMConfigForStorage{
-					Provider: req.LLMConfig.Primary.Provider,
-					ModelID:  req.LLMConfig.Primary.ModelID,
-				}
-				if len(req.LLMConfig.Fallbacks) > 0 {
-					for _, fallback := range req.LLMConfig.Fallbacks {
-						config.LLMConfig.FallbackModels = append(config.LLMConfig.FallbackModels, fallback.ModelID)
-					}
-				}
-			} else if req.Provider != "" || req.ModelID != "" {
-				config.LLMConfig = &database.LLMConfigForStorage{
-					Provider: req.Provider,
-					ModelID:  req.ModelID,
-				}
-			}
-
-			// Preserve delegation mode and tier config on session updates
-			if req.DelegationMode != "" {
-				config.DelegationMode = req.DelegationMode
-			}
-			if req.DelegationTierConfig != nil {
-				tierJSON, marshalErr := json.Marshal(req.DelegationTierConfig)
-				if marshalErr == nil {
-					config.DelegationTierConfig = tierJSON
-				}
-			}
-
-			configJSON, err := config.ToJSON()
-			if err != nil {
-				log.Printf("[CONFIG DEBUG] Failed to marshal config for update: %v", err)
-			} else {
-				updateReq.Config = configJSON
-				shouldUpdate = true
-				log.Printf("[SESSION UPDATE] Updating session %s config with selected_skills=%v", sessionID, req.SelectedSkills)
-			}
-		}
-
-		// Apply updates if needed
-		if shouldUpdate {
-			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
-			if err != nil {
-				log.Printf("[DATABASE ERROR] Failed to update chat session %s: %v", sessionID, err)
-				// Continue with existing session state - critical path should not fail
-			}
-		}
-
-		// Initialize EventStore for reactivated session to ensure new events are stored correctly
-		// Only needed if we actually reactivated (status changed)
-		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
-			// CRITICAL: Lock session reactivation to prevent race conditions
-			// Multiple concurrent requests could calculate different baseIndex values
-			// and initialize the session with misaligned event indices
-			api.sessionReactivationMux.Lock()
-
-			// Calculate existing event count to use as baseIndex for polling
-			// Use COUNT query instead of fetching all events — much faster for large sessions
-			var baseIndex int
-			countQuery := "SELECT COUNT(*) FROM events WHERE chat_session_id = ?"
-			if isPostgresDB(api.chatDB) {
-				countQuery = "SELECT COUNT(*) FROM events WHERE chat_session_id = $1"
-			}
-			err := api.chatDB.GetDB().QueryRowContext(r.Context(), countQuery, chatSession.ID).Scan(&baseIndex)
-			if err != nil {
-				log.Printf("[SESSION REACTIVATION] Failed to count existing events for session %s: %v", sessionID, err)
-				baseIndex = 0
-			} else {
-				log.Printf("[SESSION REACTIVATION] Found %d existing events for session %s, setting baseIndex", baseIndex, sessionID)
-			}
-			api.eventStore.InitializeSession(sessionID, baseIndex)
-
-			api.sessionReactivationMux.Unlock()
-		}
-	}
+	// Chat sessions are in-memory only — tracked via activeSessions map
+	// below. No persistent session metadata.
 
 	// Clear the stopped guard now that the user is explicitly sending a new message.
 	// This must happen AFTER session reactivation and BEFORE workshop creation,
@@ -2178,15 +1841,43 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
+
+	// Per-user memory and chat folders. Both live under _users/<userID>/ so different users
+	// don't share each other's persistent memory or chat output files. If a prior LLMGuidance
+	// endpoint call already set a session override, that wins; otherwise default to the
+	// per-user path and pre-create the folder on disk so the first write succeeds.
+	perUserMemoryFolder := perUserMemoryFolderFor(currentUserID)
+	perUserChatsFolder := perUserChatsFolderFor(currentUserID)
+	api.activeSessionsMux.Lock()
+	if sess, ok := api.activeSessions[sessionID]; ok {
+		if sess.MemoryFolder == "" {
+			sess.MemoryFolder = perUserMemoryFolder
+		} else {
+			perUserMemoryFolder = sess.MemoryFolder
+		}
+		if sess.ChatsFolder == "" {
+			sess.ChatsFolder = perUserChatsFolder
+		} else {
+			perUserChatsFolder = sess.ChatsFolder
+		}
+	}
+	api.activeSessionsMux.Unlock()
+	if docsRoot := getWorkspaceDocsAbsPath(); docsRoot != "" {
+		for _, rel := range []string{perUserMemoryFolder, perUserChatsFolder} {
+			abs := filepath.Join(docsRoot, rel)
+			if err := os.MkdirAll(abs, 0755); err != nil {
+				log.Printf("[SESSION] Warning: could not pre-create per-user folder %s: %v", abs, err)
+			}
+		}
+	}
+
 	enableBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
 	cdpPort := 0
 	if req.CdpPort != nil {
 		cdpPort = *req.CdpPort
 	}
 	log.Printf(
-		"[QUERY] delegation_mode=%q plan_phase=%q session=%s enable_browser_access=%v browser_mode=%q cdp_port=%d enabled_servers=%v llm_guidance_len=%d query=%q",
-		req.DelegationMode,
-		req.PlanPhase,
+		"[QUERY] session=%s enable_browser_access=%v browser_mode=%q cdp_port=%d enabled_servers=%v llm_guidance_len=%d query=%q",
 		sessionID,
 		enableBrowserAccess,
 		getBrowserMode(req),
@@ -2253,17 +1944,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		finalModelID = req.ModelID
 	}
 
-	// If provider is still empty (e.g. follow-up message with no config), load from stored session config
-	if finalProvider == "" && chatSession != nil && len(chatSession.Config) > 0 {
-		var storedConfig database.ChatSessionConfig
-		if err := json.Unmarshal(chatSession.Config, &storedConfig); err == nil && storedConfig.LLMConfig != nil {
-			if storedConfig.LLMConfig.Provider != "" {
-				finalProvider = storedConfig.LLMConfig.Provider
-				finalModelID = storedConfig.LLMConfig.ModelID
-				log.Printf("[SESSION FALLBACK] Loaded provider/model from stored session config: %s/%s", finalProvider, finalModelID)
-			}
-		}
-	}
+	// Session config isn't persisted anymore — follow-up messages rely on the
+	// frontend to pass the provider/model on every request.
 
 	// Handle workflow phase chat mode - convert to simple agent with phase-specific prompt + tools
 	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
@@ -2333,7 +2015,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if req.PresetQueryID != "" {
 			if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
 				log.Printf("[WORKFLOW CHECK] Found workflow runtime: workflowStatus=%s", wfState.WorkflowStatus)
-				if wfState.WorkflowStatus == database.WorkflowStatusPostVerification {
+				if wfState.WorkflowStatus == workflowtypes.WorkflowStatusPostVerification {
 					log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution")
 				} else {
 					log.Printf("[WORKFLOW CHECK] Workflow is not approved yet - proceeding with planning phase")
@@ -2344,15 +2026,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create workflow event bridge for event emission
-		// Note: ChatDB is set to nil - workflow execution events are stored in memory only (for polling API)
-		// Chat history database storage is disabled for workflow execution to reduce database load
-		// (workflow_phase / builder sessions use the standard chat path which already persists to DB)
 		workflowEventBridge := &eventbridge.WorkflowEventBridge{
 			BaseEventBridge: &eventbridge.BaseEventBridge{
 				EventStore: api.eventStore,
 				SessionID:  sessionID,
 				Logger:     api.logger,
-				ChatDB:     nil, // Workflow execution only — builder sessions already persist via "simple" agent path
 				BridgeName: "workflow",
 			},
 		}
@@ -2370,7 +2048,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var selectedTools []string
 		var useCodeExecutionMode bool
 		var selectedSkills []string
-		var presetLLMConfig *database.PresetLLMConfig
+		var presetLLMConfig *workflowtypes.PresetLLMConfig
 
 		// Try manifest-first resolution: resolve workspace path, then load from workflow.json
 		// Priority: req.SelectedFolder (direct) > resolveWorkspacePathFromPreset (preset-based)
@@ -2501,8 +2179,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load image generation from LLM config (works for both manifest and preset sources)
 		if presetLLMConfig != nil && presetLLMConfig.EnableImageGeneration != nil && *presetLLMConfig.EnableImageGeneration {
 			imgCfg := virtualtools.ImageGenExecutorConfig{
-				Provider:        "vertex",
-				ModelID:         "gemini-2.5-flash-image",
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
 			}
@@ -2512,21 +2188,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if presetLLMConfig.ImageGenModelID != "" {
 				imgCfg.ModelID = presetLLMConfig.ImageGenModelID
 			}
-			for _, def := range []struct {
-				tool     func() llmtypes.Tool
-				executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-				category func() string
-			}{
-				{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-				{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-			} {
-				t := def.tool()
-				exec := def.executor(imgCfg)
-				allTools = append(allTools, t)
-				allExecutors[t.Function.Name] = exec
-				toolCategories[t.Function.Name] = def.category()
-				log.Printf("[WORKFLOW] Registered image gen tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-			}
+			virtualtools.MergeImageToolExecutorsUntyped(imgCfg, allExecutors, toolCategories)
+			log.Printf("[WORKFLOW] Updated image tool executors (provider=%s model=%s)", imgCfg.Provider, imgCfg.ModelID)
 		}
 
 		// Auto-add gws-* skills when GWS access is enabled (workflow mode)
@@ -2737,31 +2400,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
 				triggeredBy := "workflow_phase"
-				if workflowPhaseID == "workflow-builder" {
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					triggeredBy = "workflow_builder"
 				}
 
-				api.activeWorkflowExecutionsMux.Lock()
-				api.activeWorkflowExecutions[queryID] = &ActiveWorkflowExecution{
+				runFolder := ""
+				if req.ExecutionOptions != nil {
+					runFolder = req.ExecutionOptions.SelectedRunFolder
+				}
+				api.registerRunningWorkflow(&ActiveWorkflowExecution{
 					QueryID:       queryID,
 					SessionID:     sessionID,
 					PresetQueryID: req.PresetQueryID,
 					WorkspacePath: workflowPhaseFolder,
-					RunFolder: func() string {
-						if req.ExecutionOptions != nil {
-							return req.ExecutionOptions.SelectedRunFolder
-						}
-						return ""
-					}(),
-					TriggeredBy: triggeredBy,
-					StartedAt:   time.Now(),
-				}
-				api.activeWorkflowExecutionsMux.Unlock()
+					RunFolder:     runFolder,
+					PhaseID:       workflowPhaseID,
+					Status:        "running",
+					UserID:        currentUserID,
+					Query:         req.Query,
+					TriggeredBy:   triggeredBy,
+					StartedAt:     time.Now(),
+				})
 			}
 
 			// Check in-memory runtime state for workflow approval status
-			workflowStatus := database.WorkflowStatusPreVerification // Default status
-			var selectedOptions *database.WorkflowSelectedOptions
+			workflowStatus := workflowtypes.WorkflowStatusPreVerification // Default status
+			var selectedOptions *workflowtypes.WorkflowSelectedOptions
 			var stepID string
 			if req.PresetQueryID != "" {
 				if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
@@ -2789,7 +2453,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Chat-only phases should not go through the orchestrator path.
 			// If the database has these as workflow status, reject early with a clear message.
-			if workflowStatus == "workflow-builder" {
+			if workflowStatus == workflowtypes.WorkflowStatusWorkflowBuilder {
 				log.Printf("[WORKFLOW ERROR] Phase %q is chat-only — cannot execute via orchestrator. Use phase chat mode instead.", workflowStatus)
 				api.eventStore.AddEvent(sessionID, events.Event{
 					ID:        fmt.Sprintf("chat_only_error_%d", time.Now().UnixNano()),
@@ -2857,16 +2521,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				SessionID:     sessionID,
 				PresetQueryID: req.PresetQueryID,
 				WorkspacePath: workflowWorkspacePath,
+				RunFolder:     "iteration-0",
+				Status:        "running",
+				UserID:        currentUserID,
+				Query:         req.Query,
 				TriggeredBy:   "manual",
 				StartedAt:     time.Now(),
 			}
-			activeExec.RunFolder = "iteration-0"
 			if req.TriggeredBy != "" {
 				activeExec.TriggeredBy = req.TriggeredBy
 			}
-			api.activeWorkflowExecutionsMux.Lock()
-			api.activeWorkflowExecutions[queryID] = activeExec
-			api.activeWorkflowExecutionsMux.Unlock()
+			api.registerRunningWorkflow(activeExec)
 
 			// Prepare options for the Execute method
 			workflowOptions := map[string]interface{}{
@@ -3022,27 +2687,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SessionID: sessionID,
 				})
 
-				// --- BEGIN: Update chat session status to error ---
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				chatSession, err := api.chatDB.GetChatSession(ctx, sessionID)
-				cancel()
-				if err == nil && chatSession != nil {
-					updateReq := &database.UpdateChatSessionRequest{
-						Title:     chatSession.Title,     // Preserve existing title
-						AgentMode: chatSession.AgentMode, // Preserve existing agent_mode
-						Status:    "error",
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
-					cancel()
-					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (workflow): %v", err)
-					} else {
-						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status (workflow)", sessionID)
-					}
-				}
-				// --- END: Update chat session status to error ---
-
 				// Update active session status to error
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to error", sessionID)
 				api.updateSessionStatus(sessionID, "error")
@@ -3053,28 +2697,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
-
-				// --- BEGIN: Update chat session status to completed ---
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				chatSession, err := api.chatDB.GetChatSession(ctx, sessionID)
-				cancel()
-				if err == nil && chatSession != nil {
-					// Update session status to completed with completion timestamp
-					completedAt := time.Now()
-					updateReq := &database.UpdateChatSessionRequest{
-						Status:      "completed",
-						CompletedAt: &completedAt,
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
-					cancel()
-					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed (workflow): %v", err)
-					} else {
-						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to completed status (workflow)", sessionID)
-					}
-				}
-				// --- END: Update chat session status to completed ---
 
 				// Update active session status to completed
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to completed", sessionID)
@@ -3090,7 +2712,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Load preset LLM config for chat/simple mode (for feature toggle fallbacks)
 	// Source: workflow.json manifest (no DB dependency)
-	var presetLLMConfig *database.PresetLLMConfig
+	var presetLLMConfig *workflowtypes.PresetLLMConfig
 	{
 		wsPath := req.SelectedFolder
 		if wsPath == "" && req.PresetQueryID != "" {
@@ -3122,7 +2744,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// The deduplication logic in the frontend will handle any duplicates
 
 	// Store last query request for synthetic turns and set session busy
-	if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+	if !isWorkflowPhase {
 		req.userID = currentUserID
 		api.lastQueryMu.Lock()
 		api.lastQueryRequests[sessionID] = req
@@ -3158,7 +2780,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Process the query in the background
 	go func() {
 		// Clear session busy when the agent turn completes
-		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+		if !isWorkflowPhase {
 			defer func() {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
@@ -3176,21 +2798,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				tracer.EndTrace(traceID, map[string]interface{}{
 					"status": "failed",
 				})
-
-				// Update chat session status to error
-				if chatSession != nil {
-					updateReq := &database.UpdateChatSessionRequest{
-						Title:     chatSession.Title,     // Preserve existing title
-						AgentMode: chatSession.AgentMode, // Preserve existing agent_mode
-						Status:    "error",
-					}
-					_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
-					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error: %v", err)
-					} else {
-						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status", sessionID)
-					}
-				}
 
 				// Emit server-level error completion event
 				// Create an error completion event using UnifiedCompletionEvent
@@ -3218,7 +2825,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Validate provider (use finalProvider which reflects LLMConfig.Primary.Provider)
+		// Resolve tier config early so provider validation can use it.
+		// Without this, internal callers (scheduler, bots) that don't pass an explicit
+		// provider would fail validation even though the tier config has one.
+		if !isWorkflowPhase && finalProvider == "" {
+			if earlyTierConfig := LoadAndResolveTierConfig(context.Background(), req.DelegationTierConfig); earlyTierConfig != nil {
+				if earlyTierConfig.Main != nil && earlyTierConfig.Main.Provider != "" && earlyTierConfig.Main.ModelID != "" {
+					finalProvider = earlyTierConfig.Main.Provider
+					finalModelID = earlyTierConfig.Main.ModelID
+				} else if earlyTierConfig.High != nil && earlyTierConfig.High.Provider != "" && earlyTierConfig.High.ModelID != "" {
+					finalProvider = earlyTierConfig.High.Provider
+					finalModelID = earlyTierConfig.High.ModelID
+				}
+			}
+		}
+
+		// Validate provider (use finalProvider which reflects LLMConfig.Primary.Provider or tier config)
 		providerToValidate := finalProvider
 		if providerToValidate == "" {
 			providerToValidate = req.Provider
@@ -3308,7 +2930,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// UNLESS the provider is claude-code (which requires it for MCP bridge tool access).
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
-		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+		if !isWorkflowPhase {
 			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
@@ -3316,7 +2938,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
-		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+		if !isWorkflowPhase {
 			tierConfig := LoadAndResolveTierConfig(streamCtx, req.DelegationTierConfig)
 			if tierConfig != nil {
 				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
@@ -3519,18 +3141,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Set agent mode based on request
-		switch req.AgentMode {
-		case "simple":
-			agentConfig.AgentMode = mcpagent.SimpleAgent
-		case "orchestrator":
-			// For orchestrator mode, we'll handle it differently
-			agentConfig.AgentMode = mcpagent.SimpleAgent // Use Simple as base for orchestrator
-		case "workflow":
-			// For workflow mode, we'll handle it differently
-			agentConfig.AgentMode = mcpagent.SimpleAgent // Use Simple as base for workflow
-		default:
-			agentConfig.AgentMode = mcpagent.SimpleAgent // Default to Simple mode
-		}
+		agentConfig.AgentMode = mcpagent.SimpleAgent
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
 			agentConfig.SmartRoutingMaxTools, agentConfig.SmartRoutingMaxServers)
@@ -3544,35 +3155,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[LATENCY_DEBUG] T+%dms | Agent wrapper created", time.Since(startTime).Milliseconds())
 
-		// Add workspace tools to simple agents (chat mode)
-		// This matches how workspace tools are registered in workflow/orchestrator agents
-		// This ensures custom tools are available and code generation is triggered
-		// Only register workspace tools if workspace access is enabled
-		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
-		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
-		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
-		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
+		// Add workspace tools to chat agents (multi-agent chat mode)
+		// Workflow mode handles workspace tools differently, so exclude it
+		isChatMode := req.AgentMode == "simple" || req.AgentMode == ""
 
-		// Check if skill-creator is in selected skills (mode-agnostic)
-		hasSkillCreator := false
-		for _, s := range req.SelectedSkills {
-			if s == "skill-creator" {
-				hasSkillCreator = true
-				break
-			}
-		}
+		// Resolve all conditional folder-guard grants once for this request.
+		// See conditional_grants.go for the registry. The result is reused across
+		// every folder guard and system prompt site below.
+		resolvedGrants := resolveConditionalGrants(req)
 
-		// Check if subagent-creator is in selected skills
-		hasSubAgentCreator := false
-		for _, s := range req.SelectedSkills {
-			if s == "subagent-creator" || s == "custom/subagent-creator" {
-				hasSubAgentCreator = true
-				break
-			}
-		}
-
-		// When skill-creator is selected, ensure it's installed
-		if hasSkillCreator {
+		// When skill-creator is selected, ensure it's installed (auto-fetch from GitHub
+		// if missing). This is the one piece of grant-specific logic that doesn't fit
+		// the registry — it's an install-on-demand side effect unique to skill-creator.
+		if resolvedGrants.HasGrant("skill-creator") {
 			workspaceAPIURL := api.GetAPIURL()
 			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
 			if err != nil {
@@ -3588,7 +3183,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
 		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
-		workspaceAccessEnabledForChat := false
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 
 		// Extract #workflow read-only folders early — needed both inside isChatMode block
@@ -3596,31 +3190,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		_, workflowReadOnlyFolders := collectSplitFolderGuardFolders(req.Query, req.WorkflowContextPaths)
 
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
-			// Check if workspace access is enabled
-			// Default to true for backward compatibility with legacy requests
-			// nil = inherit default (true), non-nil = explicit override
-			enableWorkspaceAccess := true // Default to enabled for backward compatibility
-			if req.EnableWorkspaceAccess != nil {
-				enableWorkspaceAccess = *req.EnableWorkspaceAccess
-			}
-			// Automatically enable workspace access when skills are selected
-			// Skills need workspace access to read files and context
-			if len(req.SelectedSkills) > 0 {
-				enableWorkspaceAccess = true
-				log.Printf("[SKILLS] Automatically enabling workspace access (skills selected: %v)", req.SelectedSkills)
-			}
-
-			// Auto-enable workspace access for plan delegation mode
-			// Plan mode requires workspace tools for shell commands with proper FolderGuard
-			if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-				enableWorkspaceAccess = true
-			}
-
-			// Handle browser access: when enabled, auto-enable workspace and add agent-browser skill
+			// Handle browser access: when enabled, add agent-browser skill
 			enableBrowserAccess := false
 			if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
 				enableBrowserAccess = true
-				enableWorkspaceAccess = true // Browser tool lives in workspace category
 				// Auto-add agent-browser skill if not already selected
 				hasAgentBrowserSkill := false
 				for _, skill := range req.SelectedSkills {
@@ -3663,10 +3236,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			workspaceAccessEnabledForChat = enableWorkspaceAccess
-
-			if enableWorkspaceAccess {
-				// Create Chats/ folder if it doesn't exist
+			// Create Chats/ folder if it doesn't exist
 				if err := skills.CreateFolder("Chats"); err != nil {
 					log.Printf("[WORKSPACE] Warning: Could not create Chats/ folder: %v", err)
 				}
@@ -3697,12 +3267,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
 				}
 
-				// Chat mode: advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
-				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
-				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
-				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
+				// Chat mode: LLM-visible workspace tools (advanced + image)
+				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
+				// These tools are restricted to the current workspace/chat folder guard.
+				workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
 				var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 				workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
+				virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+					WorkspaceAPIURL: getWorkspaceAPIURL(),
+					UserID:          currentUserID,
+				}, workspaceExecutors, nil)
 				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 				// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
@@ -3711,7 +3285,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
 
 				// Merge @context file paths into additional folder-guard write access.
-				// workflowReadOnlyFolders was computed above (before enableWorkspaceAccess block).
+				// workflowReadOnlyFolders was computed above.
 				fileContextWriteFolders := extractFileContextWriteFolders(req.Query)
 				if len(fileContextWriteFolders) > 0 {
 					log.Printf("[FILE CONTEXT] Extracted write folder-guard paths from @context: %v", fileContextWriteFolders)
@@ -3734,42 +3308,43 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Apply folder guard to restrict writes based on mode
 				// Multi-agent (plan) mode: primary write folder is Chats/
 				// Chat mode: writes go to Chats/
-				if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-					additionalFolders := []string{}
-					if hasSkillCreator {
-						additionalFolders = append(additionalFolders, "skills/custom/")
-					}
-					if hasSubAgentCreator {
-						additionalFolders = append(additionalFolders, "subagents/custom/")
-					}
+				if !isWorkflowPhase {
+					// Per-user memory and chat folders replace the legacy global "memories/" and "Chats/" write paths.
+					perUserMemWrite := perUserMemoryFolder + "/"
+					perUserChatsWrite := perUserChatsFolder + "/"
+					perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
+					additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 					additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, virtualtools.PlanFileFolderPath, workflowReadOnlyFolders, additionalFolders...)
+					additionalFolders = append(additionalFolders, perUserMemWrite)
+					additionalFolders = append(additionalFolders, perUserChatHistory)
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "")
-					readPaths := append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/", "Workflow/", "config/", "memories/"}, additionalFolders...)
+					readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", "config/", perUserMemWrite}, additionalFolders...)
+					readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
 					readPaths = append(readPaths, workflowReadOnlyFolders...)
 					workspace.SetSessionFolderGuard(sessionID,
 						readPaths,
-						append([]string{virtualtools.PlanFileFolderPath + "/", "Downloads/", "config/", "memories/"}, additionalFolders...),
+						append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
 					)
-					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (write: %v, read-only: %v)", virtualtools.PlanFileFolderPath, additionalFolders, workflowReadOnlyFolders)
+					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
 				} else {
-					extraFolders := []string{"config/"}
-					if hasSkillCreator {
-						extraFolders = append(extraFolders, "skills/custom/")
-					}
-					if hasSubAgentCreator {
-						extraFolders = append(extraFolders, "subagents/custom/")
-					}
+					perUserMemWrite := perUserMemoryFolder + "/"
+					perUserChatsWrite := perUserChatsFolder + "/"
+					perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
+					extraFolders := append([]string{"config/"}, resolvedGrants.WriteFolders...)
 					extraFolders = append(extraFolders, fileContextWriteFolders...)
+					extraFolders = append(extraFolders, perUserMemWrite)
+					extraFolders = append(extraFolders, perUserChatsWrite)
+					extraFolders = append(extraFolders, perUserChatHistory)
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "")
-					readPaths := append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...)
+					readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
 					readPaths = append(readPaths, workflowReadOnlyFolders...)
 					workspace.SetSessionFolderGuard(sessionID,
 						readPaths,
-						append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
+						append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
 					)
-					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction (read-only: %v)", extraFolders, workflowReadOnlyFolders)
+					log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders)
 				}
 
 				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
@@ -3777,7 +3352,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", req.SelectedSkills)
 				}
 
-				log.Printf("[WORKSPACE TOOLS] Registering %d workspace advanced tools for chat mode (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
+				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for chat mode", len(workspaceTools))
 
 				underlyingAgent := llmAgent.GetUnderlyingAgent()
 				for _, tool := range workspaceTools {
@@ -3789,10 +3364,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if executor, exists := workspaceExecutors[toolName]; exists {
 						// Enhance tool description based on mode
 						var enhancedDescription string
-						if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-							enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description)
+						if !isWorkflowPhase {
+							enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description, perUserChatsFolder)
 						} else {
-							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolder)
 						}
 
 						// Convert Parameters to map[string]interface{}
@@ -3818,6 +3393,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 						// Executor is already the correct type (func(ctx, args) (string, error))
 						// No type assertion needed unlike workflow where executors are map[string]interface{}
+						if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && req.ImageGenConfig != nil {
+							executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
+								Provider: req.ImageGenConfig.Provider,
+								ModelID:  req.ImageGenConfig.ModelID,
+								APIKey:   req.ImageGenConfig.APIKey,
+							})
+						}
+
 						if err := underlyingAgent.RegisterCustomTool(
 							toolName,
 							enhancedDescription,
@@ -3832,7 +3415,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 					}
 				}
-				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace advanced tools for chat mode", len(workspaceTools))
+				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for chat mode", len(workspaceTools))
 
 				// Register browser tool if browser access is enabled
 				if enableBrowserAccess {
@@ -3841,22 +3424,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 					// Apply same folder guard as workspace tools (reuse fileContextWriteFolders/workflowReadOnlyFolders from above)
-					if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-						additionalFolders := []string{}
-						if hasSkillCreator {
-							additionalFolders = append(additionalFolders, "skills/custom/")
-						}
+					if !isWorkflowPhase {
+						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, virtualtools.PlanFileFolderPath, workflowReadOnlyFolders, additionalFolders...)
+						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 					} else {
-						browserExtraFolders := []string{}
-						if hasSkillCreator {
-							browserExtraFolders = append(browserExtraFolders, "skills/custom/")
-						}
+						browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 						browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
+						browserExtraFolders = append(browserExtraFolders, perUserChatsFolder+"/")
 						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
 					}
-					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools (delegation_mode: %s)", req.DelegationMode)
+					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
 
 					for _, tool := range browserTools {
 						if tool.Function == nil {
@@ -3892,77 +3470,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
 				}
 
-			} else {
-				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
-			}
-
-			// Register image generation tools if enabled
-			// NOTE: This is OUTSIDE the enableWorkspaceAccess block intentionally —
-			// image gen should work regardless of workspace access setting.
-			enableImgGen := req.EnableImageGeneration != nil && *req.EnableImageGeneration
-			log.Printf("[IMAGE GEN] enable_image_generation check: ptr_set=%v enabled=%v image_gen_config_nil=%v", req.EnableImageGeneration != nil, enableImgGen, req.ImageGenConfig == nil)
-			if req.ImageGenConfig != nil {
-				log.Printf("[IMAGE GEN] received image_gen_config: provider=%q model_id=%q api_key_set=%v", req.ImageGenConfig.Provider, req.ImageGenConfig.ModelID, req.ImageGenConfig.APIKey != "")
-			}
-			if enableImgGen {
-				imgAgent := llmAgent.GetUnderlyingAgent()
-				if imgAgent == nil {
-					log.Printf("[IMAGE GEN] Warning: underlying agent is nil, cannot register image gen tools")
-				} else {
-					imgCfg := virtualtools.ImageGenExecutorConfig{
-						Provider:        "vertex",
-						ModelID:         "gemini-2.5-flash-image",
-						WorkspaceAPIURL: getWorkspaceAPIURL(),
-						UserID:          currentUserID,
-					}
-					if req.ImageGenConfig != nil {
-						if req.ImageGenConfig.Provider != "" {
-							imgCfg.Provider = req.ImageGenConfig.Provider
-						}
-						if req.ImageGenConfig.ModelID != "" {
-							imgCfg.ModelID = req.ImageGenConfig.ModelID
-						}
-						imgCfg.APIKey = req.ImageGenConfig.APIKey
-					}
-					for _, toolDef := range []struct {
-						tool     func() llmtypes.Tool
-						executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-						category func() string
-					}{
-						{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-						{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-					} {
-						t := toolDef.tool()
-						exec := toolDef.executor(imgCfg)
-						var params map[string]interface{}
-						if t.Function.Parameters != nil {
-							paramsBytes, err := json.Marshal(t.Function.Parameters)
-							if err == nil {
-								json.Unmarshal(paramsBytes, &params)
-							}
-						}
-						if params != nil {
-							if err := imgAgent.RegisterCustomTool(
-								t.Function.Name,
-								t.Function.Description,
-								params,
-								exec,
-								toolDef.category(),
-							); err != nil {
-								log.Printf("[IMAGE GEN] Warning: Failed to register %s: %v", t.Function.Name, err)
-							} else {
-								log.Printf("[IMAGE GEN] Registered %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-							}
-						}
-					}
-				}
-			}
-
-			// Register delegation tool if delegation mode is enabled
-			// Note: This is outside the workspace access block because delegation should work regardless of workspace access
-			delegationMode := req.DelegationMode // "spawn" or ""
-
-			if delegationMode == "spawn" {
+			// Register delegation tool for multi-agent chat (all non-workflow-phase simple sessions).
+			if !isWorkflowPhase {
 				// Build delegation tier config early so we can pass it to tool creation (for dynamic enum)
 				tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
 				delegationTools := virtualtools.CreateDelegationTools(tierConfig, true)
@@ -3980,33 +3489,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return api.executeDelegatedTask(subCtx, req, sessionID, instruction)
 					}
 
-					// Create workspace client for plan file I/O.
-					planWriteFolder := virtualtools.PlanFileFolderPath
+					// Create workspace client for plan file I/O. Scoped to the per-user Chats folder.
 					planWorkspaceClient := workspace.NewClient(
 						getWorkspaceAPIURL(),
 						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 							Enabled:      true,
-							WritePaths:   []string{planWriteFolder},
+							WritePaths:   []string{perUserChatsFolder},
 							BlockedPaths: []string{},
 						}),
 						workspace.WithUserID(currentUserID),
 					)
 
-					// Build capabilities context for the planner
+					// Build capabilities context for the delegation tools
 					caps := buildCapabilitiesContext(req)
-
-					// Get or create session-level plan state (replaces per-message PlanTracker)
-					planState := api.getOrCreatePlanSessionState(sessionID)
-
-					// If client passed an existing plan folder, pre-seed the session state so LLM reuses it
-					if req.PlanFolder != "" && planState.PlanID == "" {
-						parts := strings.SplitN(req.PlanFolder, "/", 2)
-						if len(parts) == 2 && parts[0] == virtualtools.PlanFileFolderPath {
-							planState.PlanID = parts[1]
-							planState.PlanFolder = req.PlanFolder
-							log.Printf("[PLAN STATE] Pre-seeded plan from request: %s", req.PlanFolder)
-						}
-					}
 
 					// Create background delegate function for async delegation (all modes)
 					bgDelegateFunc := func(bgCtx context.Context, name, instruction string) (string, error) {
@@ -4038,21 +3533,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							// Capture executor for closure
 							exec := executor
 
-							// Wrap the executor to inject delegation function, workspace client, tier config, capabilities, and plan tracker
+							// Wrap the executor to inject delegation function, workspace client, tier config, and capabilities
 							wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 								ctx = context.WithValue(ctx, virtualtools.ExecuteDelegatedTaskKey, virtualtools.ExecuteDelegatedTaskFunc(executeDelegatedTask))
 								ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
-								ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
-									eventStore: api.eventStore,
-									sessionID:  sessionID,
-									chatDB:     api.chatDB,
-								})
-								ctx = context.WithValue(ctx, virtualtools.PlanSessionStateKey, planState)
 								ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
 									eventStore: api.eventStore,
 									sessionID:  sessionID,
-									chatDB:     api.chatDB,
 								})
+								// Propagate per-user memory + chats folders so sub-agents inherit them.
+								ctx = context.WithValue(ctx, virtualtools.MemoryFolderKey, perUserMemoryFolder)
+								ctx = context.WithValue(ctx, virtualtools.ChatsFolderKey, perUserChatsFolder)
 								if tierConfig != nil {
 									ctx = context.WithValue(ctx, virtualtools.DelegationTierConfigKey, tierConfig)
 								}
@@ -4085,13 +3576,48 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
+
+						// Register workflow run tools (run_workflow, run_step)
+						wfRunTools := createWorkflowRunTools()
+						wfRunExecutors := createWorkflowRunExecutors(api)
+						for _, tool := range wfRunTools {
+							if tool.Function == nil {
+								continue
+							}
+							toolName := tool.Function.Name
+							if exec, exists := wfRunExecutors[toolName]; exists {
+								var params map[string]interface{}
+								if tool.Function.Parameters != nil {
+									paramsBytes, _ := json.Marshal(tool.Function.Parameters)
+									json.Unmarshal(paramsBytes, &params)
+								}
+								// Wrap to inject session context
+								capturedExec := exec
+								wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
+									ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+									return capturedExec(ctx, args)
+								}
+								if err := delegationAgent.RegisterCustomToolWithTimeout(
+									toolName,
+									tool.Function.Description,
+									params,
+									wrappedExec,
+									0,
+									delegationCategory,
+								); err != nil {
+									log.Printf("[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
+								} else {
+									log.Printf("[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
+								}
+							}
+						}
+					}
 				}
 			}
-		}
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			// Create custom tools for chat mode (workspace_advanced only: shell, image, web fetch, PDF)
+			// Create custom tools for chat mode (workspace_advanced + workspace_image)
 			allTools, allExecutors, toolCategories := createCustomTools(false, currentUserID, sessionID) // Chat mode: session-aware
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
@@ -4103,8 +3629,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if tool.Function != nil {
 					toolName := tool.Function.Name
 
-					// Skip workspace tools - already registered above
-					if toolCategories[toolName] == "workspace_tools" {
+					// Skip workspace tools - already registered above.
+					switch toolCategories[toolName] {
+					case "workspace_tools", virtualtools.GetWorkspaceAdvancedToolCategory(), virtualtools.GetWorkspaceImageToolCategory(), virtualtools.GetWorkspaceBrowserToolCategory():
 						continue
 					}
 
@@ -4139,7 +3666,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
 										eventStore: api.eventStore,
 										sessionID:  sessionID,
-										chatDB:     api.chatDB,
 									})
 									return originalExec(ctx, args)
 								}
@@ -4167,11 +3693,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Register memory tools in all chat modes.
 			// In plan mode, memory tools can spawn background memory agents.
+			// The memory workspace client is scoped to the per-user memory folder so all
+			// memory file I/O lands under _users/<userID>/memories/.
 			memoryTools := virtualtools.CreateMemoryTools()
 			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			memoryCategory := virtualtools.GetDelegationToolCategory()
-			var memoryWritePaths []string
-			memoryWritePaths = []string{virtualtools.PlanFileFolderPath}
+			memoryWritePaths := []string{perUserMemoryFolder, perUserChatsFolder}
 			memoryWorkspaceClient := workspace.NewClient(
 				getWorkspaceAPIURL(),
 				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
@@ -4210,12 +3737,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if memoryBgDelegate != nil {
 						ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, memoryBgDelegate)
 					}
-					// Inject per-session memory folder override
+					// Inject per-session memory and chats folder overrides
 					api.activeSessionsMux.RLock()
 					sess, sessExists := api.activeSessions[sessionID]
 					api.activeSessionsMux.RUnlock()
 					if sessExists && sess.MemoryFolder != "" {
 						ctx = context.WithValue(ctx, virtualtools.MemoryFolderKey, sess.MemoryFolder)
+					}
+					if sessExists && sess.ChatsFolder != "" {
+						ctx = context.WithValue(ctx, virtualtools.ChatsFolderKey, sess.ChatsFolder)
 					}
 					return execCopy(ctx, args)
 				}
@@ -4236,8 +3766,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
 
-			isMultiAgentChat := req.DelegationMode == "spawn"
-			if workspaceAccessEnabledForChat && isMultiAgentChat {
+			isMultiAgentChat := !isWorkflowPhase
+			if isMultiAgentChat {
 				if err := api.registerMultiAgentLLMTools(underlyingAgent); err != nil {
 					log.Printf("[LLM TOOLS] Failed to register multi-agent LLM tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent LLM tools: %v", err), true)
@@ -4259,6 +3789,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				log.Printf("[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
+
+				// create_workflow — privileged tool for writing new workflows under Workflow/
+				// Bypasses the session folder guard by writing via direct filesystem I/O.
+				if err := api.registerWorkflowCreatorTool(underlyingAgent); err != nil {
+					log.Printf("[WORKFLOW CREATOR] Failed to register create_workflow tool: %v", err)
+					sendError(fmt.Sprintf("Failed to register create_workflow tool: %v", err), true)
+					return
+				}
+				log.Printf("[WORKFLOW CREATOR] Registered create_workflow tool")
 			}
 
 			// Read session state early for guidance injection
@@ -4275,54 +3814,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			api.activeSessionsMux.RUnlock()
 
-			// Add base instructions — skip for plan mode (multi-agent) since the
-			// main agent is an orchestrator, not a file writer. The Chats/ folder
-			// rules don't apply; background sub-agents get their own instructions.
-			// Resolve workspace absolute path for use in instructions.
-			// Uses the shared root (not per-user) since skills/, subagents/, etc. live there.
-			wsAbsPath := getWorkspaceDocsAbsPath()
+			// ── PROMPT ASSEMBLY ORDER ──
+			// Priority-ordered: operating mode → workspace map → context → mode-specific → reference docs.
+			// This ensures the LLM sees its core behavior rules before any reference material.
 
-			if req.DelegationMode != "plan" {
-				underlyingAgent.AppendSystemPrompt(GetAgentInstructions(wsAbsPath))
-			}
+			shellRoot := fsutil.WorkspaceShellRoot()
 
-			// Add skill builder instructions when skill-creator is active
-			if hasSkillCreator {
-				underlyingAgent.AppendSystemPrompt(GetSkillBuilderInstructions())
-				log.Printf("[SKILL BUILDER] Added skill builder instructions to system prompt")
-			}
-
-			// Add sub-agent builder instructions when subagent-creator is active
-			if hasSubAgentCreator {
-				underlyingAgent.AppendSystemPrompt(GetSubAgentBuilderInstructions())
-				log.Printf("[SUBAGENT BUILDER] Added sub-agent builder instructions to system prompt")
-			}
-
-			// Add workflow context if workflow paths are selected (via # in chat)
-			if len(req.WorkflowContextPaths) > 0 {
-				workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
-				if workflowPrompt != "" {
-					underlyingAgent.AppendSystemPrompt(workflowPrompt)
-					log.Printf("[WORKFLOW-CTX] Added workflow context to system prompt (%d workflows)", len(req.WorkflowContextPaths))
-				}
-			}
-
-			// Add delegation instructions — unified autonomous mode for all delegation modes
-			// Placed before skills/browser/GWS since delegation is the agent's core operating mode.
-			if req.DelegationMode == "spawn" {
-				if req.PlanPhase == "execution" {
-					// Execution-only mode: skip planning, delegate directly
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
-					log.Printf("[DELEGATION] Added execution-only instructions to system prompt")
-				} else {
-					// Autonomous mode: agent decides whether to plan, delegate, or do it itself
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetAutonomousDelegationInstructions())
-					log.Printf("[DELEGATION] Added autonomous delegation instructions to system prompt (mode: %s)", req.DelegationMode)
-				}
+			// 1. OPERATING MODE — the agent's core behavior (delegate everything vs work directly).
+			//    This MUST come first so it takes precedence over reference material.
+			if !isWorkflowPhase {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetMultiAgentDelegationInstructionsWithUser(perUserChatsFolder, currentUserID))
+				log.Printf("[DELEGATION] Added multi-agent delegation instructions to system prompt")
 				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
 					underlyingAgent.AppendSystemPrompt(section)
 				}
-				// Inject custom tier descriptions into system prompt so the manager knows about them
 				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
 					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
 						underlyingAgent.AppendSystemPrompt(tierSection)
@@ -4330,33 +3835,70 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Add skill instructions if skills are selected
+			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.
+			underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+
+			// 3. CONTEXT — employees, workflow references, skills (what the agent needs to know).
+			if !isWorkflowPhase {
+				if empSection := buildEmployeesWorkflowsContext(); empSection != "" {
+					underlyingAgent.AppendSystemPrompt(empSection)
+					log.Printf("[EMPLOYEES] Injected employees & workflow assignments into system prompt")
+				}
+			}
+			if len(req.WorkflowContextPaths) > 0 {
+				if workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL()); workflowPrompt != "" {
+					underlyingAgent.AppendSystemPrompt(workflowPrompt)
+					log.Printf("[WORKFLOW-CTX] Added workflow context to system prompt (%d workflows)", len(req.WorkflowContextPaths))
+				}
+			}
 			if len(req.SelectedSkills) > 0 {
-				skillPrompt := buildSkillPrompt(req.SelectedSkills, wsAbsPath, getWorkspaceAPIURL())
-				if skillPrompt != "" {
+				if skillPrompt := buildSkillPrompt(req.SelectedSkills, getWorkspaceAPIURL(), shellRoot, isMultiAgentChat); skillPrompt != "" {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
 				}
 			}
 
-			// Add browser instructions (upload + mode-specific) using standardized builder
+			// 4. MODE-SPECIFIC — browser, GWS, memory (only when those capabilities are active).
 			chatBrowserCfg := buildChatBrowserConfig(req)
 			if chatBrowserPrompt := browserinstructions.BuildBrowserInstructions(chatBrowserCfg); chatBrowserPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(chatBrowserPrompt)
 				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
 					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasCamofox, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
 			}
-
-			// Add inline quick-start instructions for GWS access
 			if req.EnableGWSAccess != nil && *req.EnableGWSAccess {
 				underlyingAgent.AppendSystemPrompt(getGWSQuickStartInstructions())
 				log.Printf("[GWS] Added GWS quick-start instructions to system prompt")
 			}
-
-			// Memory tools are available in all chat modes.
-			// Use per-session memory folder if set.
-			// Session state (memFolderForPrompt, llmGuidance) was already read above.
 			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(memFolderForPrompt))
+
+			// Auto-inject memory index.md so the agent has prior context without needing a tool call.
+			// This is critical for the orchestrator which would otherwise skip recall_memory entirely.
+			{
+				indexPath := perUserMemoryFolder + "/index.md"
+				if indexContent, exists, err := readFileFromWorkspace(context.Background(), indexPath); err == nil && exists && indexContent != "" {
+					// Truncate very large indices to avoid bloating the prompt
+					if len(indexContent) > 4000 {
+						indexContent = indexContent[:4000] + "\n\n... (truncated — use recall_memory for full details)"
+					}
+					underlyingAgent.AppendSystemPrompt("\n## Your Memory (auto-loaded)\n\n" + indexContent)
+					log.Printf("[MEMORY] Auto-injected index.md (%d chars) into system prompt", len(indexContent))
+				}
+			}
+
+			// 5. REFERENCE DOCS — detailed config schemas, workflow structure, workflow creation.
+			//    Only for worker agents (workflow phase). The orchestrator delegates all file
+			//    work so it doesn't need 300+ lines of config schemas and parsing commands.
+			if isWorkflowPhase {
+				underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+			}
+
+			// 6. SUPPLEMENTARY — conditional grants, CLI provider overrides.
+			for _, section := range resolvedGrants.PromptSections {
+				underlyingAgent.AppendSystemPrompt(section)
+			}
+			if len(resolvedGrants.PromptSections) > 0 {
+				log.Printf("[GRANTS] Appended %d prompt section(s) for active grants: %v", len(resolvedGrants.PromptSections), resolvedGrants.AppliedNames)
+			}
 
 			// Update code execution registry AFTER all AppendSystemPrompt calls so that
 			// AppendedSystemPrompts is fully populated. rebuildSystemPromptWithUpdatedToolStructure
@@ -4397,7 +3939,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
 				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
 				{
-					wsAbsPath := getWorkspaceDocsAbsPath()
+					wsAbsPath := fsutil.WorkspaceShellRoot()
 					underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 						paths, ok := args["paths"].([]interface{})
 						if !ok || len(paths) == 0 {
@@ -4521,7 +4063,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
-				if workflowPhaseID == "workflow-builder" {
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupNames)
 					if groupInfo != "" {
 						phaseTemplateVars["GroupInfo"] = groupInfo
@@ -4550,7 +4092,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Extract workflow objective and success_criteria from plan.json for the system prompt
-				if existingPlanJSON != "" && workflowPhaseID == "workflow-builder" {
+				if existingPlanJSON != "" && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					var planMeta struct {
 						Objective       string `json:"objective"`
 						SuccessCriteria string `json:"success_criteria"`
@@ -4566,7 +4108,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Auto-detect workshop mode if not provided by frontend
-				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == "workflow-builder" {
+				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					stepConfigJSON, _ := phaseReadFile(setupCtx, phaseWorkspacePath+"/planning/step_config.json")
 					optimizedSet := make(map[string]bool)
 					if stepConfigJSON != "" {
@@ -4652,7 +4194,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Re-append supplementary prompts after system prompt override
 				// (ClearAppendedSystemPrompts above wiped browser/GWS/secrets instructions)
-				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "evaluation-builder" {
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder || workflowPhaseID == workflowtypes.WorkflowStatusEvalBuilder {
 					// Secrets
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 					if len(phaseSecrets) > 0 {
@@ -4764,7 +4306,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Register phase-appropriate tools
 				switch workflowPhaseID {
-				case "workflow-builder":
+				case workflowtypes.WorkflowStatusWorkflowBuilder:
 					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
 					// FATAL on failure: the workflow-builder system prompt advertises these tools,
 					// so a half-registered builder silently hallucinates missing tools to the LLM.
@@ -5042,7 +4584,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// This restricts which tools the LLM can see/call, enforcing mode boundaries
 				// (e.g. DEBUG mode cannot execute steps, BUILD mode cannot optimize).
 				// The allow list is applied in conversation.go (filteredTools) and buildToolIndex() (code exec).
-				if workflowPhaseID == "workflow-builder" {
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					workshopMode := phaseTemplateVars["WorkshopMode"]
 					allowedTools := todo_creation_human.GetToolsForWorkshopMode(workshopMode)
 					underlyingAgent.SetToolAllowList(allowedTools)
@@ -5061,126 +4603,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Add event observer immediately after agent creation to capture all events
-		// ✅ FIX: Always attach EventObserver to agent, even in orchestrator mode
-		// The eventbridge.OrchestratorAgentEventBridge handles orchestrator-specific events, but we still need EventObserver for regular agent events
-		log.Printf("[DATABASE DEBUG] Starting event observer setup for session %s", sessionID)
-		log.Printf("[DATABASE DEBUG] ChatDB available: %v", api.chatDB != nil)
-
-		log.Printf("[DATABASE DEBUG] Creating in-memory event observer for session %s", sessionID)
-		// Create in-memory event observer for real-time updates
+		// Attach the in-memory event observer for real-time SSE/polling, plus
+		// the cost-ledger observer that persists every token_usage event to
+		// the global cost log.
 		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
-
-		log.Printf("[DATABASE DEBUG] Creating database event observer for session %s", sessionID)
-		// Create database event observer to store events in database
-		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB, func(eventType string) bool {
-			return events.ShouldShowEvent(eventType)
-		})
-		log.Printf("[DATABASE DEBUG] Database event observer created successfully for session %s", sessionID)
-
-		// Add event observer directly to the underlying MCP agent since the wrapper's AddEventListener is disabled
-		log.Printf("[DATABASE DEBUG] Getting underlying agent for session %s", sessionID)
+		costObs := newCostObserver(api.costLedger, sessionID, currentUserID, req.AgentMode)
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			log.Printf("[DATABASE DEBUG] Underlying agent found, adding event observers for session %s", sessionID)
 			underlyingAgent.AddEventListener(eventObserver)
-			log.Printf("[DATABASE DEBUG] Added in-memory event observer for session %s", sessionID)
-			underlyingAgent.AddEventListener(dbEventObserver)
-			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
-
-			// Store running agent reference for steer message injection
+			underlyingAgent.AddEventListener(costObs)
 			api.runningAgentsMux.Lock()
 			api.runningAgents[sessionID] = underlyingAgent
 			api.runningAgentsMux.Unlock()
 		} else {
-			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
+			log.Printf("[AGENT] ERROR: underlying MCP agent is nil for session %s", sessionID)
 		}
 
-		// --- BEGIN: Load conversation history and accumulate for streaming ---
-		// Load conversation history for this session
+		// Load conversation history for this session from the in-memory
+		// cache. When the server restarts the cache is empty and the agent
+		// starts a fresh conversation.
 		api.conversationMux.RLock()
-		history, exists := api.conversationHistory[sessionID]
-		api.conversationMux.RUnlock()
-
-		if exists && len(history) > 0 {
-			log.Printf("[CONVERSATION DEBUG] Loading %d messages from in-memory conversation history for session %s", len(history), sessionID)
-			// Load the conversation history into the agent
+		if history, ok := api.conversationHistory[sessionID]; ok && len(history) > 0 {
+			log.Printf("[CONVERSATION] Replaying %d in-memory messages for session %s", len(history), sessionID)
 			for _, msg := range history {
 				llmAgent.AppendMessage(msg)
 			}
-		} else if api.chatDB != nil {
-			// Try to load conversation history from database
-			log.Printf("[CONVERSATION DEBUG] No in-memory history found for session %s, attempting to load from database", sessionID)
-
-			// Get events for this session, focusing on conversation_turn events
-			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
-			if err != nil {
-				log.Printf("[CONVERSATION DEBUG] Failed to load events from database for session %s: %v", sessionID, err)
-			} else {
-				// Find the last conversation_turn event which contains full conversation history
-				var lastTurnEvent *database.Event
-				for i := len(dbEvents) - 1; i >= 0; i-- {
-					if dbEvents[i].EventType == string(unifiedevents.ConversationTurn) {
-						lastTurnEvent = &dbEvents[i]
-						break
-					}
-				}
-
-				if lastTurnEvent != nil {
-					// Parse the event data using typed structures
-					// EventData contains the full AgentEvent JSON structure
-					// Use a helper struct to unmarshal Data as json.RawMessage first
-					type agentEventHelper struct {
-						Type unifiedevents.EventType `json:"type"`
-						Data json.RawMessage         `json:"data"`
-					}
-
-					var agentEvent agentEventHelper
-					if err := json.Unmarshal(lastTurnEvent.EventData, &agentEvent); err != nil {
-						log.Printf("[CONVERSATION DEBUG] Failed to parse AgentEvent for session %s: %v", sessionID, err)
-					} else if agentEvent.Type == unifiedevents.ConversationTurn {
-						// Unmarshal Data field to ConversationTurnEvent
-						var turnEvent unifiedevents.ConversationTurnEvent
-						if err := json.Unmarshal(agentEvent.Data, &turnEvent); err != nil {
-							log.Printf("[CONVERSATION DEBUG] Failed to parse ConversationTurnEvent data for session %s: %v", sessionID, err)
-						} else if len(turnEvent.Messages) > 0 {
-							// Deserialize messages from SerializedMessage format back to llmtypes.MessageContent
-							deserializedHistory := make([]llmtypes.MessageContent, 0, len(turnEvent.Messages))
-							for _, serializedMsg := range turnEvent.Messages {
-								msg := deserializeSerializedMessage(serializedMsg)
-								if msg != nil {
-									deserializedHistory = append(deserializedHistory, *msg)
-								}
-							}
-
-							if len(deserializedHistory) > 0 {
-								log.Printf("[CONVERSATION DEBUG] Loaded %d messages from database conversation history for session %s", len(deserializedHistory), sessionID)
-								// Load the conversation history into the agent
-								for _, msg := range deserializedHistory {
-									llmAgent.AppendMessage(msg)
-								}
-								// Cache in memory for future use
-								api.conversationMux.Lock()
-								api.conversationHistory[sessionID] = deserializedHistory
-								api.conversationMux.Unlock()
-							} else {
-								log.Printf("[CONVERSATION DEBUG] No valid messages found after deserialization for session %s", sessionID)
-							}
-						} else {
-							log.Printf("[CONVERSATION DEBUG] ConversationTurnEvent has no messages for session %s", sessionID)
-						}
-					} else {
-						log.Printf("[CONVERSATION DEBUG] Event type is %s, expected conversation_turn for session %s", agentEvent.Type, sessionID)
-					}
-				} else {
-					log.Printf("[CONVERSATION DEBUG] No conversation_turn event found in database for session %s", sessionID)
-				}
-			}
-		} else {
-			log.Printf("[CONVERSATION DEBUG] No conversation history found for session %s, starting fresh", sessionID)
 		}
+		api.conversationMux.RUnlock()
 
 		// Note: User message is added by StreamWithEvents internally, no need to add it here
-		// --- END: Load conversation history and accumulate for streaming ---
 
 		log.Printf("[AGENT DEBUG] Starting agent processing for query %s", queryID)
 
@@ -5206,21 +4656,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		isWorkflowPhase := req.PhaseID != ""
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 && !isWorkflowPhase {
-			var secretParts []string
+			// Inject secret values as environment variables for shell execution (SECRET_ prefix)
 			for _, s := range allChatSecrets {
-				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+				workspaceEnv["SECRET_"+s.Name] = s.Value
 			}
-			secretPrompt := "\n## Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
+			log.Printf("[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
+
+			// Only inject secret names (not values) into the system prompt — values are in env vars
+			var secretNames []string
+			for _, s := range allChatSecrets {
+				secretNames = append(secretNames, "- `SECRET_"+s.Name+"` → accessible as `os.environ[\"SECRET_"+s.Name+"\"]` in Python or `$SECRET_"+s.Name+"` in bash")
+			}
+			secretPrompt := "\n## Secrets\n\nThe following secrets are available as environment variables in execute_shell_command. Do NOT ask the user for these values — read them from the environment.\n\n" + strings.Join(secretNames, "\n")
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
-				log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into system prompt", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
-			}
-			// Inject secrets as environment variables for shell execution (SECRET_ prefix for whitelist)
-			if workspaceEnv != nil {
-				for _, s := range allChatSecrets {
-					workspaceEnv["SECRET_"+s.Name] = s.Value
-				}
-				log.Printf("[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
+				log.Printf("[SECRETS] Injected %d secret names (not values) into system prompt", len(allChatSecrets))
 			}
 		}
 
@@ -5282,21 +4732,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"query_id": queryID,
 				})
 
-				// Update chat session status to error for timeout
-				if chatSession != nil {
-					updateReq := &database.UpdateChatSessionRequest{
-						Title:     chatSession.Title,     // Preserve existing title
-						AgentMode: chatSession.AgentMode, // Preserve existing agent_mode
-						Status:    "error",
-					}
-					_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
-					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (timeout): %v", err)
-					} else {
-						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status (timeout)", sessionID)
-					}
-				}
-
 				// Update active session status to error
 				api.updateSessionStatus(sessionID, "error")
 
@@ -5343,29 +4778,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.conversationMux.Unlock()
 		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(finalHistory), sessionID)
 
-		// Persist conversation history to DB so follow-up queries can restore it after server restart.
-		// We store a single conversation_turn event with the full message history — this is only
-		// written once at the end of each query (not per-turn) to avoid bloating the DB.
-		if api.chatDB != nil && len(finalHistory) > 0 {
-			turnEvent := unifiedevents.NewConversationTurnEvent(
-				0,  // turn number not critical for restoration
-				"", // question not needed
-				len(finalHistory),
-				false, 0, nil,
-				finalHistory,
-			)
-			agentEvent := &unifiedevents.AgentEvent{
-				Type:      unifiedevents.ConversationTurn,
-				Timestamp: time.Now(),
-				SessionID: sessionID,
-				Data:      turnEvent,
-			}
-			if err := api.chatDB.StoreEvent(context.Background(), sessionID, agentEvent); err != nil {
-				log.Printf("[CONVERSATION DEBUG] Failed to persist conversation history to DB for session %s: %v", sessionID, err)
-			} else {
-				log.Printf("[CONVERSATION DEBUG] Persisted conversation history (%d messages) to DB for session %s", len(finalHistory), sessionID)
-			}
-		}
+		// Persist conversation to user's chat_history/ folder (same format as builder/)
+		api.persistChatConversation(sessionID, req.AgentMode, currentUserID, finalHistory)
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
 		if isWorkflowPhase && workflowPhaseFolder != "" {
@@ -5410,7 +4824,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return fmt.Sprintf("%.3fM", float64(tokens)/1_000_000.0)
 					}
 
-					phaseKey := workflowPhaseID // e.g. "workflow-builder", "planning"
+					phaseKey := workflowPhaseID
 					modelUsage := &orchestrator.ModelTokenUsage{
 						Provider:         finalProvider,
 						InputTokens:      promptTokens,
@@ -5503,11 +4917,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Store agent for reuse by synthetic turns (plan mode and workflow phase chat)
-		// The stored agent retains all tools, prompts, observers, and conversation history
-		// NOTE: isWorkflowPhase is used instead of req.AgentMode because req.AgentMode is
-		// overwritten to "simple" early in handleQuery (line ~2219) for workflow_phase sessions.
-		if req.DelegationMode == "spawn" || isWorkflowPhase {
+		// Store agent for reuse by synthetic turns (multi-agent chat and workflow phase chat).
+		// The stored agent retains all tools, prompts, observers, and conversation history.
+		{
 			api.sessionAgentsMux.Lock()
 			api.sessionAgents[sessionID] = llmAgent
 			api.sessionAgentsMux.Unlock()
@@ -5518,52 +4930,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelMux.Lock()
 		delete(api.agentCancelFuncs, sessionID)
 		api.agentCancelMux.Unlock()
-
-		// --- BEGIN: Persist plan state for session resume ---
-		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
-			planState := api.getOrCreatePlanSessionState(sessionID)
-			if planState.PlanID != "" {
-				// Read existing config, merge plan state, and save
-				if chatSession != nil {
-					existingConfig := &database.ChatSessionConfig{}
-					if cs, err := api.chatDB.GetChatSession(context.Background(), sessionID); err == nil && cs != nil {
-						if cfg, err := cs.GetConfig(); err == nil && cfg != nil {
-							existingConfig = cfg
-						}
-					}
-					existingConfig.PlanID = planState.PlanID
-					existingConfig.PlanFolder = planState.PlanFolder
-					existingConfig.PlanPhase = planState.GetPhase()
-					if configJSON, err := existingConfig.ToJSON(); err == nil {
-						if _, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, &database.UpdateChatSessionRequest{
-							Config: configJSON,
-						}); err != nil {
-							log.Printf("[PLAN STATE] Failed to persist plan state: %v", err)
-						} else {
-							log.Printf("[PLAN STATE] Saved plan state for session %s: plan=%s phase=%s", sessionID, planState.PlanID, planState.GetPhase())
-						}
-					}
-				}
-			}
-		}
-		// --- END: Persist plan state for session resume ---
-
-		// --- BEGIN: Update chat session status to completed ---
-		if chatSession != nil {
-			// Update session status to completed with completion timestamp
-			completedAt := time.Now()
-			updateReq := &database.UpdateChatSessionRequest{
-				Status:      "completed",
-				CompletedAt: &completedAt,
-			}
-			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
-			if err != nil {
-				log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed: %v", err)
-			} else {
-				log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to completed status", sessionID)
-			}
-		}
-		// --- END: Update chat session status to completed ---
 
 		// Update active session status to completed
 		log.Printf("[COMPLETION] Updating session %s status to completed", sessionID)
@@ -5582,12 +4948,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 func (api *StreamingAPI) verifySessionAccess(r *http.Request, sessionID string) error {
 	currentUserID := GetUserIDFromContext(r.Context())
-	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	if err == nil {
-		return nil
-	}
-
-	// Workflow sessions (mode=workflow/workflow_phase) are tracked in-memory only.
 	api.activeSessionsMux.RLock()
 	activeSession, exists := api.activeSessions[sessionID]
 	api.activeSessionsMux.RUnlock()
@@ -5836,10 +5196,8 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Verify session ownership for multi-user isolation
-	currentUserID := GetUserIDFromContext(r.Context())
-	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	if err != nil {
+	// Verify session ownership via the in-memory active sessions map.
+	if err := api.verifySessionAccess(r, sessionID); err != nil {
 		http.Error(w, "Session not found or access denied", http.StatusNotFound)
 		return
 	}
@@ -5911,1221 +5269,6 @@ func createLLMLogger() loggerv2.Logger {
 	return llmLogger
 }
 
-// Chat History API Handlers
-
-// createChatSessionHandler creates a new chat session
-func createChatSessionHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req database.CreateChatSessionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// Get current user ID for session isolation
-		userID := GetUserIDFromContext(r.Context())
-
-		session, err := db.CreateChatSessionWithUser(r.Context(), &req, userID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(session)
-	}
-}
-
-// listChatSessionsHandler lists all chat sessions with pagination
-func listChatSessionsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		limitStr := r.URL.Query().Get("limit")
-		offsetStr := r.URL.Query().Get("offset")
-		presetQueryID := r.URL.Query().Get("preset_query_id")
-		agentMode := r.URL.Query().Get("agent_mode")
-
-		limit := 20
-		offset := 0
-
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil {
-				limit = l
-			}
-		}
-
-		if offsetStr != "" {
-			if o, err := strconv.Atoi(offsetStr); err == nil {
-				offset = o
-			}
-		}
-
-		// Convert preset_query_id to pointer for optional filtering
-		var presetQueryIDPtr *string
-		if presetQueryID != "" {
-			presetQueryIDPtr = &presetQueryID
-		}
-
-		// Convert agent_mode to pointer for optional filtering
-		var agentModePtr *string
-		if agentMode != "" {
-			agentModePtr = &agentMode
-		}
-
-		// Get current user ID for session isolation
-		userID := GetUserIDFromContext(r.Context())
-
-		sessions, total, err := db.ListChatSessionsWithUser(r.Context(), limit, offset, presetQueryIDPtr, agentModePtr, userID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		response := map[string]interface{}{
-			"sessions": sessions,
-			"total":    total,
-			"limit":    limit,
-			"offset":   offset,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// getChatSessionHandler gets a specific chat session
-func getChatSessionHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-
-		// Get current user ID for session isolation
-		userID := GetUserIDFromContext(r.Context())
-
-		session, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(session)
-	}
-}
-
-// updateChatSessionHandler updates a chat session
-func updateChatSessionHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-
-		// Get current user ID for session isolation - verify ownership first
-		userID := GetUserIDFromContext(r.Context())
-		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
-		if err != nil {
-			http.Error(w, "Session not found or access denied", http.StatusNotFound)
-			return
-		}
-
-		var req database.UpdateChatSessionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		session, err := db.UpdateChatSession(r.Context(), sessionID, &req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(session)
-	}
-}
-
-// deleteChatSessionHandler deletes a chat session
-func deleteChatSessionHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-
-		// Get current user ID for session isolation - verify ownership first
-		userID := GetUserIDFromContext(r.Context())
-		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
-		if err != nil {
-			http.Error(w, "Session not found or access denied", http.StatusNotFound)
-			return
-		}
-
-		err = db.DeleteChatSession(r.Context(), sessionID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"message": "Chat session deleted successfully"})
-	}
-}
-
-// convertDBEventToPollingEvent converts a database.Event to events.Event format
-// This is the same conversion used by the polling API to ensure consistency
-func convertDBEventToPollingEvent(dbEvent database.Event, sessionID string) (*events.Event, error) {
-	// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
-	type agentEventWithRawData struct {
-		Type           unifiedevents.EventType `json:"type"`
-		Timestamp      time.Time               `json:"timestamp"`
-		EventIndex     int                     `json:"event_index"`
-		TraceID        string                  `json:"trace_id,omitempty"`
-		SpanID         string                  `json:"span_id,omitempty"`
-		ParentID       string                  `json:"parent_id,omitempty"`
-		CorrelationID  string                  `json:"correlation_id,omitempty"`
-		HierarchyLevel int                     `json:"hierarchy_level"`
-		SessionID      string                  `json:"session_id,omitempty"`
-		Component      string                  `json:"component,omitempty"`
-		Data           json.RawMessage         `json:"data"`
-	}
-
-	var helper agentEventWithRawData
-	if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
-		return nil, fmt.Errorf("failed to parse event: %w", err)
-	}
-
-	// Unmarshal Data field into a map to preserve structure
-	var dataMap map[string]interface{}
-	if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
-		return nil, fmt.Errorf("failed to parse event data: %w", err)
-	}
-
-	// Extract event-specific fields, excluding BaseEventData fields
-	// BaseEventData fields are: timestamp, trace_id, span_id, event_id, parent_id,
-	// is_end_event, correlation_id, hierarchy_level, session_id, component, metadata
-	baseEventDataFields := map[string]bool{
-		"timestamp":       true,
-		"trace_id":        true,
-		"span_id":         true,
-		"event_id":        true,
-		"parent_id":       true,
-		"is_end_event":    true,
-		"correlation_id":  true,
-		"hierarchy_level": true,
-		"session_id":      true,
-		"component":       true,
-		"metadata":        true,
-	}
-
-	actualEventData := make(map[string]interface{})
-	for k, v := range dataMap {
-		// Skip BaseEventData fields - they're already in AgentEvent
-		if !baseEventDataFields[k] {
-			actualEventData[k] = v
-		}
-	}
-
-	// Create AgentEvent with flatEventData that serializes directly as event-specific fields
-	// This ensures event.data.data contains the actual event data (like {content: "..."})
-	agentEvent := unifiedevents.AgentEvent{
-		Type:           helper.Type,
-		Timestamp:      helper.Timestamp,
-		EventIndex:     helper.EventIndex,
-		TraceID:        helper.TraceID,
-		SpanID:         helper.SpanID,
-		ParentID:       helper.ParentID,
-		CorrelationID:  helper.CorrelationID,
-		HierarchyLevel: helper.HierarchyLevel,
-		SessionID:      helper.SessionID,
-		Component:      helper.Component,
-		Data: &flatEventData{
-			eventData: actualEventData,
-			eventType: helper.Type,
-		},
-	}
-
-	return &events.Event{
-		ID:        dbEvent.ID,
-		Type:      dbEvent.EventType,
-		Timestamp: dbEvent.Timestamp,
-		SessionID: sessionID,
-		Data:      &agentEvent,
-	}, nil
-}
-
-// getSessionEventsHandler gets events for a specific session
-// Returns events in the same format as polling API (events.Event[])
-func getSessionEventsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-
-		limitStr := r.URL.Query().Get("limit")
-		offsetStr := r.URL.Query().Get("offset")
-
-		limit := 100
-		offset := 0
-
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil {
-				limit = l
-			}
-		}
-
-		if offsetStr != "" {
-			if o, err := strconv.Atoi(offsetStr); err == nil {
-				offset = o
-			}
-		}
-
-		// Cap limit to prevent slow queries and large responses (max 500 events per request)
-		const maxLimit = 500
-		if limit <= 0 || limit > maxLimit {
-			limit = maxLimit
-		}
-
-		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events", sessionID, len(dbEvents))
-
-		// Convert database events to polling events format using shared helper
-		convertedEvents := make([]events.Event, 0, len(dbEvents))
-		parseErrors := 0
-		for i, dbEvent := range dbEvents {
-			convertedEvent, err := convertDBEventToPollingEvent(dbEvent, sessionID)
-			if err != nil {
-				parseErrors++
-				if i < 3 {
-					log.Printf("[CHAT_HISTORY ERROR] Failed to convert event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
-				}
-				continue
-			}
-
-			convertedEvents = append(convertedEvents, *convertedEvent)
-		}
-
-		// Match the polling API's DB-fallback behavior:
-		// persisted DB events often have EventIndex=0, so assign stable sequential
-		// indices on restore. Without this, sessions restored from chat-history have a
-		// different ordering shape than sessions restored through the live polling path.
-		for i := range convertedEvents {
-			if convertedEvents[i].Data != nil && convertedEvents[i].Data.EventIndex == 0 {
-				convertedEvents[i].Data.EventIndex = i
-			}
-		}
-
-		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), parseErrors)
-
-		// Get total count using COUNT(*) - O(1) with index, avoids fetching all events
-		total := offset + len(dbEvents)
-		if count, err := db.CountEventsBySession(r.Context(), sessionID); err == nil {
-			total = count
-		}
-
-		response := map[string]interface{}{
-			"events": convertedEvents,
-			"total":  total,
-			"limit":  limit,
-			"offset": offset,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// searchEventsHandler searches events with filters
-func searchEventsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var filter database.EventFilter
-
-		// Parse query parameters
-		if sessionID := r.URL.Query().Get("session_id"); sessionID != "" {
-			filter.SessionID = sessionID
-		}
-
-		if eventType := r.URL.Query().Get("event_type"); eventType != "" {
-			filter.EventType = unifiedevents.EventType(eventType)
-		}
-
-		if fromDateStr := r.URL.Query().Get("from_date"); fromDateStr != "" {
-			if fromDate, err := time.Parse(time.RFC3339, fromDateStr); err == nil {
-				filter.FromDate = fromDate
-			}
-		}
-
-		if toDateStr := r.URL.Query().Get("to_date"); toDateStr != "" {
-			if toDate, err := time.Parse(time.RFC3339, toDateStr); err == nil {
-				filter.ToDate = toDate
-			}
-		}
-
-		limitStr := r.URL.Query().Get("limit")
-		offsetStr := r.URL.Query().Get("offset")
-
-		limit := 100
-		offset := 0
-
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil {
-				limit = l
-			}
-		}
-
-		if offsetStr != "" {
-			if o, err := strconv.Atoi(offsetStr); err == nil {
-				offset = o
-			}
-		}
-
-		filter.Limit = limit
-		filter.Offset = offset
-
-		req := &database.GetChatHistoryRequest{
-			SessionID: filter.SessionID,
-			EventType: string(filter.EventType),
-			FromDate:  filter.FromDate,
-			ToDate:    filter.ToDate,
-			Limit:     filter.Limit,
-			Offset:    filter.Offset,
-		}
-
-		response, err := db.GetEvents(r.Context(), req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// chatHistoryHealthCheckHandler health check for chat history
-func chatHistoryHealthCheckHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := db.Ping(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{
-				"status": "unhealthy",
-				"error":  err.Error(),
-			})
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "healthy",
-			"service": "chat-history",
-		})
-	}
-}
-
-// getAllSessionCostsHandler returns aggregate costs across all user's chat sessions
-func getAllSessionCostsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID := GetUserIDFromContext(r.Context())
-		agentMode := r.URL.Query().Get("agent_mode")
-		limitStr := r.URL.Query().Get("limit")
-
-		limit := 100
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-				limit = l
-			}
-		}
-
-		var agentModePtr *string
-		if agentMode != "" {
-			agentModePtr = &agentMode
-		}
-
-		sessions, _, err := db.ListChatSessionsWithUser(r.Context(), limit, 0, nil, agentModePtr, userID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to list sessions: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Collect all session IDs for batch query
-		sessionIDs := make([]string, len(sessions))
-		sessionMap := make(map[string]*database.ChatHistorySummary, len(sessions))
-		for i, s := range sessions {
-			sessionIDs[i] = s.SessionID
-			sCopy := s
-			sessionMap[s.SessionID] = &sCopy
-		}
-
-		// Batch fetch token_usage + delegation_start events for ALL sessions in one query
-		allEvents, err := batchGetCostEvents(r.Context(), db, sessionIDs)
-		if err != nil {
-			log.Printf("[COSTS] Error batch fetching cost events: %v", err)
-			// Fall through with empty events
-		}
-
-		aggregate := AggregateCosts{
-			ByModel: make(map[string]*ChatModelUsage),
-			ByAgent: make(map[string]*ChatModelUsage),
-		}
-
-		var sessionCosts []SessionCostSummary
-
-		for _, session := range sessions {
-			sessEvents := allEvents[session.SessionID]
-
-			// Build delegation name map from delegation_start events
-			delegationNameMap := make(map[string]string)
-			for _, ev := range sessEvents {
-				if ev.eventType == "delegation_start" {
-					delegationNameMap[ev.delegationID] = ev.bgAgentID
-				}
-			}
-
-			// Determine display mode
-			displayMode := session.AgentMode
-			if session.AgentMode == "simple" {
-				if cfg, err := database.ChatSessionConfigFromJSON(session.Config); err == nil && cfg != nil && (cfg.DelegationMode == "spawn" || cfg.DelegationMode == "plan") {
-					displayMode = "multi-agent"
-				}
-			}
-
-			summary := SessionCostSummary{
-				SessionID: session.SessionID,
-				Title:     session.Title,
-				AgentMode: displayMode,
-				CreatedAt: session.CreatedAt,
-				Status:    session.Status,
-				ByModel:   make(map[string]*ChatModelUsage),
-				ByAgent:   make(map[string]*ChatModelUsage),
-			}
-
-			for _, ev := range sessEvents {
-				if ev.eventType != "token_usage" {
-					continue
-				}
-				tud := ev.tokenData
-
-				// Resolve delegation component name
-				if tud.correlationID != "" {
-					if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
-						tud.Component = agentName
-					}
-				}
-
-				modelUsage := getOrCreateModelUsage(summary.ByModel, tud.ModelID)
-				accumulateUsage(modelUsage, &tud)
-
-				if tud.Component != "" {
-					agentUsage := getOrCreateModelUsage(summary.ByAgent, tud.Component)
-					accumulateUsage(agentUsage, &tud)
-				}
-
-				summary.TotalCost += tud.TotalCost
-				summary.TotalInput += tud.PromptTokens
-				summary.TotalOutput += tud.CompletionTokens
-				summary.TotalCalls++
-			}
-
-			sessionCosts = append(sessionCosts, summary)
-
-			aggregate.TotalCost += summary.TotalCost
-			aggregate.TotalInput += summary.TotalInput
-			aggregate.TotalOutput += summary.TotalOutput
-			aggregate.TotalCalls += summary.TotalCalls
-
-			for modelID, usage := range summary.ByModel {
-				aggModel := getOrCreateModelUsage(aggregate.ByModel, modelID)
-				mergeUsage(aggModel, usage)
-			}
-			for agentName, usage := range summary.ByAgent {
-				aggAgent := getOrCreateModelUsage(aggregate.ByAgent, agentName)
-				mergeUsage(aggAgent, usage)
-			}
-		}
-
-		aggregate.TotalSessions = len(sessionCosts)
-
-		if sessionCosts == nil {
-			sessionCosts = []SessionCostSummary{}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UserCostsResponse{
-			Sessions:  sessionCosts,
-			Aggregate: aggregate,
-		})
-	}
-}
-
-// getSessionCostsHandler returns detailed cost breakdown for a single session
-func getSessionCostsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-		if sessionID == "" {
-			http.Error(w, "session_id is required", http.StatusBadRequest)
-			return
-		}
-
-		userID := GetUserIDFromContext(r.Context())
-
-		session, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
-		if err != nil {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
-
-		// Use batch query for single session (same optimized path)
-		allEvents, err := batchGetCostEvents(r.Context(), db, []string{sessionID})
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to get token events: %v", err), http.StatusInternalServerError)
-			return
-		}
-		sessEvents := allEvents[sessionID]
-
-		// Build delegation name map
-		delegationNameMap := make(map[string]string)
-		for _, ev := range sessEvents {
-			if ev.eventType == "delegation_start" {
-				delegationNameMap[ev.delegationID] = ev.bgAgentID
-			}
-		}
-
-		detail := SessionCostDetail{
-			SessionID:       session.SessionID,
-			Title:           session.Title,
-			CreatedAt:       session.CreatedAt,
-			ByModel:         make(map[string]*ChatModelUsage),
-			ByTurnAndModel:  make(map[string]map[string]*ChatModelUsage),
-			ByAgentAndModel: make(map[string]map[string]*ChatModelUsage),
-		}
-
-		for _, ev := range sessEvents {
-			if ev.eventType != "token_usage" {
-				continue
-			}
-			tud := ev.tokenData
-
-			// Resolve delegation component name
-			if tud.correlationID != "" {
-				if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
-					tud.Component = agentName
-				}
-			}
-
-			modelUsage := getOrCreateModelUsage(detail.ByModel, tud.ModelID)
-			accumulateUsage(modelUsage, &tud)
-
-			turnKey := fmt.Sprintf("turn-%d", tud.Turn)
-			if detail.ByTurnAndModel[turnKey] == nil {
-				detail.ByTurnAndModel[turnKey] = make(map[string]*ChatModelUsage)
-			}
-			turnModelUsage := getOrCreateModelUsage(detail.ByTurnAndModel[turnKey], tud.ModelID)
-			accumulateUsage(turnModelUsage, &tud)
-
-			agentKey := tud.Component
-			if agentKey == "" {
-				agentKey = "main"
-			}
-			if detail.ByAgentAndModel[agentKey] == nil {
-				detail.ByAgentAndModel[agentKey] = make(map[string]*ChatModelUsage)
-			}
-			agentModelUsage := getOrCreateModelUsage(detail.ByAgentAndModel[agentKey], tud.ModelID)
-			accumulateUsage(agentModelUsage, &tud)
-
-			detail.TotalCost += tud.TotalCost
-			detail.TotalInput += tud.PromptTokens
-			detail.TotalOutput += tud.CompletionTokens
-			detail.TotalCalls++
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(detail)
-	}
-}
-
-// getDelegationLogsHandler returns delegation log entries with costs for a session (mux handler)
-func getDelegationLogsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-		if sessionID == "" {
-			http.Error(w, "session_id is required", http.StatusBadRequest)
-			return
-		}
-
-		// Check session exists
-		userID := GetUserIDFromContext(r.Context())
-		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
-		if err != nil {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
-
-		// Get all events for this session
-		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, 10000, 0)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to get events: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Also fetch sub-agent session events
-		sqlDB := db.GetDB()
-		var subSessionEvents []database.Event
-		if sqlDB != nil {
-			subSessionPrefix := sessionID + "-sub-"
-			query := `SELECT session_id FROM chat_sessions WHERE session_id LIKE ?`
-			if isPostgresDB(db) {
-				query = `SELECT session_id FROM chat_sessions WHERE session_id LIKE $1`
-			}
-			rows, err := sqlDB.QueryContext(r.Context(),
-				query,
-				subSessionPrefix+"%",
-			)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var subSessionID string
-					if err := rows.Scan(&subSessionID); err != nil {
-						continue
-					}
-					subEvents, err := db.GetEventsBySession(r.Context(), subSessionID, 10000, 0)
-					if err == nil {
-						subSessionEvents = append(subSessionEvents, subEvents...)
-					}
-				}
-			}
-		}
-
-		allEvents := append(dbEvents, subSessionEvents...)
-
-		// Build delegation entries from start/end events and aggregate token_usage
-		delegationMap := make(map[string]*DelegationLogEntry)
-		var delegationOrder []string
-
-		for _, dbEvent := range allEvents {
-			var wrapper struct {
-				CorrelationID string          `json:"correlation_id"`
-				Timestamp     time.Time       `json:"timestamp"`
-				Data          json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
-				continue
-			}
-
-			switch dbEvent.EventType {
-			case "delegation_start":
-				var startData struct {
-					DelegationID      string   `json:"delegation_id"`
-					Depth             int      `json:"depth"`
-					Instruction       string   `json:"instruction"`
-					ReasoningLevel    string   `json:"reasoning_level"`
-					ModelID           string   `json:"model_id"`
-					ToolMode          string   `json:"tool_mode"`
-					Servers           []string `json:"servers"`
-					BackgroundAgentID string   `json:"background_agent_id"`
-					Timestamp         string   `json:"timestamp"`
-				}
-				if err := json.Unmarshal(wrapper.Data, &startData); err != nil {
-					continue
-				}
-
-				entry := &DelegationLogEntry{
-					DelegationID:      startData.DelegationID,
-					Instruction:       startData.Instruction,
-					ReasoningLevel:    startData.ReasoningLevel,
-					ModelID:           startData.ModelID,
-					ToolMode:          startData.ToolMode,
-					Servers:           startData.Servers,
-					BackgroundAgentID: startData.BackgroundAgentID,
-					Depth:             startData.Depth,
-					Status:            "running",
-					StartTime:         startData.Timestamp,
-					TokenUsage:        make(map[string]*ChatModelUsage),
-				}
-				delegationMap[startData.DelegationID] = entry
-				delegationOrder = append(delegationOrder, startData.DelegationID)
-
-			case "delegation_end":
-				var endData struct {
-					DelegationID string `json:"delegation_id"`
-					Result       string `json:"result"`
-					Error        string `json:"error"`
-					Success      bool   `json:"success"`
-					Timestamp    string `json:"timestamp"`
-					InputTokens  int64  `json:"input_tokens"`
-					OutputTokens int64  `json:"output_tokens"`
-					ToolCalls    int64  `json:"tool_calls"`
-					Duration     string `json:"duration"`
-				}
-				if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
-					continue
-				}
-
-				entry, ok := delegationMap[endData.DelegationID]
-				if !ok {
-					continue
-				}
-
-				if endData.Success {
-					entry.Status = "completed"
-				} else {
-					entry.Status = "failed"
-				}
-				entry.EndTime = endData.Timestamp
-				entry.Duration = endData.Duration
-				entry.Result = endData.Result
-				entry.Error = endData.Error
-				entry.InputTokens = endData.InputTokens
-				entry.OutputTokens = endData.OutputTokens
-				entry.ToolCalls = endData.ToolCalls
-
-			case "token_usage":
-				correlationID := wrapper.CorrelationID
-				if correlationID == "" {
-					continue
-				}
-
-				entry, ok := delegationMap[correlationID]
-				if !ok {
-					continue
-				}
-
-				tud, err := parseTokenUsageEvent(dbEvent.EventData)
-				if err != nil {
-					continue
-				}
-
-				modelUsage := getOrCreateModelUsage(entry.TokenUsage, tud.ModelID)
-				accumulateUsage(modelUsage, &tud)
-				entry.TotalCostUSD += tud.TotalCost
-			}
-		}
-
-		// Build ordered response
-		response := DelegationLogsResponse{
-			Delegations: make([]DelegationLogEntry, 0, len(delegationOrder)),
-			ByModel:     make(map[string]*ChatModelUsage),
-		}
-
-		for _, id := range delegationOrder {
-			entry := delegationMap[id]
-			response.Delegations = append(response.Delegations, *entry)
-			response.TotalCost += entry.TotalCostUSD
-			response.TotalInput += entry.InputTokens
-			response.TotalOutput += entry.OutputTokens
-			response.TotalCalls++
-
-			for modelID, usage := range entry.TokenUsage {
-				aggModel := getOrCreateModelUsage(response.ByModel, modelID)
-				mergeUsage(aggModel, usage)
-			}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// getAllDelegationLogsHandler returns delegation logs grouped by session with main agent + sub-agent breakdown
-func getAllDelegationLogsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID := GetUserIDFromContext(r.Context())
-		limitStr := r.URL.Query().Get("limit")
-
-		limit := 50
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-				limit = l
-			}
-		}
-
-		sessions, _, err := db.ListChatSessionsWithUser(r.Context(), limit, 0, nil, nil, userID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to list sessions: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Build session info map and filter to multi-agent sessions
-		type sessionInfo struct {
-			summary database.ChatHistorySummary
-		}
-		var multiAgentSessions []sessionInfo
-		for _, s := range sessions {
-			cfg, err := database.ChatSessionConfigFromJSON(s.Config)
-			if err == nil && cfg != nil && (cfg.DelegationMode == "spawn" || cfg.DelegationMode == "plan") {
-				multiAgentSessions = append(multiAgentSessions, sessionInfo{summary: s})
-			}
-		}
-
-		response := AllDelegationLogsResponse{
-			Sessions: make([]SessionDelegationLogs, 0),
-			ByModel:  make(map[string]*ChatModelUsage),
-		}
-
-		for _, si := range multiAgentSessions {
-			sid := si.summary.SessionID
-			dbEvents, err := db.GetEventsBySession(r.Context(), sid, 10000, 0)
-			if err != nil {
-				continue
-			}
-
-			sessLog := SessionDelegationLogs{
-				SessionID:   sid,
-				Title:       si.summary.Title,
-				CreatedAt:   si.summary.CreatedAt,
-				Status:      si.summary.Status,
-				Delegations: make([]DelegationLogEntry, 0),
-				ByModel:     make(map[string]*ChatModelUsage),
-				MainAgent: AgentCostSummary{
-					Name:    "Main Agent",
-					ByModel: make(map[string]*ChatModelUsage),
-				},
-			}
-
-			delegationMap := make(map[string]*DelegationLogEntry)
-			var delegationOrder []string
-			// Track which correlation_ids belong to delegations
-			delegationCorrelations := make(map[string]bool)
-
-			for _, dbEvent := range dbEvents {
-				var wrapper struct {
-					CorrelationID string          `json:"correlation_id"`
-					Data          json.RawMessage `json:"data"`
-				}
-				if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
-					continue
-				}
-
-				switch dbEvent.EventType {
-				case "delegation_start":
-					var startData struct {
-						DelegationID      string   `json:"delegation_id"`
-						Depth             int      `json:"depth"`
-						Instruction       string   `json:"instruction"`
-						ReasoningLevel    string   `json:"reasoning_level"`
-						ModelID           string   `json:"model_id"`
-						ToolMode          string   `json:"tool_mode"`
-						Servers           []string `json:"servers"`
-						BackgroundAgentID string   `json:"background_agent_id"`
-						Timestamp         string   `json:"timestamp"`
-					}
-					if err := json.Unmarshal(wrapper.Data, &startData); err != nil {
-						continue
-					}
-					entry := &DelegationLogEntry{
-						DelegationID:      startData.DelegationID,
-						SessionID:         sid,
-						Instruction:       startData.Instruction,
-						ReasoningLevel:    startData.ReasoningLevel,
-						ModelID:           startData.ModelID,
-						ToolMode:          startData.ToolMode,
-						Servers:           startData.Servers,
-						BackgroundAgentID: startData.BackgroundAgentID,
-						Depth:             startData.Depth,
-						Status:            "running",
-						StartTime:         startData.Timestamp,
-						TokenUsage:        make(map[string]*ChatModelUsage),
-					}
-					delegationMap[startData.DelegationID] = entry
-					delegationOrder = append(delegationOrder, startData.DelegationID)
-					delegationCorrelations[startData.DelegationID] = true
-
-				case "delegation_end":
-					var endData struct {
-						DelegationID string `json:"delegation_id"`
-						Result       string `json:"result"`
-						Error        string `json:"error"`
-						Success      bool   `json:"success"`
-						Timestamp    string `json:"timestamp"`
-						InputTokens  int64  `json:"input_tokens"`
-						OutputTokens int64  `json:"output_tokens"`
-						ToolCalls    int64  `json:"tool_calls"`
-						Duration     string `json:"duration"`
-					}
-					if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
-						continue
-					}
-					entry, ok := delegationMap[endData.DelegationID]
-					if !ok {
-						continue
-					}
-					if endData.Success {
-						entry.Status = "completed"
-					} else {
-						entry.Status = "failed"
-					}
-					entry.EndTime = endData.Timestamp
-					entry.Duration = endData.Duration
-					entry.Result = endData.Result
-					entry.Error = endData.Error
-					entry.InputTokens = endData.InputTokens
-					entry.OutputTokens = endData.OutputTokens
-					entry.ToolCalls = endData.ToolCalls
-
-				case "token_usage":
-					tud, err := parseTokenUsageEvent(dbEvent.EventData)
-					if err != nil {
-						continue
-					}
-
-					correlationID := wrapper.CorrelationID
-					if correlationID != "" {
-						if entry, ok := delegationMap[correlationID]; ok {
-							// Sub-agent token usage
-							modelUsage := getOrCreateModelUsage(entry.TokenUsage, tud.ModelID)
-							accumulateUsage(modelUsage, &tud)
-							entry.TotalCostUSD += tud.TotalCost
-							continue
-						}
-					}
-
-					// Main agent token usage (no correlation_id or doesn't match a delegation)
-					// NOTE: Main agent emits CUMULATIVE token_usage events (one per user turn).
-					// Each event contains the running total, so we REPLACE to avoid double-counting.
-					mainModel := getOrCreateModelUsage(sessLog.MainAgent.ByModel, tud.ModelID)
-					replaceUsage(mainModel, &tud)
-					sessLog.MainAgent.InputTokens = int64(tud.PromptTokens)
-					sessLog.MainAgent.OutputTokens = int64(tud.CompletionTokens)
-					sessLog.MainAgent.TotalCostUSD = tud.TotalCost
-					sessLog.MainAgent.LLMCalls++
-				}
-			}
-
-			// Build session-level aggregates
-			for _, id := range delegationOrder {
-				entry := delegationMap[id]
-				sessLog.Delegations = append(sessLog.Delegations, *entry)
-				for modelID, usage := range entry.TokenUsage {
-					aggModel := getOrCreateModelUsage(sessLog.ByModel, modelID)
-					mergeUsage(aggModel, usage)
-				}
-			}
-
-			// Add main agent costs to session totals
-			for modelID, usage := range sessLog.MainAgent.ByModel {
-				aggModel := getOrCreateModelUsage(sessLog.ByModel, modelID)
-				mergeUsage(aggModel, usage)
-			}
-
-			// Compute session totals
-			for _, usage := range sessLog.ByModel {
-				sessLog.TotalCost += usage.TotalCost
-				sessLog.TotalInput += int64(usage.InputTokens)
-				sessLog.TotalOutput += int64(usage.OutputTokens)
-				sessLog.TotalCalls += int64(usage.LLMCallCount)
-			}
-
-			// Only include sessions that have delegations or main agent costs
-			if len(sessLog.Delegations) > 0 || sessLog.MainAgent.LLMCalls > 0 {
-				response.Sessions = append(response.Sessions, sessLog)
-				response.TotalCost += sessLog.TotalCost
-				response.TotalInput += sessLog.TotalInput
-				response.TotalOutput += sessLog.TotalOutput
-				response.TotalCalls += sessLog.TotalCalls
-				for modelID, usage := range sessLog.ByModel {
-					aggModel := getOrCreateModelUsage(response.ByModel, modelID)
-					mergeUsage(aggModel, usage)
-				}
-			}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// getDelegationEventsHandler returns events for a specific delegation (drill-down, mux handler)
-func getDelegationEventsHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		sessionID := vars["session_id"]
-		delegationID := vars["delegation_id"]
-
-		if sessionID == "" || delegationID == "" {
-			http.Error(w, "session_id and delegation_id are required", http.StatusBadRequest)
-			return
-		}
-
-		limitStr := r.URL.Query().Get("limit")
-		offsetStr := r.URL.Query().Get("offset")
-
-		limit := 500
-		if limitStr != "" {
-			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-				limit = l
-			}
-		}
-		offset := 0
-		if offsetStr != "" {
-			if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-				offset = o
-			}
-		}
-
-		// Query events with matching correlation_id
-		dbEvents, err := db.GetEventsByCorrelationID(r.Context(), sessionID, delegationID, limit, offset)
-		if err != nil || len(dbEvents) == 0 {
-			// Fallback: try sub-agent session
-			subSessionID := sessionID + "-sub-" + delegationID
-			dbEvents, err = db.GetEventsBySession(r.Context(), subSessionID, limit, offset)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("failed to get delegation events: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		type rawEvent struct {
-			ID        string          `json:"id"`
-			Type      string          `json:"type"`
-			Timestamp time.Time       `json:"timestamp"`
-			SessionID string          `json:"session_id"`
-			Data      json.RawMessage `json:"data"`
-		}
-
-		events := make([]rawEvent, 0, len(dbEvents))
-		for _, dbEvent := range dbEvents {
-			events = append(events, rawEvent{
-				ID:        dbEvent.ID,
-				Type:      dbEvent.EventType,
-				Timestamp: dbEvent.Timestamp,
-				SessionID: sessionID,
-				Data:      dbEvent.EventData,
-			})
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"events": events,
-			"total":  len(events),
-		})
-	}
-}
-
-// costEvent is a lightweight struct for batch cost queries (holds either token_usage or delegation_start data)
-type costEvent struct {
-	eventType    string         // "token_usage" or "delegation_start"
-	tokenData    tokenUsageData // populated for token_usage events
-	delegationID string         // populated for delegation_start events
-	bgAgentID    string         // populated for delegation_start events
-}
-
-// batchGetCostEvents fetches token_usage and delegation_start events for multiple sessions in a single query
-func batchGetCostEvents(ctx context.Context, db database.Database, sessionIDs []string) (map[string][]costEvent, error) {
-	result := make(map[string][]costEvent)
-	if len(sessionIDs) == 0 {
-		return result, nil
-	}
-
-	sqlDB := db.GetDB()
-	if sqlDB == nil {
-		return result, fmt.Errorf("no database connection")
-	}
-
-	// Resolve session UUIDs to internal IDs
-	// Build placeholder string for IN clause
-	placeholders := make([]string, len(sessionIDs))
-	args := make([]interface{}, len(sessionIDs))
-	for i, sid := range sessionIDs {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = sid
-	}
-	inClause := "(" + strings.Join(placeholders, ",") + ")"
-
-	// Step 1: Resolve session_id UUIDs -> internal hex IDs
-	resolveQuery := `SELECT id, session_id FROM chat_sessions WHERE session_id IN ` + inClause
-	rows, err := sqlDB.QueryContext(ctx, resolveQuery, args...)
-	if err != nil {
-		return result, fmt.Errorf("failed to resolve session IDs: %w", err)
-	}
-
-	internalToUUID := make(map[string]string) // internal hex ID -> UUID
-	internalIDs := make([]string, 0, len(sessionIDs))
-	for rows.Next() {
-		var internalID, uuid string
-		if err := rows.Scan(&internalID, &uuid); err != nil {
-			continue
-		}
-		internalToUUID[internalID] = uuid
-		internalIDs = append(internalIDs, internalID)
-	}
-	rows.Close()
-
-	if len(internalIDs) == 0 {
-		return result, nil
-	}
-
-	// Step 2: Batch query events filtered by event_type
-	placeholders2 := make([]string, len(internalIDs))
-	args2 := make([]interface{}, len(internalIDs)+2)
-	args2[0] = "token_usage"
-	args2[1] = "delegation_start"
-	for i, id := range internalIDs {
-		placeholders2[i] = fmt.Sprintf("$%d", i+3)
-		args2[i+2] = id
-	}
-	inClause2 := "(" + strings.Join(placeholders2, ",") + ")"
-
-	eventsQuery := `SELECT chat_session_id, event_type, event_data FROM events
-		WHERE event_type IN ($1, $2) AND chat_session_id IN ` + inClause2 + `
-		ORDER BY timestamp ASC`
-
-	eventRows, err := sqlDB.QueryContext(ctx, eventsQuery, args2...)
-	if err != nil {
-		return result, fmt.Errorf("failed to batch query events: %w", err)
-	}
-	defer eventRows.Close()
-
-	for eventRows.Next() {
-		var chatSessionID, eventType, eventDataJSON string
-		if err := eventRows.Scan(&chatSessionID, &eventType, &eventDataJSON); err != nil {
-			continue
-		}
-
-		// Map internal ID back to UUID
-		uuid, ok := internalToUUID[chatSessionID]
-		if !ok {
-			continue
-		}
-
-		eventData := json.RawMessage(eventDataJSON)
-
-		if eventType == "token_usage" {
-			tud, err := parseTokenUsageEvent(eventData)
-			if err != nil {
-				continue
-			}
-			result[uuid] = append(result[uuid], costEvent{
-				eventType: "token_usage",
-				tokenData: tud,
-			})
-		} else if eventType == "delegation_start" {
-			var wrapper struct {
-				Data json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal(eventData, &wrapper); err != nil {
-				continue
-			}
-			var delegData struct {
-				DelegationID      string `json:"delegation_id"`
-				BackgroundAgentID string `json:"background_agent_id"`
-			}
-			if err := json.Unmarshal(wrapper.Data, &delegData); err != nil {
-				continue
-			}
-			result[uuid] = append(result[uuid], costEvent{
-				eventType:    "delegation_start",
-				delegationID: delegData.DelegationID,
-				bgAgentID:    delegData.BackgroundAgentID,
-			})
-		}
-	}
-
-	return result, nil
-}
-
 // --- ACTIVE SESSION MANAGEMENT ---
 
 // trackActiveSession tracks a new active session
@@ -7157,53 +5300,15 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 	}
 }
 
-// updateSessionStatus updates the status of an active session
+// updateSessionStatus updates the status of an active session in memory.
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
-
-	skipDBUpdate := isScheduledSession(sessionID)
 	if session, exists := api.activeSessions[sessionID]; exists {
 		session.Status = status
 		session.LastActivity = time.Now()
-		if session.AgentMode == "workflow" || session.AgentMode == "workflow_phase" {
-			skipDBUpdate = true
-		}
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
-	} else {
-		log.Printf("[ACTIVE_SESSION] Session %s not found in activeSessions, updating database only", sessionID)
 	}
-
-	// Update the database for non-workflow sessions
-	// Workflow sessions (sched_*, workflow/workflow_phase) don't have DB chat session records
-	go func() {
-		if skipDBUpdate {
-			return
-		}
-
-		ctx := context.Background()
-		var completedAt *time.Time
-		if status == "completed" {
-			now := time.Now()
-			completedAt = &now
-		}
-
-		log.Printf("[ACTIVE_SESSION] Updating database for session %s status to: %s", sessionID, status)
-		_, err := api.chatDB.UpdateChatSession(ctx, sessionID, &database.UpdateChatSessionRequest{
-			Status:      status,
-			CompletedAt: completedAt,
-		})
-		if err != nil {
-			log.Printf("[ACTIVE_SESSION] Failed to update database for session %s: %v", sessionID, err)
-		} else {
-			log.Printf("[ACTIVE_SESSION] Successfully updated database for session %s status to: %s", sessionID, status)
-		}
-
-		// NOTE: Completed sessions are NOT removed from activeSessions map immediately.
-		// They remain in the map so getAllActiveSessions can include them in the 30-minute
-		// window for page refresh restoration. The cleanupInactiveSessions goroutine will
-		// eventually remove old sessions.
-	}()
 }
 
 // handleDismissSession marks a session as dismissed so it won't be auto-restored on page refresh.
@@ -7218,23 +5323,12 @@ func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Update in-memory status
 	api.activeSessionsMux.Lock()
 	if session, exists := api.activeSessions[sessionID]; exists {
 		session.Status = "dismissed"
 		session.LastActivity = time.Now()
 	}
 	api.activeSessionsMux.Unlock()
-
-	// Also update DB so the dismiss survives backend restarts.
-	// The DB fallback in handleGetActiveSessions checks status — "dismissed" won't match.
-	if api.chatDB != nil {
-		if _, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, &database.UpdateChatSessionRequest{
-			Status: "dismissed",
-		}); err != nil {
-			log.Printf("[ACTIVE_SESSION] Failed to dismiss session %s in DB: %v", sessionID, err)
-		}
-	}
 
 	log.Printf("[ACTIVE_SESSION] Dismissed session %s", sessionID)
 	w.WriteHeader(http.StatusOK)
@@ -7244,45 +5338,11 @@ func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// planEventEmitter implements virtualtools.PlanEventEmitter to emit workspace_file_operation events
-// when delegation plan files are saved, so the workspace sidebar highlights them.
-type planEventEmitter struct {
-	eventStore *events.EventStore
-	sessionID  string
-	chatDB     database.Database
-}
-
-func (e *planEventEmitter) EmitFileEvent(filepath string) {
-	now := time.Now()
-	eventData := unifiedevents.NewWorkspaceFileOperationEvent("update", filepath, virtualtools.PlanFileFolderPath, 0, "delegation")
-	event := events.Event{
-		ID:        fmt.Sprintf("%s_plan_file_%d", e.sessionID, now.UnixNano()),
-		Type:      "workspace_file_operation",
-		Timestamp: now,
-		SessionID: e.sessionID,
-		Data: &unifiedevents.AgentEvent{
-			Type:      unifiedevents.WorkspaceFileOperation,
-			Timestamp: now,
-			SessionID: e.sessionID,
-			Component: "delegation",
-			Data:      eventData,
-		},
-	}
-	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
-			log.Printf("[DELEGATION PLAN] Failed to persist event to DB: %v", err)
-		}
-	}
-	log.Printf("[DELEGATION PLAN] Emitted workspace_file_operation event for plan file: %s (session: %s)", filepath, e.sessionID)
-}
-
 // sessionEventEmitter implements virtualtools.SessionEventEmitter to emit
-// blocking_human_feedback events for the confirm_plan_execution tool.
+// blocking_human_feedback events for human-input tools.
 type sessionEventEmitter struct {
 	eventStore *events.EventStore
 	sessionID  string
-	chatDB     database.Database
 }
 
 func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, contextText string, yesNoOnly bool, yesLabel, noLabel string, options ...string) {
@@ -7315,44 +5375,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
-			log.Printf("[PLAN APPROVAL] Failed to persist event to DB: %v", err)
-		}
-	}
 	log.Printf("[PLAN APPROVAL] Emitted blocking_human_feedback event for plan approval (request_id: %s, session: %s)", requestID, e.sessionID)
-}
-
-func (e *sessionEventEmitter) EmitPlanApproval(question, contextText, yesLabel string) {
-	now := time.Now()
-	eventData := &orchEvents.PlanApprovalEvent{
-		BaseEventData: unifiedevents.BaseEventData{
-			Timestamp: now,
-		},
-		Question: question,
-		Context:  contextText,
-		YesLabel: yesLabel,
-	}
-	event := events.Event{
-		ID:        fmt.Sprintf("%s_plan_approval_%d", e.sessionID, now.UnixNano()),
-		Type:      "plan_approval",
-		Timestamp: now,
-		SessionID: e.sessionID,
-		Data: &unifiedevents.AgentEvent{
-			Type:      orchEvents.PlanApproval,
-			Timestamp: now,
-			SessionID: e.sessionID,
-			Component: "delegation",
-			Data:      eventData,
-		},
-	}
-	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
-			log.Printf("[PLAN APPROVAL] Failed to persist plan_approval to DB: %v", err)
-		}
-	}
-	log.Printf("[PLAN APPROVAL] Emitted plan_approval event (session: %s)", e.sessionID)
 }
 
 func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
@@ -7387,11 +5410,6 @@ func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, quest
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
-			log.Printf("[HUMAN QUESTIONS] Failed to persist event to DB: %v", err)
-		}
-	}
 	log.Printf("[HUMAN QUESTIONS] Emitted blocking_human_questions event (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
@@ -7476,13 +5494,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 	}
 
-	// Resolve tool_mode for sub-agent
-	toolMode, _ := ctx.Value(virtualtools.ToolModeKey).(string)
-	if toolMode == "" && loadedTemplate != nil && loadedTemplate.Frontmatter.DefaultToolMode != "" {
-		toolMode = loadedTemplate.Frontmatter.DefaultToolMode
-		log.Printf("[DELEGATION] Using template default tool_mode: %s", toolMode)
-	}
-
 	// Build server name — use delegation-specific servers if provided, otherwise all parent servers
 	var serverName string
 	var serversList []string
@@ -7498,13 +5509,14 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		serversList = parentReq.Servers
 	}
 
-	useCodeExec := toolMode == "code_execution"
+	// Sub-agents always run in code_execution mode (Python harness calling MCP tools via HTTP API).
+	useCodeExec := true
 
 	// Extract background agent ID if this delegation was spawned by a background agent
 	backgroundAgentID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
 
 	// Emit delegation_start event (after model and server resolution so we can include all info)
-	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList, backgroundAgentID, agentTemplateName)
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, serversList, backgroundAgentID, agentTemplateName)
 
 	// Load merged API keys (env + workspace)
 	apiKeys := MergedProviderAPIKeys(ctx)
@@ -7677,47 +5689,38 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		return "", fmt.Errorf("failed to create sub-agent: %w", err)
 	}
 
-	// Add event observers to sub-agent so its events appear in the UI
-	// Events from sub-agent will be tagged with Component field for identification
+	// Resolve conditional folder-guard grants for the sub-agent once.
+	// Used by both nested scopes below (prompt assembly + workspace tool folder guard).
+	subResolvedGrants := resolveConditionalGrants(parentReq)
+
+	// Add event observers to sub-agent so its events appear in the UI and
+	// its token usage lands in the global cost ledger.
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-		// Create in-memory event observer for real-time updates
-		// DelegationEventObserver tags events with correlation_id/parent_id and also persists to DB
-		// (replaces the separate EventDatabaseObserver to avoid untagged duplicates)
 		subAgentObserver := events.NewDelegationEventObserver(api.eventStore, sessionID, currentDepth, delegationID, api.logger)
-		// Wire tool event callback if provided (background agents use this for timing)
 		if toolCb, ok := ctx.Value(virtualtools.ToolEventCallbackKey).(events.ToolEventCallback); ok && toolCb != nil {
 			subAgentObserver.OnToolEvent = toolCb
 		}
-		// Wire DB persistence so tagged sub-agent events are stored for shared sessions / restore
-		subAgentObserver.DBStore = func(ctx context.Context, sid string, evt *unifiedevents.AgentEvent) error {
-			return api.chatDB.StoreEvent(ctx, sid, evt)
-		}
 		underlyingAgent.AddEventListener(subAgentObserver)
+		parentUserID, _ := ctx.Value(common.UserIDKey).(string)
+		underlyingAgent.AddEventListener(newCostObserver(api.costLedger, sessionID, parentUserID, parentReq.AgentMode))
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
-
-		// Resolve workspace absolute path for sub-agent instructions (shared root, not per-user)
-		subWsAbs := getWorkspaceDocsAbsPath()
 
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
-			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, subWsAbs, getWorkspaceAPIURL())
+			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, getWorkspaceAPIURL(), fsutil.WorkspaceShellRoot(), false)
 			if skillPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(skillPrompt)
 				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))
 			}
 		}
 
-		// Add skill builder instructions for sub-agents when skill-creator is active
-		hasSkillCreator := false
-		for _, s := range parentReq.SelectedSkills {
-			if s == "skill-creator" {
-				hasSkillCreator = true
-				break
-			}
+		// Append prompt sections contributed by active conditional grants
+		// (resolved above in subResolvedGrants before this block).
+		for _, section := range subResolvedGrants.PromptSections {
+			underlyingAgent.AppendSystemPrompt(section)
 		}
-		if hasSkillCreator {
-			underlyingAgent.AppendSystemPrompt(GetSkillBuilderInstructions())
-			log.Printf("[DELEGATION] Added skill builder instructions to sub-agent")
+		if len(subResolvedGrants.PromptSections) > 0 {
+			log.Printf("[DELEGATION] Appended %d grant prompt section(s) to sub-agent: %v", len(subResolvedGrants.PromptSections), subResolvedGrants.AppliedNames)
 		}
 
 		// Inject sub-agent template instructions into system prompt
@@ -7728,24 +5731,27 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			log.Printf("[DELEGATION] Injected sub-agent template instructions: %s", loadedTemplate.Frontmatter.Name)
 		}
 
-		// Merge global secrets with parent's decrypted secrets, then inject into sub-agent
+		// Merge global secrets with parent's decrypted secrets — inject names into prompt (values are in env vars)
 		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
 		if len(allDelegationSecrets) > 0 {
-			var secretParts []string
+			var secretNames []string
 			for _, s := range allDelegationSecrets {
-				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+				secretNames = append(secretNames, "- `SECRET_"+s.Name+"` → accessible as `os.environ[\"SECRET_"+s.Name+"\"]` in Python or `$SECRET_"+s.Name+"` in bash")
 			}
-			secretPrompt := "\n## Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## Secrets\n\nThe following secrets are available as environment variables in execute_shell_command. Do NOT ask the user for these values — read them from the environment.\n\n" + strings.Join(secretNames, "\n")
 			underlyingAgent.AppendSystemPrompt(secretPrompt)
-			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
+			log.Printf("[DELEGATION] Injected %d secret names (not values) into sub-agent system prompt", len(allDelegationSecrets))
 		}
 
 		// Give sub-agents the workspace folder structure so they know where to
-		// read/write files (Chats/, skills/, etc.).
-		// The main agent skips this in plan mode (it's an orchestrator), but sub-agents
-		// are actual file workers that need this orientation.
-		underlyingAgent.AppendSystemPrompt(GetAgentInstructions(subWsAbs))
-		log.Printf("[DELEGATION] Added workspace folder instructions to sub-agent")
+		// read/write files. Sub-agents are actual file workers that need this orientation.
+		// Use the same per-user Chats folder as the parent session.
+		subAgentChatsFolder := perUserChatsFolderFor(subAgentUserID)
+		subAgentMemoryFolder := perUserMemoryFolderFor(subAgentUserID)
+		subShellRoot := fsutil.WorkspaceShellRoot()
+		underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(subShellRoot, subAgentChatsFolder, subAgentMemoryFolder))
+		underlyingAgent.AppendSystemPrompt(GetWorkspaceReference(subShellRoot, subAgentChatsFolder, subAgentMemoryFolder))
+		log.Printf("[DELEGATION] Added workspace instructions to sub-agent (chats=%s)", subAgentChatsFolder)
 
 		// Give sub-agents access to memory tools so they can persist key discoveries
 		// across tasks (reads from Chats/memories/ by default).
@@ -7787,7 +5793,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 		}
 		if hasBrowserAccess || hasPlaywright || hasCamofox {
-			wsAbsPath := getWorkspaceDocsAbsPath()
+			wsAbsPath := fsutil.WorkspaceShellRoot()
 			underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 				paths, ok := args["paths"].([]interface{})
 				if !ok || len(paths) == 0 {
@@ -7815,21 +5821,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 	}
 
-	// Register the same workspace tools as parent (if workspace access is enabled)
+	// Register workspace tools for sub-agent
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-		// Check workspace access from parent request
-		enableWorkspaceAccess := true
-		if parentReq.EnableWorkspaceAccess != nil {
-			enableWorkspaceAccess = *parentReq.EnableWorkspaceAccess
-		}
-		if len(parentReq.SelectedSkills) > 0 {
-			enableWorkspaceAccess = true
-		}
-
-		if enableWorkspaceAccess {
-			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
-			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
+		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image).
+			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
 			workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
+			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          subAgentUserID,
+			}, workspaceExecutors, nil)
 			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
 			// Inject secrets as environment variables for sub-agent shell execution (SECRET_ prefix for whitelist)
 			delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
@@ -7845,24 +5845,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			_, _, toolCategories := createCustomTools(false, subAgentUserID, sessionID)
 
-			// Check for skill-creator
-			hasSkillCreator := false
-			for _, s := range parentReq.SelectedSkills {
-				if s == "skill-creator" {
-					hasSkillCreator = true
-					break
-				}
-			}
-
-			// Check for subagent-creator
-			hasSubAgentCreator := false
-			for _, s := range parentReq.SelectedSkills {
-				if s == "subagent-creator" || s == "custom/subagent-creator" {
-					hasSubAgentCreator = true
-					break
-				}
-			}
-
+			// Conditional grants already resolved above into subResolvedGrants.
 			// Merge parent @context paths and #workflow references into delegated folder-guard access.
 			// @context paths get write access; #workflow paths get read-only access.
 			fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
@@ -7873,45 +5856,25 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				log.Printf("[DELEGATION] Extracted read-only folder-guard paths from parent #workflow: %v", workflowReadOnlyFolders)
 			}
 
-			// Apply folder guards
-			// Plan sub-agents: restrict to the plan folder
-			// All others: default Chats/ guard
-			planFolder, _ := ctx.Value(virtualtools.PlanFolderKey).(string)
-			if planFolder != "" {
-				// Tighter restriction: only allow writes to the assigned chat-backed plan folder.
-				additionalFolders := []string{}
-				if hasSkillCreator {
-					additionalFolders = append(additionalFolders, "skills/custom/")
-				}
-				if hasSubAgentCreator {
-					additionalFolders = append(additionalFolders, "subagents/custom/")
-				}
-				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, workflowReadOnlyFolders, additionalFolders...)
-				workspace.SetSessionWorkingDir(sessionID, planFolder+"/")
-				readPaths := append([]string{planFolder + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...)
-				readPaths = append(readPaths, workflowReadOnlyFolders...)
-				workspace.SetSessionFolderGuard(sessionID,
-					readPaths,
-					append([]string{planFolder + "/", "Downloads/"}, additionalFolders...),
-				)
-				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/ (read-only: %v)", planFolder, workflowReadOnlyFolders)
-			} else {
-				extraFolders := []string{"config/"}
-				if hasSkillCreator {
-					extraFolders = append(extraFolders, "skills/custom/")
-				}
-				if hasSubAgentCreator {
-					extraFolders = append(extraFolders, "subagents/custom/")
-				}
+			// Apply per-user folder guard for all sub-agents.
+			// Writes scoped to _users/<subAgentUserID>/Chats/ and _users/<subAgentUserID>/memories/.
+			{
+				subPerUserChatsFolder := perUserChatsFolderFor(subAgentUserID)
+				subPerUserChatsWrite := subPerUserChatsFolder + "/"
+				subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
+				subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
+				extraFolders := append([]string{"config/"}, subResolvedGrants.WriteFolders...)
 				extraFolders = append(extraFolders, fileContextWriteFolders...)
+				extraFolders = append(extraFolders, subPerUserMemWrite)
+				extraFolders = append(extraFolders, subPerUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "")
-				readPaths := append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...)
+				readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
+				readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				workspace.SetSessionFolderGuard(sessionID,
 					readPaths,
-					append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
+					append([]string{subPerUserChatsWrite, "Downloads/", "config/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
 				)
 			}
 
@@ -7922,7 +5885,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				toolName := tool.Function.Name
 				if executor, exists := workspaceExecutors[toolName]; exists {
-					enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+					enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolderFor(subAgentUserID))
 
 					var params map[string]interface{}
 					if tool.Function.Parameters != nil {
@@ -7938,6 +5901,14 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 					toolCategory := toolCategories[toolName]
 					if toolCategory == "" {
 						continue
+					}
+
+					if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && parentReq.ImageGenConfig != nil {
+						executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
+							Provider: parentReq.ImageGenConfig.Provider,
+							ModelID:  parentReq.ImageGenConfig.ModelID,
+							APIKey:   parentReq.ImageGenConfig.APIKey,
+						})
 					}
 
 					if err := underlyingAgent.RegisterCustomTool(
@@ -7958,10 +5929,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(parentReq))
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
-				browserExtraFolders := []string{}
-				if hasSkillCreator {
-					browserExtraFolders = append(browserExtraFolders, "skills/custom/")
-				}
+				browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 				browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
 				browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
 
@@ -7995,107 +5963,18 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 			}
 
-			// Register image generation tool for sub-agent if enabled in parent request
-			if parentReq.EnableImageGeneration != nil && *parentReq.EnableImageGeneration {
-				imgCfg := virtualtools.ImageGenExecutorConfig{
-					Provider:        "vertex",
-					ModelID:         "gemini-2.5-flash-image",
-					WorkspaceAPIURL: getWorkspaceAPIURL(),
-					UserID:          subAgentUserID,
-				}
-				if parentReq.ImageGenConfig != nil {
-					if parentReq.ImageGenConfig.Provider != "" {
-						imgCfg.Provider = parentReq.ImageGenConfig.Provider
-					}
-					if parentReq.ImageGenConfig.ModelID != "" {
-						imgCfg.ModelID = parentReq.ImageGenConfig.ModelID
-					}
-					imgCfg.APIKey = parentReq.ImageGenConfig.APIKey
-				}
-				for _, toolDef := range []struct {
-					tool     func() llmtypes.Tool
-					executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-					category func() string
-				}{
-					{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-					{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-				} {
-					t := toolDef.tool()
-					exec := toolDef.executor(imgCfg)
-					var params map[string]interface{}
-					if t.Function.Parameters != nil {
-						paramsBytes, err := json.Marshal(t.Function.Parameters)
-						if err == nil {
-							json.Unmarshal(paramsBytes, &params)
-						}
-					}
-					if params != nil {
-						if err := underlyingAgent.RegisterCustomTool(
-							t.Function.Name,
-							t.Function.Description,
-							params,
-							exec,
-							toolDef.category(),
-						); err != nil {
-							log.Printf("[IMAGE GEN] Warning: Failed to register %s for sub-agent: %v", t.Function.Name, err)
-						} else {
-							log.Printf("[IMAGE GEN] Registered %s for sub-agent (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-						}
-					}
-				}
-			}
-
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
-			// This prevents runaway delegation chains
+			// This prevents runaway delegation chains.
 
-			// Add plan update instructions to worker sub-agents
-			// Workers update plan.md as they work — adding findings, marking progress, noting issues
-			if planFolder != "" {
-				planUpdatePrompt := fmt.Sprintf(`
-## Workspace Rules
-Your workspace folder is: %s/
-Save ALL output files inside this folder. Do NOT write to Chats/ or any other folder.
-
-**File Organization — ALWAYS use sub-folders:**
-- Organize outputs into sub-folders by type — NEVER dump files at the plan folder root
-- Use descriptive sub-folder names: research/, reports/, scripts/, data/, config/, analysis/, etc.
-- Match the sub-folder to your task type. Examples:
-  - Research/analysis outputs → %s/research/topic-name.md
-  - Generated reports → %s/reports/report-name.md
-  - Scripts or code → %s/scripts/script-name.py
-  - Data files → %s/data/dataset-name.json
-- If your instruction specifies a path, use that exact path
-- Create the sub-folder if it doesn't exist (mkdir -p via execute_shell_command)
-- Only plan.md and plan_tracking.md belong at the folder root
-
-## Plan Update Protocol
-You are working on a task from the plan at %s/plan.md.
-After completing your task, you MUST update the plan file:
-1. **Mark your task**: Change '[ ]' to '[x]' for your completed task using sed
-2. **Add key knowledge**: Append important discoveries to the '## Key Knowledge' section — things that other workers (who start fresh with NO context) need to know. Examples: file paths created/modified, API endpoints discovered, configuration values, naming conventions found, gotchas or constraints discovered.
-3. **Add results**: Append a brief summary of what you did to the '## Notes' section
-4. **Report issues**: If something failed or was unexpected, note it in '## Notes'
-
-This is critical — the manager reads plan.md after you finish and passes your Key Knowledge to the next worker. Without your updates, the next worker will have no context about what you discovered.
-
-Use execute_shell_command or diff_patch_workspace_file to update the file.
-- For appending: execute_shell_command(command: "echo '\n- [task-N result]: Summary of findings' >> %s/plan.md")
-- For precise edits (marking checkboxes, updating sections): diff_patch_workspace_file with filepath "%s/plan.md"
-`, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder)
-				underlyingAgent.AppendSystemPrompt(planUpdatePrompt)
-				log.Printf("[DELEGATION] Added plan update instructions for plan folder: %s", planFolder)
-			} else {
-				// No plan folder — ad-hoc delegate. Give the sub-agent a minimal worker context
-				// so it knows to return a clear result rather than asking follow-up questions.
-				underlyingAgent.AppendSystemPrompt(`## Your Role
+			// Minimal worker context — tells the sub-agent its role and output conventions.
+			subWorkerChatsFolder := perUserChatsFolderFor(subAgentUserID)
+			underlyingAgent.AppendSystemPrompt(fmt.Sprintf(`## Your Role
 You are a focused background worker. Complete the assigned task using available tools and return a clear, concise result.
 - You cannot spawn further sub-agents
 - You have no shared memory with the caller — all context is in the instruction you received
-- Save any output files to Chats/ unless the instruction specifies otherwise
-- Return a summary of what you did and what you found`)
-				log.Printf("[DELEGATION] Added ad-hoc worker context to sub-agent (no plan folder)")
-			}
-		}
+- Save any output files under %s/ (use the sub-folder specified in your instruction, or create a descriptive one if none is given)
+- Return a summary of what you did and what you found`, subWorkerChatsFolder))
+			log.Printf("[DELEGATION] Added worker context to sub-agent (chats=%s)", subWorkerChatsFolder)
 	}
 
 	log.Printf("[DELEGATION] Sub-agent created, executing instruction at depth %d", currentDepth)
@@ -8368,14 +6247,16 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	if rl, ok := ctx.Value(virtualtools.ReasoningLevelKey).(string); ok {
 		bgCtx = context.WithValue(bgCtx, virtualtools.ReasoningLevelKey, rl)
 	}
-	if pf, ok := ctx.Value(virtualtools.PlanFolderKey).(string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.PlanFolderKey, pf)
-	}
-	if tm, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
-		bgCtx = context.WithValue(bgCtx, virtualtools.ToolModeKey, tm)
-	}
 	if at, ok := ctx.Value(virtualtools.AgentTemplateKey).(string); ok {
 		bgCtx = context.WithValue(bgCtx, virtualtools.AgentTemplateKey, at)
+	}
+	// Propagate per-user memory + chats folders to background sub-agents so their
+	// shell commands against memories/ and Chats/ resolve to the right user's folder.
+	if mf, ok := ctx.Value(virtualtools.MemoryFolderKey).(string); ok && mf != "" {
+		bgCtx = context.WithValue(bgCtx, virtualtools.MemoryFolderKey, mf)
+	}
+	if cf, ok := ctx.Value(virtualtools.ChatsFolderKey).(string); ok && cf != "" {
+		bgCtx = context.WithValue(bgCtx, virtualtools.ChatsFolderKey, cf)
 	}
 	if ds, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok {
 		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationServersKey, ds)
@@ -8543,12 +6424,6 @@ func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType 
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
-	// Also persist to database so shared/restored sessions include background agent events
-	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
-			log.Printf("[BG_AGENT] Failed to persist %s event to DB: %v", eventType, err)
-		}
-	}
 }
 
 // isSessionBusy returns whether the session is currently processing a user turn
@@ -8999,7 +6874,7 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 	caps := &virtualtools.CapabilitiesContext{
 		EnabledServers: req.EnabledServers,
 		SelectedTools:  req.SelectedTools,
-		HasWorkspace:   req.EnableWorkspaceAccess == nil || *req.EnableWorkspaceAccess,
+		HasWorkspace:   true,
 		HasBrowser:     hasBrowser,
 	}
 
@@ -9030,7 +6905,6 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 			Description:           sa.Frontmatter.Description,
 			FolderName:            folderName,
 			DefaultReasoningLevel: sa.Frontmatter.DefaultReasoningLevel,
-			DefaultToolMode:       sa.Frontmatter.DefaultToolMode,
 		})
 	}
 
@@ -9039,7 +6913,7 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 
 // emitDelegationStartEvent emits an event when delegation starts
 // This event serves as the parent for all sub-agent events (via parent_id linking)
-func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string, backgroundAgentID, agentTemplate string) {
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID string, servers []string, backgroundAgentID, agentTemplate string) {
 	now := time.Now()
 	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationStartEventData{
@@ -9048,7 +6922,6 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 		Instruction:       instruction,
 		ReasoningLevel:    reasoningLevel,
 		ModelID:           modelID,
-		ToolMode:          toolMode,
 		Servers:           servers,
 		BackgroundAgentID: backgroundAgentID,
 		AgentTemplate:     agentTemplate,
@@ -9070,12 +6943,6 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
-	// Also persist to database so shared sessions and restored sessions include delegation events
-	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
-			log.Printf("[DELEGATION] Failed to persist delegation_start to DB: %v", err)
-		}
-	}
 	log.Printf("[DELEGATION] Emitted delegation_start event %s for %s at depth %d", eventID, delegationID, depth)
 }
 
@@ -9125,12 +6992,6 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
-	// Also persist to database so shared sessions and restored sessions include delegation events
-	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
-		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
-			log.Printf("[DELEGATION] Failed to persist delegation_end to DB: %v", err)
-		}
-	}
 	log.Printf("[DELEGATION] Emitted delegation_end event for %s at depth %d (success: %v)", delegationID, depth, errorMsg == "")
 }
 
@@ -9783,8 +7644,6 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				// Image generation tools
 				if llmCfg.EnableImageGeneration != nil && *llmCfg.EnableImageGeneration {
 					imgCfg := virtualtools.ImageGenExecutorConfig{
-						Provider:        "vertex",
-						ModelID:         "gemini-2.5-flash-image",
 						WorkspaceAPIURL: getWorkspaceAPIURL(),
 						UserID:          currentUserID,
 					}
@@ -9794,21 +7653,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 					if llmCfg.ImageGenModelID != "" {
 						imgCfg.ModelID = llmCfg.ImageGenModelID
 					}
-					for _, def := range []struct {
-						tool     func() llmtypes.Tool
-						executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-						category func() string
-					}{
-						{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-						{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-					} {
-						t := def.tool()
-						exec := def.executor(imgCfg)
-						allTools = append(allTools, t)
-						allExecutors[t.Function.Name] = exec
-						toolCategories[t.Function.Name] = def.category()
-						log.Printf("[WORKSHOP] Registered image tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-					}
+					virtualtools.MergeImageToolExecutorsUntyped(imgCfg, allExecutors, toolCategories)
+					log.Printf("[WORKSHOP] Updated image tool executors (provider=%s model=%s)", imgCfg.Provider, imgCfg.ModelID)
 				}
 
 				log.Printf("[WORKSHOP] LLM config loaded: phase=%v tiered=%v kb=%v",
@@ -9863,7 +7709,6 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			EventStore: api.eventStore,
 			SessionID:  sessionID,
 			Logger:     api.logger,
-			ChatDB:     nil,
 			BridgeName: "workshop",
 		},
 	}
@@ -9890,7 +7735,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			nameSet[gs.Name] = true
 		}
 		// User-stored secrets from DB
-		userSecrets, err := api.chatDB.ListUserSecrets(ctx, currentUserID)
+		userSecrets, err := api.chatStore.ListUserSecrets(ctx, currentUserID)
 		if err == nil {
 			for _, us := range userSecrets {
 				nameSet[us.Name] = true
@@ -11015,7 +8860,7 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 
 // workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.
 // Returns nil if neither specific nor legacy values are set.
-func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
+func workshopExtractLLM(specific *workflowtypes.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
 	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
 		return &todo_creation_human.AgentLLMConfig{
 			Provider:  specific.Provider,
@@ -11033,7 +8878,7 @@ func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legac
 }
 
 // workshopConvertFallbacks converts database fallbacks to step_based_workflow fallbacks.
-func workshopConvertFallbacks(fallbacks []database.AgentLLMFallback) []todo_creation_human.AgentLLMFallback {
+func workshopConvertFallbacks(fallbacks []workflowtypes.AgentLLMFallback) []todo_creation_human.AgentLLMFallback {
 	if len(fallbacks) == 0 {
 		return nil
 	}

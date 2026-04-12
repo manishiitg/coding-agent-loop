@@ -113,8 +113,7 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
     setTabConfig(tabId, {
       inputText: prompt,
       autoRun: true,
-      selectedServers: ['playwright', 'context7'], // Assuming workspace is auto-enabled via enableWorkspaceAccess
-      enableWorkspaceAccess: true,
+      selectedServers: ['playwright', 'context7'],
       llmConfig: {
         provider: llm.provider,
         model_id: llm.model_id,

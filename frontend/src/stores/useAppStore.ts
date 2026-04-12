@@ -19,9 +19,6 @@ interface AppState {
   // Code execution mode (for multi-agent mode when no preset is active)
   useCodeExecutionMode: boolean
 
-  // Delegation mode: 'off' = disabled, 'spawn' = simple delegate only (plan is now in multi-agent mode)
-  delegationMode: 'off' | 'spawn'
-
   // Actions
   setAgentMode: (mode: AgentMode) => void
   
@@ -40,10 +37,6 @@ interface AppState {
   setWorkspaceMinimized: (minimized: boolean) => void
   setShowWorkflowsOverview: (show: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
-  setDelegationMode: (mode: 'off' | 'spawn') => void
-  // Last plan phase chosen in multi-agent mode — persisted so new tabs inherit it
-  lastMultiAgentPlanPhase: 'planning' | 'execution'
-  setLastMultiAgentPlanPhase: (phase: 'planning' | 'execution') => void
   // Last-used tab settings — inherited by new tabs
   lastSelectedSkills: string[]
   lastSelectedSubAgents: string[]
@@ -69,7 +62,6 @@ export const useAppStore = create<AppState>()(
           workspaceMinimized: false,
           showWorkflowsOverview: false,
           useCodeExecutionMode: true, // Default to enabled
-          delegationMode: 'spawn' as const, // Default to spawn (delegation enabled by default)
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode
@@ -145,14 +137,6 @@ export const useAppStore = create<AppState>()(
           set({ useCodeExecutionMode: enabled })
         },
 
-        setDelegationMode: (mode) => {
-          set({ delegationMode: mode })
-        },
-
-        lastMultiAgentPlanPhase: 'planning',
-        setLastMultiAgentPlanPhase: (phase) => {
-          set({ lastMultiAgentPlanPhase: phase })
-        },
         lastSelectedSkills: [],
         lastSelectedSubAgents: [],
         lastBrowserMode: 'none',
@@ -173,24 +157,19 @@ export const useAppStore = create<AppState>()(
         showWorkflowsOverview: state.showWorkflowsOverview,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
-        delegationMode: state.delegationMode,
-        lastMultiAgentPlanPhase: state.lastMultiAgentPlanPhase,
         lastSelectedSkills: state.lastSelectedSkills,
         lastSelectedSubAgents: state.lastSelectedSubAgents,
         lastBrowserMode: state.lastBrowserMode,
         lastEnableImageGeneration: state.lastEnableImageGeneration,
         lastGWSAccess: state.lastGWSAccess
-        // delegationMode: persisted so /spawn survives page refresh
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),
-        // Migrate old 'plan' delegationMode to 'off' (plan is now implicit in multi-agent mode)
-        version: 2,
-        migrate: (persistedState: unknown, version: number) => {
+        // Drop legacy `delegationMode` persisted from v2 — multi-agent is the default now.
+        version: 3,
+        migrate: (persistedState: unknown, _version: number) => {
           const state = persistedState as Record<string, unknown>
-          if (version === 0 && state.delegationMode === 'plan') {
-            state.delegationMode = 'off'
-          }
+          delete state.delegationMode
           if (state.showWorkflowsOverview === undefined) {
             state.showWorkflowsOverview = false
           }

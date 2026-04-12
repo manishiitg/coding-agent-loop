@@ -228,11 +228,6 @@ export default function SubAgentSelectionDropdown({
                                   {sa.frontmatter.default_reasoning_level}
                                 </span>
                               )}
-                              {sa.frontmatter.default_tool_mode && (
-                                <span className="text-[10px] px-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
-                                  {sa.frontmatter.default_tool_mode}
-                                </span>
-                              )}
                             </div>
                           </div>
                         </div>

@@ -217,13 +217,13 @@ WritePaths:   []             # Not used
 
 The agent backend additionally restricts which folders the LLM can **write** to via `wrapExecutorsWithChatModeFolderGuard()` — writes are only allowed to `Chats/` (and `skills/custom/` if the skill creator is active). This is enforced at the agent level before the shell command reaches the workspace API.
 
-#### Mode 2: Allow-List (Multi-Agent / Plan Mode)
+#### Mode 2: Allow-List (Multi-Agent Chat)
 
-When delegation mode is active, `wrapExecutorsWithPlanFolderGuard()` injects a FolderGuard config with explicit read/write paths:
+Multi-agent chat sub-agents use `wrapExecutorsWithChatModeFolderGuard()` with the standard Chats/ allow list:
 
 ```
-ReadPaths:  ["."]            # Entire workspace mounted read-only
-WritePaths: ["Chats/"]   # Only this folder is writable in multi-agent mode
+ReadPaths:  ["Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"]
+WritePaths: ["Chats/", "Downloads/", "config/", "memories/"]
 ```
 
 The Isolator creates a mount namespace:

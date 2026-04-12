@@ -19,6 +19,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useAuthStore } from '../stores/useAuthStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useActiveWorkflowPreset } from '../hooks/useActiveWorkflowPreset'
 import {
@@ -42,6 +43,8 @@ export default function Workspace({
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
   const { selectedModeCategory } = useModeStore()
+  const authUser = useAuthStore(state => state.user)
+  const currentUserFolder = `_users/${authUser?.id || 'default'}`
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const getActiveTab = useChatStore(state => state.getActiveTab)
   const setTabConfig = useChatStore(state => state.setTabConfig)
@@ -314,12 +317,19 @@ export default function Workspace({
       // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
+      })
+      // Scope _users/ to current user only — hide other users' folders
+      result = result.map(f => {
+        if (f.filepath === '_users' && f.children) {
+          return { ...f, children: f.children.filter(c => c.filepath === currentUserFolder || c.filepath.startsWith(currentUserFolder + '/')) }
+        }
+        return f
       })
     }
 
     return result
-  }, [selectedModeCategory, effectiveWorkflowFolderPath])
+  }, [selectedModeCategory, effectiveWorkflowFolderPath, currentUserFolder])
 
   // Fetch capabilities on mount
   useEffect(() => {
@@ -617,7 +627,7 @@ export default function Workspace({
         // (e.g., workflow.json appears as a separate data[] entry, not inside children)
         const rootPrefix = effectiveWorkflowFolderPath.replace(/\/$/, '') + '/'
         const rootLevelFiles = result.filter(f =>
-          f.type === 'file' &&
+          f.type !== 'folder' &&
           f.filepath.startsWith(rootPrefix) &&
           !f.filepath.slice(rootPrefix.length).includes('/')
         )
@@ -640,7 +650,14 @@ export default function Workspace({
       // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories' || topFolder === 'chat_history' || topFolder === '_users'
+      })
+      // Scope _users/ to current user only — hide other users' folders
+      result = result.map(f => {
+        if (f.filepath === '_users' && f.children) {
+          return { ...f, children: f.children.filter(c => c.filepath === currentUserFolder || c.filepath.startsWith(currentUserFolder + '/')) }
+        }
+        return f
       })
     }
 
@@ -648,7 +665,7 @@ export default function Workspace({
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
+  }, [files, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder])
 
   // Refresh file tree from server (re-fetch all files so local filter can find them)
   const handleRefreshAndSearch = useCallback(async () => {
@@ -838,7 +855,7 @@ export default function Workspace({
 
   // Handle file click - fetch content and show in chat area
   const handleFileClick = async (file: PlannerFile) => {
-    if (file.type === 'file' || !file.type) {
+    if (file.type !== 'folder') {
       // Reconstruct the original full path if we're in workflow mode with filtered files
       const fullFilePath = getOriginalFilePath(file)
       const fileName = fullFilePath.split('/').pop() || fullFilePath
@@ -1139,8 +1156,8 @@ export default function Workspace({
       for (const item of itemsToDelete) {
         try {
           const fullFilePath = getOriginalFilePath(item)
-          console.log(`[BulkDelete] Deleting ${item.type}: "${fullFilePath}" (display: "${item.filepath}")`)
-          if (item.type === 'file') {
+          console.log(`[BulkDelete] Deleting ${item.type || 'file'}: "${fullFilePath}" (display: "${item.filepath}")`)
+          if (item.type !== 'folder') {
             await wsFileApi.deleteFile(fullFilePath)
           } else {
             await wsFileApi.deleteFolder(fullFilePath)
@@ -1210,7 +1227,7 @@ export default function Workspace({
         setExpandedFolders(newExpanded)
       }
       
-      if (deleteDialog.item.type === 'file') {
+      if (deleteDialog.item.type !== 'folder') {
         await wsFileApi.deleteFile(fullFilePath)
       } else {
         await wsFileApi.deleteFolder(fullFilePath)

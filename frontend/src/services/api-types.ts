@@ -107,8 +107,6 @@ export interface AgentQueryRequest {
   enable_context_summarization?: boolean // Enable context summarization feature
   summarize_on_max_turns?: boolean // Automatically summarize when max turns is reached
   summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
-  // Workspace access configuration
-  enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Explicit browser mode for prompt/runtime selection
@@ -123,10 +121,6 @@ export interface AgentQueryRequest {
   selected_skills?: string[] // Array of skill folder names
   // Selected sub-agent templates for delegation
   selected_subagents?: string[] // Array of sub-agent template folder names
-  // Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, undefined/absent = disabled
-  delegation_mode?: 'spawn' | 'plan'
-  // Plan phase override: 'planning' = plan first (default), 'execution' = skip planning and execute directly
-  plan_phase?: 'planning' | 'execution'
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
   delegation_tier_config?: DelegationTierConfig
   // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
@@ -142,8 +136,6 @@ export interface AgentQueryRequest {
     model_id: string
     api_key?: string
   }
-  // Existing plan folder to reuse (skips creating new folder in multi-agent mode)
-  plan_folder?: string
   // Auto-notification flag: when true, this is a background agent completion notification,
   // not a user-initiated message. Backend treats it as a synthetic turn (doesn't block user input).
   is_auto_notification?: boolean
@@ -455,10 +447,10 @@ export type ToolDefinition = {
 // Planner API types
 export interface PlannerFile {
   filepath: string;
-  content: string;
-  last_modified: string;
+  content?: string;
+  last_modified?: string;
   folder?: string;
-  type?: 'file' | 'folder';
+  type?: 'folder';
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
@@ -469,7 +461,7 @@ export interface PlannerFile {
 export interface PlannerFileContent {
   filepath: string;
   content: string;
-  last_modified: string;
+  last_modified?: string;
   folder?: string;
   is_image?: boolean;
 }
@@ -667,15 +659,10 @@ export interface ChatSessionConfig {
     path: string;
     type: 'file' | 'folder';
   }>;
-  enable_workspace_access?: boolean;
   workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
   selected_skills?: string[]; // Selected skill folder names
   selected_subagents?: string[]; // Selected sub-agent template folder names
-  delegation_mode?: 'off' | 'spawn' | 'plan'; // Delegation mode for multi-agent sessions
   delegation_tier_config?: DelegationTierConfig; // Delegation tier model config
-  plan_id?: string; // Active plan ID (for session resume)
-  plan_folder?: string; // Active plan folder path
-  plan_phase?: string; // Plan phase: "planning" or "execution"
 }
 
 // Chat History API types
@@ -759,6 +746,58 @@ export interface UpdateChatSessionRequest {
   preset_query_id?: string;
   status?: string;
   completed_at?: string;
+}
+
+// Workflow running-session types — mirror ActiveWorkflowExecution in
+// agent_go/cmd/server/workflow.go.
+export interface RunningWorkflowInfo {
+  query_id: string;
+  session_id: string;
+  preset_query_id?: string;
+  preset_name?: string;
+  workspace_path: string;
+  run_folder?: string;
+  phase_id?: string;
+  phase_name?: string;
+  status?: string;
+  user_id?: string;
+  title?: string;
+  query?: string;
+  triggered_by: string;
+  started_at: string;
+  is_minimized?: boolean;
+  minimized_at?: number;
+  current_step_id?: string;
+  current_step_title?: string;
+}
+
+export interface UpdateRunningWorkflowRequest {
+  status?: string;
+  phase_id?: string;
+  phase_name?: string;
+  is_minimized?: boolean;
+  minimized_at?: number;
+  current_step_id?: string;
+  current_step_title?: string;
+}
+
+// Global cost ledger summary — mirror of pkg/costledger.Summary.
+export interface CostAggregate {
+  prompt_tokens: number
+  completion_tokens: number
+  reasoning_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_cost_usd: number
+  call_count: number
+}
+
+export interface CostSummary {
+  from?: string
+  to?: string
+  total: CostAggregate
+  by_date: Record<string, CostAggregate>
+  by_model: Record<string, CostAggregate>
 }
 
 // Preset LLM Configuration types
@@ -1496,7 +1535,6 @@ export interface DelegationLogEntry {
   instruction: string;
   reasoning_level?: string;
   model_id?: string;
-  tool_mode?: string;
   servers?: string[];
   background_agent_id?: string;
   depth: number;
@@ -1617,16 +1655,18 @@ export interface ScheduledJob {
   id: string
   name: string
   description: string
-  entity_type: 'workflow' | 'chat'
-  preset_query_id: string
+  entity_type: 'workflow' | 'chat' | 'multi-agent'
+  preset_query_id?: string
   workspace_path?: string
   workflow_id?: string
   workflow_label?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
-  mode?: 'workflow' | 'workshop'  // 'workflow' (default) or 'workshop' (LLM-driven)
+  mode?: 'workflow' | 'workshop' | 'multi-agent'
   messages?: string[]  // predefined messages for workshop mode
   workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
+  query?: string  // message to execute (multi-agent mode)
+  user_id?: string  // user context (multi-agent mode)
   cron_expression: string
   timezone: string
   enabled: boolean
@@ -1638,8 +1678,8 @@ export interface ScheduledJob {
   last_duration_ms?: number
   run_count: number
   consecutive_failures: number
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface CreateScheduledJobRequest {

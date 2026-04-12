@@ -60,7 +60,7 @@ func SanitizeInputPath(inputPath, docsDir string) string {
 
 // --- User ID Utilities ---
 // These utilities support user identification for auth/database purposes.
-// All users share the same workspace filesystem (no per-user folder isolation).
+// Per-user folders (Chats/, Downloads/) are routed to _users/{userID}/ for isolation.
 
 // UsersDirectory is kept for backwards compatibility (e.g. migration from old layout)
 const UsersDirectory = "_users"
@@ -107,18 +107,55 @@ func SanitizeUserID(userID string) string {
 	return userID
 }
 
+// perUserPrefixes are top-level folders that are per-user isolated.
+// Requests to these folders are routed to _users/{userID}/{folder}.
+var perUserPrefixes = []string{"Chats", "Downloads", "chat_history", "memories"}
+
+// PerUserPrefixes returns the list of per-user folder prefixes.
+func PerUserPrefixes() []string {
+	return perUserPrefixes
+}
+
+// IsPerUserPath returns true if the given relative path falls under a per-user folder.
+func IsPerUserPath(relPath string) bool {
+	for _, prefix := range perUserPrefixes {
+		if relPath == prefix || strings.HasPrefix(relPath, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveUserPath resolves a requested path to the actual filesystem path.
-// All users share the same filesystem — no per-user folder routing.
-// The userID parameter is accepted for API compatibility but ignored for path resolution.
+// Per-user folders (Chats/, Downloads/) are routed to _users/{userID}/.
+// Shared folders (skills/, Workflow/, etc.) resolve to docsDir directly.
 func ResolveUserPath(docsDir, requestedPath, userID string) (string, error) {
-	// Clean the requested path
 	cleanPath := SanitizeInputPath(requestedPath, docsDir)
+
+	if IsPerUserPath(cleanPath) {
+		sanitizedUID := SanitizeUserID(userID)
+		return filepath.Join(docsDir, UsersDirectory, sanitizedUID, cleanPath), nil
+	}
 
 	return filepath.Join(docsDir, cleanPath), nil
 }
 
 // ConvertToUserRelativePath converts an absolute path back to a relative path
-// for API responses.
+// for API responses. Strips _users/{userID}/ prefix so callers see clean paths.
 func ConvertToUserRelativePath(fullPath, docsDir string) (string, error) {
-	return filepath.Rel(docsDir, fullPath)
+	rel, err := filepath.Rel(docsDir, fullPath)
+	if err != nil {
+		return "", err
+	}
+	// Strip _users/{userID}/ prefix if present
+	if strings.HasPrefix(rel, UsersDirectory+string(filepath.Separator)) {
+		// _users/{userID}/Chats/... → Chats/...
+		parts := strings.SplitN(rel, string(filepath.Separator), 3)
+		if len(parts) >= 3 {
+			return parts[2], nil
+		}
+		// _users/{userID} with no sub-path — shouldn't happen in normal use
+		return "", nil
+	}
+	return rel, nil
 }

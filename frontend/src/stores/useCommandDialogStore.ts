@@ -1,15 +1,13 @@
 import { create } from 'zustand'
 
-type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'resume' | 'delegationTiers' | 'workflowBuilder' | 'presetSettings' | 'subAgentImport'
+type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'delegationTiers' | 'presetSettings' | 'subAgentImport'
 
 interface CommandDialogState {
   showSkillImport: boolean
   showMCPDetails: boolean
   showMCPConfig: boolean
   showModels: boolean
-  showResume: boolean
   showDelegationTiers: boolean
-  showWorkflowBuilder: boolean
   showPresetSettings: boolean
   showSubAgentImport: boolean
   openDialog: (dialog: DialogName) => void
@@ -22,9 +20,7 @@ const dialogKeyMap: Record<DialogName, keyof CommandDialogState> = {
   mcpDetails: 'showMCPDetails',
   mcpConfig: 'showMCPConfig',
   models: 'showModels',
-  resume: 'showResume',
   delegationTiers: 'showDelegationTiers',
-  workflowBuilder: 'showWorkflowBuilder',
   presetSettings: 'showPresetSettings',
   subAgentImport: 'showSubAgentImport',
 }
@@ -34,9 +30,7 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
   showMCPDetails: false,
   showMCPConfig: false,
   showModels: false,
-  showResume: false,
   showDelegationTiers: false,
-  showWorkflowBuilder: false,
   showPresetSettings: false,
   showSubAgentImport: false,
   openDialog: (dialog) => set({ [dialogKeyMap[dialog]]: true }),
@@ -46,9 +40,7 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
     showMCPDetails: false,
     showMCPConfig: false,
     showModels: false,
-    showResume: false,
     showDelegationTiers: false,
-    showWorkflowBuilder: false,
     showPresetSettings: false,
     showSubAgentImport: false,
   }),

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 // ScheduleContext bundles everything needed to identify and execute a schedule.
@@ -23,6 +24,8 @@ type ScheduleContext struct {
 	WorkflowLabel string
 	Schedule      WorkflowSchedule
 	Capabilities  WorkflowCapabilities
+	UserID        string // Set for multi-agent schedules (derived from _users/{userID}/ path)
+	SourceType    string // "workflow" or "multi-agent"
 }
 
 // ScheduleRuntimeState holds in-memory runtime state for a schedule (not persisted in manifest).
@@ -52,6 +55,10 @@ type SchedulerService struct {
 	// Schedule-to-workspace index for quick lookups
 	workspaceIndex   map[string]string // scheduleID → workspacePath
 	workspaceIndexMu sync.RWMutex
+
+	// Schedule-to-user index for multi-agent schedules
+	userIndex   map[string]string // scheduleID → userID
+	userIndexMu sync.RWMutex
 }
 
 // NewSchedulerService creates a new manifest-based SchedulerService.
@@ -61,6 +68,7 @@ func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 		jobIDs:         make(map[string]uuid.UUID),
 		runtimeStates:  make(map[string]*ScheduleRuntimeState),
 		workspaceIndex: make(map[string]string),
+		userIndex:      make(map[string]string),
 	}
 }
 
@@ -113,14 +121,126 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 		}
 	}
 
+	// Discover multi-agent schedules from _users/*/multiagent-schedules.json
+	maScheds, err := DiscoverMultiAgentSchedules(ctx)
+	if err != nil {
+		scheduleLogf("[SCHEDULER] Warning: failed to discover multi-agent schedules: %v", err)
+	} else {
+		scheduleLogf("[SCHEDULER] Discovered %d users with multi-agent schedules", len(maScheds))
+
+		// Mark stale runs
+		for _, ma := range maScheds {
+			runs, err := ReadMultiAgentScheduleRuns(ctx, ma.UserID)
+			if err != nil {
+				continue
+			}
+			fixed := 0
+			for i := range runs {
+				if runs[i].Status == "running" {
+					runs[i].Status = "error"
+					runs[i].Error = "interrupted: server restarted"
+					fixed++
+				}
+			}
+			if fixed > 0 {
+				_ = WriteMultiAgentScheduleRuns(ctx, ma.UserID, runs)
+				scheduleLogf("[SCHEDULER] Marked %d stale multi-agent run(s) as error for user %s", fixed, ma.UserID)
+			}
+		}
+
+		for _, ma := range maScheds {
+			for _, sched := range ma.ScheduleFile.Schedules {
+				if !sched.Enabled {
+					continue
+				}
+				sctx := buildMultiAgentScheduleContext(ma.UserID, sched, ma.ScheduleFile.Capabilities)
+				if err := s.LoadSchedule(sctx); err != nil {
+					scheduleLogf("[SCHEDULER] Failed to load multi-agent schedule %s (%s) for user %s: %v", sched.ID, sched.Name, ma.UserID, err)
+				} else {
+					loaded++
+				}
+			}
+		}
+	}
+
 	s.scheduler.Start()
 	scheduleLogf("[SCHEDULER] ✅ Started with %d schedules. Server time: %s, timezone: %s",
 		loaded, time.Now().Format(time.RFC3339), time.Now().Location().String())
+
+	// Periodically rescan multi-agent schedule files for changes (written by agents via shell)
+	go s.multiAgentRescanLoop(ctx)
 
 	// Wait for context cancellation
 	<-ctx.Done()
 	scheduleLogf("[SCHEDULER] Shutting down (context canceled)")
 	return nil
+}
+
+// multiAgentRescanLoop periodically checks for new/changed multi-agent schedule files.
+// Agents write these files directly via shell commands, so we need to rescan to pick up changes.
+func (s *SchedulerService) multiAgentRescanLoop(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.rescanMultiAgentSchedules(ctx)
+		}
+	}
+}
+
+// rescanMultiAgentSchedules discovers multi-agent schedules and loads/unloads as needed.
+func (s *SchedulerService) rescanMultiAgentSchedules(ctx context.Context) {
+	maScheds, err := DiscoverMultiAgentSchedules(ctx)
+	if err != nil {
+		return
+	}
+
+	// Build set of all discovered schedule IDs
+	discovered := make(map[string]bool)
+
+	for _, ma := range maScheds {
+		for _, sched := range ma.ScheduleFile.Schedules {
+			discovered[sched.ID] = true
+
+			// Check if already loaded with same enabled state
+			s.mu.Lock()
+			_, isLoaded := s.jobIDs[sched.ID]
+			s.mu.Unlock()
+
+			if sched.Enabled && !isLoaded {
+				// New or re-enabled schedule
+				sctx := buildMultiAgentScheduleContext(ma.UserID, sched, ma.ScheduleFile.Capabilities)
+				if err := s.LoadSchedule(sctx); err != nil {
+					scheduleLogf("[SCHEDULER] Rescan: failed to load multi-agent schedule %s: %v", sched.ID, err)
+				} else {
+					scheduleLogf("[SCHEDULER] Rescan: loaded new multi-agent schedule %s (%s) for user %s", sched.ID, sched.Name, ma.UserID)
+				}
+			} else if !sched.Enabled && isLoaded {
+				// Disabled — remove
+				_ = s.RemoveJob(sched.ID)
+				scheduleLogf("[SCHEDULER] Rescan: removed disabled multi-agent schedule %s", sched.ID)
+			}
+		}
+	}
+
+	// Remove schedules that were deleted from files
+	s.userIndexMu.RLock()
+	toRemove := []string{}
+	for schedID := range s.userIndex {
+		if !discovered[schedID] {
+			toRemove = append(toRemove, schedID)
+		}
+	}
+	s.userIndexMu.RUnlock()
+
+	for _, schedID := range toRemove {
+		_ = s.RemoveJob(schedID)
+		scheduleLogf("[SCHEDULER] Rescan: removed deleted multi-agent schedule %s", schedID)
+	}
 }
 
 // discoveredWorkflow holds a manifest + its workspace path.
@@ -175,6 +295,18 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		WorkflowLabel: manifest.Label,
 		Schedule:      sched,
 		Capabilities:  manifest.Capabilities,
+		SourceType:    "workflow",
+	}
+}
+
+// buildMultiAgentScheduleContext creates a ScheduleContext for a multi-agent schedule.
+func buildMultiAgentScheduleContext(userID string, sched WorkflowSchedule, caps WorkflowCapabilities) *ScheduleContext {
+	return &ScheduleContext{
+		WorkspacePath: "_users/" + userID,
+		UserID:        userID,
+		Schedule:      sched,
+		Capabilities:  caps,
+		SourceType:    "multi-agent",
 	}
 }
 
@@ -231,6 +363,13 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.workspaceIndex[sched.ID] = sctx.WorkspacePath
 	s.workspaceIndexMu.Unlock()
 
+	// Update user index for multi-agent schedules
+	if sctx.UserID != "" {
+		s.userIndexMu.Lock()
+		s.userIndex[sched.ID] = sctx.UserID
+		s.userIndexMu.Unlock()
+	}
+
 	// Initialize runtime state with next run
 	nextRun := getNextRunTime(sched.CronExpression, sched.Timezone)
 	state := s.getOrCreateRuntimeState(sched.ID)
@@ -263,6 +402,22 @@ func (s *SchedulerService) ReloadSchedule(ctx context.Context, workspacePath str
 	return s.RemoveJob(scheduleID)
 }
 
+// ReloadMultiAgentSchedule reloads a multi-agent schedule after it's been updated.
+func (s *SchedulerService) ReloadMultiAgentSchedule(ctx context.Context, userID string, scheduleID string) error {
+	f, exists, err := ReadMultiAgentSchedules(ctx, userID)
+	if err != nil || !exists {
+		return s.RemoveJob(scheduleID)
+	}
+
+	for _, sched := range f.Schedules {
+		if sched.ID == scheduleID {
+			return s.LoadSchedule(buildMultiAgentScheduleContext(userID, sched, f.Capabilities))
+		}
+	}
+
+	return s.RemoveJob(scheduleID)
+}
+
 // RemoveJob removes a schedule from gocron.
 func (s *SchedulerService) RemoveJob(id string) error {
 	s.mu.Lock()
@@ -278,6 +433,10 @@ func (s *SchedulerService) RemoveJob(id string) error {
 	s.workspaceIndexMu.Lock()
 	delete(s.workspaceIndex, id)
 	s.workspaceIndexMu.Unlock()
+
+	s.userIndexMu.Lock()
+	delete(s.userIndex, id)
+	s.userIndexMu.Unlock()
 
 	return nil
 }
@@ -297,6 +456,13 @@ func (s *SchedulerService) GetWorkspaceForSchedule(scheduleID string) string {
 	s.workspaceIndexMu.RLock()
 	defer s.workspaceIndexMu.RUnlock()
 	return s.workspaceIndex[scheduleID]
+}
+
+// GetUserForSchedule returns the user ID for a multi-agent schedule ID.
+func (s *SchedulerService) GetUserForSchedule(scheduleID string) string {
+	s.userIndexMu.RLock()
+	defer s.userIndexMu.RUnlock()
+	return s.userIndex[scheduleID]
 }
 
 // TriggerNow triggers a schedule immediately (for manual trigger API).
@@ -336,6 +502,48 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	go func() {
 		if _, err := s.runJob(context.Background(), sctx); err != nil {
 			scheduleLogf("[SCHEDULER] Triggered job %s failed: %v", scheduleID, err)
+		}
+	}()
+
+	return "triggered", nil
+}
+
+// TriggerMultiAgentNow triggers a multi-agent schedule immediately.
+func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string) (string, error) {
+	ctx := context.Background()
+
+	f, exists, err := ReadMultiAgentSchedules(ctx, userID)
+	if err != nil || !exists {
+		return "", fmt.Errorf("failed to read multi-agent schedules for user %s: %w", userID, err)
+	}
+
+	var sched *WorkflowSchedule
+	for i := range f.Schedules {
+		if f.Schedules[i].ID == scheduleID {
+			sched = &f.Schedules[i]
+			break
+		}
+	}
+	if sched == nil {
+		return "", fmt.Errorf("multi-agent schedule %s not found for user %s", scheduleID, userID)
+	}
+
+	startTime := time.Now().UTC()
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(scheduleID)
+	if state.LastStatus == "running" {
+		s.runtimeStatesMu.Unlock()
+		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
+	}
+	state.LastStatus = "running"
+	state.LastRunAt = &startTime
+	s.runtimeStatesMu.Unlock()
+
+	sctx := buildMultiAgentScheduleContext(userID, *sched, f.Capabilities)
+
+	go func() {
+		if _, err := s.runJob(context.Background(), sctx); err != nil {
+			scheduleLogf("[SCHEDULER] Triggered multi-agent job %s failed: %v", scheduleID, err)
 		}
 	}()
 
@@ -411,38 +619,66 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		return
 	}
 
-	// Reload manifest for latest config
-	manifest, found, err := ReadWorkflowManifest(context.Background(), sctx.WorkspacePath)
-	if err != nil || !found {
-		scheduleLogf("[SCHEDULER] ❌ Failed to reload manifest for %s: %v", schedID, err)
-		return
-	}
-
-	// Find current schedule in manifest (may have been updated)
-	var currentSched *WorkflowSchedule
-	for i := range manifest.Schedules {
-		if manifest.Schedules[i].ID == schedID {
-			currentSched = &manifest.Schedules[i]
-			break
+	// Reload schedule for latest config — different paths for workflow vs multi-agent
+	var freshCtx *ScheduleContext
+	if sctx.SourceType == "multi-agent" {
+		f, exists, err := ReadMultiAgentSchedules(context.Background(), sctx.UserID)
+		if err != nil || !exists {
+			scheduleLogf("[SCHEDULER] ❌ Failed to reload multi-agent schedules for user %s: %v", sctx.UserID, err)
+			return
 		}
-	}
-	if currentSched == nil {
-		scheduleLogf("[SCHEDULER] ❌ Schedule %s not found in manifest, skipping", schedID)
-		return
-	}
-	if !currentSched.Enabled {
-		scheduleLogf("[SCHEDULER] ⏭️ Schedule %s is disabled, skipping", schedID)
-		return
-	}
-
-	if activeExec := s.findActiveExecutionForWorkspace(sctx.WorkspacePath); activeExec != nil {
-		triggeredBy := activeExec.TriggeredBy
-		if strings.TrimSpace(triggeredBy) == "" {
-			triggeredBy = "unknown"
+		var currentSched *WorkflowSchedule
+		for i := range f.Schedules {
+			if f.Schedules[i].ID == schedID {
+				currentSched = &f.Schedules[i]
+				break
+			}
 		}
-		scheduleLogf("[SCHEDULER] ⏭️ Workflow %s already has an active %s run (session: %s), skipping schedule %s",
-			sctx.WorkspacePath, triggeredBy, activeExec.SessionID, schedID)
-		return
+		if currentSched == nil {
+			scheduleLogf("[SCHEDULER] ❌ Multi-agent schedule %s not found for user %s, skipping", schedID, sctx.UserID)
+			return
+		}
+		if !currentSched.Enabled {
+			scheduleLogf("[SCHEDULER] ⏭️ Multi-agent schedule %s is disabled, skipping", schedID)
+			return
+		}
+		freshCtx = buildMultiAgentScheduleContext(sctx.UserID, *currentSched, f.Capabilities)
+	} else {
+		// Reload manifest for latest config
+		manifest, found, err := ReadWorkflowManifest(context.Background(), sctx.WorkspacePath)
+		if err != nil || !found {
+			scheduleLogf("[SCHEDULER] ❌ Failed to reload manifest for %s: %v", schedID, err)
+			return
+		}
+
+		// Find current schedule in manifest (may have been updated)
+		var currentSched *WorkflowSchedule
+		for i := range manifest.Schedules {
+			if manifest.Schedules[i].ID == schedID {
+				currentSched = &manifest.Schedules[i]
+				break
+			}
+		}
+		if currentSched == nil {
+			scheduleLogf("[SCHEDULER] ❌ Schedule %s not found in manifest, skipping", schedID)
+			return
+		}
+		if !currentSched.Enabled {
+			scheduleLogf("[SCHEDULER] ⏭️ Schedule %s is disabled, skipping", schedID)
+			return
+		}
+
+		if activeExec := s.findActiveExecutionForWorkspace(sctx.WorkspacePath); activeExec != nil {
+			triggeredBy := activeExec.TriggeredBy
+			if strings.TrimSpace(triggeredBy) == "" {
+				triggeredBy = "unknown"
+			}
+			scheduleLogf("[SCHEDULER] ⏭️ Workflow %s already has an active %s run (session: %s), skipping schedule %s",
+				sctx.WorkspacePath, triggeredBy, activeExec.SessionID, schedID)
+			return
+		}
+
+		freshCtx = buildScheduleContext(sctx.WorkspacePath, manifest, *currentSched)
 	}
 
 	// Prevent concurrent runs — check and mark atomically under the write lock
@@ -458,10 +694,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	state.LastRunAt = &startTime
 	s.runtimeStatesMu.Unlock()
 
-	// Update context with fresh manifest data
-	freshCtx := buildScheduleContext(sctx.WorkspacePath, manifest, *currentSched)
-
-	scheduleLogf("[SCHEDULER] 🚀 Starting %s (%s)", schedID, currentSched.Name)
+	scheduleLogf("[SCHEDULER] 🚀 Starting %s (%s)", schedID, freshCtx.Schedule.Name)
 	if _, err := s.runJob(context.Background(), freshCtx); err != nil {
 		scheduleLogf("[SCHEDULER] ❌ %s failed: %v", schedID, err)
 	} else {
@@ -490,8 +723,14 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 		GroupNames: sctx.Schedule.GroupNames,
 		StartedAt:  startTime,
 	}
-	if err := AppendScheduleRun(ctx, sctx.WorkspacePath, run); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to create run entry for %s: %v", schedID, err)
+	if sctx.SourceType == "multi-agent" {
+		if err := AppendMultiAgentScheduleRun(ctx, sctx.UserID, run); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to create multi-agent run entry for %s: %v", schedID, err)
+		}
+	} else {
+		if err := AppendScheduleRun(ctx, sctx.WorkspacePath, run); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to create run entry for %s: %v", schedID, err)
+		}
 	}
 
 	// Execute
@@ -525,8 +764,14 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	}
 
 	// Update run history entry
-	if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
+	if sctx.SourceType == "multi-agent" {
+		if err := UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, status, errMsg, &durationMs, sessionID); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to update multi-agent run entry for %s: %v", schedID, err)
+		}
+	} else {
+		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
+		}
 	}
 
 	return sessionID, execErr
@@ -535,9 +780,12 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
-	// Dispatch to workshop mode if configured
+	// Dispatch to workshop or multi-agent mode if configured
 	if sctx.Schedule.Mode == "workshop" {
 		return s.executeWorkshopJob(ctx, sctx, runID)
+	}
+	if sctx.Schedule.Mode == "multi-agent" || sctx.SourceType == "multi-agent" {
+		return s.executeMultiAgentJob(ctx, sctx, runID)
 	}
 
 	query := sctx.WorkflowLabel
@@ -662,6 +910,94 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	scheduleLogf("[SCHEDULER] ✅ Workshop execution completed for %s, session=%s, folder=%s", sctx.Schedule.ID, sessionID, runFolder)
 	return sessionID, runFolder, nil
+}
+
+// executeMultiAgentJob runs a multi-agent chat session with the configured query.
+func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
+	query := strings.TrimSpace(sctx.Schedule.Query)
+	if query == "" {
+		return "", "", fmt.Errorf("multi-agent schedule %s has no query", sctx.Schedule.ID)
+	}
+
+	idPrefix := sctx.Schedule.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+
+	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
+	state.LastSessionID = sessionID
+
+	if runID != "" {
+		_ = UpdateMultiAgentScheduleRun(ctx, sctx.UserID, runID, "running", "", nil, sessionID)
+	}
+
+	reqMap := map[string]interface{}{
+		"query":        query,
+		"agent_mode":   "simple",
+		"triggered_by": "cron",
+	}
+
+	// Apply capabilities if set
+	if len(sctx.Capabilities.SelectedServers) > 0 {
+		reqMap["servers"] = sctx.Capabilities.SelectedServers
+	}
+	if len(sctx.Capabilities.SelectedSkills) > 0 {
+		reqMap["selected_skills"] = sctx.Capabilities.SelectedSkills
+	}
+	if sctx.Capabilities.BrowserMode != "" && sctx.Capabilities.BrowserMode != "none" {
+		reqMap["browser_mode"] = sctx.Capabilities.BrowserMode
+	}
+	if sctx.Capabilities.UseCodeExecutionMode {
+		reqMap["use_code_execution_mode"] = true
+	}
+
+	// Apply LLM config and secrets
+	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
+
+	// Load user-level secrets if configured
+	if len(sctx.Capabilities.SelectedSecrets) > 0 && sctx.UserID != "" {
+		userSecrets := s.api.loadSelectedUserSecrets(context.Background(), sctx.UserID, sctx.Capabilities.SelectedSecrets)
+		if len(userSecrets) > 0 {
+			reqMap["decrypted_secrets"] = userSecrets
+			scheduleLogf("[SCHEDULER] Loaded %d user secrets for multi-agent schedule %s", len(userSecrets), sctx.Schedule.ID)
+		}
+	}
+
+	scheduleLogf("[SCHEDULER] executeMultiAgentJob for %s (%s): session=%s user=%s query=%q",
+		sctx.Schedule.ID, sctx.Schedule.Name, sessionID, sctx.UserID, query)
+
+	// Start the session with the user's identity
+	runErr := s.api.startSessionInternal(ctx, reqMap, sessionID, sctx.UserID, nil)
+	if runErr != nil {
+		return sessionID, "", fmt.Errorf("multi-agent session execution failed: %w", runErr)
+	}
+
+	// Wait for session to complete (no workflow orchestrator, just wait for agent to finish)
+	if err := s.waitForSessionComplete(ctx, sessionID); err != nil {
+		scheduleLogf("[SCHEDULER] ⚠️ Multi-agent session wait interrupted for %s: %v", sctx.Schedule.ID, err)
+	}
+
+	return sessionID, "", nil
+}
+
+// waitForSessionComplete polls until a simple/multi-agent session is no longer busy.
+func (s *SchedulerService) waitForSessionComplete(ctx context.Context, sessionID string) error {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			hasRunning := s.api.bgAgentRegistry.HasRunningAgents(sessionID)
+			isBusy := s.api.isSessionBusy(sessionID)
+			if !hasRunning && !isBusy {
+				return nil
+			}
+		}
+	}
 }
 
 func shouldAutoGenerateWorkshopReport(schedule WorkflowSchedule, messages []string) bool {
@@ -795,7 +1131,7 @@ func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMa
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
 	reqMap := map[string]interface{}{
 		"agent_mode":              "workflow_phase",
-		"phase_id":                "workflow-builder",
+		"phase_id":                workflowtypes.WorkflowStatusWorkflowBuilder,
 		"preset_query_id":         sctx.WorkflowID,
 		"selected_folder":         sctx.WorkspacePath,
 		"triggered_by":            "cron",
@@ -941,6 +1277,43 @@ func (s *SchedulerService) findActiveExecutionForWorkspace(workspacePath string)
 	}
 
 	return nil
+}
+
+// ScheduleSearchResult holds the result of finding a schedule by ID.
+type ScheduleSearchResult struct {
+	SourceType    string // "workflow" or "multi-agent"
+	WorkspacePath string // For workflow schedules
+	Manifest      *WorkflowManifest
+	UserID        string // For multi-agent schedules
+	ScheduleFile  *MultiAgentScheduleFile
+	Index         int
+}
+
+// findScheduleByIDAny scans both workflow manifests and multi-agent schedule files.
+func findScheduleByIDAny(ctx context.Context, scheduleID string) (*ScheduleSearchResult, error) {
+	// Try workflow manifests first
+	wsPath, manifest, idx, err := findScheduleByID(ctx, scheduleID)
+	if err == nil {
+		return &ScheduleSearchResult{
+			SourceType:    "workflow",
+			WorkspacePath: wsPath,
+			Manifest:      manifest,
+			Index:         idx,
+		}, nil
+	}
+
+	// Try multi-agent schedules
+	userID, f, idx, err := findMultiAgentScheduleByID(ctx, scheduleID)
+	if err == nil {
+		return &ScheduleSearchResult{
+			SourceType:   "multi-agent",
+			UserID:       userID,
+			ScheduleFile: f,
+			Index:        idx,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("schedule %s not found", scheduleID)
 }
 
 // findScheduleByID scans all workspace manifests to find a schedule by ID.

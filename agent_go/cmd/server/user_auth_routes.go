@@ -199,13 +199,6 @@ func (api *StreamingAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upsert app_users for email→userID lookup (used by bot sessions)
-	if extUser.Email != "" {
-		if err := api.chatDB.UpsertAppUser(r.Context(), userID, extUser.Email, extUser.Username, extUser.Provider); err != nil {
-			log.Printf("[AUTH] Failed to upsert app user: %v", err)
-		}
-	}
-
 	log.Printf("[AUTH] User %s logged in successfully via provider %s", extUser.Username, extUser.Provider)
 	json.NewEncoder(w).Encode(AuthResponse{
 		Token: token,
@@ -337,13 +330,6 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 		log.Printf("[AUTH] Failed to generate token: %v", err)
 		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
 		return
-	}
-
-	// Upsert app_users for email→userID lookup (used by bot sessions)
-	if extUser.Email != "" {
-		if err := api.chatDB.UpsertAppUser(r.Context(), userID, extUser.Email, extUser.Username, extUser.Provider); err != nil {
-			log.Printf("[AUTH] Failed to upsert app user: %v", err)
-		}
 	}
 
 	log.Printf("[AUTH] User %s authenticated via OAuth provider %s", extUser.Username, extUser.Provider)

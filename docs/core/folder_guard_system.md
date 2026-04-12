@@ -41,10 +41,11 @@ In standard Chat Mode, the agent operates in a shared workspace but is heavily r
 - **Read-Only Folders**: The `Workflow/` directory is strictly **read-only**. The agent can use `list_workspace_files` or `read_workspace_file` on `Workflow/` but cannot update or delete files there.
 - **Blocked Folders**: The `_users/` directory (which contains authentication data, OAuth tokens, and session history) is **strictly blocked** from all read and write access.
 
-### 2. Plan Mode (Multi-Agent Chat)
-Plan Mode (Multi-Agent Chat) isolates agents into specific task contexts.
-- **Write Restrictions**: Writes are restricted to a specific `Chats/{planID}/` folder via the `PlanFolderKey` injected into the context.
-- **Shared Memory**: The agent has read/write access to `Chats/memories/` for cross-session knowledge storage (handled by the memory tools).
+### 2. Multi-Agent Chat
+Multi-agent chat sub-agents share the default chat folder guard — there is no per-plan folder scoping any more.
+- **Write Restrictions**: Writes are restricted to the standard chat-mode allowed folders: `Chats/`, `Downloads/`, `config/`, `memories/` (plus `skills/custom/` and `subagents/custom/` when the builder tools are active).
+- **Read Access**: Sub-agents can read `Chats/`, `Downloads/`, `skills/`, `subagents/`, `Workflow/`, `config/`, `memories/`.
+- Scoping a sub-agent's output to a specific sub-folder under `Chats/` is done through the worker's instruction, not via a context flag.
 
 ### 3. Workflow Mode
 Workflow mode dynamically configures the folder guard for **each individual step** in the graph, providing the highest level of isolation.

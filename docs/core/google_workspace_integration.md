@@ -8,7 +8,7 @@ AgentForge integrates with Google Workspace via the `gws` CLI. This allows agent
 On your local machine, run the following command to perform the initial OAuth handshake:
 
 ```bash
-gws auth login --client-secret client_secret.json
+gws auth login
 ```
 *This will open your browser. Grant the necessary permissions to finish the login.*
 

@@ -8,7 +8,6 @@ interface ImageGenToolCallEndDisplayProps {
 }
 
 interface ImageGenResult {
-  images?: Array<{ data: string; mime_type: string }>
   model: string
   cost_per_image: number
   prompt: string
@@ -49,7 +48,7 @@ export const ImageGenToolCallEndDisplay: React.FC<ImageGenToolCallEndDisplayProp
     if (
       typeof parsed === 'object' &&
       typeof parsed.count === 'number' &&
-      (Array.isArray(parsed.saved_paths) || Array.isArray(parsed.images))
+      Array.isArray(parsed.saved_paths)
     ) {
       data = parsed as ImageGenResult
     }
@@ -60,8 +59,6 @@ export const ImageGenToolCallEndDisplay: React.FC<ImageGenToolCallEndDisplayProp
   if (!data) return null
 
   const hasSavedPaths = data.saved_paths && data.saved_paths.length > 0
-  const hasFallbackImages = data.images && data.images.length > 0
-
   return (
     <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded p-3 space-y-3">
       {/* Header */}
@@ -94,29 +91,6 @@ export const ImageGenToolCallEndDisplay: React.FC<ImageGenToolCallEndDisplayProp
                 <Download className="w-3 h-3" />
                 Save
               </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Fallback: base64 images (when workspace saving was unavailable) */}
-      {!hasSavedPaths && hasFallbackImages && (
-        <div className="flex flex-wrap gap-3">
-          {data.images!.map((img, i) => (
-            <div key={i} className="relative group">
-              <img
-                src={`data:${img.mime_type};base64,${img.data}`}
-                alt={`Generated image ${i + 1}`}
-                className="max-w-sm max-h-72 rounded border border-purple-200 dark:border-purple-700 object-contain"
-              />
-              <a
-                href={`data:${img.mime_type};base64,${img.data}`}
-                download={`generated-image-${i + 1}.png`}
-                className="absolute bottom-1 right-1 flex items-center gap-1 bg-black/70 hover:bg-black/90 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <Download className="w-3 h-3" />
-                Save
-              </a>
             </div>
           ))}
         </div>

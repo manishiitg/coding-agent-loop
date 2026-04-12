@@ -100,7 +100,7 @@ func (c *Client) ReadImage(ctx context.Context, params ReadImageParams) (string,
 	rawData, err := c.request(ctx, "GET", apiPath, nil)
 	if err != nil {
 		log.Printf("[READ_IMAGE_DEBUG] Workspace API request failed: %v", err)
-		return "", fmt.Errorf("failed to read image file: %w. Use 'list_workspace_files' to find the correct path", err)
+		return "", fmt.Errorf("failed to read image file: %w. Use execute_shell_command to verify the path, for example with 'ls' or 'find'.", err)
 	}
 
 	log.Printf("[READ_IMAGE_DEBUG] Raw image bytes received: %d bytes", len(rawData))

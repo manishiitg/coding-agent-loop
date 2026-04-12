@@ -1,6 +1,6 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/event-types'
-import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, DelegationToolCallDisplay, SubAgentToolCallDisplay, MCPToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, SubAgentToolCallDisplay, MCPToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
 import { normalizeMCPToolName } from '../../../utils/customToolNames'
@@ -36,11 +36,6 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return name === 'discover_code_structure' || name === 'discover_code_files' || name === 'write_code' || name === 'get_api_spec' || name === 'execute_shell_command'
   }
 
-  // Check if this is a delegation tool
-  const isDelegationTool = (name: string): boolean => {
-    return name === 'create_delegation_plan' || name === 'confirm_plan_execution'
-  }
-
   // If it's a workspace tool, use the specialized component
   if (normalizedToolName && isWorkspaceTool(normalizedToolName)) {
     return <WorkspaceToolCallDisplay event={event} />
@@ -56,11 +51,6 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
   // If it's a code execution tool, use the specialized component
   if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
     return <CodeExecutionToolCallDisplay event={{ ...event, tool_name: normalizedToolName }} />
-  }
-
-  // If it's a delegation tool, use the specialized component
-  if (normalizedToolName && isDelegationTool(normalizedToolName)) {
-    return <DelegationToolCallDisplay event={event} />
   }
 
   // If it's a sub-agent tool, use the specialized component

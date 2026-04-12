@@ -5,7 +5,7 @@ Slash commands are quick actions triggered by typing `/` in the chat input. The 
 ## Overview
 
 - **Trigger**: Type `/` in the chat input to open the command picker dialog.
-- **Built-in Commands**: 13 commands covering summarization, skill building, MCP management, delegation modes, etc.
+- **Built-in Commands**: Commands covering summarization, skill building, MCP management, workflow tooling, etc.
 - **User Commands**: Custom prompt shortcuts stored in `workspace-docs/commands/custom/`.
 - **Registry**: A unified command registry (`frontend/src/commands/`) so adding a command is a single-file change.
 
@@ -66,8 +66,6 @@ loadAndRegisterUserCommands(): Promise<void>
 
 | Command | Description | Modes | Hidden |
 |---------|-------------|-------|--------|
-| `/summarize` | Summarize conversation history | All | No |
-| `/compact` | Compact conversation context | All | Yes |
 | `/build-skill` | Build a new skill using skill-creator | All | No |
 | `/build-subagent` | Build a new sub-agent template | All | No |
 | `/add-skill` | Import a skill from GitHub | All | No |
@@ -75,8 +73,6 @@ loadAndRegisterUserCommands(): Promise<void>
 | `/mcp-add` | Add or edit MCP server configuration | All | No |
 | `/models` | Open LLM model configuration | All | No |
 | `/resume` | Resume a previous conversation | All | No |
-| `/spawn` | Enable simple sub-agent delegation | All | No |
-| `/nospawn` | Disable all sub-agent delegation | All | No |
 | `/workflow-builder` | Build a workflow from existing plans | Multi-Agent | No |
 | `/compress-memory` | Compress and clean up agent memories | Multi-Agent | No |
 
@@ -223,7 +219,7 @@ The commands package reuses `skills.WorkspaceAPIClient` for all file operations 
 ```
 frontend/src/commands/
 ├── types.ts              # CommandDefinition, CommandContext interfaces
-├── builtin-commands.tsx   # All 13 built-in commands with execute functions
+├── builtin-commands.tsx   # Built-in commands with execute functions
 ├── registry.ts           # getCommands(), findCommand(), setUserCommands()
 ├── user-commands.ts      # Load user commands from API, icon mapping
 └── index.ts              # Re-exports

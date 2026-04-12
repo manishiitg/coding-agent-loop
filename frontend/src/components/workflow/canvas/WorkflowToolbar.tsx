@@ -1273,11 +1273,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               Groups
                             </div>
                             {/* Select All / Unselect All - only if multiple groups */}
-                            {variablesManifest.groups.filter(g => g.enabled !== false).length > 1 && (
+                            {(variablesManifest.groups ?? []).filter(g => g.enabled !== false).length > 1 && (
                               <div className="flex items-center justify-end gap-1 px-2 pb-1">
                                 <button
                                   onClick={() => {
-                                    const allGroupIds = variablesManifest.groups
+                                    const allGroupIds = (variablesManifest.groups ?? [])
                                       .filter(g => g.enabled !== false)
                                       .map(g => g.name)
                                     setSelectedGroupIds(allGroupIds)
@@ -1300,10 +1300,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 </button>
                               </div>
                             )}
-                            {variablesManifest.groups.map((group) => {
+                            {(variablesManifest.groups ?? []).map((group) => {
                               const isDisabled = group.enabled === false
                               const isGroupChecked = selectedGroupIds.includes(group.name)
-                              const hasMultipleGroups = variablesManifest.groups.filter(g => g.enabled !== false).length > 1
+                              const hasMultipleGroups = (variablesManifest.groups ?? []).filter(g => g.enabled !== false).length > 1
 
                               return (
                                 <div

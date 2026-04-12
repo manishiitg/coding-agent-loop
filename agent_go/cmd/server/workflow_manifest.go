@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	"github.com/google/uuid"
 )
@@ -43,7 +43,7 @@ type WorkflowCapabilities struct {
 	SelectedGlobalSecretNames *[]string                 `json:"selected_global_secret_names"` // nil = all, [] = none
 	BrowserMode               string                    `json:"browser_mode"`
 	UseCodeExecutionMode      bool                      `json:"use_code_execution_mode"`
-	LLMConfig                 *database.PresetLLMConfig `json:"llm_config,omitempty"`
+	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
 }
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.
@@ -72,9 +72,10 @@ type WorkflowSchedule struct {
 	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
 	GroupNames     []string        `json:"group_names,omitempty"`
-	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator) or "workshop" (LLM-driven via workshop builder)
+	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
 	Messages       []string        `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
 	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner" (default), "debugger"
+	Query          string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
 }
 
 // --- Validation ---
@@ -103,7 +104,7 @@ func ValidateManifest(m *WorkflowManifest) error {
 
 	// Validate LLM config if present
 	if m.Capabilities.LLMConfig != nil {
-		if err := database.ValidatePresetLLMConfigPublic(m.Capabilities.LLMConfig); err != nil {
+		if err := workflowtypes.ValidatePresetLLMConfigPublic(m.Capabilities.LLMConfig); err != nil {
 			return fmt.Errorf("invalid llm_config: %w", err)
 		}
 	}
@@ -116,7 +117,8 @@ func ValidateManifest(m *WorkflowManifest) error {
 		if sched.CronExpression == "" {
 			return fmt.Errorf("schedules[%d].cron_expression is required", i)
 		}
-		if len(normalizeScheduleGroupNames(sched.GroupNames)) == 0 {
+		// group_names required for workflow/workshop modes, not for multi-agent
+		if sched.Mode != "multi-agent" && len(normalizeScheduleGroupNames(sched.GroupNames)) == 0 {
 			return fmt.Errorf("schedules[%d].group_names is required", i)
 		}
 	}

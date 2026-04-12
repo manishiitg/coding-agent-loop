@@ -18,7 +18,6 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset } from '../types/preset'
-import { WORKSPACE_TOOLS } from '../utils/customToolNames'
 import { restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
 import { summarizeEventForDebug } from '../utils/eventOrdering'
@@ -327,34 +326,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   
   // Filter tools to only include those from effective servers
   // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
-  // Also filter out workspace tools if workspace access is disabled
   const enabledTools = useMemo(() => {
     if (effectiveServers.includes("NO_SERVERS")) {
       return []
     }
-    
-    // Get workspace access setting from tab config (default: true)
-    const enableWorkspaceAccess = (selectedModeCategory === 'multi-agent' && activeTab?.config)
-      ? (activeTab.config.enableWorkspaceAccess ?? true)
-      : true // Default to enabled for workflow mode or if no tab config
-    
-    let filteredTools = allTools.filter(tool => 
+
+    return allTools.filter(tool =>
       tool.server && effectiveServers.includes(tool.server)
     )
-    
-    // Filter out workspace tools if workspace access is disabled
-    // Use category-based filtering: check if tool name is in WORKSPACE_TOOLS list
-    // This matches the backend category system where workspace tools have category "workspace"
-    if (!enableWorkspaceAccess) {
-      const workspaceToolSet = new Set<string>(WORKSPACE_TOOLS as readonly string[])
-      filteredTools = filteredTools.filter(tool => {
-        const toolName = tool.name || ''
-        return !workspaceToolSet.has(toolName)
-      })
-    }
-    
-    return filteredTools
-  }, [allTools, effectiveServers, selectedModeCategory, activeTab?.config])
+  }, [allTools, effectiveServers])
   
   // PERF FIX: Derive tab lists from stable tabSessionKey instead of raw chatTabs reference.
   // Uses getState() for the actual tab objects (avoids subscription), and tabSessionKey
@@ -2369,30 +2349,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         selectedServers: currentTab?.config?.selectedServers,
       })
 
-      // Compute effective plan phase for multi-agent mode (mirrors ChatInput logic)
-      let effectivePlanPhase: string | undefined
-      if (isMultiAgentMode) {
-        const planPhaseOverride = currentTab?.config?.planPhaseOverride ?? null
-        let autoDetectedPlanPhase: 'planning' | 'execution' | null = null
-        const currentTabEvents = currentTab?.sessionId ? (tabEvents) : []
-        for (let i = currentTabEvents.length - 1; i >= 0; i--) {
-          const event = currentTabEvents[i]
-          if (event.type === 'plan_approval') {
-            autoDetectedPlanPhase = 'execution'
-            break
-          }
-          if (event.type === 'tool_call_start' || event.type === 'tool_call_end') {
-            const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
-            const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
-            if (toolName === 'create_delegation_plan') {
-              autoDetectedPlanPhase = 'planning'
-              break
-            }
-          }
-        }
-        effectivePlanPhase = planPhaseOverride ?? autoDetectedPlanPhase ?? 'planning'
-      }
-
       // Build request payload
       const requestPayload = buildQueryRequestPayload({
         queryWithContext,
@@ -2409,7 +2365,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         chatPresetId,
         filteredPresetTools,
         hasActivePreset: !!activePreset,
-        effectivePlanPhase,
         decryptedSecrets,
         selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames ?? undefined,
       })

@@ -26,10 +26,6 @@ export default function SubAgentEditor({ subagent, onClose, onSave }: SubAgentEd
       frontmatterYaml.push(`default_reasoning_level: ${subagent.frontmatter.default_reasoning_level}`)
     }
 
-    if (subagent.frontmatter.default_tool_mode) {
-      frontmatterYaml.push(`default_tool_mode: ${subagent.frontmatter.default_tool_mode}`)
-    }
-
     frontmatterYaml.push('---')
     frontmatterYaml.push('')
 
@@ -119,7 +115,6 @@ export default function SubAgentEditor({ subagent, onClose, onSave }: SubAgentEd
 name: my-subagent
 description: A specialized sub-agent for...
 default_reasoning_level: medium
-default_tool_mode: simple
 ---
 
 # Instructions
@@ -135,8 +130,7 @@ You are a specialized agent for...`}
               <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">name</span> and{' '}
               <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">description</span> are required.
               Optional:{' '}
-              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_reasoning_level</span>,{' '}
-              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_tool_mode</span>
+              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_reasoning_level</span>
             </p>
           </div>
         </div>

@@ -13,8 +13,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// MemoryFolderPath is the default workspace folder for agent memories
-const MemoryFolderPath = "memories"
+// MemoryFolderPath is the fallback per-user memories folder when session context is unavailable.
+// Always prefer getMemoryFolder(ctx) which reads the session-scoped per-user path.
+const MemoryFolderPath = "_users/default/memories"
 
 // MemoryFolderKey is the context key for overriding the memory folder (e.g. per-project memories)
 const MemoryFolderKey delegationContextKey = "memory_folder"
@@ -239,8 +240,6 @@ execute_shell_command(command: "cat > ` + dateDir + `/{category}.md << 'MEMEOF'\
 
 	// Set medium reasoning level for memory save — needs judgment to write detailed, well-structured memories
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
-	// Restrict writes to the chat-backed plan folder root
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Save Memory"
 	log.Printf("[MEMORY] Starting background save_memory agent: %s", truncateString(content, 80))
@@ -347,8 +346,6 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 
 	// Set low reasoning level for memory ops (simple search/read)
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "low")
-	// Restrict writes to the chat-backed plan folder root (recall mostly reads, but keep consistent)
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Recall Memory"
 	log.Printf("[MEMORY] Starting background recall_memory agent: %s", truncateString(query, 80))
@@ -491,8 +488,6 @@ Last updated: {current timestamp}
 
 	// Use medium reasoning level — compression requires judgment about what to keep/merge
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
-	// Restrict writes to the chat-backed plan folder root
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Compress Memory"
 	if focus != "" {
@@ -543,18 +538,35 @@ Persistent memory across sessions. All memory tools run in the background — yo
 ` + "```" + `
 
 ### Recall Guidelines
-- **Read index.md first** via recall_memory(query: "index") — it lists settled decisions and known entities so you know what to look for.
-- **Before planning or decisions**: If index.md lists a relevant entity or decision, recall_memory for full context before proceeding.
+- Your memory index is auto-loaded into this prompt (see "Your Memory" section above if present).
+- Use recall_memory for deeper lookups when the index references something relevant.
 - **When user references past work** ("like before", "as we discussed", "continue with"): always recall first.
-- index.md is only as fresh as the last compress_memory run. For recent saves, use recall_memory to search date and entity files.
-- Recall is async and cheap — when in doubt, recall rather than miss important context.
 
 ### Save Rules
-- Save decisions, user preferences, learnings, project context, debugging insights, and patterns.
-- Be **detailed and thorough**: include WHY a decision was made, alternatives considered, what worked/failed, relevant code snippets and file paths.
+- **Only save when the user explicitly asks** ("remember this", "save to memory", "note this down").
+- Do NOT proactively save during normal conversations — the user will separately review chats and create memories when needed.
+- When saving, be **detailed and thorough**: include WHY, alternatives considered, what worked/failed, and relevant context.
 - Write as if explaining to a future self with no session context.
 
 ### Compression
 - Use compress_memory when memories have accumulated over multiple sessions. It merges related entries, removes outdated ones, and rewrites files cleanly.
+
+### Building Memories from Chat History
+
+When asked to read past conversations and create memories, follow this process:
+
+1. **List sessions:** ` + "`execute_shell_command(command: \"ls " + memoryFolder + "/../chat_history/\")`" + `
+2. **Read each conversation:** ` + "`execute_shell_command(command: \"cat " + memoryFolder + "/../chat_history/<session-id>/conversation.json\")`" + `
+3. **Extract what matters from each conversation:**
+   - User preferences and corrections ("don't do X", "I prefer Y")
+   - Decisions made and their reasoning
+   - What worked vs what failed (tool calls, approaches)
+   - Project context (what the user is working on, goals, constraints)
+   - Recurring patterns (user frequently asks about X, common workflows)
+   - Key facts learned (system architecture, credentials, endpoints)
+4. **Save each extracted memory** via save_memory with detailed context about which conversation it came from.
+5. **After processing all conversations**, run compress_memory to consolidate.
+
+**What to skip:** Greetings, trivial questions with no lasting value, one-off lookups with no reusable insight.
 `
 }

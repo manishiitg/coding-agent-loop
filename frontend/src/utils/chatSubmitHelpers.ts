@@ -86,7 +86,6 @@ export function buildQueryRequestPayload(params: {
   chatPresetId: string | null
   filteredPresetTools: string[]
   hasActivePreset: boolean
-  effectivePlanPhase?: string
   decryptedSecrets?: Array<{ name: string; value: string }>
   selectedGlobalSecrets?: string[] | null
 }): AgentQueryRequest {
@@ -95,7 +94,7 @@ export function buildQueryRequestPayload(params: {
     enabledTools, effectiveServers, currentTab, effectiveLLMConfig,
     llmConfigWithApiKeys, useCodeExecutionMode,
     executionOptions, workflowPresetId, chatPresetId,
-    filteredPresetTools, hasActivePreset, effectivePlanPhase, decryptedSecrets,
+    filteredPresetTools, hasActivePreset, decryptedSecrets,
     selectedGlobalSecrets,
   } = params
 
@@ -166,9 +165,6 @@ export function buildQueryRequestPayload(params: {
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,
     summary_keep_last_messages: isChatLikeMode ? 4 : undefined,
-    enable_workspace_access: isChatLikeMode
-      ? (currentTab?.config?.enableWorkspaceAccess ?? true)
-      : undefined,
     enable_browser_access: isChatWithExtras
       ? isBrowserAccessMode
       : undefined,
@@ -180,12 +176,6 @@ export function buildQueryRequestPayload(params: {
       : undefined,
     cdp_port: isChatWithExtras && effectiveBrowserMode === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)
-      : undefined,
-    delegation_mode: isMultiAgentMode
-      ? 'spawn' as const
-      : undefined,
-    plan_phase: isMultiAgentMode
-      ? ('execution' as const)
       : undefined,
     delegation_tier_config: undefined,
     selected_skills: isChatWithExtras && currentTab?.config?.selectedSkills?.length
@@ -201,9 +191,6 @@ export function buildQueryRequestPayload(params: {
       : undefined,
     workflow_context_paths: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
-      : undefined,
-    plan_folder: isMultiAgentMode
-      ? (currentTab?.config?.fileContext?.find(f => /^Chats\/[^/]+$/.test(f.path))?.path ?? undefined)
       : undefined,
     enable_image_generation: isChatWithExtras ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
     image_gen_config: (() => {

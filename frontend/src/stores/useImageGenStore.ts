@@ -2,9 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export interface ImageGenConfig {
-  provider: string  // 'vertex' (only option now; extensible for future providers)
-  modelId: string   // e.g. 'imagen-4.0-generate-001'
-  apiKey: string    // GEMINI_API_KEY value
+  provider: string  // e.g. 'vertex' or 'minimax-coding-plan'
+  modelId: string   // e.g. 'gemini-3.1-flash-image-preview' or 'image-01'
+  apiKey: string    // provider-specific API key override
 }
 
 interface ImageGenStore {
@@ -17,7 +17,7 @@ export const useImageGenStore = create<ImageGenStore>()(
     (set) => ({
       config: {
         provider: 'vertex',
-        modelId: 'gemini-2.5-flash-image',
+        modelId: 'gemini-3.1-flash-image-preview',
         apiKey: '',
       },
       setConfig: (config) =>

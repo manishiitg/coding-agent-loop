@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Wand2, Loader2, FolderOpen, Search, Globe, Layers, X, History, Bot, Server, ImagePlus, Download, Paperclip } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, Search, Globe, Layers, X, History, Bot, Server, Download, Paperclip } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -110,9 +110,6 @@ import SubAgentImportDialog from './subagents/SubAgentImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import ResumeSessionDialog from './ResumeSessionDialog'
-import { ImageGenerationConfigModal } from './ImageGenerationConfigModal'
-import WorkflowBuilderModal from './WorkflowBuilderModal'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
@@ -380,7 +377,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const {
     agentMode,
     setWorkspaceMinimized,
-    delegationMode,
     showWorkflowsOverview
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
@@ -405,11 +401,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [isWorkflowPhaseChat, workflowPhasePreset?.selectedFolder?.filepath])
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
-  // Multi-agent now runs in spawn mode by default (can still plan via tools when needed)
-  const effectiveDelegationMode: 'off' | 'spawn' = isMultiAgentMode ? 'spawn' : delegationMode
-
-  // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
-  // We'll compute this from tabEvents below after they're defined
 
   // Use selectors to subscribe only to specific values, reducing re-renders
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -651,8 +642,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   // CLI providers always require code execution mode
   const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
-  const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
-  const enableImageGeneration = useMemo(() => tabConfig?.enableImageGeneration ?? false, [tabConfig?.enableImageGeneration])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'none', [tabConfig?.browserMode])
   const enableBrowserAccess = useMemo(() => browserMode === 'headless' || browserMode === 'cdp', [browserMode])
   const useCdp = useMemo(() => browserMode === 'cdp', [browserMode])
@@ -663,7 +652,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
-  const [showImageGenConfig, setShowImageGenConfig] = useState(false)
   const [showGWSPopup, setShowGWSPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
   const [showActiveAgentsPanel, setShowActiveAgentsPanel] = useState(false)
@@ -772,22 +760,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     [mcpToolList]
   )
 
-  const setEnableWorkspaceAccess = useCallback((enabled: boolean) => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { enableWorkspaceAccess: enabled })
-      // Open workspace sidebar when workspace access is enabled
-      if (enabled) {
-        setWorkspaceMinimized(false)
-      }
-    }
-  }, [activeTabId, setTabConfig, setWorkspaceMinimized])
-
-  const setEnableImageGeneration = useCallback((enabled: boolean) => {
-    if (activeTabId) {
-      setTabConfig(activeTabId, { enableImageGeneration: enabled })
-    }
-  }, [activeTabId, setTabConfig])
-
   const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
     if (!activeTabId) return
 
@@ -801,7 +773,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         browserMode: 'stealth',
         enableBrowserAccess: false,
         useCdp: false,
-        enableWorkspaceAccess: true,
+
         selectedServers: newServers,
         selectedSkills: cleanedSkills,
       })
@@ -816,7 +788,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         browserMode: 'playwright',
         enableBrowserAccess: false,
         useCdp: false,
-        enableWorkspaceAccess: true,
+
         selectedServers: newServers
       })
       setChatSelectedServers(newServers)
@@ -829,7 +801,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         browserMode: mode,
         enableBrowserAccess: true,
         useCdp: mode === 'cdp',
-        enableWorkspaceAccess: true,
+
         selectedServers: newServers
       })
       setChatSelectedServers(newServers)
@@ -1037,7 +1009,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const newEnabled = !gwsEnabled
     setTabConfig(activeTabId, {
       enableGWSAccess: newEnabled,
-      ...(newEnabled ? { enableWorkspaceAccess: true } : {}),
     })
     if (newEnabled) setWorkspaceMinimized(false)
   }, [activeTabId, gwsEnabled, setTabConfig, setWorkspaceMinimized])
@@ -1072,7 +1043,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             browserMode: 'stealth',
             enableBrowserAccess: false,
             useCdp: false,
-            enableWorkspaceAccess: true,
+    
           })
           setChatSelectedServers(newServers)
           setWorkspaceMinimized(false)
@@ -1084,7 +1055,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             browserMode: 'playwright',
             enableBrowserAccess: false,
             useCdp: false,
-            enableWorkspaceAccess: true,
+    
           })
           setChatSelectedServers(newServers)
           setWorkspaceMinimized(false)
@@ -1208,7 +1179,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
-  const { showSkillImport, showSubAgentImport, showMCPDetails, showMCPConfig, showModels, showResume, showWorkflowBuilder, openDialog, closeDialog } = useCommandDialogStore()
+  const { showSkillImport, showSubAgentImport, showMCPDetails, showMCPConfig, showModels, openDialog, closeDialog } = useCommandDialogStore()
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
@@ -1433,19 +1404,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [])
 
 
-  // Close workspace sidebar when workspace access is disabled
-  // Do NOT force it open — respect the user's persisted preference
-  useEffect(() => {
-    if (!enableWorkspaceAccess) {
-      setWorkspaceMinimized(true)
-      if (showFileDialog) {
-        setShowFileDialog(false)
-        setAtPosition(-1)
-        setFileSearchQuery('')
-      }
-    }
-  }, [enableWorkspaceAccess, setWorkspaceMinimized, showFileDialog])
-
   // Fetch Chats/ on demand when @ dialog opens (these may not be in the
   // workspace tree when it's scoped to a workflow folder).
   // The API returns the CONTENTS of a folder, so we wrap them in synthetic folder entries.
@@ -1582,7 +1540,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const hashDist = hashIdx >= 0 ? cursorPos - hashIdx : Infinity
       const closestTrigger = Math.min(atDist, slashDist, hashDist)
 
-      if (atIdx >= 0 && closestTrigger === atDist && enableWorkspaceAccess) {
+      if (atIdx >= 0 && closestTrigger === atDist) {
         const textAfterAt = textBefore.substring(atIdx + 1)
         const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
         if (hasValidAt) {
@@ -1826,7 +1784,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     // Check for @ symbol and update file dialog state (only if no other dialog active and workspace access is enabled)
-    else if (lastAtIndex >= 0 && !showCommandDialog && !showWorkflowDialog && enableWorkspaceAccess) {
+    else if (lastAtIndex >= 0 && !showCommandDialog && !showWorkflowDialog) {
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
       const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
 
@@ -1920,7 +1878,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       fileRemovalTimeoutRef.current = null
     }, 500)
-  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight, isWorkflowPhaseChat])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isWorkflowPhaseChat])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -2127,35 +2085,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         return
       }
 
-      const summarizeIndex = trimmedQuery.indexOf('/summarize')
-      const compactIndex = trimmedQuery.indexOf('/compact')
-      
-      if (summarizeIndex >= 0) {
-        // Handle summarize command
-        if (tabSessionId && !isSummarizing && !isStreaming) {
-          // Extract text before /summarize
-          const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
-
-          // If there's text before /summarize, send it after summarization
-          // Otherwise, just summarize
-          handleSummarize(textBeforeSummarize || undefined)
-          
-          clearInputState()
-        }
-        return
-      }
-
-      if (compactIndex >= 0) {
-        // Handle compact command
-        if (tabSessionId && !isSummarizing && !isStreaming) {
-          const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
-          handleCompact(textBeforeCompact || undefined)
-          
-          clearInputState()
-        }
-        return
-      }
-
       if (canSubmitImmediately) {
         // Guard: prevent double submission from rapid key repeat or double press
         if (justSubmittedRef.current) return
@@ -2205,29 +2134,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
     if (executeSlashCommandFromQuery(trimmedQuery)) {
-      return
-    }
-
-    const summarizeIndex = trimmedQuery.indexOf('/summarize')
-    const compactIndex = trimmedQuery.indexOf('/compact')
-
-    if (summarizeIndex >= 0) {
-      if (tabSessionId && !isSummarizing && !isStreaming) {
-        const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
-        handleSummarize(textBeforeSummarize || undefined)
-
-        clearInputState()
-      }
-      return
-    }
-
-    if (compactIndex >= 0) {
-      if (tabSessionId && !isSummarizing && !isStreaming) {
-        const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
-        handleCompact(textBeforeCompact || undefined)
-        
-        clearInputState()
-      }
       return
     }
 
@@ -2385,12 +2291,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       scrollToFile(file.filepath)
     }
 
-    // If the selected file is a direct multi-agent plan folder, write .last_used timestamp
-    const isPlanFolder = file.type === 'folder' && /^Chats\/[^/]+$/.test(file.filepath)
-    if (isPlanFolder) {
-      agentApi.updatePlannerFile(`${file.filepath}/.last_used`, new Date().toISOString()).catch(() => {})
-    }
-
     // Focus back to textarea and position cursor after the space
     setTimeout(() => {
       if (textareaRef.current) {
@@ -2437,8 +2337,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         label: workflow.label,
         workspacePath: workflow.workspacePath
       }]
-      // Auto-enable workspace access when workflow context is selected
-      setTabConfig(activeTabId, { workflowContext: updated, enableWorkspaceAccess: true })
+      setTabConfig(activeTabId, { workflowContext: updated })
     }
 
     // Sync store
@@ -2933,7 +2832,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             onImportClick={() => openDialog('skillImport')}
                           />
                         )}
-                        {!hideExtras && effectiveDelegationMode === 'spawn' && (
+                        {!hideExtras && isMultiAgentMode && (
                           <SubAgentSelectionDropdown
                             selectedSubAgents={selectedSubAgents}
                             onSubAgentToggle={onSubAgentToggle}
@@ -2966,28 +2865,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {/* Workspace Access Toggle - hidden for phase chat, always on in multi-agent, toggleable in chat */}
-                    {!hideExtras && (isMultiAgentMode ? (
-                      <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
-                        <FolderOpen className="w-4 h-4 flex-shrink-0" />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setEnableWorkspaceAccess(!enableWorkspaceAccess)}
-                        disabled={isStreaming || isSummarizing || browserMode !== 'none'}
-                        className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                          enableWorkspaceAccess
-                            ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
-                            : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                        } ${(isStreaming || isSummarizing || browserMode !== 'none') ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                      >
-                        <FolderOpen className="w-4 h-4 flex-shrink-0" />
-                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
-                          Workspace
-                        </span>
-                      </button>
-                    ))}
                     {/* Browser Access Toggle — hidden in workflow mode */}
                     {!hideExtras && <button
                       type="button"
@@ -3084,41 +2961,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </button>
                     )}
 
-                    {/* Image Generation Toggle — hidden in workflow mode */}
-                    {!hideExtras && <button
-                      type="button"
-                      onClick={() => {
-                        if (!enableImageGeneration) {
-                          setEnableImageGeneration(true)
-                        }
-                        setShowImageGenConfig(true)
-                      }}
-                      disabled={isStreaming || isSummarizing}
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        enableImageGeneration
-                          ? 'bg-purple-900/40 border-purple-600 text-purple-400'
-                          : 'bg-gray-800 border-gray-600 text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <ImagePlus className="w-4 h-4 flex-shrink-0" />
-                      {enableImageGeneration ? (
-                        <span className="text-[10px] font-semibold px-1 rounded bg-purple-800/60 text-purple-200">IMG</span>
-                      ) : (
-                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
-                          Image Gen
-                        </span>
-                      )}
-                    </button>}
-
                   </div>
-                )}
-
-                {/* Image Generation Config Modal */}
-                {showImageGenConfig && (
-                  <ImageGenerationConfigModal
-                    onClose={() => setShowImageGenConfig(false)}
-                    onDisable={() => setEnableImageGeneration(false)}
-                  />
                 )}
 
                 {/* Browser Access Configuration Popup */}
@@ -3984,14 +3827,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showModels}
         onClose={() => closeDialog('models')}
       />
-      {showResume && (
-        <ResumeSessionDialog
-          onClose={() => closeDialog('resume')}
-        />
-      )}
-      {showWorkflowBuilder && (
-        <WorkflowBuilderModal onClose={() => closeDialog('workflowBuilder')} />
-      )}
       </div>
     </TooltipProvider>
   )

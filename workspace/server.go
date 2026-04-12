@@ -12,6 +12,7 @@ import (
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/handlers"
 	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -51,8 +52,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Create default workspace subdirectories
-	defaultFolders := []string{"Chats", "Downloads", "Workflow", "skills"}
+	// Create default workspace subdirectories.
+	// Root-level Chats/ and Downloads/ are kept for backwards compatibility with existing workspaces.
+	// New sessions write to _users/<userID>/Chats/ instead (per-user isolation).
+	defaultFolders := []string{"Chats", "Downloads", "Workflow", "skills", "_users/default/Chats", "_users/default/memories", "_users/default/chat_history"}
 	for _, folder := range defaultFolders {
 		path := filepath.Join(docsDir, folder)
 		if err := os.MkdirAll(path, 0755); err != nil {
@@ -157,6 +160,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Create Gin router
 	r := gin.Default()
+
+	// Gzip compression
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	// Add CORS middleware
 	r.Use(func(c *gin.Context) {

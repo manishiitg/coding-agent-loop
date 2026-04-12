@@ -115,6 +115,31 @@ func generateTextLLMToolDef() llmtypes.Tool {
 	}
 }
 
+// searchWebLLMToolDef returns the search_web_llm tool definition (single source of truth).
+func searchWebLLMToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "search_web_llm",
+			Description: "Search the web using a published search-capable model. If provider is omitted, the workspace primary search provider is used with configured fallbacks.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "The web search query.",
+					},
+						"provider": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional published provider override to use for this search, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan.",
+						},
+				},
+				"required": []string{"query"},
+			}),
+		},
+	}
+}
+
 // diffPatchToolDef returns the diff_patch_workspace_file tool definition.
 func diffPatchToolDef() llmtypes.Tool {
 	return llmtypes.Tool{
@@ -160,6 +185,11 @@ func GetGenerateTextLLMToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{generateTextLLMToolDef()}
 }
 
+// GetSearchWebLLMToolDefinitions returns only the web search tool.
+func GetSearchWebLLMToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{searchWebLLMToolDef()}
+}
+
 // GetDiffPatchToolDefinitions returns only the diff_patch_workspace_file tool definition.
 func GetDiffPatchToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{diffPatchToolDef()}
@@ -172,6 +202,7 @@ func GetAdvancedToolDefinitions() []llmtypes.Tool {
 	tools = append(tools, GetImageToolDefinitions()...)
 	tools = append(tools, GetPDFToolDefinitions()...)
 	tools = append(tools, GetGenerateTextLLMToolDefinitions()...)
+	tools = append(tools, GetSearchWebLLMToolDefinitions()...)
 	tools = append(tools, GetDiffPatchToolDefinitions()...)
 	return tools
 }

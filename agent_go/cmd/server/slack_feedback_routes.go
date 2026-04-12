@@ -8,7 +8,7 @@ import (
 
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 
 	"github.com/gorilla/mux"
 )
@@ -41,45 +41,50 @@ type SlackTestResponse struct {
 // Webhook types removed - using Socket Mode for real-time events
 
 // SlackFeedbackRoutes sets up Slack feedback API routes
-func SlackFeedbackRoutes(router *mux.Router, api *StreamingAPI, db database.Database) {
+func SlackFeedbackRoutes(router *mux.Router, api *StreamingAPI) {
 	apiRouter := router.PathPrefix("/api/human-feedback/slack").Subrouter()
 
 	// Configuration routes
-	apiRouter.HandleFunc("/config", getSlackConfigHandler(api, db)).Methods("GET")
-	apiRouter.HandleFunc("/config", updateSlackConfigHandler(api, db)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/config", getSlackConfigHandler(api)).Methods("GET")
+	apiRouter.HandleFunc("/config", updateSlackConfigHandler(api)).Methods("POST", "OPTIONS")
 
 	// Test connection
-	apiRouter.HandleFunc("/test", testSlackConnectionHandler(api, db)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/test", testSlackConnectionHandler(api)).Methods("POST", "OPTIONS")
 
 	// Get test connection reply (for polling)
-	apiRouter.HandleFunc("/test/reply", getTestConnectionReplyHandler(api, db)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/test/reply", getTestConnectionReplyHandler(api)).Methods("GET", "OPTIONS")
 	// Note: Using Socket Mode for real-time events - no webhook endpoint needed
 }
 
+// ensureSlackService returns the global Slack service, initializing it lazily
+// on first use. The service reads its config from the filesystem now, so no
+// database handle is required.
+func ensureSlackService() (*slackservice.SlackService, error) {
+	slackService := slackservice.GetSlackService()
+	if slackService != nil {
+		return slackService, nil
+	}
+	svc, err := slackservice.InitSlackService()
+	if err != nil {
+		return nil, err
+	}
+	return svc, nil
+}
+
 // getSlackConfigHandler retrieves current Slack configuration
-func getSlackConfigHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slackService := slackservice.GetSlackService()
-		if slackService == nil {
-			// Initialize if not already initialized
-			sqliteDB, ok := db.(*database.SQLiteDB)
-			if !ok {
-				http.Error(w, "database type not supported", http.StatusInternalServerError)
-				return
-			}
-			var err error
-			slackService, err = slackservice.InitSlackService(sqliteDB.GetDB())
-			if err != nil {
-				http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
-				return
-			}
+		slackService, err := ensureSlackService()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
+			return
 		}
 
 		config := slackService.GetConfig()
 
-		// Check bot_mode from bot_connector_config table
+		// Check bot_mode from the filesystem-backed bot connector config.
 		botMode := false
-		botCfg, _ := db.GetBotConnectorConfig(r.Context(), "slack")
+		botCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
 		if botCfg != nil {
 			botMode = botCfg.BotMode
 		}
@@ -98,7 +103,7 @@ func getSlackConfigHandler(api *StreamingAPI, db database.Database) http.Handler
 }
 
 // updateSlackConfigHandler creates/updates Slack configuration
-func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -112,21 +117,11 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 			return
 		}
 
-		slackService := slackservice.GetSlackService()
-		if slackService == nil {
-			// Initialize if not already initialized
-			sqliteDB, ok := db.(*database.SQLiteDB)
-			if !ok {
-				http.Error(w, "database type not supported", http.StatusInternalServerError)
-				return
-			}
-			var err error
-			slackService, err = slackservice.InitSlackService(sqliteDB.GetDB())
-			if err != nil {
-				log.Printf("[SLACK] Failed to initialize service: %v", err)
-				http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
-				return
-			}
+		slackService, err := ensureSlackService()
+		if err != nil {
+			log.Printf("[SLACK] Failed to initialize service: %v", err)
+			http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
+			return
 		}
 
 		config := &slackservice.SlackConfig{
@@ -142,13 +137,12 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 			return
 		}
 
-		// Save bot_mode to bot_connector_config table
-		_, err := db.UpsertBotConnectorConfig(r.Context(), &database.CreateBotConnectorConfigRequest{
+		// Save bot_mode to the filesystem-backed bot connector config.
+		if _, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
 			ID:      "slack",
 			Enabled: req.Enabled,
 			BotMode: req.BotMode,
-		})
-		if err != nil {
+		}); err != nil {
 			log.Printf("[SLACK] Failed to save bot_mode: %v", err)
 			// Non-fatal — Slack config itself was saved
 		}
@@ -179,32 +173,22 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 
 // testSlackConnectionHandler tests Slack connection
 // Accepts optional config in request body to test without saving
-func testSlackConnectionHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		slackService := slackservice.GetSlackService()
-		if slackService == nil {
-			// Initialize if not already initialized
-			sqliteDB, ok := db.(*database.SQLiteDB)
-			if !ok {
-				http.Error(w, "database type not supported", http.StatusInternalServerError)
-				return
+		slackService, err := ensureSlackService()
+		if err != nil {
+			response := SlackTestResponse{
+				Success: false,
+				Message: fmt.Sprintf("Failed to initialize Slack service: %v", err),
 			}
-			var err error
-			slackService, err = slackservice.InitSlackService(sqliteDB.GetDB())
-			if err != nil {
-				response := SlackTestResponse{
-					Success: false,
-					Message: fmt.Sprintf("Failed to initialize Slack service: %v", err),
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(response)
-				return
-			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
 		}
 
 		// Check if config is provided in request body (for testing without saving)
@@ -219,7 +203,6 @@ func testSlackConnectionHandler(api *StreamingAPI, db database.Database) http.Ha
 
 		// If config provided, test with it directly; otherwise use saved config
 		var testUniqueID string
-		var err error
 		if testConfig != nil {
 			testUniqueID, err = slackService.TestConnectionWithConfig(r.Context(), &slackservice.SlackConfig{
 				Enabled:   testConfig.Enabled,
@@ -255,7 +238,7 @@ func testSlackConnectionHandler(api *StreamingAPI, db database.Database) http.Ha
 }
 
 // getTestConnectionReplyHandler checks if a reply was received for a test connection
-func getTestConnectionReplyHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func getTestConnectionReplyHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		testUniqueID := r.URL.Query().Get("test_id")
 		if testUniqueID == "" {

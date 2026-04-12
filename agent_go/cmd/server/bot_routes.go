@@ -4,36 +4,33 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strconv"
+
+	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
-	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	"github.com/gorilla/mux"
 )
 
-// BotRoutes sets up the bot connector API routes
-func BotRoutes(router *mux.Router, api *StreamingAPI, db database.Database) {
+// BotRoutes sets up the bot connector API routes.
+// Bot sessions are regular chat sessions with BotMetadata attached to their
+// on-disk manifest; the handlers here translate between the unified model and
+// the legacy BotSession shape the frontend still expects.
+func BotRoutes(router *mux.Router, api *StreamingAPI) {
 	botRouter := router.PathPrefix("/api/bot").Subrouter()
 
 	// Connector config routes
-	botRouter.HandleFunc("/connectors", listBotConnectorsHandler(api, db)).Methods("GET")
-	botRouter.HandleFunc("/connectors/{platform}", getBotConnectorHandler(api, db)).Methods("GET")
-	botRouter.HandleFunc("/connectors/{platform}", saveBotConnectorHandler(api, db)).Methods("POST", "OPTIONS")
-	botRouter.HandleFunc("/connectors/{platform}/test", testBotConnectorHandler(api, db)).Methods("POST", "OPTIONS")
-
-	// Bot session routes
-	botRouter.HandleFunc("/sessions", listBotSessionsHandler(api, db)).Methods("GET")
-	botRouter.HandleFunc("/sessions/{id}", getBotSessionHandler(api, db)).Methods("GET")
-	botRouter.HandleFunc("/sessions/{id}/stop", stopBotSessionHandler(api, db)).Methods("POST", "OPTIONS")
-	botRouter.HandleFunc("/sessions/{id}/messages", listBotMessagesHandler(api, db)).Methods("GET")
+	botRouter.HandleFunc("/connectors", listBotConnectorsHandler(api)).Methods("GET")
+	botRouter.HandleFunc("/connectors/{platform}", getBotConnectorHandler(api)).Methods("GET")
+	botRouter.HandleFunc("/connectors/{platform}", saveBotConnectorHandler(api)).Methods("POST", "OPTIONS")
+	botRouter.HandleFunc("/connectors/{platform}/test", testBotConnectorHandler(api)).Methods("POST", "OPTIONS")
 }
 
 // --- Connector config handlers ---
 
-func listBotConnectorsHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func listBotConnectorsHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		configs, err := db.ListBotConnectorConfigs(r.Context())
+		configs, err := api.chatStore.ListBotConnectorConfigs(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -41,7 +38,7 @@ func listBotConnectorsHandler(api *StreamingAPI, db database.Database) http.Hand
 
 		// Add live status from registered connectors
 		type connectorStatus struct {
-			database.BotConnectorConfig
+			chathistory.BotConnectorConfig
 			Connected bool `json:"connected"`
 		}
 
@@ -62,11 +59,11 @@ func listBotConnectorsHandler(api *StreamingAPI, db database.Database) http.Hand
 	}
 }
 
-func getBotConnectorHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func getBotConnectorHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		platform := mux.Vars(r)["platform"]
 
-		cfg, err := db.GetBotConnectorConfig(r.Context(), platform)
+		cfg, err := api.chatStore.GetBotConnectorConfig(r.Context(), platform)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -77,7 +74,7 @@ func getBotConnectorHandler(api *StreamingAPI, db database.Database) http.Handle
 	}
 }
 
-func saveBotConnectorHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func saveBotConnectorHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -86,14 +83,14 @@ func saveBotConnectorHandler(api *StreamingAPI, db database.Database) http.Handl
 
 		platform := mux.Vars(r)["platform"]
 
-		var req database.CreateBotConnectorConfigRequest
+		var req chathistory.CreateBotConnectorConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 		req.ID = platform
 
-		cfg, err := db.UpsertBotConnectorConfig(r.Context(), &req)
+		cfg, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -106,7 +103,7 @@ func saveBotConnectorHandler(api *StreamingAPI, db database.Database) http.Handl
 	}
 }
 
-func testBotConnectorHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
+func testBotConnectorHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -155,119 +152,3 @@ func testBotConnectorHandler(api *StreamingAPI, db database.Database) http.Handl
 	}
 }
 
-// --- Bot session handlers ---
-
-func listBotSessionsHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		limit := 20
-		offset := 0
-		status := r.URL.Query().Get("status")
-
-		if l := r.URL.Query().Get("limit"); l != "" {
-			if parsed, err := strconv.Atoi(l); err == nil {
-				limit = parsed
-			}
-		}
-		if o := r.URL.Query().Get("offset"); o != "" {
-			if parsed, err := strconv.Atoi(o); err == nil {
-				offset = parsed
-			}
-		}
-
-		sessions, total, err := db.ListBotSessions(r.Context(), limit, offset, status)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"sessions": sessions,
-			"total":    total,
-			"limit":    limit,
-			"offset":   offset,
-		})
-	}
-}
-
-func getBotSessionHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := mux.Vars(r)["id"]
-
-		session, err := db.GetBotSession(r.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(session)
-	}
-}
-
-func stopBotSessionHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		id := mux.Vars(r)["id"]
-
-		session, err := db.GetBotSession(r.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-
-		if session.Status != database.BotSessionStatusRunning && session.Status != database.BotSessionStatusAwaitingPlanApproval {
-			http.Error(w, "Session is not active", http.StatusBadRequest)
-			return
-		}
-
-		err = db.CompleteBotSession(r.Context(), id, database.BotSessionStatusFailed)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Session stopped",
-		})
-	}
-}
-
-func listBotMessagesHandler(api *StreamingAPI, db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := mux.Vars(r)["id"]
-		limit := 100
-		offset := 0
-
-		if l := r.URL.Query().Get("limit"); l != "" {
-			if parsed, err := strconv.Atoi(l); err == nil {
-				limit = parsed
-			}
-		}
-		if o := r.URL.Query().Get("offset"); o != "" {
-			if parsed, err := strconv.Atoi(o); err == nil {
-				offset = parsed
-			}
-		}
-
-		messages, total, err := db.ListBotMessages(r.Context(), id, limit, offset)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"messages": messages,
-			"total":    total,
-			"limit":    limit,
-			"offset":   offset,
-		})
-	}
-}

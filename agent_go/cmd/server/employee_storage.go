@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // EmployeeFile represents a single employee record stored in config/employees.json.
@@ -67,28 +69,11 @@ func readEmployeesFile() ([]EmployeeFile, error) {
 	return employees, nil
 }
 
-// writeEmployeesFile writes the employees slice to config/employees.json atomically
-// using a temp file + rename. Creates the config/ directory if needed.
+// writeEmployeesFile writes the employees slice to config/employees.json.
 func writeEmployeesFile(employees []EmployeeFile) error {
 	employeesMu.Lock()
 	defer employeesMu.Unlock()
-
-	fp := employeesFilePath()
-	dir := filepath.Dir(fp)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(employees, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	tmp := fp + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, fp)
+	return fsutil.WriteJSONAtomic(employeesFilePath(), employees, 0644)
 }
 
 // readEmployeeWorkflowsFile reads config/employee-workflows.json and returns
@@ -109,26 +94,9 @@ func readEmployeeWorkflowsFile() (map[string]string, error) {
 }
 
 // writeEmployeeWorkflowsFile writes the workflow_path → employee_id map to
-// config/employee-workflows.json atomically using a temp file + rename.
-// Creates the config/ directory if needed.
+// config/employee-workflows.json.
 func writeEmployeeWorkflowsFile(assignments map[string]string) error {
 	employeeWorkflowsMu.Lock()
 	defer employeeWorkflowsMu.Unlock()
-
-	fp := employeeWorkflowsFilePath()
-	dir := filepath.Dir(fp)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	tmp := fp + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, fp)
+	return fsutil.WriteJSONAtomic(employeeWorkflowsFilePath(), assignments, 0644)
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/mcpclient"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/chathistory"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 )
 
@@ -44,6 +44,17 @@ type BotIncomingMessage struct {
 	IsThreadReply   bool
 	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
 	ThreadHistory   []ThreadMessage // populated when tagged in existing thread
+}
+
+func botMetaFromMsg(msg BotIncomingMessage, threadID ThreadID) *chathistory.BotMetadata {
+	return &chathistory.BotMetadata{
+		Platform:  msg.Platform,
+		ChannelID: msg.ChannelID,
+		ThreadTS:  threadID.ThreadTS,
+		UserID:    msg.UserID,
+		UserName:  msg.UserName,
+		UserEmail: msg.UserEmail,
+	}
 }
 
 // ThreadMessage represents a single message in a thread's history
@@ -132,13 +143,16 @@ type DecryptedSecret struct {
 // Used by bot sessions to retrieve server-side stored secrets.
 type UserSecretsLoaderFunc func(ctx context.Context, userID string) ([]DecryptedSecret, error)
 
-// BotConversationManager is the platform-agnostic orchestrator for bot sessions
+// BotConversationManager is the platform-agnostic orchestrator for bot sessions.
+// Bot conversations are unified with regular chat sessions: each Slack thread
+// / DM / web-simulator tab maps to a chat session folder with a BotMetadata
+// block attached to its manifest.
 type BotConversationManager struct {
 	mu         sync.RWMutex
 	connectors map[string]BotConnector      // platform name -> connector
 	sessions   map[string]*activeBotSession // threadKey -> active session tracking
 
-	db              database.Database
+	chatStore       chathistory.Store
 	eventSubscriber BotEventSubscriber
 
 	// Function references set by server layer (to avoid import cycles)
@@ -147,30 +161,30 @@ type BotConversationManager struct {
 	loadUserSecrets UserSecretsLoaderFunc
 	mcpConfigPath   string
 	workspaceURL    string
-
 }
 
-// activeBotSession tracks an in-progress bot conversation
+// activeBotSession tracks an in-progress bot conversation. In the unified
+// model there is exactly one ID — the chat session ID (folder name).
 type activeBotSession struct {
 	mu                sync.Mutex
-	BotSessionID      string
-	SessionID         string // internal chat session ID
+	SessionID         string // unified chat session id
 	UserID            string // workspace user ID for secrets loading
 	Status            string
 	Platform          string
 	ThreadID          ThreadID
+	Metadata          *chathistory.BotMetadata // platform/user info for the conversation
 	cancel            context.CancelFunc
 	eventFilter       *BotEventFilter
 	awaitingUserInput bool   // set by event filter on any blocking event
-	blockingEventType string // "plan_approval", "blocking_human_feedback", "blocking_human_questions"
+	blockingEventType string // "blocking_human_feedback", "blocking_human_questions"
 }
 
-// NewBotConversationManager creates a new manager
-func NewBotConversationManager(db database.Database, mcpConfigPath, workspaceURL string) *BotConversationManager {
+// NewBotConversationManager creates a new manager.
+func NewBotConversationManager(chatStore chathistory.Store, mcpConfigPath, workspaceURL string) *BotConversationManager {
 	return &BotConversationManager{
 		connectors:    make(map[string]BotConnector),
 		sessions:      make(map[string]*activeBotSession),
-		db:            db,
+		chatStore:     chatStore,
 		mcpConfigPath: mcpConfigPath,
 		workspaceURL:  workspaceURL,
 	}
@@ -237,18 +251,13 @@ func (m *BotConversationManager) LoadAvailableCapabilities() (servers []string, 
 	return
 }
 
-// resolveWorkspaceUserID maps a bot message to a workspace user ID for per-user secrets loading.
-// Priority: 1) pre-resolved (web simulator sets from HTTP auth), 2) email lookup via app_users, 3) fallback to "default".
+// resolveWorkspaceUserID maps a bot message to a workspace user ID for
+// per-user secrets loading. The web simulator pre-resolves this from HTTP auth;
+// Slack and other async platforms fall through to "default" since we no
+// longer maintain an email→userID lookup table.
 func (m *BotConversationManager) resolveWorkspaceUserID(msg BotIncomingMessage) string {
 	if msg.WorkspaceUserID != "" {
 		return msg.WorkspaceUserID
-	}
-	if msg.UserEmail != "" {
-		user, err := m.db.GetAppUserByEmail(context.Background(), msg.UserEmail)
-		if err == nil && user != nil {
-			log.Printf("[BOT_MANAGER] Resolved workspace user ID %s for email %s", user.UserID, msg.UserEmail)
-			return user.UserID
-		}
 	}
 	return "default"
 }
@@ -277,8 +286,8 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	if msg.UserEmail != "" {
 		var allowedEmails []string
 
-		// 1. Load from DB (_global config)
-		globalCfg, _ := m.db.GetBotConnectorConfig(context.Background(), "_global")
+		// 1. Load from filesystem-backed bot connector config
+		globalCfg, _ := m.chatStore.GetBotConnectorConfig(context.Background(), "_global")
 		if globalCfg != nil && globalCfg.ConfigJSON != "" {
 			var cfgData map[string]json.RawMessage
 			if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
@@ -343,7 +352,9 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	threadKey := threadID.Key()
 	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
 
-	// Check if there's an existing session for this thread
+	// Check if there's an existing in-memory session for this thread.
+	// Bot sessions are pure in-memory now — a reply that arrives after a
+	// server restart simply starts a new session.
 	m.mu.RLock()
 	active, exists := m.sessions[threadKey]
 	m.mu.RUnlock()
@@ -353,23 +364,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		return
 	}
 
-	// Also check DB for active sessions on this thread
-	existing, err := m.db.GetBotSessionByThread(context.Background(), msg.Platform, msg.ChannelID, threadID.ThreadTS)
-	if err != nil {
-		log.Printf("[BOT_MANAGER] Error looking up thread: %v", err)
-	}
-
-	if existing != nil && (existing.Status == database.BotSessionStatusRunning || existing.Status == database.BotSessionStatusAwaitingPlanApproval) {
-		// Session is in DB as running but not in memory — server restart or crash.
-		// Mark as failed and start a fresh session with proper event filter.
-		log.Printf("[BOT_MANAGER] Found stale session %s (status=%s) for thread %s, marking failed and starting fresh",
-			existing.ID, existing.Status, threadKey)
-		m.db.CompleteBotSession(context.Background(), existing.ID, database.BotSessionStatusFailed)
-		go m.startNewSessionDirect(msg, threadID)
-		return
-	}
-
-	// Start new session directly — no analysis step
 	go m.startNewSessionDirect(msg, threadID)
 }
 
@@ -402,7 +396,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	active.mu.Unlock()
 
 	switch status {
-	case database.BotSessionStatusRunning, database.BotSessionStatusAwaitingPlanApproval:
+	case chathistory.BotSessionStatusRunning, chathistory.BotSessionStatusAwaitingPlanApproval:
 		// Check if session is waiting for user input (any blocking event)
 		if awaiting {
 			m.handleBlockingResponse(active, msg)
@@ -451,7 +445,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		} else {
 			log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sid)
 		}
-	case database.BotSessionStatusCompleted, database.BotSessionStatusFailed:
+	case chathistory.BotSessionStatusCompleted, chathistory.BotSessionStatusFailed:
 		threadID := active.ThreadID
 		go m.startNewSessionDirect(msg, threadID)
 	}
@@ -594,12 +588,9 @@ func (m *BotConversationManager) clearBlockingState(active *activeBotSession) {
 	active.mu.Lock()
 	active.awaitingUserInput = false
 	active.blockingEventType = ""
-	active.Status = database.BotSessionStatusRunning
+	active.Status = chathistory.BotSessionStatusRunning
 	ef := active.eventFilter
 	active.mu.Unlock()
-	m.db.UpdateBotSession(context.Background(), active.BotSessionID, &database.UpdateBotSessionRequest{
-		Status: database.BotSessionStatusRunning,
-	})
 	if ef != nil {
 		ef.ClearBlockingState()
 	}
@@ -650,7 +641,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	}
 
 	// 2. Running session (not awaiting input) → inject follow-up
-	if exists && status == database.BotSessionStatusRunning && sessionID != "" && !awaitingInput {
+	if exists && status == chathistory.BotSessionStatusRunning && sessionID != "" && !awaitingInput {
 		active.mu.Lock()
 		uid := active.UserID
 		active.mu.Unlock()
@@ -676,39 +667,22 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	// Resolve workspace user ID for per-user secrets
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
-	// Use a unique thread TS for DB to avoid constraint violations
-	taskThreadTS := fmt.Sprintf("%s_%d", threadID.ThreadTS, time.Now().UnixNano())
-	botSession, err := m.db.CreateBotSession(ctx, &database.CreateBotSessionRequest{
-		Platform:  msg.Platform,
-		ChannelID: msg.ChannelID,
-		ThreadTS:  taskThreadTS,
-		UserID:    msg.UserID,
-		UserName:  msg.UserName,
-		Query:     msg.Text,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bot session: %w", err)
-	}
-
 	newSessionID := uuid.New().String()
+	botMeta := botMetaFromMsg(msg, threadID)
+
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID)
 
-	m.db.UpdateBotSession(ctx, botSession.ID, &database.UpdateBotSessionRequest{
-		SessionID: newSessionID,
-		Status:    database.BotSessionStatusRunning,
-	})
-
-	// Track as active session
+	// Track as active session — bot sessions are in-memory only.
 	m.mu.Lock()
 	activeTask := &activeBotSession{
-		BotSessionID: botSession.ID,
-		SessionID:    newSessionID,
-		UserID:       workspaceUserID,
-		Status:       database.BotSessionStatusRunning,
-		Platform:     msg.Platform,
-		ThreadID:     threadID,
+		SessionID: newSessionID,
+		UserID:    workspaceUserID,
+		Status:    chathistory.BotSessionStatusRunning,
+		Platform:  msg.Platform,
+		ThreadID:  threadID,
+		Metadata:  botMeta,
 	}
 	m.sessions[threadID.Key()] = activeTask
 	m.mu.Unlock()
@@ -724,48 +698,29 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	}, nil
 }
 
-// startNewSessionDirect creates a DB session and starts it immediately (async path)
+// startNewSessionDirect creates a unified bot chat session and starts it
+// immediately (async path, used by Slack / @mention flows).
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID) {
 	ctx := context.Background()
 
-	// Resolve workspace user ID for per-user secrets
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
-	// Create bot session in DB — use unique thread TS to avoid constraint violations
-	// when restarting sessions on the same thread (stale session marked failed but row still exists)
-	dbThreadTS := fmt.Sprintf("%s_%d", threadID.ThreadTS, time.Now().UnixNano())
-	botSession, err := m.db.CreateBotSession(ctx, &database.CreateBotSessionRequest{
-		Platform:  msg.Platform,
-		ChannelID: msg.ChannelID,
-		ThreadTS:  dbThreadTS,
-		UserID:    msg.UserID,
-		UserName:  msg.UserName,
-		Query:     msg.Text,
-	})
-	if err != nil {
-		log.Printf("[BOT_MANAGER] Failed to create bot session: %v", err)
-		return
-	}
-
 	sessionID := uuid.New().String()
+	botMeta := botMetaFromMsg(msg, threadID)
+
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID)
 
-	m.db.UpdateBotSession(ctx, botSession.ID, &database.UpdateBotSessionRequest{
-		SessionID: sessionID,
-		Status:    database.BotSessionStatusRunning,
-	})
-
-	// Track active session
+	// Track active session — bot sessions are in-memory only.
 	m.mu.Lock()
 	active := &activeBotSession{
-		BotSessionID: botSession.ID,
-		SessionID:    sessionID,
-		UserID:       workspaceUserID,
-		Status:       database.BotSessionStatusRunning,
-		Platform:     msg.Platform,
-		ThreadID:     threadID,
+		SessionID: sessionID,
+		UserID:    workspaceUserID,
+		Status:    chathistory.BotSessionStatusRunning,
+		Platform:  msg.Platform,
+		ThreadID:  threadID,
+		Metadata:  botMeta,
 	}
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
@@ -774,13 +729,9 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	if connector != nil {
 		startMsg := "Starting session... (tag me to follow up in this thread)"
 		log.Printf("[BOT_MANAGER] Sending starting message to thread %s", threadID.Key())
-		msgID, sendErr := connector.SendThreadMessage(ctx, threadID, startMsg)
-		if sendErr != nil {
+		if _, sendErr := connector.SendThreadMessage(ctx, threadID, startMsg); sendErr != nil {
 			log.Printf("[BOT_MANAGER] Failed to send starting message to %s: %v", threadID.Key(), sendErr)
-		} else {
-			log.Printf("[BOT_MANAGER] Starting message sent OK to %s (msgID=%s)", threadID.Key(), msgID)
 		}
-		m.recordMessage(botSession.ID, "outgoing", "progress", startMsg, msgID)
 	} else {
 		log.Printf("[BOT_MANAGER] WARNING: no connector for platform %s", msg.Platform)
 	}
@@ -801,23 +752,18 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	sessionCtx, cancel := context.WithCancel(ctx)
 	active.mu.Lock()
 	active.cancel = cancel
-	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.BotSessionID, m.db, os.Getenv("PUBLIC_URL"), active.UserID)
+	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.SessionID, os.Getenv("PUBLIC_URL"), active.UserID)
 	sessionID := active.SessionID
 	userID := active.UserID
 	active.mu.Unlock()
 
-	// Wire up blocking event callback — any blocking event (plan_approval, human feedback, etc.)
+	// Wire up blocking event callback — any blocking event (human feedback, etc.)
 	active.eventFilter.SetBlockingEventCallback(func(eventType string) {
 		active.mu.Lock()
 		log.Printf("[BOT_MANAGER] Blocking event %s for session %s", eventType, active.SessionID)
 		active.awaitingUserInput = true
 		active.blockingEventType = eventType
 		active.mu.Unlock()
-		if eventType == "plan_approval" {
-			m.db.UpdateBotSession(context.Background(), active.BotSessionID, &database.UpdateBotSessionRequest{
-				Status: database.BotSessionStatusAwaitingPlanApproval,
-			})
-		}
 	})
 
 	// Wire up session done callback — event filter signals when session is truly complete
@@ -840,9 +786,8 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 			if err != nil && sessionCtx.Err() == nil {
 				log.Printf("[BOT_MANAGER] Session error: %v", err)
 				connector.SendThreadMessage(ctx, active.ThreadID, fmt.Sprintf("Session failed: %v", err))
-				m.db.CompleteBotSession(ctx, active.BotSessionID, database.BotSessionStatusFailed)
 				active.mu.Lock()
-				active.Status = database.BotSessionStatusFailed
+				active.Status = chathistory.BotSessionStatusFailed
 				active.mu.Unlock()
 				cancel()
 			}
@@ -854,20 +799,18 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 
 	// Session completed or was canceled
 	active.mu.Lock()
-	alreadyFailed := active.Status == database.BotSessionStatusFailed
+	alreadyFailed := active.Status == chathistory.BotSessionStatusFailed
 	if !alreadyFailed {
-		active.Status = database.BotSessionStatusCompleted
+		active.Status = chathistory.BotSessionStatusCompleted
 	}
 	active.mu.Unlock()
 	if !alreadyFailed {
 		if _, sendErr := connector.SendThreadMessage(ctx, active.ThreadID, "Session completed."); sendErr != nil {
 			log.Printf("[BOT_MANAGER] Failed to send completion message to %s: %v", active.ThreadID.Key(), sendErr)
 		}
-		m.db.CompleteBotSession(ctx, active.BotSessionID, database.BotSessionStatusCompleted)
 	}
 
-	// Remove from active sessions map so subsequent messages start a fresh session
-	// with a new event filter (instead of injecting follow-ups into a dead session)
+	// Remove from active sessions map so a subsequent message starts a fresh session.
 	m.mu.Lock()
 	delete(m.sessions, active.ThreadID.Key())
 	m.mu.Unlock()
@@ -879,14 +822,12 @@ func (m *BotConversationManager) cancelSession(active *activeBotSession, reason 
 
 	active.mu.Lock()
 	cancelFn := active.cancel
-	active.Status = database.BotSessionStatusFailed
+	active.Status = chathistory.BotSessionStatusFailed
 	active.mu.Unlock()
 
 	if cancelFn != nil {
 		cancelFn()
 	}
-
-	m.db.CompleteBotSession(ctx, active.BotSessionID, database.BotSessionStatusFailed)
 
 	if reason != "" {
 		connector := m.GetConnector(active.Platform)
@@ -900,19 +841,17 @@ func (m *BotConversationManager) cancelSession(active *activeBotSession, reason 
 	m.mu.Unlock()
 }
 
-// IsBotSession checks if a sessionID belongs to a bot session
+// IsBotSession reports whether a session id matches any bot conversation
+// currently tracked in memory.
 func (m *BotConversationManager) IsBotSession(sessionID string) bool {
-	bs, err := m.db.GetBotSessionBySessionID(context.Background(), sessionID)
-	return err == nil && bs != nil
-}
-
-// GetBotSessionForInternal returns the bot session for an internal session ID
-func (m *BotConversationManager) GetBotSessionForInternal(sessionID string) *database.BotSession {
-	bs, err := m.db.GetBotSessionBySessionID(context.Background(), sessionID)
-	if err != nil {
-		return nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, s := range m.sessions {
+		if s != nil && s.SessionID == sessionID {
+			return true
+		}
 	}
-	return bs
+	return false
 }
 
 // buildQueryWithThreadHistory loads thread history from the platform and prepends it as context
@@ -975,9 +914,7 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 // userID is the workspace user ID used for loading per-user secrets.
 func (m *BotConversationManager) buildQueryRequest(query string, userID string) map[string]interface{} {
 	req := map[string]interface{}{
-		"query":                   query,
-		"delegation_mode":         "spawn",
-		"enable_workspace_access": true,
+		"query": query,
 	}
 
 	// No default servers — bot starts with no MCP servers (agent has workspace, delegation, and shell tools).
@@ -1005,22 +942,14 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 			log.Printf("[BOT_MANAGER] Loaded delegation tier config from workspace file")
 		}
 
-		// Load provider API keys from workspace encrypted file
+		// Load provider API keys from the workspace encrypted file and inject
+		// them into llm_config so handleQuery can use them for all providers.
 		if apiKeys, exists, err := LoadProviderKeys(context.Background(), m.workspaceURL); err != nil {
 			log.Printf("[BOT_MANAGER] Warning: failed to load provider keys from workspace: %v", err)
 		} else if exists && len(apiKeys) > 0 {
-			req["_api_keys_temp"] = apiKeys
+			req["llm_config"] = map[string]interface{}{"api_keys": apiKeys}
 			log.Printf("[BOT_MANAGER] Loaded %d provider API keys from workspace file", len(apiKeys))
 		}
-	}
-
-	// Pass API keys via llm_config so handleQuery can use them for all providers.
-	if apiKeys, ok := req["_api_keys_temp"].(map[string]interface{}); ok {
-		delete(req, "_api_keys_temp")
-		req["llm_config"] = map[string]interface{}{
-			"api_keys": apiKeys,
-		}
-		log.Printf("[BOT_MANAGER] Built llm_config with %d API keys", len(apiKeys))
 	}
 
 	// Load server-side user secrets and inject as decrypted_secrets
@@ -1034,7 +963,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 				secretsList[i] = map[string]string{"name": s.Name, "value": s.Value}
 			}
 			req["decrypted_secrets"] = secretsList
-			log.Printf("[BOT_MANAGER] Loaded %d user secrets from DB for bot session", len(secrets))
+			log.Printf("[BOT_MANAGER] Loaded %d user secrets for bot session", len(secrets))
 		}
 	}
 
@@ -1042,20 +971,6 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 		botTruncate(query, 60), defaultSkills)
 
 	return req
-}
-
-// recordMessage stores a bot message in the database
-func (m *BotConversationManager) recordMessage(botSessionID, direction, msgType, content, platformMsgID string) {
-	_, err := m.db.CreateBotMessage(context.Background(), &database.CreateBotMessageRequest{
-		BotSessionID:      botSessionID,
-		Direction:         direction,
-		MessageType:       msgType,
-		Content:           content,
-		PlatformMessageID: platformMsgID,
-	})
-	if err != nil {
-		log.Printf("[BOT_MANAGER] Failed to record message: %v", err)
-	}
 }
 
 // isMultiUserThread checks if a thread has multiple distinct human users.

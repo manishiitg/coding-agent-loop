@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
-
-	"mcp-agent-builder-go/agent_go/pkg/database"
 )
 
 // BlockingEventCallback is called when a blocking event is received.
@@ -27,12 +25,11 @@ type SessionDoneCallback func()
 // BotEventFilter filters agent events and posts updates to a platform thread.
 // It also tracks session lifecycle: delegations, blocking events, and completion.
 type BotEventFilter struct {
-	connector    BotConnector
-	threadID     ThreadID
-	botSessionID string
-	db           database.Database
-	appBaseURL   string // public app URL for shareable links (e.g., "https://app.example.com")
-	userID       string // workspace user ID for shareable links (e.g., "default")
+	connector  BotConnector
+	threadID   ThreadID
+	sessionID  string // unified chat session id (folder name + thread index key)
+	appBaseURL string // public app URL for shareable links (e.g., "https://app.example.com")
+	userID     string // workspace user ID for shareable links (e.g., "default")
 
 	mu                 sync.Mutex
 	delegationNames    map[string]string // correlationID -> instruction (sub-agent name)
@@ -50,12 +47,11 @@ type BotEventFilter struct {
 }
 
 // NewBotEventFilter creates a new event filter
-func NewBotEventFilter(connector BotConnector, threadID ThreadID, botSessionID string, db database.Database, appBaseURL string, userID string) *BotEventFilter {
+func NewBotEventFilter(connector BotConnector, threadID ThreadID, sessionID, appBaseURL, userID string) *BotEventFilter {
 	return &BotEventFilter{
 		connector:       connector,
 		threadID:        threadID,
-		botSessionID:    botSessionID,
-		db:              db,
+		sessionID:       sessionID,
 		appBaseURL:      strings.TrimSuffix(appBaseURL, "/"),
 		userID:          userID,
 		delegationNames: make(map[string]string),
@@ -566,8 +562,6 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 	switch {
 	case parsed.ToolName == "execute_shell_command":
 		return "Running commands"
-	case parsed.ToolName == "create_delegation_plan":
-		return "Planning approach"
 	case parsed.ToolName == "delegate":
 		return "Delegating to sub-agent"
 	case strings.HasPrefix(parsed.ToolName, "read_") || parsed.ToolName == "resources_list":
@@ -638,12 +632,11 @@ func (f *BotEventFilter) formatGenerationEnd(event BotEventData) string {
 
 func (f *BotEventFilter) sendMessage(ctx context.Context, content string) {
 	content = f.replaceWorkspacePaths(content)
-	msgID, err := f.connector.SendThreadMessage(ctx, f.threadID, content)
+	_, err := f.connector.SendThreadMessage(ctx, f.threadID, content)
 	if err != nil {
 		log.Printf("[BOT_FILTER] Failed to send message: %v", err)
 		return
 	}
-	f.recordMessage(content, msgID)
 }
 
 // workspacePathPattern is the core pattern for workspace file paths.
@@ -700,12 +693,3 @@ func (f *BotEventFilter) buildShareableURL(filePath string) string {
 	return url
 }
 
-func (f *BotEventFilter) recordMessage(content, platformMsgID string) {
-	f.db.CreateBotMessage(context.Background(), &database.CreateBotMessageRequest{
-		BotSessionID:      f.botSessionID,
-		Direction:         "outgoing",
-		MessageType:       "progress",
-		Content:           content,
-		PlatformMessageID: platformMsgID,
-	})
-}

@@ -11,15 +11,23 @@ export const looksLikeDiffContent = (content: string): boolean => {
     return false
   }
 
-  const matches = lines.filter(line => (
-    line.startsWith('diff --git ') ||
-    line.startsWith('index ') ||
-    line.startsWith('--- ') ||
-    line.startsWith('+++ ') ||
-    line.startsWith('@@ ') ||
-    line.startsWith('+ ') ||
-    line.startsWith('- ')
-  )).length
+  const hasGitHeader = lines.some(line => line.startsWith('diff --git ') || line.startsWith('index '))
+  const hasFileHeaders = lines.some(line => line.startsWith('--- ')) && lines.some(line => line.startsWith('+++ '))
+  const hasHunkHeader = lines.some(line => line.startsWith('@@ '))
+  const additions = lines.filter(line => line.startsWith('+ ') && !line.startsWith('+++ ')).length
+  const deletions = lines.filter(line => line.startsWith('- ') && !line.startsWith('--- ')).length
 
-  return matches >= 3
+  if (hasHunkHeader) {
+    return true
+  }
+
+  if (hasFileHeaders && (additions > 0 || deletions > 0)) {
+    return true
+  }
+
+  if (hasGitHeader && (hasFileHeaders || additions + deletions >= 2)) {
+    return true
+  }
+
+  return false
 }

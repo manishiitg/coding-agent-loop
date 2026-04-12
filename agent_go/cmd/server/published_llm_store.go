@@ -19,6 +19,8 @@ type StoredPublishedLLM struct {
 	Name                      string                 `json:"name"`
 	Provider                  string                 `json:"provider"`
 	ModelID                   string                 `json:"model_id"`
+	SearchRole                string                 `json:"search_role,omitempty"`
+	SearchPriority            *int                   `json:"search_priority,omitempty"`
 	ModelName                 string                 `json:"model_name,omitempty"`
 	AuthMethod                string                 `json:"auth_method,omitempty"`
 	ContextWindow             *int                   `json:"context_window,omitempty"`
@@ -37,6 +39,7 @@ func sanitizePublishedLLM(entry StoredPublishedLLM) (StoredPublishedLLM, bool) {
 	entry.Name = strings.TrimSpace(entry.Name)
 	entry.Provider = strings.TrimSpace(entry.Provider)
 	entry.ModelID = strings.TrimSpace(entry.ModelID)
+	entry.SearchRole = strings.ToLower(strings.TrimSpace(entry.SearchRole))
 	entry.ModelName = strings.TrimSpace(entry.ModelName)
 	entry.AuthMethod = strings.TrimSpace(entry.AuthMethod)
 	entry.CreatedAt = strings.TrimSpace(entry.CreatedAt)

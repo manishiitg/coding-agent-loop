@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent-builder-go/agent_go/cmd/database"
 	"mcp-agent-builder-go/agent_go/cmd/mcp"
 	"mcp-agent-builder-go/agent_go/cmd/server"
 	"mcp-agent-builder-go/agent_go/cmd/testing"
@@ -105,7 +104,6 @@ func init() {
 	rootCmd.AddCommand(mcp.MCPCmd)
 	rootCmd.AddCommand(server.ServerCmd)
 	rootCmd.AddCommand(testing.TestingCmd)
-	rootCmd.AddCommand(database.DatabaseCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.

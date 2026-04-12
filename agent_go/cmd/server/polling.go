@@ -3,13 +3,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
-	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 
@@ -32,24 +29,19 @@ func (f *flatEventData) MarshalJSON() ([]byte, error) {
 	return json.Marshal(f.eventData)
 }
 
-// getSessionStatusString returns the session status for a given session ID.
-// It checks active sessions first, then falls back to the database.
-// Returns the status string and whether the caller should deny access (user mismatch).
+// getSessionStatusString returns the session status for a given session ID
+// from the in-memory active sessions map. Returns "" if not found, and
+// denyAccess=true when the session belongs to another user.
 func (api *StreamingAPI) getSessionStatusString(r *http.Request, sessionID string) (status string, denyAccess bool) {
 	currentUserID := GetUserIDFromContext(r.Context())
 	activeSession, existsInActive := api.getActiveSession(sessionID)
-	if existsInActive {
-		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
-			return "", true
-		}
-		return activeSession.Status, false
+	if !existsInActive {
+		return "", false
 	}
-	// Check database for completed/error sessions
-	chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	if err == nil && chatSession != nil {
-		return chatSession.Status, false
+	if activeSession.UserID != "" && activeSession.UserID != currentUserID {
+		return "", true
 	}
-	return "", false
+	return activeSession.Status, false
 }
 
 func (api *StreamingAPI) canSteerSession(sessionID string) bool {
@@ -152,227 +144,30 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
 
-	// Get session status (from active sessions or database)
+	// Session status comes from the in-memory active sessions map.
 	var sessionStatus string
-	var chatSession *database.ChatSession
 	activeSession, existsInActive := api.getActiveSession(sessionID)
 	if existsInActive {
-		// Verify user ownership for active session
 		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
 			http.Error(w, "Session not found or access denied", http.StatusNotFound)
 			return
 		}
 		sessionStatus = activeSession.Status
-	} else {
-		// Check database for completed/error sessions - filter by user for isolation
-		var err error
-		chatSession, err = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-		if err == nil && chatSession != nil {
-			sessionStatus = chatSession.Status
-		}
-		// If not found, leave empty (session might not exist yet or belongs to another user)
 	}
 
-	// Check if we need to fallback to database:
-	// 1. Session doesn't exist in memory (!exists), OR
-	// 2. Session exists in memory but has 0 events AND session is completed/stopped
-	shouldFallbackToDB := !exists || (exists && len(sessionEvents) == 0 && chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped"))
-
-	if shouldFallbackToDB {
-		// Session doesn't exist in memory or has no events - check if it's a completed/stopped session in database
-		// For non-active sessions (completed, stopped, error), fetch events from database
-		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
-			// Fallback to database for non-active sessions
-			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 10000, 0)
-			if err != nil {
-				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
-			}
-			if err == nil && len(dbEvents) > 0 {
-				// Convert database events to polling events format
-				convertedEvents := make([]events.Event, 0, len(dbEvents))
-				parseErrors := 0
-				filteredOut := 0
-				for i, dbEvent := range dbEvents {
-					// Parse only the Type field from the stored AgentEvent JSON for filtering
-					// The full AgentEvent will be unmarshaled properly by the event store's MarshalJSON
-					type eventTypeOnly struct {
-						Type pkgevents.EventType `json:"type"`
-					}
-
-					var typeOnly eventTypeOnly
-					if err := json.Unmarshal(dbEvent.EventData, &typeOnly); err != nil {
-						parseErrors++
-						if i < 3 { // Log first 3 parse errors
-							log.Printf("[POLLING ERROR] Failed to parse event type %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
-						}
-						continue
-					}
-
-					// Apply event filtering
-					if !events.ShouldShowEvent(string(typeOnly.Type)) {
-						filteredOut++
-						continue
-					}
-
-					// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
-					// Since EventData is an interface, we need to unmarshal Data as json.RawMessage first
-					type agentEventWithRawData struct {
-						Type           pkgevents.EventType `json:"type"`
-						Timestamp      time.Time           `json:"timestamp"`
-						EventIndex     int                 `json:"event_index"`
-						TraceID        string              `json:"trace_id,omitempty"`
-						SpanID         string              `json:"span_id,omitempty"`
-						ParentID       string              `json:"parent_id,omitempty"`
-						CorrelationID  string              `json:"correlation_id,omitempty"`
-						HierarchyLevel int                 `json:"hierarchy_level"`
-						SessionID      string              `json:"session_id,omitempty"`
-						Component      string              `json:"component,omitempty"`
-						Data           json.RawMessage     `json:"data"`
-					}
-
-					var helper agentEventWithRawData
-					if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
-						parseErrors++
-						if i < 3 {
-							log.Printf("[POLLING ERROR] Failed to parse event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
-						}
-						continue
-					}
-
-					// Unmarshal Data field into a map to preserve structure
-					var dataMap map[string]interface{}
-					if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
-						parseErrors++
-						if i < 3 {
-							log.Printf("[POLLING ERROR] Failed to parse event data %d for session %s: %v", i, sessionID, err)
-						}
-						continue
-					}
-
-					// Extract event-specific fields, excluding BaseEventData fields
-					// BaseEventData fields are: timestamp, trace_id, span_id, event_id, parent_id,
-					// is_end_event, correlation_id, hierarchy_level, session_id, component, metadata
-					baseEventDataFields := map[string]bool{
-						"timestamp":       true,
-						"trace_id":        true,
-						"span_id":         true,
-						"event_id":        true,
-						"parent_id":       true,
-						"is_end_event":    true,
-						"correlation_id":  true,
-						"hierarchy_level": true,
-						"session_id":      true,
-						"component":       true,
-						"metadata":        true,
-					}
-
-					actualEventData := make(map[string]interface{})
-					for k, v := range dataMap {
-						// Skip BaseEventData fields - they're already in AgentEvent
-						if !baseEventDataFields[k] {
-							actualEventData[k] = v
-						}
-					}
-
-					// Use convertDBEventToPollingEvent helper for consistency
-					// But we need to call it from server.go, so we'll duplicate the logic here
-					// Create AgentEvent with flatEventData that serializes directly
-					agentEvent := pkgevents.AgentEvent{
-						Type:           helper.Type,
-						Timestamp:      helper.Timestamp,
-						EventIndex:     helper.EventIndex,
-						TraceID:        helper.TraceID,
-						SpanID:         helper.SpanID,
-						ParentID:       helper.ParentID,
-						CorrelationID:  helper.CorrelationID,
-						HierarchyLevel: helper.HierarchyLevel,
-						SessionID:      helper.SessionID,
-						Component:      helper.Component,
-						Data: &flatEventData{
-							eventData: actualEventData,
-							eventType: helper.Type,
-						},
-					}
-
-					convertedEvents = append(convertedEvents, events.Event{
-						ID:        dbEvent.ID,
-						Type:      dbEvent.EventType,
-						Timestamp: dbEvent.Timestamp,
-						SessionID: sessionID,
-						Data:      &agentEvent,
-					})
-				}
-
-				// Fix EventIndex for DB-loaded events: they're stored with EventIndex=0
-				// Assign sequential indices so sinceIndex filtering works correctly
-				for i := range convertedEvents {
-					if convertedEvents[i].Data != nil && convertedEvents[i].Data.EventIndex == 0 {
-						convertedEvents[i].Data.EventIndex = i
-					}
-				}
-
-				// Apply sinceIndex filtering if specified
-				var filteredBySinceIndex []events.Event
-				maxEventIndex := -1
-				if opts.SinceIndex >= 0 {
-					for _, event := range convertedEvents {
-						eventIndex := -1
-						if event.Data != nil {
-							eventIndex = event.Data.EventIndex
-						}
-						if eventIndex > maxEventIndex {
-							maxEventIndex = eventIndex
-						}
-						if eventIndex > opts.SinceIndex {
-							filteredBySinceIndex = append(filteredBySinceIndex, event)
-						}
-					}
-					if maxEventIndex < 0 && len(convertedEvents) > 0 {
-						maxEventIndex = len(convertedEvents) - 1
-					}
-				} else {
-					// No sinceIndex filtering, return all
-					filteredBySinceIndex = convertedEvents
-					for _, event := range convertedEvents {
-						if event.Data != nil && event.Data.EventIndex > maxEventIndex {
-							maxEventIndex = event.Data.EventIndex
-						}
-					}
-					if maxEventIndex < 0 && len(convertedEvents) > 0 {
-						maxEventIndex = len(convertedEvents) - 1
-					}
-				}
-
-				response := GetEventsResponse{
-					Events:                     filteredBySinceIndex,
-					HasMore:                    false, // Completed sessions don't have more events
-					SessionID:                  sessionID,
-					SessionStatus:              sessionStatus,
-					LastProcessedIndex:         maxEventIndex, // Use actual max EventIndex, not array length
-					HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
-					CanSteer:                   api.canSteerSession(sessionID),
-				}
-
-				if err := json.NewEncoder(w).Encode(response); err != nil {
-					http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-					return
-				}
-				return
-			}
-		}
-
-		// Session doesn't exist yet (no events have been added)
-		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
+	// If the session doesn't exist in the in-memory event store, return an
+	// empty events payload. This happens when polling starts before events
+	// are generated, or after the process has restarted and dropped state.
+	if !exists {
 		response := GetEventsResponse{
 			Events:                     []events.Event{},
 			HasMore:                    false,
 			SessionID:                  sessionID,
 			SessionStatus:              sessionStatus,
-			LastProcessedIndex:         -1, // No events processed
+			LastProcessedIndex:         -1,
 			HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
 			CanSteer:                   api.canSteerSession(sessionID),
 		}
-
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 			return
@@ -471,62 +266,9 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 		}
 	}
 
-	// If no in-memory sessions, check database for recent sessions (handles backend restart case)
-	// Query for sessions with status 'active' or 'running', or recently completed (within 30 minutes)
-	// Note: Workflow sessions are restored separately by WorkflowLayout (queries DB by preset_query_id)
-	if len(activeSessions) == 0 && api.chatDB != nil {
-		thirtyMinutesAgo := time.Now().Add(-30 * time.Minute)
-
-		// Get recent sessions from database - filter by user for isolation
-		dbSessions, _, err := api.chatDB.ListChatSessionsWithUser(r.Context(), 20, 0, nil, nil, currentUserID)
-		if err != nil {
-			log.Printf("[ACTIVE_SESSION] Failed to query database for recent sessions: %v", err)
-		} else {
-			for _, dbSession := range dbSessions {
-				// Skip workflow sessions — they are restored by WorkflowLayout independently
-				if dbSession.AgentMode == "workflow" || dbSession.AgentMode == "workflow_phase" || dbSession.AgentMode == "workshop" {
-					continue
-				}
-				// Include sessions that are active/running or recently completed
-				isActive := dbSession.Status == "active" || dbSession.Status == "running"
-				// Use last_activity if available, otherwise fall back to completed_at or created_at
-				sessionTime := dbSession.LastActivity
-				if sessionTime == nil && dbSession.CompletedAt != nil {
-					sessionTime = dbSession.CompletedAt
-				}
-				if sessionTime == nil {
-					t := dbSession.CreatedAt
-					sessionTime = &t
-				}
-				isRecentlyCompleted := dbSession.Status == "completed" && sessionTime.After(thirtyMinutesAgo)
-
-				if isActive || isRecentlyCompleted {
-					// Convert to ActiveSessionInfo
-					sessionInfo := &ActiveSessionInfo{
-						SessionID: dbSession.SessionID,
-						AgentMode: dbSession.AgentMode,
-						Status:    dbSession.Status,
-						CreatedAt: dbSession.CreatedAt,
-						Query:     dbSession.Title, // Use title as query summary
-					}
-					if dbSession.LastActivity != nil {
-						sessionInfo.LastActivity = *dbSession.LastActivity
-					} else {
-						sessionInfo.LastActivity = dbSession.CreatedAt
-					}
-
-					// Map 'active' status to 'completed' for frontend consistency
-					// (frontend expects 'running' or 'completed')
-					if sessionInfo.Status == "active" {
-						sessionInfo.Status = "completed"
-					}
-
-					activeSessions = append(activeSessions, sessionInfo)
-					log.Printf("[ACTIVE_SESSION] Restored session from DB: %s (status: %s, last_activity: %v)", dbSession.SessionID, dbSession.Status, dbSession.LastActivity)
-				}
-			}
-		}
-	}
+	// Sessions are in-memory only now — if activeSessions is empty after a
+	// server restart, there are no durable sessions to restore. Workflow
+	// restarts are handled independently via the /api/workflow/running API.
 
 	response := GetActiveSessionsResponse{
 		ActiveSessions: activeSessions,
@@ -589,30 +331,13 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
 
-	// Check if session is active
 	activeSession, exists := api.getActiveSession(sessionID)
 	if !exists {
-		// Check if session exists in database (completed) - filter by user for isolation
-		chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-		if err != nil {
-			http.Error(w, "Session not found", http.StatusNotFound)
-			return
-		}
-
-		// Return completed session info
-		response := map[string]interface{}{
-			"session_id":   sessionID,
-			"status":       "completed",
-			"agent_mode":   chatSession.AgentMode,
-			"created_at":   chatSession.CreatedAt,
-			"completed_at": chatSession.CompletedAt,
-			"can_steer":    api.canSteerSession(sessionID),
-		}
-
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-			return
-		}
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	if activeSession.UserID != "" && activeSession.UserID != currentUserID {
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 

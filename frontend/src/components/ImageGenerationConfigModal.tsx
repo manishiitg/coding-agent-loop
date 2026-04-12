@@ -14,7 +14,7 @@ const IMAGE_GEN_MODELS: Record<string, { id: string; label: string; cost: string
     { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Gemini 3 Pro Image)', cost: '$0.134/1K-2K · $0.24/4K' },
     { id: 'gemini-2.5-flash-image', label: 'Nano Banana (Gemini 2.5 Flash Image)', cost: '$0.039/image' },
   ],
-  minimax: [
+  'minimax-coding-plan': [
     { id: 'image-01', label: 'MiniMax Image-01', cost: '$0.0035/image' },
   ],
 }
@@ -100,8 +100,8 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
               }}
               className="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-purple-500"
             >
-              <option value="vertex">Vertex AI (Imagen)</option>
-              <option value="minimax">MiniMax</option>
+              <option value="vertex">Vertex AI (Gemini/Imagen)</option>
+              <option value="minimax-coding-plan">MiniMax Coding Plan</option>
             </select>
           </div>
 
@@ -124,7 +124,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
           {/* API Key */}
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5">
-              {localConfig.provider === 'minimax' ? 'MINIMAX_API_KEY' : 'GEMINI_API_KEY'}
+              {localConfig.provider === 'minimax-coding-plan' ? 'MINIMAX_CODING_PLAN_API_KEY' : 'GEMINI_API_KEY'}
               <span className="text-gray-500 font-normal ml-1">(optional if env var is set on server)</span>
             </label>
             <div className="relative">
@@ -132,7 +132,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
                 type={showApiKey ? 'text' : 'password'}
                 value={localConfig.apiKey}
                 onChange={(e) => { setLocalConfig({ ...localConfig, apiKey: e.target.value }); setTestState('idle'); setTestImageSrc(null) }}
-                placeholder={localConfig.provider === 'minimax' ? 'sk-api-...' : 'AIza...'}
+                placeholder={localConfig.provider === 'minimax-coding-plan' ? 'sk-api-...' : 'AIza...'}
                 className="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-md px-3 py-2 pr-10 focus:outline-none focus:ring-1 focus:ring-purple-500 placeholder-gray-600"
               />
               <button
@@ -144,8 +144,8 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {localConfig.provider === 'minimax'
-                ? 'If blank, the server uses MINIMAX_API_KEY environment variable.'
+              {localConfig.provider === 'minimax-coding-plan'
+                ? 'If blank, the server uses MINIMAX_CODING_PLAN_API_KEY environment variable.'
                 : 'If blank, the server uses GEMINI_API_KEY or GOOGLE_API_KEY environment variables.'}
             </p>
           </div>

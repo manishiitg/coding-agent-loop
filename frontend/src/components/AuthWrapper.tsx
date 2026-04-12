@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { Login } from '../pages/Login'
 import { AuthCallback } from '../pages/AuthCallback'
-import { SharedSession } from '../pages/SharedSession'
 import { SharedFile } from '../pages/SharedFile'
 import { SharedFolder } from '../pages/SharedFolder'
 import { Loader2 } from 'lucide-react'
@@ -21,13 +20,12 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     checkAuth
   } = useAuthStore()
 
-  const [shareToken, setShareToken] = useState<string | null>(null)
   const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
   const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null)
   const [sharedUid, setSharedUid] = useState<string | null>(null)
   const [isAuthCallback, setIsAuthCallback] = useState(false)
 
-  // Check for shared session URL, shared file/folder URL, or OAuth callback
+  // Check for shared file/folder URL or OAuth callback
   useEffect(() => {
     const path = window.location.pathname
     const params = new URLSearchParams(window.location.search)
@@ -53,13 +51,6 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       }
     }
 
-    // Check for shared session
-    const shareMatch = path.match(/^\/shared\/([^/]+)$/)
-    if (shareMatch) {
-      setShareToken(shareMatch[1])
-      return
-    }
-
     // Check for OAuth callback
     if (path === '/auth/callback') {
       setIsAuthCallback(true)
@@ -72,19 +63,6 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     checkAuthMode()
     checkAuth()
   }, [checkAuthMode, checkAuth])
-
-  // If viewing a shared session, render it directly (no auth required)
-  if (shareToken) {
-    return (
-      <SharedSession
-        shareToken={shareToken}
-        onBack={() => {
-          setShareToken(null)
-          window.history.pushState({}, '', '/')
-        }}
-      />
-    )
-  }
 
   // If viewing a shared file, render it directly
   if (sharedFilePath) {

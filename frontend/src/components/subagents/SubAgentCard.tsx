@@ -1,4 +1,4 @@
-import { Trash2, Cpu, Wrench } from 'lucide-react'
+import { Trash2, Cpu } from 'lucide-react'
 import type { SubAgent } from '../../types/subagents'
 
 interface SubAgentCardProps {
@@ -33,13 +33,6 @@ export default function SubAgentCard({ subagent, onDelete }: SubAgentCardProps) 
               <span className="flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded">
                 <Cpu className="w-3 h-3" />
                 {frontmatter.default_reasoning_level}
-              </span>
-            )}
-
-            {frontmatter.default_tool_mode && (
-              <span className="flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
-                <Wrench className="w-3 h-3" />
-                {frontmatter.default_tool_mode}
               </span>
             )}
           </div>

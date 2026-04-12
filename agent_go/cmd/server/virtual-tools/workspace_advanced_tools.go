@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"sort"
 	"strings"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -113,8 +115,9 @@ func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string
 }
 
 func attachWorkspaceAdvancedLLMExecutors(executors map[string]func(ctx context.Context, args map[string]any) (string, error), workspaceURL string) {
-	wrapReadImageExecutor(executors)
+	wrapReadImageExecutor(executors, workspaceURL)
 	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL)
+	executors["search_web_llm"] = createSearchWebLLMExecutor(workspaceURL)
 }
 
 // getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
@@ -209,6 +212,201 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 
 		return string(payload), nil
 	}
+}
+
+func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		query := strings.TrimSpace(fmt.Sprintf("%v", args["query"]))
+		if query == "" {
+			return "", fmt.Errorf("query is required")
+		}
+
+		provider := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", args["provider"])))
+		if provider == "<nil>" {
+			provider = ""
+		}
+
+		llmModel, err := createPublishedSearchLLM(ctx, workspaceURL, provider)
+		if err != nil {
+			return "", err
+		}
+
+		result, err := llm.SearchWeb(ctx, llmModel, query)
+		if err != nil {
+			return "", fmt.Errorf("search_web_llm failed: %w", err)
+		}
+		return result, nil
+	}
+}
+
+func isSearchCapableProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case string(llm.ProviderClaudeCode), string(llm.ProviderCodexCLI), string(llm.ProviderGeminiCLI), string(llm.ProviderMiniMaxCodingPlan), string(llm.ProviderVertex):
+		return true
+	default:
+		return false
+	}
+}
+
+func isSearchCapablePublishedLLM(entry services.PublishedLLM) bool {
+	provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+	if !isSearchCapableProvider(provider) {
+		return false
+	}
+	if provider != string(llm.ProviderVertex) {
+		return true
+	}
+
+	modelID := strings.ToLower(strings.TrimSpace(entry.ModelID))
+	return strings.HasPrefix(modelID, "gemini")
+}
+
+func hasSearchProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case string(llm.ProviderClaudeCode):
+		return apiKeys != nil && apiKeys.Anthropic != nil && strings.TrimSpace(*apiKeys.Anthropic) != ""
+	case string(llm.ProviderCodexCLI):
+		return true
+	case string(llm.ProviderGeminiCLI):
+		return apiKeys != nil && apiKeys.GeminiCLI != nil && strings.TrimSpace(*apiKeys.GeminiCLI) != ""
+	case string(llm.ProviderMiniMaxCodingPlan):
+		return apiKeys != nil && apiKeys.MiniMaxCodingPlan != nil && strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) != ""
+	case string(llm.ProviderVertex):
+		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
+	default:
+		return false
+	}
+}
+
+func isSearchProviderAvailable(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case string(llm.ProviderGeminiCLI):
+		_, err := exec.LookPath("gemini")
+		return err == nil
+	case string(llm.ProviderClaudeCode):
+		_, err := exec.LookPath("claude")
+		return err == nil
+	case string(llm.ProviderCodexCLI):
+		_, err := exec.LookPath("codex")
+		return err == nil
+	case string(llm.ProviderMiniMaxCodingPlan):
+		_, err := exec.LookPath("mmx")
+		return err == nil
+	case string(llm.ProviderVertex):
+		return true
+	default:
+		return false
+	}
+}
+
+func sortSearchCandidates(entries []services.PublishedLLM) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		pi := 1000
+		pj := 1000
+		if entries[i].SearchPriority != nil {
+			pi = *entries[i].SearchPriority
+		}
+		if entries[j].SearchPriority != nil {
+			pj = *entries[j].SearchPriority
+		}
+		return pi < pj
+	})
+}
+
+func publishedSearchProviderSummary(entries []services.PublishedLLM) string {
+	var available []string
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if !isSearchCapablePublishedLLM(entry) {
+			continue
+		}
+		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+		modelID := strings.TrimSpace(entry.ModelID)
+		key := provider + "|" + modelID
+		if provider == "" || modelID == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		available = append(available, fmt.Sprintf("%s (%s)", provider, modelID))
+	}
+	if len(available) == 0 {
+		return "No published search-capable providers are configured."
+	}
+	sort.Strings(available)
+	return "Published search-capable providers: " + strings.Join(available, ", ")
+}
+
+func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKeys *llm.ProviderAPIKeys, requestedProvider string) (*services.PublishedLLM, error) {
+	publishedLLMs, exists, err := services.LoadPublishedLLMs(ctx, workspaceURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load published LLMs: %w", err)
+	}
+	if !exists || len(publishedLLMs) == 0 {
+		return nil, fmt.Errorf("search_web_llm requires a published search-capable provider in config/published-llms.json")
+	}
+
+	requestedProvider = strings.ToLower(strings.TrimSpace(requestedProvider))
+	if requestedProvider != "" {
+		foundProvider := false
+		for _, entry := range publishedLLMs {
+			provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+			if provider != requestedProvider {
+				continue
+			}
+			foundProvider = true
+			if !isSearchCapablePublishedLLM(entry) {
+				continue
+			}
+			if !hasSearchProviderAuth(provider, apiKeys) {
+				return nil, fmt.Errorf("search_web_llm requires auth for requested provider %q in config/provider-api-keys.json. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
+			}
+			if !isSearchProviderAvailable(provider) {
+				return nil, fmt.Errorf("search_web_llm cannot use requested provider %q because its runtime dependency is unavailable. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
+			}
+			candidate := entry
+			return &candidate, nil
+		}
+		if foundProvider {
+			return nil, fmt.Errorf("search_web_llm does not support published provider %q for the selected model(s) yet. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+		}
+		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+	}
+
+	var primaryCandidates []services.PublishedLLM
+	var fallbackCandidates []services.PublishedLLM
+	for _, entry := range publishedLLMs {
+		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+		if !isSearchCapablePublishedLLM(entry) || !hasSearchProviderAuth(provider, apiKeys) || !isSearchProviderAvailable(provider) {
+			continue
+		}
+		switch entry.SearchRole {
+		case "primary":
+			primaryCandidates = append(primaryCandidates, entry)
+		case "fallback":
+			fallbackCandidates = append(fallbackCandidates, entry)
+		}
+	}
+
+	if len(primaryCandidates) > 0 {
+		sortSearchCandidates(primaryCandidates)
+		candidate := primaryCandidates[0]
+		return &candidate, nil
+	}
+	if len(fallbackCandidates) > 0 {
+		sortSearchCandidates(fallbackCandidates)
+		candidate := fallbackCandidates[0]
+		return &candidate, nil
+	}
+
+	for _, entry := range publishedLLMs {
+		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+		if isSearchCapablePublishedLLM(entry) && hasSearchProviderAuth(provider, apiKeys) && isSearchProviderAvailable(provider) {
+			candidate := entry
+			return &candidate, nil
+		}
+	}
+
+	return nil, fmt.Errorf("search_web_llm requires a published search-capable model in config/published-llms.json. %s", publishedSearchProviderSummary(publishedLLMs))
 }
 
 func loadWorkspaceTierModel(ctx context.Context, workspaceURL, tier string) (*TierModel, error) {
@@ -358,6 +556,10 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.GeminiCLI = &v
 	}
+	if value, ok := rawKeys["codex_cli"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.CodexCLI = &v
+	}
 	if value, ok := rawKeys["minimax"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.MiniMax = &v
@@ -391,6 +593,47 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 	}
 
 	return keys
+}
+
+func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requestedProvider string) (llmtypes.Model, error) {
+	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
+	publishedLLM, err := loadPublishedSearchProvider(ctx, workspaceURL, apiKeys, requestedProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	provider := llm.Provider(strings.ToLower(strings.TrimSpace(publishedLLM.Provider)))
+	switch provider {
+	case llm.ProviderGeminiCLI:
+		if apiKeys == nil || apiKeys.GeminiCLI == nil || strings.TrimSpace(*apiKeys.GeminiCLI) == "" {
+			return nil, fmt.Errorf("search_web_llm requires Gemini CLI auth in config/provider-api-keys.json for the published provider")
+		}
+	case llm.ProviderCodexCLI:
+		// Codex CLI can use workspace auth, CODEX_API_KEY, or its own stored login state.
+	case llm.ProviderClaudeCode:
+		if apiKeys == nil || apiKeys.Anthropic == nil || strings.TrimSpace(*apiKeys.Anthropic) == "" {
+			return nil, fmt.Errorf("search_web_llm requires Anthropic auth in config/provider-api-keys.json for the published Claude Code provider")
+		}
+	case llm.ProviderMiniMaxCodingPlan:
+		if apiKeys == nil || apiKeys.MiniMaxCodingPlan == nil || strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) == "" {
+			return nil, fmt.Errorf("search_web_llm requires MiniMax auth in config/provider-api-keys.json for the published MiniMax coding plan provider")
+		}
+	case llm.ProviderVertex:
+		if apiKeys == nil || apiKeys.Vertex == nil || strings.TrimSpace(*apiKeys.Vertex) == "" {
+			return nil, fmt.Errorf("search_web_llm requires Vertex auth in config/provider-api-keys.json for the published Vertex provider")
+		}
+	default:
+		return nil, fmt.Errorf("search_web_llm does not support published provider %q yet", publishedLLM.Provider)
+	}
+
+	llmCfg := llm.Config{
+		Provider:   provider,
+		ModelID:    publishedLLM.ModelID,
+		Context:    ctx,
+		APIKeys:    apiKeys,
+		MaxRetries: 3,
+	}
+	return llm.InitializeLLM(llmCfg)
 }
 
 func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
@@ -434,10 +677,10 @@ func formatTierFallbackModels(model *TierModel) []string {
 
 // wrapReadImageExecutor wraps the read_image executor in the map with LLM analysis.
 // The LLM config is read from context at execution time (injected by conversation.go).
-func wrapReadImageExecutor(executors map[string]func(ctx context.Context, args map[string]any) (string, error)) {
+func wrapReadImageExecutor(executors map[string]func(ctx context.Context, args map[string]any) (string, error), workspaceURL string) {
 	if baseExecutor, exists := executors["read_image"]; exists {
-		executors["read_image"] = wrapReadImageWithLLM(baseExecutor)
-		log.Printf("[READ_IMAGE_DEBUG] read_image executor wrapped with context-based LLM analysis")
+		executors["read_image"] = wrapReadImageWithLLM(baseExecutor, workspaceURL)
+		log.Printf("[READ_IMAGE_DEBUG] read_image executor wrapped with workspace-configurable LLM analysis")
 	}
 }
 
@@ -478,31 +721,19 @@ func injectLLMConfigFallback(
 // The LLM config (provider, model, API key) is read from context at execution time.
 func wrapReadImageWithLLM(
 	baseExecutor func(ctx context.Context, args map[string]any) (string, error),
+	workspaceURL string,
 ) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		log.Printf("[READ_IMAGE_DEBUG] Wrapped read_image executor called")
 
-		// Step 1: Extract LLM config from context (injected by conversation.go / parallel_tool_execution.go)
-		llmConfigRaw := ctx.Value(mcpagent.ToolExecutionLLMConfigKey)
-		if llmConfigRaw == nil {
-			log.Printf("[READ_IMAGE_DEBUG] No LLM config in context — cannot perform image analysis")
-			return "", fmt.Errorf("LLM configuration not available in context for image analysis")
-		}
-		llmConfig, ok := llmConfigRaw.(mcpagent.LLMModel)
-		if !ok {
-			log.Printf("[READ_IMAGE_DEBUG] LLM config in context has unexpected type: %T", llmConfigRaw)
-			return "", fmt.Errorf("LLM configuration in context has unexpected type")
-		}
-		log.Printf("[READ_IMAGE_DEBUG] LLM config from context: provider=%s, model=%s", llmConfig.Provider, llmConfig.ModelID)
-
-		// Step 2: Call the base executor to get base64 image data from workspace
+		// Step 1: Call the base executor to get base64 image data from workspace
 		rawResult, err := baseExecutor(ctx, args)
 		if err != nil {
 			log.Printf("[READ_IMAGE_DEBUG] Base executor failed: %v", err)
 			return "", err
 		}
 
-		// Step 3: Parse the structured result from workspace
+		// Step 2: Parse the structured result from workspace
 		var imageData workspace.ReadImageResult
 		if err := json.Unmarshal([]byte(rawResult), &imageData); err != nil {
 			log.Printf("[READ_IMAGE_DEBUG] Failed to parse base result as ReadImageResult: %v", err)
@@ -512,17 +743,17 @@ func wrapReadImageWithLLM(
 		log.Printf("[READ_IMAGE_DEBUG] Image data received: filepath=%s, mimeType=%s, base64Length=%d",
 			imageData.Filepath, imageData.MimeType, len(imageData.Data))
 
-		// Step 4: Create a dedicated LLM client using multi-llm-provider-go
-		llmModel, err := createLLMFromConfig(ctx, llmConfig)
+		// Step 3: Resolve the analysis LLM from workspace config, falling back to the current agent model.
+		llmModel, provider, modelID, err := createImageAnalysisLLM(ctx, workspaceURL)
 		if err != nil {
 			log.Printf("[READ_IMAGE_DEBUG] Failed to create LLM client: %v", err)
 			return "", fmt.Errorf("failed to initialize LLM for image analysis: %w", err)
 		}
 
 		log.Printf("[READ_IMAGE_DEBUG] LLM client created (provider=%s, model=%s), making GenerateContent call",
-			llmConfig.Provider, llmConfig.ModelID)
+			provider, modelID)
 
-		// Step 5: Make the LLM call with the image + query
+		// Step 4: Make the LLM call with the image + query
 		messages := []llmtypes.MessageContent{
 			{
 				Role: llmtypes.ChatMessageTypeHuman,
@@ -543,7 +774,7 @@ func wrapReadImageWithLLM(
 			return "", fmt.Errorf("LLM image analysis failed: %w", err)
 		}
 
-		// Step 6: Extract and return the text response
+		// Step 5: Extract and return the text response
 		var responseText string
 		if len(resp.Choices) > 0 {
 			responseText = resp.Choices[0].Content
@@ -578,6 +809,61 @@ func wrapReadImageWithLLM(
 	}
 }
 
+func createImageAnalysisLLM(ctx context.Context, workspaceURL string) (llmtypes.Model, string, string, error) {
+	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
+
+	if workspaceURL != "" {
+		imageCfg, exists, err := services.LoadImageAnalysisConfig(ctx, workspaceURL)
+		if err != nil {
+			log.Printf("[READ_IMAGE_DEBUG] Failed to load image analysis config: %v", err)
+		} else if exists && imageCfg != nil {
+			var candidates []services.ImageGenerationModelConfig
+			if imageCfg.Primary != nil {
+				candidates = append(candidates, *imageCfg.Primary)
+			}
+			candidates = append(candidates, imageCfg.Fallbacks...)
+
+			for _, candidate := range candidates {
+				provider, modelID, err := normalizeImageProviderAndModel(candidate.Provider, candidate.ModelID)
+				if err != nil {
+					continue
+				}
+				if !hasImageProviderAuth(provider, apiKeys) {
+					continue
+				}
+				model, err := llm.InitializeLLM(llm.Config{
+					Provider: llm.Provider(provider),
+					ModelID:  modelID,
+					Context:  ctx,
+					APIKeys:  apiKeys,
+				})
+				if err == nil {
+					return model, provider, modelID, nil
+				}
+				log.Printf("[READ_IMAGE_DEBUG] Failed to initialize configured image analysis model %s/%s: %v", provider, modelID, err)
+			}
+			return nil, "", "", fmt.Errorf("image analysis config requires a valid configured provider/model with matching auth")
+		}
+	}
+
+	llmConfigRaw := ctx.Value(mcpagent.ToolExecutionLLMConfigKey)
+	if llmConfigRaw == nil {
+		log.Printf("[READ_IMAGE_DEBUG] No LLM config in context — cannot perform image analysis fallback")
+		return nil, "", "", fmt.Errorf("LLM configuration not available in context for image analysis")
+	}
+	llmConfig, ok := llmConfigRaw.(mcpagent.LLMModel)
+	if !ok {
+		log.Printf("[READ_IMAGE_DEBUG] LLM config in context has unexpected type: %T", llmConfigRaw)
+		return nil, "", "", fmt.Errorf("LLM configuration in context has unexpected type")
+	}
+
+	model, err := createLLMFromConfig(ctx, llmConfig)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return model, llmConfig.Provider, llmConfig.ModelID, nil
+}
+
 // createLLMFromConfig creates an LLM model instance using multi-llm-provider-go
 // from the agent's LLMModel config (extracted from context).
 func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtypes.Model, error) {
@@ -593,6 +879,14 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.OpenRouter = config.APIKey
 		case llm.ProviderVertex:
 			apiKeys.Vertex = config.APIKey
+		case llm.ProviderGeminiCLI:
+			apiKeys.GeminiCLI = config.APIKey
+		case llm.ProviderCodexCLI:
+			apiKeys.CodexCLI = config.APIKey
+		case llm.ProviderMiniMax:
+			apiKeys.MiniMax = config.APIKey
+		case llm.ProviderMiniMaxCodingPlan:
+			apiKeys.MiniMaxCodingPlan = config.APIKey
 		}
 	}
 

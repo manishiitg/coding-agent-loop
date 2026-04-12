@@ -341,6 +341,20 @@ func (es *EventStore) GetToolCallsByCorrelation(sessionID, correlationID string)
 	return result
 }
 
+// GetAllEventsRaw returns a copy of all in-memory events for a session with no
+// filtering and no limit. Used for persistence on session completion.
+func (es *EventStore) GetAllEventsRaw(sessionID string) []Event {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	src, ok := es.events[sessionID]
+	if !ok {
+		return nil
+	}
+	out := make([]Event, len(src))
+	copy(out, src)
+	return out
+}
+
 // InitializeSession creates an empty event list for a session
 func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
 	es.mu.Lock()
@@ -735,7 +749,6 @@ type DelegationStartEventData struct {
 	Instruction       string   `json:"instruction"`
 	ReasoningLevel    string   `json:"reasoning_level,omitempty"`
 	ModelID           string   `json:"model_id,omitempty"`
-	ToolMode          string   `json:"tool_mode,omitempty"`
 	Servers           []string `json:"servers,omitempty"`
 	BackgroundAgentID string   `json:"background_agent_id,omitempty"`
 	AgentTemplate     string   `json:"agent_template,omitempty"`
@@ -763,32 +776,6 @@ type DelegationEndEventData struct {
 
 func (d *DelegationEndEventData) GetEventType() events.EventType {
 	return events.EventType("delegation_end")
-}
-
-// DelegationPlanCreatedEventData implements events.EventData for delegation_plan_created
-type DelegationPlanCreatedEventData struct {
-	PlanID    string `json:"plan_id"`
-	Objective string `json:"objective"`
-	TaskCount int    `json:"task_count"`
-	Timestamp string `json:"timestamp"`
-}
-
-func (d *DelegationPlanCreatedEventData) GetEventType() events.EventType {
-	return events.EventType("delegation_plan_created")
-}
-
-// DelegationPlanUpdatedEventData implements events.EventData for delegation_plan_updated
-type DelegationPlanUpdatedEventData struct {
-	PlanID    string `json:"plan_id"`
-	Status    string `json:"status"`
-	Completed int    `json:"completed"`
-	Total     int    `json:"total"`
-	Failed    int    `json:"failed"`
-	Timestamp string `json:"timestamp"`
-}
-
-func (d *DelegationPlanUpdatedEventData) GetEventType() events.EventType {
-	return events.EventType("delegation_plan_updated")
 }
 
 // GenericEventData is a generic event data type that wraps a map

@@ -40,6 +40,7 @@ var knownWorkspaceToolNames = map[string]bool{
 	"read_image":                true,
 	"read_pdf":                  true,
 	"generate_text_llm":         true,
+	"search_web_llm":            true,
 	"human_feedback":            true,
 	"agent_browser":             true,
 	"search_tools":              true,
@@ -775,7 +776,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"delete_workspace_file", "move_workspace_file",
 		// Workspace advanced tools
 		"execute_shell_command", "diff_patch_workspace_file",
-		"read_image", "read_pdf", "generate_text_llm",
+		"read_image", "read_pdf", "generate_text_llm", "search_web_llm",
 		// Human tools
 		"human_feedback",
 		// Browser (if registered)
@@ -1089,23 +1090,24 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	}
 
 	templateVars := map[string]string{
-		"WorkspacePath":           workspacePath,
-		"RunFolder":               iwm.controller.selectedRunFolder,
-		"PlanJSON":                planContent,
-		"StepConfigSummary":       stepConfigSummary,
-		"IsCodeExecutionMode":     fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
-		"WorkshopMode":            workshopMode,
-		"UnoptimizedSteps":        unoptimizedSteps,
-		"ProgressSummary":         progressSummary,
-		"UserRequest":             userGoal,
-		"SessionID":               iwm.sessionID,
-		"WorkflowID":              iwm.workflowID,
-		"UseKnowledgebase":        useKB,
-		"WorkflowObjective":       workflowObjective,
-		"WorkflowSuccessCriteria": workflowSuccessCriteria,
-		"AvailableGroups":         availableGroups,
-		"AbsWorkspacePath":        GetPromptDocsRoot() + "/" + workspacePath,
-		"AbsDocsRoot":             GetPromptDocsRoot(),
+		"WorkspacePath":                     workspacePath,
+		"RunFolder":                         iwm.controller.selectedRunFolder,
+		"PlanJSON":                          planContent,
+		"StepConfigSummary":                 stepConfigSummary,
+		"IsCodeExecutionMode":               fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
+		"WorkshopMode":                      workshopMode,
+		"UnoptimizedSteps":                  unoptimizedSteps,
+		"ProgressSummary":                   progressSummary,
+		"UserRequest":                       userGoal,
+		"SessionID":                         iwm.sessionID,
+		"WorkflowID":                        iwm.workflowID,
+		"UseKnowledgebase":                  useKB,
+		"WorkflowObjective":                 workflowObjective,
+		"WorkflowSuccessCriteria":           workflowSuccessCriteria,
+		"AvailableGroups":                   availableGroups,
+		"AbsWorkspacePath":                  GetPromptDocsRoot() + "/" + workspacePath,
+		"AbsDocsRoot":                       GetPromptDocsRoot(),
+		"SpecialWorkspaceToolsInstructions": instructions.GetSpecialWorkspaceToolsInstructions(),
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -1238,6 +1240,7 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
 ## CURRENT MODE: {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}BUILD & OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else if eq .WorkshopMode "output"}}OUTPUT{{else}}RUN{{end}}
+{{.SpecialWorkspaceToolsInstructions}}
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 **BUILD & OPTIMIZE MODE** — Design, build, test, debug, and optimize the workflow. You have full access to all tools.
 
@@ -3276,7 +3279,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+					"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm, search_web_llm), human_tools (human_feedback), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
 				},
 				"enabled_skills": map[string]interface{}{
 					"type":        "array",
@@ -4349,9 +4352,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(configuredCustomTools) == 0 {
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
-						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm\n")
+						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm, search_web_llm\n")
 						result.WriteString("   - `human_tools:*` → human_feedback\n")
-						result.WriteString("   Consider: does this step need `read_image`? `read_pdf`? `generate_text_llm`? `human_feedback`?\n")
+						result.WriteString("   Consider: does this step need `read_image`? `read_pdf`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")
 						result.WriteString("   `[\"workspace_advanced:execute_shell_command\", \"workspace_advanced:diff_patch_workspace_file\"]`\n")
 					} else {

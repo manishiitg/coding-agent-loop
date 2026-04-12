@@ -48,7 +48,8 @@ interface ConversationRendererProps {
 
 /** Detect if parsed JSON is a conversation log */
 export function isConversationJSON(filePath: string, parsed: unknown): parsed is ConversationData {
-  if (!filePath.toLowerCase().endsWith('-conversation.json')) return false
+  const lowerPath = filePath.toLowerCase()
+  if (!lowerPath.endsWith('-conversation.json') && !lowerPath.endsWith('/conversation.json')) return false
   if (!parsed || typeof parsed !== 'object') return false
   const obj = parsed as Record<string, unknown>
   return Array.isArray(obj.conversation_history)

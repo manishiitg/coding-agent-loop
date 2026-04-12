@@ -61,10 +61,9 @@ func (f FlexString) String() string {
 
 // SubAgentFrontmatter represents the YAML frontmatter in SUBAGENT.md
 type SubAgentFrontmatter struct {
-	Name                  string     `yaml:"name" json:"name"`
-	Description           string     `yaml:"description" json:"description"`
-	DefaultReasoningLevel string     `yaml:"default_reasoning_level,omitempty" json:"default_reasoning_level,omitempty"`
-	DefaultToolMode       string     `yaml:"default_tool_mode,omitempty" json:"default_tool_mode,omitempty"`
+	Name                  string `yaml:"name" json:"name"`
+	Description           string `yaml:"description" json:"description"`
+	DefaultReasoningLevel string `yaml:"default_reasoning_level,omitempty" json:"default_reasoning_level,omitempty"`
 }
 
 // SubAgent represents a complete sub-agent template with parsed content

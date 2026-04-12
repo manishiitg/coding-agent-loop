@@ -31,7 +31,7 @@ export const schedulerApi = {
   updateConfig: (req: SchedulerConfig) =>
     api.put<SchedulerConfig>('/api/scheduler/config', req).then(r => r.data),
 
-  listJobs: (params?: { entity_type?: string; enabled?: boolean; limit?: number; offset?: number }) =>
+  listJobs: (params?: { entity_type?: string; enabled?: boolean; limit?: number; offset?: number; mode?: string }) =>
     api.get<ListScheduledJobsResponse>('/api/scheduler/jobs', { params }).then(r => r.data),
 
   getJob: (id: string) =>

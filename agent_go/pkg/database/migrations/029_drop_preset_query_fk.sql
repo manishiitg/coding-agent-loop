@@ -1,5 +1,0 @@
--- Migration 029: Drop preset_query_id foreign key from chat_sessions
--- The preset_queries table is no longer used (manifest-based workflows).
--- Keep the column as a plain string identifier for filtering sessions by workflow.
--- SQLite does not support ALTER TABLE DROP CONSTRAINT, but FK enforcement is off by default.
--- This migration is a no-op for SQLite; it exists for parity with the Postgres migration.

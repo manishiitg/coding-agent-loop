@@ -693,6 +693,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 			if strings.HasPrefix(entry, "workspace_git") {
 				continue // Drop deprecated workspace_git entries
 			}
+			if entry == "workspace_image_gen:*" || entry == "workspace_image_edit:*" {
+				entry = "workspace_image:*"
+			} else if strings.HasPrefix(entry, "workspace_image_gen:") {
+				entry = strings.Replace(entry, "workspace_image_gen:", "workspace_image:", 1)
+			} else if strings.HasPrefix(entry, "workspace_image_edit:") {
+				entry = strings.Replace(entry, "workspace_image_edit:", "workspace_image:", 1)
+			}
 			if strings.HasPrefix(entry, "workspace_advanced") {
 				hasAdvanced = true
 			}
@@ -741,14 +748,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		for _, tool := range hcpo.WorkspaceTools {
 			if tool.Function != nil && tool.Function.Name == "agent_browser" {
 				defaultEnabledTools = append(defaultEnabledTools, "workspace_browser:*")
-				break
-			}
-		}
-		// Auto-include image gen tools if workspace_image_gen exists in the workspace tools pool
-		for _, tool := range hcpo.WorkspaceTools {
-			if tool.Function != nil && tool.Function.Name == "workspace_image_gen" {
-				defaultEnabledTools = append(defaultEnabledTools, "workspace_image_gen:*")
-				defaultEnabledTools = append(defaultEnabledTools, "workspace_image_edit:*")
 				break
 			}
 		}

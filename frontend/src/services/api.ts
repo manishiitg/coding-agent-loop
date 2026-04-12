@@ -57,6 +57,9 @@ import type {
   UpdateWorkflowManifestRequest,
   DuplicateWorkflowManifestRequest,
   MigrateWorkflowsResponse,
+  RunningWorkflowInfo,
+  UpdateRunningWorkflowRequest,
+  CostSummary,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -596,7 +599,7 @@ export const agentApi = {
   },
 
   // Get bot simulator config
-  getSimulatorConfig: async (): Promise<{ delegation_tier_config?: Record<string, unknown>; default_servers?: string[]; default_skills?: string[]; delegation_mode?: string }> => {
+  getSimulatorConfig: async (): Promise<{ delegation_tier_config?: Record<string, unknown>; default_servers?: string[]; default_skills?: string[] }> => {
     const response = await api.get('/api/bot/simulate/config')
     return response.data
   },
@@ -898,75 +901,28 @@ export const agentApi = {
     return response.data
   },
 
-  // Chat History API
-  getChatSessions: async (limit: number = 20, offset: number = 0, presetQueryId?: string, agentMode?: string): Promise<ListChatSessionsResponse> => {
-    const params: Record<string, string | number> = { limit, offset }
-    if (presetQueryId) {
-      params.preset_query_id = presetQueryId
-    }
-    if (agentMode) {
-      params.agent_mode = agentMode
-    }
-    const response = await api.get('/api/chat-history/sessions', { params })
+  // Workflow running-session API (decoupled from chat session storage).
+  getRunningWorkflow: async (sessionId: string): Promise<RunningWorkflowInfo> => {
+    const response = await api.get(`/api/workflow/running/${sessionId}`)
     return response.data
   },
 
-  getChatSession: async (sessionId: string): Promise<ChatSession> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}`)
+  listRunningWorkflows: async (): Promise<{ running: RunningWorkflowInfo[] }> => {
+    const response = await api.get('/api/workflow/running')
     return response.data
   },
 
-  // Get events from database for a chat session (for completed sessions)
-  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0): Promise<GetSessionEventsResponse> => {
-    const params: Record<string, string | number> = { limit, offset }
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, { params })
+  updateRunningWorkflow: async (sessionId: string, patch: UpdateRunningWorkflowRequest): Promise<RunningWorkflowInfo> => {
+    const response = await api.patch(`/api/workflow/running/${sessionId}`, patch)
     return response.data
   },
 
-  createChatSession: async (request: CreateChatSessionRequest): Promise<ChatSession> => {
-    const response = await api.post('/api/chat-history/sessions', request)
-    return response.data
-  },
-
-  updateChatSession: async (sessionId: string, request: UpdateChatSessionRequest): Promise<ChatSession> => {
-    const response = await api.put(`/api/chat-history/sessions/${sessionId}`, request)
-    return response.data
-  },
-
-  deleteChatSession: async (sessionId: string): Promise<void> => {
-    await api.delete(`/api/chat-history/sessions/${sessionId}`)
-  },
-
-  // Chat Cost Analysis API
-  getAllSessionCosts: async (agentMode?: string, signal?: AbortSignal): Promise<UserCostsResponse> => {
+  // Global cost ledger summary (date + model aggregation).
+  getCostSummary: async (from?: string, to?: string, signal?: AbortSignal): Promise<CostSummary> => {
     const params: Record<string, string> = {}
-    if (agentMode) {
-      params.agent_mode = agentMode
-    }
-    const response = await api.get('/api/chat-history/costs', { params, signal })
-    return response.data
-  },
-
-  getSessionCosts: async (sessionId: string, signal?: AbortSignal): Promise<SessionCostDetail> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/costs`, { signal })
-    return response.data
-  },
-
-  // Delegation Logs API (Multi-Agent Mode)
-  getDelegationLogs: async (sessionId: string, signal?: AbortSignal): Promise<DelegationLogsResponse> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/delegation-logs`, { signal })
-    return response.data
-  },
-
-  getAllDelegationLogs: async (limit = 50, signal?: AbortSignal): Promise<AllDelegationLogsResponse> => {
-    const response = await api.get('/api/chat-history/delegation-logs', { params: { limit }, signal })
-    return response.data
-  },
-
-  getDelegationEvents: async (sessionId: string, delegationId: string, limit = 500, offset = 0): Promise<{ events: PollingEvent[]; total: number }> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/delegation-logs/${delegationId}/events`, {
-      params: { limit, offset }
-    })
+    if (from) params.from = from
+    if (to) params.to = to
+    const response = await api.get('/api/cost/summary', { params, signal })
     return response.data
   },
 
@@ -1509,61 +1465,8 @@ export const authApi = {
   },
 }
 
-// --- Session Sharing API ---
-export interface ShareResponse {
-  share_id: string
-  share_url: string
-  token: string
-  expires_at?: string
-}
-
-export interface SessionShare {
-  id: string
-  session_id: string
-  share_token: string
-  created_by: string
-  created_at: string
-  expires_at?: string
-  access_level: string
-}
-
-export interface SharedSessionResponse {
-  session_id: string
-  title: string
-  agent_mode: string
-  status: string
-  created_at: string
-  completed_at?: string
-  events?: unknown[]
-  is_shared: boolean
-}
-
-export const sessionShareApi = {
-  // Create a share link for a session
-  createShare: async (sessionId: string, expiresInHours?: number): Promise<ShareResponse> => {
-    const response = await api.post(`/api/sessions/${sessionId}/share`, { expires_in_hours: expiresInHours })
-    return response.data
-  },
-
-  // List all shares for a session
-  listShares: async (sessionId: string): Promise<{ shares: SessionShare[] }> => {
-    const response = await api.get(`/api/sessions/${sessionId}/shares`)
-    return response.data
-  },
-
-  // Revoke a share link
-  revokeShare: async (sessionId: string, shareId: string): Promise<void> => {
-    await api.delete(`/api/sessions/${sessionId}/share/${shareId}`)
-  },
-
-  // Get a shared session (no auth required)
-  getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
-    const response = await api.get(`/api/shared/${shareToken}`)
-    return response.data
-  },
-
-  // Workflow manifest endpoints are also consumed from this API surface by
-  // workflow stores/components, so keep them available here alongside sharing.
+// --- Workflow manifest API ---
+export const workflowManifestApi = {
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
     const response = await api.get('/api/workflows/manifests')
     return response.data

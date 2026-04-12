@@ -18,42 +18,99 @@ type AgentInstructions struct {
 	ResponseFormatting string
 }
 
-// GetAgentInstructions returns the custom instructions for agents.
-// workspaceAbsPath is the absolute filesystem path to the workspace root (e.g. "/app/workspace-docs").
-// If empty, only relative paths are shown.
-func GetAgentInstructions(workspaceAbsPath string) string {
+// workspacePaths holds the resolved absolute paths for the workspace.
+type workspacePaths struct {
+	DocsRoot    string
+	Chats       string
+	Skills      string
+	Workflow    string
+	Downloads   string
+	Subagents   string
+	Config      string
+	Memory      string
+	ChatHistory string
+}
+
+func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePaths {
+	if chatsFolder == "" {
+		chatsFolder = "_users/default/Chats"
+	}
+	if memoryFolder == "" {
+		memoryFolder = "_users/default/memories"
+	}
+	abs := func(rel string) string {
+		if docsRoot == "" {
+			return rel
+		}
+		return docsRoot + "/" + rel
+	}
+	return workspacePaths{
+		DocsRoot:    docsRoot,
+		Chats:       abs(chatsFolder),
+		Skills:      abs("skills"),
+		Workflow:    abs("Workflow"),
+		Downloads:   abs("Downloads"),
+		Subagents:   abs("subagents"),
+		Config:      abs("config"),
+		Memory:      abs(memoryFolder),
+		ChatHistory: abs(strings.TrimSuffix(chatsFolder, "/Chats") + "/chat_history"),
+	}
+}
+
+// GetWorkspaceMap returns a compact folder listing with absolute paths and access levels.
+// This is the high-priority section — placed early in the prompt before reference docs.
+func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
+	p := newWorkspacePaths(docsRoot, chatsFolder, memoryFolder)
+	return `
+## Workspace
+
+**Always use absolute paths** in shell commands. Root: ` + "`" + p.DocsRoot + "`" + `
+
+| Path | Access | Purpose |
+|------|--------|---------|
+| ` + "`" + p.Chats + "/`" + ` | read/write | Your workspace — save all output files here |
+| ` + "`" + p.Memory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
+| ` + "`" + p.Config + "/`" + ` | read/write | Session config (tier config, provider auth, image config) |
+| ` + "`" + p.ChatHistory + "/`" + ` | read/write | Past conversation histories |
+| ` + "`" + p.Skills + "/`" + ` | read-only | Skill definitions (SKILL.md + supporting files) |
+| ` + "`" + p.Workflow + "/`" + ` | read-only | Workflow definitions (use create_workflow tool to create) |
+| ` + "`" + p.Downloads + "/`" + ` | read-only | Downloaded files and browser content |
+| ` + "`" + p.Subagents + "/`" + ` | read-only | Sub-agent templates |
+
+### Chats Folder Organization
+
+Organize output files under descriptive project folders — never dump files at the Chats root.
+
+` + "```" + `
+` + p.Chats + `/
+  <project-name>/          ← One folder per task/project (kebab-case)
+    report.md              ← Final output
+    data.json              ← Supporting data
+    analysis/              ← Sub-folder for complex outputs
+  <another-project>/
+` + "```" + `
+
+Examples: ` + "`quarterly-sales-analysis/`" + `, ` + "`aws-cost-report/`" + `, ` + "`bank-statement-parsing/`" + `
+Reuse existing project folders for follow-up work on the same topic.
+`
+}
+
+// GetWorkspaceReference returns detailed reference documentation for workspace config,
+// workflow structure, and workflow creation. This is lower-priority reference material —
+// placed after the operating mode instructions in the prompt.
+func GetWorkspaceReference(docsRoot, chatsFolder, memoryFolder string) string {
+	p := newWorkspacePaths(docsRoot, chatsFolder, memoryFolder)
+	absWorkflow := p.Workflow
+	absConfig := p.Config
+
 	instructions := utils.GetCommonFileInstructions()
 
-	// Add workspace root path info
-	wsPathNote := ""
-	if workspaceAbsPath != "" {
-		wsPathNote = fmt.Sprintf("\n**Workspace root:** `%s`\n**Always use absolute paths** in shell commands (e.g., `cat %s/config/employees.json`, `ls %s/Workflow/`).\n", workspaceAbsPath, workspaceAbsPath, workspaceAbsPath)
-	}
-
-	// Build per-folder absolute path suffix when workspace root is known
-	absPath := func(rel string) string {
-		if workspaceAbsPath == "" {
-			return ""
-		}
-		return fmt.Sprintf(" (`%s/%s`)", workspaceAbsPath, rel)
-	}
-
-	// Add chat mode folder restriction note
-	instructions += "\n\n## Workspace Folder Structure\n" + wsPathNote + `
-The workspace is organized into the following folders:
-
-` + fmt.Sprintf("- **Chats/**%s (read/write) - Your personal workspace for this conversation. Save all output files here.", absPath("Chats")) + `
-` + fmt.Sprintf("- **skills/**%s (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.", absPath("skills")) + `
-` + fmt.Sprintf("- **Workflow/**%s (read-only) - Stores workflow definitions that automate multi-step processes.", absPath("Workflow")) + `
-` + fmt.Sprintf("- **Downloads/**%s (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).", absPath("Downloads")) + `
-` + fmt.Sprintf("- **subagents/**%s (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.", absPath("subagents")) + `
-` + fmt.Sprintf("- **config/**%s (read/write) - Configuration files for this agent session. Read and update using execute_shell_command. Changes take effect immediately when the next sub-agent spawns.", absPath("config")) + `
-
+	instructions += "\n\n" + browserinstructions.GetSpecialWorkspaceToolsInstructions() + `
 
 ## LLM Tier Configuration
-` + fmt.Sprintf("Edit `config/delegation-tier-config.json`%s to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.", absPath("config/delegation-tier-config.json")) + `
-- Read: ` + "`execute_shell_command(command: \"cat config/delegation-tier-config.json\")`" + `
-- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > config/delegation-tier-config.json\")`" + `
+Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.
+- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/delegation-tier-config.json\")`" + `
+- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/delegation-tier-config.json\")`" + `
 - Schema: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\",\"fallbacks\":[{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"},{\"model_id\":\"gpt-5.4\"}]},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`" + `
 - To add fallbacks for a tier, add an ordered ` + "`fallbacks`" + ` array under that tier object.
 - Each fallback entry uses ` + "`{\"provider\":\"...\",\"model_id\":\"...\"}`" + `. If ` + "`provider`" + ` is omitted, it defaults to the tier's own provider.
@@ -61,49 +118,345 @@ The workspace is organized into the following folders:
 - Preserve existing tiers when editing. Only change the specific tier or ` + "`fallbacks`" + ` entries the user asked for.
 
 ## Published LLMs & Provider Auth
-` + fmt.Sprintf("Published LLM metadata lives in `config/published-llms.json`%s. Provider authentication lives separately in `config/provider-api-keys.json`%s.", absPath("config/published-llms.json"), absPath("config/provider-api-keys.json")) + `
+Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Provider authentication lives separately in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses the same shared metadata catalog as the frontend model picker.
-- List published LLMs: ` + "`execute_shell_command(command: \"cat config/published-llms.json\")`" + `
-- Delete a published LLM: read the file, remove the matching JSON entry, then overwrite it with ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > config/published-llms.json\")`" + `
-- Provider auth is encrypted at rest in ` + "`config/provider-api-keys.json`" + `. Do not read or hand-edit that file with shell commands.
+- List published LLMs: ` + "`execute_shell_command(command: \"cat " + absConfig + "/published-llms.json\")`" + `
+- Delete a published LLM: read the file, remove the matching JSON entry, then overwrite it with ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/published-llms.json\")`" + `
+- Provider auth is encrypted at rest in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `. Do not read or hand-edit that file with shell commands.
 - Update provider auth with the ` + "`set_provider_auth`" + ` tool.
 - Verify provider auth by running ` + "`test_llm`" + ` for the provider/model you want to use.
-- Prefer shell commands only for published LLM metadata in ` + "`config/published-llms.json`" + `. Use tools for provider-auth operations.
+- Prefer shell commands only for published LLM metadata in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Use tools for provider-auth operations.
+- ` + "`search_web_llm`" + ` selects providers from ` + "`" + absConfig + `/published-llms.json` + "`" + `.
+- Use ` + "`search_role`" + ` to control routing:
+  - ` + "`\"primary\"`" + ` = preferred default search provider
+  - ` + "`\"fallback\"`" + ` = backup search provider
+- Use ` + "`search_priority`" + ` to order providers within the same role. Lower numbers win.
+- If the tool call passes a specific ` + "`provider`" + `, that override wins over ` + "`search_role`" + ` / ` + "`search_priority`" + `.
+- Example: ` + "`{\"id\":\"gemini-search\",\"name\":\"Gemini Search\",\"provider\":\"gemini-cli\",\"model_id\":\"gemini-2.5-pro\",\"search_role\":\"primary\",\"search_priority\":1}`" + `
+
+## Image Generation Defaults
+Image generation defaults live in ` + "`" + absConfig + `/image-generation-config.json` + "`" + `. Provider authentication still lives in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
+- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-generation-config.json\")`" + `
+- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-generation-config.json\")`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3.1-flash-image-preview\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"image-01\"}]}`" + `
+- ` + "`primary`" + ` is tried first. ` + "`fallbacks`" + ` are tried in order when the primary provider lacks workspace auth.
+- Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
+- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
+- Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
+- MiniMax image generation is supported via provider ` + "`minimax-coding-plan`" + ` with model ` + "`image-01`" + `.
+- Vertex image generation is supported via provider ` + "`vertex`" + ` with models such as ` + "`gemini-3.1-flash-image-preview`" + ` and ` + "`gemini-3-pro-image-preview`" + `.
+
+## Image Analysis Defaults
+Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
+- Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
+- Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-2.5-flash\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"}]}`" + `
+- If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
+- If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
+- If you want to use MiniMax for image understanding, configure provider ` + "`minimax-coding-plan`" + `, not plain ` + "`minimax`" + `.
+- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 
 ## Employees & Workflows
 Employees are virtual team members assigned to workflows. When creating employees, give them realistic human first names (e.g., "Priya", "Arjun", "Sarah") — not functional titles or descriptions.
 
 ### Quick Reference
-- Employees: ` + "`execute_shell_command(command: \"cat config/employees.json\")`" + `
-- Assignments (workflow_path → employee_id): ` + "`execute_shell_command(command: \"cat config/employee-workflows.json\")`" + `
-- List workflows: ` + "`execute_shell_command(command: \"ls Workflow/\")`" + `
+- Employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
+- Assignments (workflow_path → employee_id): ` + "`execute_shell_command(command: \"cat " + absConfig + "/employee-workflows.json\")`" + `
+- List workflows: ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
 
 ### Workflow Structure
-Each workflow lives in ` + "`Workflow/<name>/`" + ` with:
-- ` + "`workflow.json`" + ` — config, schedules, capabilities (can be large)
-- ` + "`planning/plan.json`" + ` — step definitions with IDs and titles
-- ` + "`planning/step_config.json`" + ` — per-step tool/skill config
-- ` + "`learnings/<step-id>/SKILL.md`" + ` — learnings accumulated per step
-- ` + "`runs/`" + ` — execution output folders
+Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
+
+**Planning & config:**
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, employee assignment. May carry optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`planning/plan.json`" + ` — step definitions (IDs, titles). **Primary source of truth** for workflow ` + "`objective`" + ` and ` + "`success_criteria`" + ` at root level (falls back to ` + "`workflow.json`" + ` if empty).
+- ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
+  - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
+  - ` + "`declared_execution_mode`" + ` (string) — ` + "`\"learn_code\"`" + ` (persistent main.py reused across runs) or ` + "`\"code_exec\"`" + ` (ephemeral per-run scripts). Ignored when ` + "`use_code_execution_mode`" + ` is false.
+
+**Variables:**
+- ` + "`variables/variables.json`" + ` — **the only** source of runtime variable values. Shape: ` + "`{variables:[{name,value,group}], groups:[{id,name,enabled}]}`" + `. Groups enable batch execution with different value sets. ` + "`workflow.json`" + ` does NOT carry variable definitions.
+
+**Learnings (accumulated knowledge):**
+- ` + "`learnings/_global/SKILL.md`" + ` — **global workflow learnings**: domain knowledge, conventions, patterns shared across all steps. Canonical place where accumulated workflow knowledge lives. (Per-step SKILL.md learnings have been removed.)
+- ` + "`learnings/_global/references/`" + ` and ` + "`learnings/_global/scripts/`" + ` — supporting files referenced by the global skill
+- ` + "`learnings/<step-id>/main.py`" + ` — **persistent saved script** for ` + "`learn_code`" + ` steps. Source of truth; each run copies it into the per-run working folder.
+- ` + "`learnings/<step-id>/script_metadata.json`" + ` — version history + run stats for the saved script
+
+**Runs (execution output):**
+- ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to ` + "`iteration-1`" + `, older backups shift up (` + "`iteration-2`" + `, etc.). Only the 10 most recent backups are kept.
+- ` + "`runs/iteration-{N}/{group-name}/execution/step-X/`" + ` — per-step execution outputs (when variable groups are in use, each group runs in its own subfolder)
+- ` + "`runs/iteration-{N}/{group-name}/execution/step-X/code/main.py`" + ` — per-run working copy of the ` + "`learn_code`" + ` script
+- ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + ` — per-step logs (see Log Layout below)
+
+**Reports & evaluation:**
+- ` + "`reports/{group-name}/{timestamp}.md`" + ` — final output reports generated after a successful run (one per group, per run timestamp)
+- ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — scored evaluation results (eval pipeline only, separate from normal runs)
+- ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
+
+**Interactive builder / workshop:**
+- ` + "`builder/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches. Only the 3 most recent are kept.
+
+### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
+- ` + "`validation-{N}.json`" + ` — validation attempts for the step
+- ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
+- ` + "`execution/execution-attempt-{A}-iteration-{I}-conversation.json`" + ` — full LLM conversation for that attempt
+- ` + "`conditional-evaluation.json`" + ` — conditional-step branch results
+- ` + "`decision-evaluation.json`" + ` — decision-step routing results
+- ` + "`routing-evaluation.json`" + ` — routing-step results
+- ` + "`orchestration-execution.json`" + ` — JSONL log for orchestration / todo_task steps (one line per iteration)
 
 ### Efficient Parsing
-- **Step list (IDs + titles):** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('Workflow/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`" + `
-- **Schedules:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('Workflow/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`" + `
-- **Step learnings:** ` + "`execute_shell_command(command: \"cat Workflow/<name>/learnings/<step-id>/SKILL.md\")`" + `
-- **Full config (when needed):** ` + "`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`" + `
+- **List workflows:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/\")`" + `
+- **Objective + success criteria:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; p=json.load(open('" + absWorkflow + "/<name>/planning/plan.json')); print('objective:',p.get('objective','')); print('success:',p.get('success_criteria',''))\\\"\")`" + `
+- **Step list (IDs + titles):** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('" + absWorkflow + "/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`" + `
+- **Step execution modes:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/planning/step_config.json\")`" + ` — look at each step's ` + "`agent_configs.use_code_execution_mode`" + ` + ` + "`agent_configs.declared_execution_mode`" + `
+- **Schedules:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('" + absWorkflow + "/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`" + `
+- **Variables + groups:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/variables/variables.json\")`" + `
+- **Global workflow learnings:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/_global/SKILL.md\")`" + `
+- **Saved step code (learn_code steps only):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/<step-id>/main.py\")`" + `
+- **Latest run logs:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` (active run is always iteration-0; older runs backed up at iteration-1, iteration-2, ...)
+- **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
+- **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
 ### When the user mentions an employee by name
-1. **Always read employees first**: ` + "`execute_shell_command(command: \"cat config/employees.json\")`" + ` to find the employee ID
-2. **Then read assignments**: ` + "`execute_shell_command(command: \"cat config/employee-workflows.json\")`" + ` to find their workflows
-3. **Then check workflow details**: Browse Workflow/<name>/ for runs, learnings, outputs
+If the employee list is already in this prompt (see "Current Employees & Workflow Assignments" section below), use it directly — no need to read config files. Otherwise:
+1. Read employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
+2. Read assignments: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employee-workflows.json\")`" + `
+3. Then check workflow details: browse ` + "`" + absWorkflow + `/<name>/` + "`" + ` for runs, learnings, reports
 
 ### What You Can Do
-- **Reuse step learnings**: Workflow learnings contain detailed instructions (e.g., how to log into a bank). You can read these and use them in your own delegated tasks for related work the user asks for.
-- **Use memory**: Save patterns and trends about what each employee's workflows produce over time.
+- **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
+- **Reuse saved step scripts**: For ` + "`learn_code`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
+- **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Read step execution results and logs to understand what happened.
+- **Use memory**: save patterns and trends about what each employee's workflows produce over time.
+
+## Creating New Workflows
+
+When asked to create a new workflow (e.g. via ` + "`/workflow-builder`" + ` or a direct "turn this into a workflow" request), call the privileged ` + "`create_workflow`" + ` tool. **Do NOT try to ` + "`mkdir`" + ` or ` + "`cat > workflow.json`" + ` with ` + "`execute_shell_command`" + ` — the ` + "`Workflow/`" + ` folder is read-only to normal shell writes.** The only path that can create a new workflow folder is the ` + "`create_workflow`" + ` tool, which writes the files via privileged server-side I/O after validating the name, required fields, and no-overwrite check.
+
+### The ` + "`create_workflow`" + ` Tool
+
+` + "`create_workflow(name, workflow_json, plan_json)`" + ` — creates ` + "`Workflow/<name>/`" + ` with the two JSON files in one atomic call.
+
+- **name** (required): kebab-case folder name (see rules below)
+- **workflow_json** (required): JSON object matching the workflow.json schema — must include ` + "`schema_version`" + ` (1), ` + "`id`" + `, ` + "`label`" + `
+- **plan_json** (required): JSON object matching the plan.json schema — must include a non-empty ` + "`steps`" + ` array
+
+The tool refuses to overwrite existing workflows. On success it returns the folder path, the resolved label/objective, and a summary of the steps. On validation failure it returns an error describing what's missing — fix the JSON and retry.
+
+### Two Different "Names" — Don't Confuse Them
+Workflows have **two** separate name-like values, and it matters which one you're setting:
+
+1. **Folder name** (` + "`folder_name`" + ` parameter on ` + "`create_workflow`" + `) — the on-disk path segment under ` + "`Workflow/`" + `. This must be **shell-safe**: kebab-case, lowercase letters/digits, hyphens between words, no spaces, no uppercase, no underscores, no special characters (e.g. ` + "`customer-onboarding`" + `, ` + "`sales-report`" + `, ` + "`api-health-check`" + `). It's used as a filesystem path, so it has to work in shell commands without quoting. 2-5 words, descriptive, ≤64 chars. If a clean folder_name cannot be derived, ask the user before creating.
+2. **Display name / label** (` + "`workflow_json.label`" + `) — the human-readable name shown in the UI. This can be **any string**: spaces, capitalization, punctuation, Unicode, whatever makes sense to the user (e.g. ` + "`\"AWS Cost Analysis Q3\"`" + `, ` + "`\"Customer Onboarding (v2)\"`" + `, ` + "`\"Müller's Pipeline\"`" + `).
+
+**Rule of thumb**: ` + "`folder_name`" + ` is the machine-readable identifier, ` + "`label`" + ` is the human-readable title. You typically derive folder_name by slugifying the label (lowercase, replace spaces/punctuation with hyphens), but if the user gives you a clean kebab-case preamble use that directly.
+
+### Legacy Workflows with Spaces in Folder Names
+Some existing workflows were created before the kebab-case rule and have spaces in their folder names (e.g. ` + "`Workflow/AWS Cost Analysis/`" + `, ` + "`Workflow/Portfolio Detailed/`" + `). When you reference these in shell commands, **always quote the path** to avoid word-splitting errors:
+- Correct: ` + "`execute_shell_command(command: \"ls 'Workflow/AWS Cost Analysis/'\")`" + `
+- Wrong: ` + "`execute_shell_command(command: \"ls Workflow/AWS Cost Analysis/\")`" + ` (the shell splits on the space and runs ` + "`ls Workflow/AWS Cost Analysis/`" + ` as multiple args)
+
+New workflows you create via ` + "`create_workflow`" + ` will always have shell-safe folder names, so this only affects legacy workflows.
+
+### File 1: ` + "`Workflow/<kebab-name>/workflow.json`" + `
+
+Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1), ` + "`id`" + ` (string, e.g. ` + "`wf_<kebab-name>`" + `), ` + "`label`" + ` (string, human-readable name).
+
+**Sensible starter shape** — include the fields below; pick capabilities smartly from the current chat context (only the MCP servers, skills, and LLM tiers actually relevant to the workflow, not every enabled server):
+
+` + "```json" + `
+{
+  "schema_version": 1,
+  "id": "wf_<kebab-name>",
+  "label": "Human Readable Name",
+  "objective": "One-sentence statement of what this workflow accomplishes",
+  "success_criteria": "How to tell a run succeeded",
+  "capabilities": {
+    "selected_servers": ["mcp-server-name"],
+    "selected_tools": [],
+    "selected_skills": ["skill-folder-name"],
+    "selected_secrets": [],
+    "browser_mode": "none",
+    "use_code_execution_mode": false,
+    "llm_config": null
+  },
+  "execution_defaults": {
+    "execution_max_turns": 10
+  },
+  "ownership": { "employee_id": null },
+  "schedules": []
+}
+` + "```" + `
+
+**` + "`capabilities`" + ` fields**:
+- ` + "`selected_servers`" + ` — MCP server names the workflow uses (array of strings)
+- ` + "`selected_tools`" + ` — specific tool names to allow-list from those servers (optional)
+- ` + "`selected_skills`" + ` — skill folder names to auto-activate
+- ` + "`selected_secrets`" + ` — secret names the workflow needs
+- ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + ` | ` + "`playwright`" + ` | ` + "`stealth`" + `
+- ` + "`use_code_execution_mode`" + ` — ` + "`true`" + ` if steps should run scripted Python; ` + "`false`" + ` for direct tool calls
+- ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
+
+**` + "`schedules`" + `** is an array; leave empty ` + "`[]`" + ` unless the user asked for cron scheduling. Each schedule (if any) needs: ` + "`id`" + `, ` + "`name`" + `, ` + "`cron_expression`" + `, ` + "`timezone`" + `, ` + "`enabled`" + ` (bool), ` + "`group_names`" + ` (array).
+
+### File 2: ` + "`Workflow/<kebab-name>/planning/plan.json`" + `
+
+Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step). Each step needs ` + "`type`" + `, ` + "`id`" + ` (kebab-case, unique), and ` + "`title`" + ` at minimum.
+
+**Sensible starter shape**:
+
+` + "```json" + `
+{
+  "objective": "Same or more specific than workflow.json objective",
+  "success_criteria": "How the overall plan succeeds",
+  "steps": [
+    {
+      "type": "regular",
+      "id": "step-one",
+      "title": "Human readable step title",
+      "description": "Detailed instructions for the worker — self-contained, assume no memory of the chat",
+      "success_criteria": "How this step succeeds",
+      "context_dependencies": [],
+      "context_output": "step_one_output.json"
+    },
+    {
+      "type": "regular",
+      "id": "step-two",
+      "title": "Next step",
+      "description": "Depends on step-one's output",
+      "success_criteria": "...",
+      "context_dependencies": ["step_one_output.json"],
+      "context_output": "final_report.json"
+    }
+  ]
+}
+` + "```" + `
+
+**Step types** (use ` + "`regular`" + ` by default; only use others when needed):
+- ` + "`regular`" + ` — LLM-driven execution step (the common case).
+- ` + "`decision`" + ` — Execute + evaluate + branch on yes/no. Needs ` + "`decision_evaluation_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
+- ` + "`conditional`" + ` — Evaluate only, no execution, branch. Needs ` + "`condition_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
+- ` + "`routing`" + ` — N-way branching. Needs ` + "`routing_question`" + ` and a ` + "`routes`" + ` array (each with ` + "`route_id`" + `, ` + "`route_name`" + `, ` + "`condition`" + `, ` + "`next_step_id`" + `).
+- ` + "`human_input`" + ` — Pause for user response. Needs ` + "`question`" + `, ` + "`response_type`" + ` (` + "`text`" + `/` + "`yesno`" + `/` + "`multiple_choice`" + `), ` + "`next_step_id`" + `, and (for yesno) ` + "`if_yes_next_step_id`" + `/` + "`if_no_next_step_id`" + `.
+- ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + ` and optional ` + "`enable_generic_agent`" + ` flag.
+
+**Step field reference**:
+- ` + "`context_dependencies`" + ` — array of file names this step reads (produced by earlier steps)
+- ` + "`context_output`" + ` — file name (string) or array of file names this step writes
+- ` + "`validation_schema`" + ` — optional JSONPath-based output validation (` + "`files[].json_checks`" + `)
+- Steps chain via ` + "`context_dependencies`" + ` / ` + "`context_output`" + `, or via explicit ` + "`next_step_id`" + ` on branching types.
+
+### Rules When Creating a Workflow
+- **Use ` + "`create_workflow`" + `, not shell commands.** Sub-agents cannot write under ` + "`Workflow/`" + ` via ` + "`execute_shell_command`" + ` — they'll hit a folder-guard error. Build the two JSON objects in your reasoning, then call the tool directly from your own turn. No delegation needed for this step.
+- **Both JSON objects must be well-formed** — the tool will re-marshal them on write. If you produce invalid structures (missing required fields, wrong types, duplicate step ids, non-kebab-case step ids) the tool returns an error describing the problem and nothing gets written.
+- **Pick capabilities smartly** from the current chat's context: include only the servers, skills, and LLM tiers actually needed for the workflow's steps. Don't blindly copy every currently-enabled server.
+- **Don't overwrite existing workflows.** If the user wants to modify an existing workflow, tell them to use the workflow canvas — ` + "`create_workflow`" + ` will refuse if the target folder already exists.
+- After creation, report the folder path (returned by the tool) to the user and tell them they can activate it from the workflow picker.
 
 `
 	return instructions
+}
+
+// buildEmployeesWorkflowsContext reads the employee registry and workflow-assignment map
+// and returns a compact markdown section listing each employee with their assigned workflows.
+// Injected into the multi-agent chat system prompt so the agent already knows who exists
+// and which workflows each person owns — no need to cat the config files just to resolve a name.
+// Returns an empty string when no employees are registered.
+func buildEmployeesWorkflowsContext() string {
+	employees, err := readEmployeesFile()
+	if err != nil {
+		log.Printf("[PROMPT CONTEXT] Failed to read employees.json: %v", err)
+		return ""
+	}
+	if len(employees) == 0 {
+		return ""
+	}
+
+	assignments, err := readEmployeeWorkflowsFile()
+	if err != nil {
+		log.Printf("[PROMPT CONTEXT] Failed to read employee-workflows.json: %v", err)
+		// Still render employees even if assignments file is missing — names are useful on their own
+		assignments = map[string]string{}
+	}
+
+	// Group workflows by employee ID
+	byEmployee := map[string][]string{}
+	for workflowPath, employeeID := range assignments {
+		byEmployee[employeeID] = append(byEmployee[employeeID], workflowPath)
+	}
+	for _, paths := range byEmployee {
+		sort.Strings(paths)
+	}
+
+	// Build a stable employee order (by name, then ID as tiebreaker)
+	sortedEmployees := make([]EmployeeFile, len(employees))
+	copy(sortedEmployees, employees)
+	sort.Slice(sortedEmployees, func(i, j int) bool {
+		ni := strings.ToLower(strings.TrimSpace(sortedEmployees[i].Name))
+		nj := strings.ToLower(strings.TrimSpace(sortedEmployees[j].Name))
+		if ni != nj {
+			return ni < nj
+		}
+		return sortedEmployees[i].ID < sortedEmployees[j].ID
+	})
+
+	var sb strings.Builder
+	sb.WriteString("\n## Current Employees & Workflow Assignments\n\n")
+	sb.WriteString("This workspace has the following employees with their assigned workflows. When the user mentions an employee by name, use this list directly — do not read config files. Go straight to inspecting the relevant workflow folder.\n\n")
+
+	for _, emp := range sortedEmployees {
+		name := strings.TrimSpace(emp.Name)
+		if name == "" {
+			name = emp.ID
+		}
+		role := strings.TrimSpace(emp.Role)
+		if role == "" {
+			role = strings.TrimSpace(emp.Description)
+		}
+
+		line := fmt.Sprintf("- **%s**", name)
+		if emp.ID != "" {
+			line += fmt.Sprintf(" (`%s`)", emp.ID)
+		}
+		if role != "" {
+			line += fmt.Sprintf(" — %s", role)
+		}
+		sb.WriteString(line + "\n")
+
+		workflows := byEmployee[emp.ID]
+		if len(workflows) == 0 {
+			sb.WriteString("  - _No workflows assigned_\n")
+		} else {
+			for _, wp := range workflows {
+				sb.WriteString(fmt.Sprintf("  - `%s`\n", wp))
+			}
+		}
+	}
+
+	// Call out any assignments referencing an employee ID that no longer exists in the registry
+	employeeIDs := map[string]bool{}
+	for _, emp := range employees {
+		employeeIDs[emp.ID] = true
+	}
+	var orphans []string
+	for workflowPath, employeeID := range assignments {
+		if !employeeIDs[employeeID] {
+			orphans = append(orphans, workflowPath)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		sb.WriteString("\n**Workflows with stale assignments** (pointing at unknown employee IDs):\n")
+		for _, wp := range orphans {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", wp))
+		}
+	}
+
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 // GetSkillBuilderInstructions returns the custom instructions for Skill Builder agents
@@ -171,68 +524,75 @@ Use this access to create and update custom skills. You can read other folders t
 }
 
 // buildSkillPrompt builds the system prompt section for selected skills.
-// It provides paths to skills and instructions for the agent to discover them using workspace tools.
-// workspaceAbsPath is optional — if provided, absolute paths are also shown alongside relative ones.
-func buildSkillPrompt(selectedSkills []string, workspaceAbsPath string, workspaceAPIURL ...string) string {
+// isOrchestrator=true means the agent delegates all tool use — skill reading
+// instructions are phrased as "include in your delegate() instructions" instead
+// of "read the file directly", resolving the contradiction between the orchestrator's
+// "do not use tools" policy and the requirement to read skills before acting.
+// docsRoot is the shell-visible workspace root for absolute paths.
+func buildSkillPrompt(selectedSkills []string, workspaceAPIURL, docsRoot string, isOrchestrator bool) string {
 	if len(selectedSkills) == 0 {
 		return ""
 	}
 
+	absSkills := docsRoot + "/skills"
+
 	var promptParts []string
 
-	// Add skills discovery instructions
-	promptParts = append(promptParts, `
+	// Mode-appropriate skill reading instructions
+	if isOrchestrator {
+		promptParts = append(promptParts, `
+## Available Skills
+
+The following skills are available for this conversation. When delegating tasks, include the relevant skill path in your delegate() instruction so the sub-agent can read and apply it.
+
+### Available Skills:
+`)
+	} else {
+		promptParts = append(promptParts, `
 ## Available Skills
 
 The following skills are available for this conversation. Each skill extends your capabilities with specialized instructions and tools.
 
-**Important:** Before taking any significant action (creating a plan, delegating tasks, executing multi-step work, or performing analysis), read the SKILL.md files for relevant skills so you understand what capabilities are available and can use them effectively. For simple conversational messages (greetings, clarifying questions, etc.), you do not need to read skills first — just respond naturally.
+**Important:** Before taking any significant action (executing multi-step work or performing analysis), read the SKILL.md files for relevant skills so you understand what capabilities are available. For simple conversational messages, you do not need to read skills first.
 
 ### Available Skills:
 `)
+	}
 
 	// Group gws-* skills into a single entry; list all others individually
-	wsURL := ""
-	if len(workspaceAPIURL) > 0 {
-		wsURL = workspaceAPIURL[0]
-	}
 	gwsAdded := false
 	for _, folderName := range selectedSkills {
 		if strings.HasPrefix(folderName, "gws-") {
 			if !gwsAdded {
 				gwsAdded = true
-				gwsNote := ""
-				if workspaceAbsPath != "" {
-					gwsNote = fmt.Sprintf(" (`%s/skills/gws-*/SKILL.md`)", workspaceAbsPath)
-				}
-				promptParts = append(promptParts, fmt.Sprintf(
-					"- **Google Workspace (gws-\\*)**: Drive, Gmail, Calendar, Docs, Sheets, Slides, and shared utilities.%s\n  List available: `execute_shell_command(command: \"ls skills/gws-*/SKILL.md\")`",
-					gwsNote))
+				promptParts = append(promptParts,
+					fmt.Sprintf("- **Google Workspace (gws-\\*)**: Drive, Gmail, Calendar, Docs, Sheets, Slides, and shared utilities.\n  List available: `execute_shell_command(command: \"ls %s/gws-*/SKILL.md\")`", absSkills))
 			}
 			continue
 		}
-		skill, err := skills.GetSkill(wsURL, folderName)
-		relPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
-		absNote := ""
-		if workspaceAbsPath != "" {
-			absNote = fmt.Sprintf("\n  - Absolute: `%s`", path.Join(workspaceAbsPath, relPath))
-		}
+		skill, err := skills.GetSkill(workspaceAPIURL, folderName)
+		absPath := fmt.Sprintf("%s/%s/SKILL.md", absSkills, folderName)
 		if err != nil {
 			log.Printf("[SKILLS] Warning: Failed to load skill metadata %s: %v", folderName, err)
-			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`%s", folderName, relPath, absNote))
+			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`", folderName, absPath))
 			continue
 		}
-		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`%s",
+		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`",
 			skill.Frontmatter.Name,
 			skill.Frontmatter.Description,
-			relPath,
-			absNote))
+			absPath))
 	}
 
-	promptParts = append(promptParts, `
-Read each relevant skill in full: execute_shell_command(command: "cat skills/<name>/SKILL.md")
+	if isOrchestrator {
+		promptParts = append(promptParts, fmt.Sprintf(`
+Include the skill path in your delegate() instruction, e.g.: "Read %s/<name>/SKILL.md first, then follow its instructions to..."
+`, absSkills))
+	} else {
+		promptParts = append(promptParts, fmt.Sprintf(`
+Read each relevant skill in full: execute_shell_command(command: "cat %s/<name>/SKILL.md")
 Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
-`)
+`, absSkills))
+	}
 
 	return strings.Join(promptParts, "\n")
 }
@@ -261,7 +621,6 @@ Each template must have a YAML frontmatter and markdown content:
 name: template-name
 description: Brief description of what this sub-agent specializes in
 default_reasoning_level: medium
-default_tool_mode: simple
 skills: skill-1, skill-2
 servers: server-1, server-2
 ---
@@ -282,7 +641,6 @@ You are a specialized agent for...
 - **name** (required): Short identifier for the template
 - **description** (required): Brief description of the sub-agent's specialization
 - **default_reasoning_level** (optional): "high", "medium", or "low" — used when delegate call doesn't specify one
-- **default_tool_mode** (optional): "simple", "code_execution", or "tool_search" — used when delegate call doesn't specify one
 - **skills** (optional): Comma-separated list of skill folder names to auto-activate for this sub-agent
 - **servers** (optional): Comma-separated list of MCP server names to enable for this sub-agent
 
@@ -411,15 +769,18 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 
 	// 6. File locations guide (matching plan improvement agent's detail level)
 	parts = append(parts, fmt.Sprintf(`**File Locations:**
-- Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment)
-- Plan file: `+"`%s/planning/plan.json`"+`
-- Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tool, and mode settings
-- Variables: `+"`%s/variables/variables.json`"+`
-- Learnings: `+"`%s/learnings/`"+` and `+"`%s/learnings/{step_id}/`"+`
+- Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment). Holds optional `+"`objective`"+`/`+"`success_criteria`"+` fallback values.
+- Plan file: `+"`%s/planning/plan.json`"+` — step definitions + **primary** `+"`objective`"+`/`+"`success_criteria`"+` at root
+- Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tools, and execution mode (`+"`agent_configs.use_code_execution_mode`"+` + `+"`agent_configs.declared_execution_mode`"+`: `+"`learn_code`"+` | `+"`code_exec`"+` | direct)
+- Variables: `+"`%s/variables/variables.json`"+` — sole source of variable values + groups (workflow.json does NOT carry variable definitions)
+- Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
+- Per-step saved scripts: `+"`%s/learnings/{step_id}/main.py`"+` — persistent script for `+"`learn_code`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
-- Runs: `+"`%s/runs/`"+`
+- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to `+"`iteration-1/`"+`, `+"`iteration-2/`"+`, ... (keep 10). Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
+- Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+- Builder sessions: `+"`%s/builder/session-{id}-conversation.json`"+` — workshop chat histories (kept 3)
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, DelegationTierConfig, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
 import { SSEConnection } from '../services/sse'
 import { shouldShowEventByMode } from '../components/events/eventModeUtils'
 import type { StoreActions } from './types'
@@ -56,9 +56,6 @@ const incrementPerModeCounts = (
     micro: existing.micro + microDelta,
   }
 }
-// Chat history cache TTL (5 minutes - chat history doesn't change as frequently)
-const CHAT_HISTORY_CACHE_TTL = 300000
-
 // Event memory management constants - use shared constants
 const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
 
@@ -178,7 +175,6 @@ export interface ChatTabConfig {
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
-  enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   enableGWSAccess?: boolean  // Enable/disable Google Workspace CLI access
@@ -194,10 +190,8 @@ export interface ChatTabConfig {
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
   autoRun?: boolean  // Automatically run the chat when tab is loaded
-  planPhaseOverride?: 'planning' | 'execution' | null  // User-selected plan phase override for multi-agent mode
   defaultReasoningLevel?: 'high' | 'medium' | 'low' | null  // Preferred reasoning level for delegated tasks in multi-agent mode
   enableImageGeneration?: boolean  // Enable/disable image generation virtual tool
-  selectedPlanFolder?: string  // Existing plan folder to reuse (multi-agent mode; cleared after submit)
 }
 
 // Generalized ChatTab interface (works for multi-agent and workflow modes)
@@ -245,7 +239,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
 
   // Get mode-specific server selection (multi-agent uses chat settings)
   const isWorkflowMode = mode === 'workflow'
-  const isMultiAgentMode = mode === 'multi-agent'
 
   const selectedServers = isWorkflowMode
     ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
@@ -273,7 +266,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     // Workflow mode uses global chatFileContext, but chat mode uses tab-specific fileContext
     fileContext: [],
     enableContextSummarization: false,
-    enableWorkspaceAccess: true,
     browserMode: appStore?.lastBrowserMode ?? 'none',
     enableBrowserAccess: (appStore?.lastBrowserMode === 'headless' || appStore?.lastBrowserMode === 'cdp') ?? false,
     enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
@@ -283,7 +275,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     delegationTierConfig: undefined,
     queuedMessages: [],
     autoRun: false,
-    planPhaseOverride: isMultiAgentMode ? (appStore?.lastMultiAgentPlanPhase ?? 'planning') : undefined,
   }
 }
 
@@ -367,13 +358,6 @@ interface ChatState extends StoreActions {
   activeSessionsCache: ActiveSessionInfo[]
   activeSessionsCacheTimestamp: number | null
   activeSessionsPollingInterval: NodeJS.Timeout | null
-  
-  // Chat history cache (shared across all components, persists across sidebar mount/unmount)
-  chatHistoryCache: ChatHistorySummary[]
-  chatHistoryCacheTimestamp: number | null
-  chatHistoryLastLoadedMode: string | null  // Track which mode category was last loaded
-  chatHistoryTotalCount: number | null  // Total count of sessions available
-  chatHistoryLoadedCount: number  // Number of sessions currently loaded
 
   // Streaming text accumulation (per session)
   // Only tracks parent agent streaming - sub-agent streaming routed to delegationStreamingText
@@ -479,12 +463,6 @@ interface ChatState extends StoreActions {
   startActiveSessionsPolling: () => void
   stopActiveSessionsPolling: () => void
   
-  // Chat history cache actions
-  getChatHistory: (modeCategory: string, forceRefresh?: boolean) => Promise<ChatHistorySummary[]>
-  loadMoreChatHistory: (modeCategory: string) => Promise<ChatHistorySummary[]>
-  setChatHistory: (sessions: ChatHistorySummary[], modeCategory: string) => void
-  getChatHistoryHasMore: () => boolean
-  
   // Streaming text actions
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   clearStreamingText: (sessionId: string) => void
@@ -539,13 +517,6 @@ export const useChatStore = create<ChatState>()(
       activeSessionsCacheTimestamp: null,
       activeSessionsPollingInterval: null,
       
-      // Chat history cache (shared across all components)
-      chatHistoryCache: [],
-      chatHistoryCacheTimestamp: null,
-      chatHistoryLastLoadedMode: null,
-      chatHistoryTotalCount: null,
-      chatHistoryLoadedCount: 0,
-
       // Streaming text accumulation (per session)
       streamingText: {},
       streamingStatus: {},
@@ -2112,103 +2083,6 @@ export const useChatStore = create<ChatState>()(
         }
       },
       
-      // Chat history cache actions
-      getChatHistory: async (modeCategory: string, forceRefresh = false): Promise<ChatHistorySummary[]> => {
-        const state = get()
-        const now = Date.now()
-        
-        // Return cached data if:
-        // 1. Not forcing refresh
-        // 2. Cache exists and is still fresh
-        // 3. Cache was loaded for the same mode category
-        if (!forceRefresh && 
-            state.chatHistoryCacheTimestamp !== null && 
-            state.chatHistoryLastLoadedMode === modeCategory &&
-            (now - state.chatHistoryCacheTimestamp) < CHAT_HISTORY_CACHE_TTL) {
-          logger.debug('ChatStore', 'Returning cached chat history for mode:', modeCategory)
-          return state.chatHistoryCache
-        }
-        
-        // Fetch fresh data — fetch 50 to give client-side mode filtering enough to work with
-        try {
-                // Map mode category to agent mode for filtering
-                let agentMode: string | undefined
-                if (modeCategory === 'workflow') {
-                  agentMode = 'workflow'
-                }
-                // For multi-agent mode, fetch all non-workflow sessions;
-                // client-side filtering splits them by delegation_mode
-
-                logger.debug('ChatStore', `Fetching fresh chat history for mode: ${modeCategory} (agentMode: ${agentMode})`)
-                const response = await agentApi.getChatSessions(50, 0, undefined, agentMode)
-                const sessions = response.sessions || []
-          
-          set({
-            chatHistoryCache: sessions,
-            chatHistoryCacheTimestamp: now,
-            chatHistoryLastLoadedMode: modeCategory,
-            chatHistoryTotalCount: response.total || 0,
-            chatHistoryLoadedCount: sessions.length
-          })
-          
-          return sessions
-        } catch (error) {
-          logger.error('ChatStore', 'Failed to fetch chat history:', error)
-          // Return cached data even if stale on error
-          return state.chatHistoryCache
-        }
-      },
-      
-      loadMoreChatHistory: async (modeCategory: string): Promise<ChatHistorySummary[]> => {
-        const state = get()
-        
-        // Check if we have more to load
-        if (state.chatHistoryTotalCount === null || state.chatHistoryLoadedCount >= state.chatHistoryTotalCount) {
-          logger.debug('ChatStore', 'No more chat history to load')
-          return state.chatHistoryCache
-        }
-        
-        // Load next batch
-        try {
-                // Map mode category to agent mode for filtering
-                let agentMode: string | undefined
-                if (modeCategory === 'workflow') {
-                  agentMode = 'workflow'
-                }
-
-                logger.debug('ChatStore', `Loading more chat history for mode: ${modeCategory} (agentMode: ${agentMode}) (offset: ${state.chatHistoryLoadedCount}, limit: 50)`)
-                const response = await agentApi.getChatSessions(50, state.chatHistoryLoadedCount, undefined, agentMode)
-                const newSessions = response.sessions || []
-          
-          // Append new sessions to existing cache
-          const updatedSessions = [...state.chatHistoryCache, ...newSessions]
-          
-          set({
-            chatHistoryCache: updatedSessions,
-            chatHistoryTotalCount: response.total || state.chatHistoryTotalCount,
-            chatHistoryLoadedCount: updatedSessions.length
-          })
-          
-          return updatedSessions
-        } catch (error) {
-          logger.error('ChatStore', 'Failed to load more chat history:', error)
-          return state.chatHistoryCache
-        }
-      },
-      
-      getChatHistoryHasMore: (): boolean => {
-        const state = get()
-        if (state.chatHistoryTotalCount === null) return false
-        return state.chatHistoryLoadedCount < state.chatHistoryTotalCount
-      },
-      
-      setChatHistory: (sessions: ChatHistorySummary[], modeCategory: string) => {
-        set({
-          chatHistoryCache: sessions,
-          chatHistoryCacheTimestamp: Date.now(),
-          chatHistoryLastLoadedMode: modeCategory
-        })
-      }
       }),
       {
         name: 'chat-store',
@@ -2240,7 +2114,7 @@ export const useChatStore = create<ChatState>()(
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
                 viewMode: tab.viewMode ?? 'detailed', // Persist view mode across reload
-                config: { ...tab.config, selectedPlanFolder: undefined }, // CRITICAL: Persist full config including:
+                config: { ...tab.config }, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)
                 // - useCodeExecutionMode (Simple vs Code Exec mode)

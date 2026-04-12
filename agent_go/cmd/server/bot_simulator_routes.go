@@ -9,19 +9,20 @@ import (
 	"strconv"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/chathistory"
+
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
-	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	"github.com/gorilla/mux"
 )
 
 // BotSimulatorRoutes sets up the web simulator API routes
-func BotSimulatorRoutes(router *mux.Router, api *StreamingAPI, db database.Database) {
+func BotSimulatorRoutes(router *mux.Router, api *StreamingAPI) {
 	simRouter := router.PathPrefix("/api/bot/simulate").Subrouter()
 
 	simRouter.HandleFunc("/send", simulatorSendHandler(api)).Methods("POST", "OPTIONS")
-	simRouter.HandleFunc("/config", simulatorGetConfigHandler(db)).Methods("GET")
-	simRouter.HandleFunc("/config", simulatorSaveConfigHandler(db)).Methods("POST", "OPTIONS")
+	simRouter.HandleFunc("/config", simulatorGetConfigHandler(api.chatStore)).Methods("GET")
+	simRouter.HandleFunc("/config", simulatorSaveConfigHandler(api.chatStore)).Methods("POST", "OPTIONS")
 	simRouter.HandleFunc("/available-capabilities", simulatorAvailableCapabilitiesHandler(api)).Methods("GET")
 	simRouter.HandleFunc("/threads", simulatorListThreadsHandler(api)).Methods("GET")
 	simRouter.HandleFunc("/mode", simulatorGetModeHandler(api)).Methods("GET")
@@ -266,9 +267,9 @@ func simulatorSetModeHandler(api *StreamingAPI) http.HandlerFunc {
 	}
 }
 
-func simulatorGetConfigHandler(db database.Database) http.HandlerFunc {
+func simulatorGetConfigHandler(store chathistory.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cfg, err := db.GetBotConnectorConfig(r.Context(), "_global")
+		cfg, err := store.GetBotConnectorConfig(r.Context(), "_global")
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{})
@@ -298,12 +299,6 @@ func simulatorGetConfigHandler(db database.Database) http.HandlerFunc {
 						result["default_skills"] = skills
 					}
 				}
-				if raw, ok := cfgData["delegation_mode"]; ok {
-					var mode string
-					if err := json.Unmarshal(raw, &mode); err == nil {
-						result["delegation_mode"] = mode
-					}
-				}
 				if raw, ok := cfgData["allowed_emails"]; ok {
 					var emails []string
 					if err := json.Unmarshal(raw, &emails); err == nil {
@@ -318,7 +313,7 @@ func simulatorGetConfigHandler(db database.Database) http.HandlerFunc {
 	}
 }
 
-func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
+func simulatorSaveConfigHandler(store chathistory.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -326,11 +321,10 @@ func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
 		}
 
 		var req struct {
-			DelegationTierConfig json.RawMessage  `json:"delegation_tier_config,omitempty"`
+			DelegationTierConfig json.RawMessage   `json:"delegation_tier_config,omitempty"`
 			ProviderAPIKeys      map[string]string `json:"provider_api_keys,omitempty"`
 			DefaultServers       []string          `json:"default_servers,omitempty"`
 			DefaultSkills        []string          `json:"default_skills,omitempty"`
-			DelegationMode       string            `json:"delegation_mode,omitempty"`
 			AllowedEmails        []string          `json:"allowed_emails,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -342,7 +336,7 @@ func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
 		cfgMap := map[string]interface{}{}
 
 		// Preserve existing config values first
-		existingCfg, _ := db.GetBotConnectorConfig(r.Context(), "_global")
+		existingCfg, _ := store.GetBotConnectorConfig(r.Context(), "_global")
 		if existingCfg != nil && existingCfg.ConfigJSON != "" {
 			json.Unmarshal([]byte(existingCfg.ConfigJSON), &cfgMap)
 		}
@@ -371,12 +365,9 @@ func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
 		if req.DefaultSkills != nil {
 			cfgMap["default_skills"] = req.DefaultSkills
 		}
-		// Use delegation_mode from request if set, otherwise default to "plan"
-		if req.DelegationMode != "" {
-			cfgMap["delegation_mode"] = req.DelegationMode
-		} else if _, exists := cfgMap["delegation_mode"]; !exists {
-			cfgMap["delegation_mode"] = "plan"
-		}
+		// delegation_mode is no longer configurable — multi-agent chat is the only mode
+		// for bot-connector sessions. Strip any stale value from previously saved configs.
+		delete(cfgMap, "delegation_mode")
 		if req.AllowedEmails != nil {
 			cfgMap["allowed_emails"] = req.AllowedEmails
 		}
@@ -387,7 +378,7 @@ func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
 			configJSON = string(cfgBytes)
 		}
 
-		_, err := db.UpsertBotConnectorConfig(r.Context(), &database.CreateBotConnectorConfigRequest{
+		_, err := store.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
 			ID:         "_global",
 			Enabled:    true,
 			BotMode:    true,

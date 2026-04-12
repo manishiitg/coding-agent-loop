@@ -20,6 +20,10 @@ interface ChatMessage {
 
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 
+function isVisibleSimulatorMessage(text: string): boolean {
+  return text.trim() !== 'Session completed.'
+}
+
 export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModalProps) {
   const { delegationTierConfig } = useLLMStore()
   const [input, setInput] = useState('')
@@ -82,11 +86,11 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
           Object.keys(providerKeys).length > 0 ? providerKeys : undefined
         ).catch(() => {})
       }
-      // Fetch what's actually in the DB
+      // Fetch the shared workspace tier config used by both bot simulation and multi-agent chat
       try {
-        const cfg = await agentApi.getSimulatorConfig()
-        if (cfg.delegation_tier_config && typeof cfg.delegation_tier_config === 'object') {
-          setServerTierConfig(cfg.delegation_tier_config as Record<string, { provider?: string; model_id?: string }>)
+        const cfg = await agentApi.getDelegationTierConfig()
+        if (cfg && typeof cfg === 'object' && Object.keys(cfg).length > 0) {
+          setServerTierConfig(cfg as Record<string, { provider?: string; model_id?: string }>)
         } else {
           setServerTierConfig(null)
         }
@@ -124,12 +128,14 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
         const data = await agentApi.getSimulatorMessages(activeThreadId, lastCount)
         if (cancelled) return
         if (data.messages && data.messages.length > 0) {
-          const newMsgs: ChatMessage[] = data.messages.map(m => ({
-            id: m.id,
-            text: m.text,
-            is_bot: m.is_bot,
-            timestamp: m.timestamp,
-          }))
+          const newMsgs: ChatMessage[] = data.messages
+            .filter(m => isVisibleSimulatorMessage(m.text))
+            .map(m => ({
+              id: m.id,
+              text: m.text,
+              is_bot: m.is_bot,
+              timestamp: m.timestamp,
+            }))
           // Deduplicate by message ID to prevent duplicates from race conditions
           setMessages(prev => {
             const existingIds = new Set(prev.map(m => m.id))
@@ -225,12 +231,14 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
     try {
       const data = await agentApi.getSimulatorMessages(threadId, 0)
       if (data.messages && data.messages.length > 0) {
-        setMessages(data.messages.map(m => ({
-          id: m.id,
-          text: m.text,
-          is_bot: m.is_bot,
-          timestamp: m.timestamp,
-        })))
+        setMessages(data.messages
+          .filter(m => isVisibleSimulatorMessage(m.text))
+          .map(m => ({
+            id: m.id,
+            text: m.text,
+            is_bot: m.is_bot,
+            timestamp: m.timestamp,
+          })))
       }
     } catch {
       // ignore
@@ -345,30 +353,30 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
               {['high', 'medium', 'low'].map(tier => {
                 const cfg = serverTierConfig[tier]
                 if (!cfg?.model_id) return null
-                const label = cfg.model_id.split('/').pop() || cfg.model_id
+                const label = cfg.provider ? `${cfg.provider}/${cfg.model_id}` : cfg.model_id
                 return (
                   <span key={tier} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-secondary border border-border">
                     <span className="capitalize font-medium">{tier[0].toUpperCase()}:</span>
-                    <span className="truncate max-w-[120px]">{label}</span>
+                    <span className="truncate max-w-[200px]">{label}</span>
                   </span>
                 )
               })}
               {/* Custom tiers */}
               {serverTierConfig.custom && typeof serverTierConfig.custom === 'object' &&
-                Object.entries(serverTierConfig.custom as Record<string, { model_id?: string }>).map(([slug, cfg]) => {
+                Object.entries(serverTierConfig.custom as Record<string, { provider?: string; model_id?: string }>).map(([slug, cfg]) => {
                   if (!cfg?.model_id) return null
-                  const label = cfg.model_id.split('/').pop() || cfg.model_id
+                  const label = cfg.provider ? `${cfg.provider}/${cfg.model_id}` : cfg.model_id
                   return (
                     <span key={slug} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-secondary border border-purple-500/30">
                       <span className="font-medium text-purple-400">{slug}:</span>
-                      <span className="truncate max-w-[120px]">{label}</span>
+                      <span className="truncate max-w-[200px]">{label}</span>
                     </span>
                   )
                 })
               }
             </>
           ) : (
-            <span className="text-yellow-500">Not configured — set delegation tiers in LLM Settings</span>
+            <span className="text-yellow-500">Not configured — uses the same tier config as multi-agent chat</span>
           )}
         </div>
 

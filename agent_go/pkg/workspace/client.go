@@ -26,12 +26,12 @@ type FolderGuardConfig struct {
 
 // Client handles communication with the workspace API directly via REST
 type Client struct {
-	BaseURL            string
-	HTTPClient         *http.Client
-	FolderGuard        *FolderGuardConfig
-	UserID             string            // User ID for auth/database scoping
-	ExtraEnv           map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
-	DefaultWorkingDir  string            // Default working directory for shell commands (relative to docs-dir)
+	BaseURL           string
+	HTTPClient        *http.Client
+	FolderGuard       *FolderGuardConfig
+	UserID            string            // User ID for auth/database scoping
+	ExtraEnv          map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
+	DefaultWorkingDir string            // Default working directory for shell commands (relative to docs-dir)
 }
 
 // ClientOption is a functional option for configuring the Client
@@ -159,6 +159,18 @@ func (c *Client) ValidatePathWithContext(ctx context.Context, inputPath string, 
 		return nil
 	}
 	return validatePathAgainstGuard(guard, inputPath, isWrite)
+}
+
+// HasEffectiveWriteGuard reports whether the current request/session context has
+// an explicit write guard from session or context state. This excludes the
+// client-level fallback guard so callers can distinguish "real session guard"
+// from a narrow one-off client restriction.
+func (c *Client) HasEffectiveWriteGuard(ctx context.Context) bool {
+	guard := c.resolveEffectiveFolderGuard(ctx)
+	if guard == nil || !guard.Enabled {
+		return false
+	}
+	return len(guard.WritePaths) > 0
 }
 
 // ValidatePath checks if a path is allowed based on client-level folder guard configuration.
@@ -350,6 +362,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 // data is the raw binary content.
 // Returns the saved workspace filepath on success.
 func (c *Client) UploadBinary(ctx context.Context, folderPath, fileName string, data []byte) (string, error) {
+	if err := c.ValidatePathWithContext(ctx, folderPath, true); err != nil {
+		return "", err
+	}
+	if err := c.ValidatePathWithContext(ctx, filepath.Join(folderPath, fileName), true); err != nil {
+		return "", err
+	}
+
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
@@ -411,6 +430,9 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 
 // CreateFolder creates a folder via the workspace API: POST /api/folders
 func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
+	if err := c.ValidatePathWithContext(ctx, folderPath, true); err != nil {
+		return err
+	}
 	body := map[string]string{"folder_path": folderPath}
 	_, err := c.request(ctx, "POST", "/api/folders", body)
 	return err

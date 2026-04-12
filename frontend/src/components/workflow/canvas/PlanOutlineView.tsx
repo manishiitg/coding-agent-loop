@@ -22,7 +22,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import type { PlanStep, PlanningResponse, PlanRoutingRoute } from '../../../utils/stepConfigMatching'
-import type { StepProgress } from '../../../services/api-types'
+import type { StepProgress, PlannerFile } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
@@ -219,9 +219,9 @@ function LazyFolder({
         const resp = await agentApi.getPlannerFiles(fullFolder, -1, 2)
 
         // Response: { success, data: PlannerFile[] } — flat list of folder + file entries
-        const allItems: any[] = resp?.data || (Array.isArray(resp) ? resp : [])
+        const allItems: PlannerFile[] = resp?.data || (Array.isArray(resp) ? resp : [])
         // Keep only file entries (skip folder entries)
-        const fileItems = allItems.filter((item: any) => item.type === 'file')
+        const fileItems = allItems.filter((item) => item.type !== 'folder')
         // Ensure paths are full workspace-relative paths
         const files = fileItems.map((f) => {
           const fp = f.filepath || ''
@@ -325,7 +325,7 @@ function ReportsFolder({
       try {
         const folder = `${workspacePath}/reports`
         const resp = await agentApi.getPlannerFiles(folder, -1, 3)
-        const allItems: any[] = resp?.data || []
+        const allItems: PlannerFile[] = resp?.data || []
 
         // Parse: top-level folders are groups, files inside are reports
         const groupMap = new Map<string, { name: string; path: string }[]>()
@@ -337,7 +337,7 @@ function ReportsFolder({
             // Check for children
             if (item.children && Array.isArray(item.children)) {
               for (const child of item.children) {
-                if (child.type === 'file') {
+                if (child.type !== 'folder') {
                   groupMap.get(groupName)!.push({
                     name: child.filepath.split('/').pop() || child.filepath,
                     path: child.filepath,
@@ -345,7 +345,7 @@ function ReportsFolder({
                 }
               }
             }
-          } else if (item.type === 'file' && item.filepath !== folder) {
+          } else if (item.type !== 'folder' && item.filepath !== folder) {
             // File directly in reports/ (no group)
             const parts = item.filepath.replace(folder + '/', '').split('/')
             if (parts.length >= 2) {

@@ -12,6 +12,7 @@ import (
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
@@ -99,6 +100,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
 		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
+		templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsInstructions()
 		wsPath := templateVars["WorkspacePath"]
 		templateData["AbsWorkspacePath"] = GetPromptDocsRoot() + "/" + wsPath
 		templateData["AbsDocsRoot"] = GetPromptDocsRoot()

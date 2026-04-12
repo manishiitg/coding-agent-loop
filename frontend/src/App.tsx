@@ -14,7 +14,7 @@ import { ConversationRenderer, isConversationJSON } from "./components/ui/Conver
 import { DiffRenderer } from "./components/ui/DiffRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
-import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
+import type { FileVersion } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import PushToGistDialog from "./components/workspace/PushToGistDialog";
 import FileEditor from "./components/workspace/FileEditor";
@@ -30,7 +30,6 @@ import { ModePresetBar } from "./components/ModePresetBar";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
-import { restoreSession } from "./utils/sessionRestore";
 import { useModeStore } from "./stores/useModeStore";
 import { useAuthStore } from "./stores/useAuthStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -964,24 +963,6 @@ function App() {
     }
   }, [setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
-  // Handle chat session selection
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleChatSessionSelect = useCallback(async (sessionId: string, sessionTitle?: string, _sessionType?: 'active' | 'completed', _activeSessionInfo?: ActiveSessionInfo) => {
-    const chatStore = useChatStore.getState()
-    chatStore.setIsLoadingHistory(true)
-    try {
-      const tabId = await restoreSession(sessionId, {
-        title: sessionTitle,
-        source: 'sidebar',
-      })
-      useChatStore.getState().switchTab(tabId)
-      setSidebarMinimized(true)
-      setShowFileContent(false)
-    } finally {
-      chatStore.setIsLoadingHistory(false)
-    }
-  }, [setSidebarMinimized, setShowFileContent]);
-
   // Minimize toggle functions
   const toggleSidebarMinimize = useCallback(() => {
     setSidebarMinimized(!sidebarMinimized)
@@ -991,6 +972,15 @@ function App() {
     setWorkspaceMinimized(!workspaceMinimized)
   }, [workspaceMinimized, setWorkspaceMinimized])
 
+  const createNewMultiAgentTab = useCallback(async () => {
+    const chatStore = useChatStore.getState()
+    const visibleChatTabs = Object.values(chatStore.chatTabs).filter(tab =>
+      tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant
+    )
+    const tabName = `Agent Chat ${visibleChatTabs.length + 1}`
+    await chatStore.createChatTab(tabName, { mode: 'multi-agent' })
+  }, [])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Ctrl/Cmd + 1 for Multi-agent mode
@@ -999,6 +989,7 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('multi-agent')
         setShowWorkflowsOverview(false)
+        return
       }
       // Ctrl/Cmd + 2 for Workflow mode
       if ((event.ctrlKey || event.metaKey) && event.key === '2') {
@@ -1006,26 +997,47 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
         setShowWorkflowsOverview(false)
+        return
+      }
+      // Ctrl/Cmd + 3 for Organization view
+      if ((event.ctrlKey || event.metaKey) && event.key === '3') {
+        event.preventDefault()
+        setShowWorkflowsOverview(true)
+        return
       }
       // Ctrl/Cmd + 5 for sidebar minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '5') {
         event.preventDefault()
         toggleSidebarMinimize()
+        return
       }
       // Ctrl/Cmd + 6 for workspace minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '6') {
         event.preventDefault()
         toggleWorkspaceMinimize()
+        return
+      }
+      // Ctrl/Cmd + 7 for auto-scroll
+      if ((event.ctrlKey || event.metaKey) && event.key === '7') {
+        event.preventDefault()
+        const chatStore = useChatStore.getState()
+        chatStore.setAutoScroll(!chatStore.autoScroll)
+        return
       }
       // Ctrl/Cmd + K for the global quick switcher
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault()
         setShowQuickSwitcher(prev => !prev)
+        return
       }
       // Ctrl/Cmd + N for new chat
       if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
         event.preventDefault()
-        // Use ChatArea's handleNewChat method to properly clear events
+        if (selectedModeCategory === 'multi-agent' && !showWorkflowsOverview) {
+          void createNewMultiAgentTab()
+          return
+        }
+        // Outside chat mode, preserve the existing reset-current-chat behavior.
         if (chatAreaRef.current) {
           chatAreaRef.current.handleNewChat()
         }
@@ -1034,7 +1046,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
+  }, [createNewMultiAgentTab, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
 
   useEffect(() => {
     setWorkspaceMinimized(showWorkflowsOverview)

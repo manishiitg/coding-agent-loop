@@ -5,11 +5,11 @@ import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPr
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
-import ChatCostsPopup from './ChatCostsPopup'
-import DelegationLogsPopup from './DelegationLogsPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
+import MultiAgentSchedulesPopup from './scheduler/MultiAgentSchedulesPopup'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
 import BotConnectorModal from './settings/BotConnectorModal'
+import CostDashboard from './CostDashboard'
 import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
@@ -113,15 +113,16 @@ export const ModePresetBar: React.FC = () => {
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
-  const [showCostsPopup, setShowCostsPopup] = useState(false)
-  const [showDelegationLogs, setShowDelegationLogs] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
+  const [showMultiAgentSchedules, setShowMultiAgentSchedules] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
   const [runningScheduledWorkflowCount, setRunningScheduledWorkflowCount] = useState(0)
+  const [multiAgentScheduleCount, setMultiAgentScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
   const [showBotConnector, setShowBotConnector] = useState(false)
+  const [showCostDashboard, setShowCostDashboard] = useState(false)
   const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
   const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
@@ -130,6 +131,7 @@ export const ModePresetBar: React.FC = () => {
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
   const isOrganizationView = showWorkflowsOverview
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
     setModeCategory(modeKey)
@@ -170,6 +172,35 @@ export const ModePresetBar: React.FC = () => {
       window.clearInterval(interval)
     }
   }, [shouldShowScheduleHeader, showRunsPanel]) // refresh after runs panel closes or mode changes
+
+  // Fetch multi-agent schedule count
+  useEffect(() => {
+    if (!isMultiAgentMode) {
+      setMultiAgentScheduleCount(0)
+      return
+    }
+
+    let cancelled = false
+
+    const loadMASchedules = async () => {
+      try {
+        const resp = await schedulerApi.listJobs({ mode: 'multi-agent' })
+        if (cancelled) return
+        setMultiAgentScheduleCount(resp.jobs?.length ?? 0)
+      } catch {
+        if (cancelled) return
+        setMultiAgentScheduleCount(0)
+      }
+    }
+
+    loadMASchedules()
+    const interval = window.setInterval(loadMASchedules, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [isMultiAgentMode, showMultiAgentSchedules])
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -704,13 +735,13 @@ export const ModePresetBar: React.FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
+                        onClick={() => setShowCostDashboard(true)}
                         className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                       >
                         <DollarSign className="w-4 h-4" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">Execution logs & costs</TooltipContent>
+                    <TooltipContent side="bottom">LLM costs (global)</TooltipContent>
                   </Tooltip>
                 </>
               )}
@@ -746,6 +777,23 @@ export const ModePresetBar: React.FC = () => {
                     </TooltipContent>
                   </Tooltip>
                 </>
+              )}
+
+              {isMultiAgentMode && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setShowMultiAgentSchedules(true)}
+                      className="flex items-center gap-2 px-2 py-1 rounded-md transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200"
+                    >
+                      <CalendarDays className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium whitespace-nowrap">
+                        {multiAgentScheduleCount > 0 ? `${multiAgentScheduleCount} schedule${multiAgentScheduleCount !== 1 ? 's' : ''}` : 'Schedules'}
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Scheduled multi-agent tasks</TooltipContent>
+                </Tooltip>
               )}
 
             </div>
@@ -810,7 +858,7 @@ export const ModePresetBar: React.FC = () => {
                     ['Minimize Sidebar', 'Ctrl+5'],
                     ['Minimize Workspace', 'Ctrl+6'],
                     ['Toggle Auto-scroll', 'Ctrl+7'],
-                    ['New Chat', 'Ctrl+N'],
+                    ['New Chat Tab (Chat mode)', 'Ctrl+N'],
                   ].map(([label, key]) => (
                     <div key={key} className="flex items-center justify-between py-1">
                       <span className="text-sm text-gray-600 dark:text-gray-300">{label}</span>
@@ -866,19 +914,6 @@ export const ModePresetBar: React.FC = () => {
         agentMode={agentMode}
       />
 
-      {/* Cost Analysis Popup (Chat mode) */}
-      <ChatCostsPopup
-        isOpen={showCostsPopup}
-        onClose={() => setShowCostsPopup(false)}
-        isMultiAgent={false}
-      />
-
-      {/* Delegation Logs Popup (Multi-agent mode - combined logs + costs) */}
-      <DelegationLogsPopup
-        isOpen={showDelegationLogs}
-        onClose={() => setShowDelegationLogs(false)}
-      />
-
       <DelegationTierConfigModal
         isOpen={showTierModal}
         onClose={closeTierModal}
@@ -889,9 +924,18 @@ export const ModePresetBar: React.FC = () => {
         onClose={closeBotConnector}
       />
 
+      <CostDashboard
+        isOpen={showCostDashboard}
+        onClose={() => setShowCostDashboard(false)}
+      />
+
       {/* Scheduled Workflow Runs Panel */}
       {showRunsPanel && (
         <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
+      )}
+
+      {showMultiAgentSchedules && (
+        <MultiAgentSchedulesPopup onClose={() => setShowMultiAgentSchedules(false)} />
       )}
 
       {/* Workflows Overview Popup */}

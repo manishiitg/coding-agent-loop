@@ -1,5 +1,5 @@
 # Build stage - Debian so the binary links against glibc
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 # Install ripgrep and gcc for CGO support
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep gcc libc6-dev git && rm -rf /var/lib/apt/lists/*

@@ -17,6 +17,33 @@ import (
 	"time"
 )
 
+// PublishedLLM is the minimal workspace-backed published LLM record needed by
+// workspace-aware services outside the main server package.
+type PublishedLLM struct {
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Provider       string                 `json:"provider"`
+	ModelID        string                 `json:"model_id"`
+	SearchRole     string                 `json:"search_role,omitempty"`
+	SearchPriority *int                   `json:"search_priority,omitempty"`
+	Options        map[string]interface{} `json:"options,omitempty"`
+}
+
+type ImageGenerationModelConfig struct {
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
+}
+
+type ImageGenerationConfig struct {
+	Primary   *ImageGenerationModelConfig  `json:"primary,omitempty"`
+	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
+}
+
+type ImageAnalysisConfig struct {
+	Primary   *ImageGenerationModelConfig  `json:"primary,omitempty"`
+	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
+}
+
 // readWorkspaceFile reads a file from the workspace API using the given workspaceURL.
 // Returns (content, true, nil) if found, ("", false, nil) if not found, or ("", false, err) on error.
 func readWorkspaceFile(ctx context.Context, workspaceURL, filePath string) (string, bool, error) {
@@ -95,6 +122,119 @@ func LoadDelegationTierConfig(ctx context.Context, workspaceURL string) (map[str
 	return cfg, true, nil
 }
 
+// LoadPublishedLLMs reads published LLM metadata (plain JSON) from the workspace.
+// Returns (nil, false, nil) if the file doesn't exist.
+func LoadPublishedLLMs(ctx context.Context, workspaceURL string) ([]PublishedLLM, bool, error) {
+	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "config/published-llms.json")
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	var stored []PublishedLLM
+	if err := json.Unmarshal([]byte(content), &stored); err != nil {
+		return nil, false, fmt.Errorf("failed to parse published llms: %w", err)
+	}
+
+	normalized := make([]PublishedLLM, 0, len(stored))
+	for _, entry := range stored {
+		entry.ID = strings.TrimSpace(entry.ID)
+		entry.Name = strings.TrimSpace(entry.Name)
+		entry.Provider = strings.TrimSpace(entry.Provider)
+		entry.ModelID = strings.TrimSpace(entry.ModelID)
+		entry.SearchRole = strings.ToLower(strings.TrimSpace(entry.SearchRole))
+		if entry.Provider == "" || entry.ModelID == "" {
+			continue
+		}
+		if len(entry.Options) == 0 {
+			entry.Options = nil
+		}
+		normalized = append(normalized, entry)
+	}
+
+	return normalized, true, nil
+}
+
+// LoadImageGenerationConfig reads image generation defaults (plain JSON) from the workspace.
+// Returns (nil, false, nil) if the file doesn't exist.
+func LoadImageGenerationConfig(ctx context.Context, workspaceURL string) (*ImageGenerationConfig, bool, error) {
+	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "config/image-generation-config.json")
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	var stored ImageGenerationConfig
+	if err := json.Unmarshal([]byte(content), &stored); err != nil {
+		return nil, false, fmt.Errorf("failed to parse image generation config: %w", err)
+	}
+
+	cfg := &ImageGenerationConfig{}
+	if stored.Primary != nil {
+		if primary := sanitizeImageGenerationModelConfig(stored.Primary); primary != nil {
+			cfg.Primary = primary
+		}
+	}
+	for _, fallback := range stored.Fallbacks {
+		fb := fallback
+		if sanitized := sanitizeImageGenerationModelConfig(&fb); sanitized != nil {
+			cfg.Fallbacks = append(cfg.Fallbacks, *sanitized)
+		}
+	}
+	if len(cfg.Fallbacks) == 0 {
+		cfg.Fallbacks = nil
+	}
+
+	return cfg, true, nil
+}
+
+// LoadImageAnalysisConfig reads image analysis defaults (plain JSON) from the workspace.
+// Returns (nil, false, nil) if the file doesn't exist.
+func LoadImageAnalysisConfig(ctx context.Context, workspaceURL string) (*ImageAnalysisConfig, bool, error) {
+	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "config/image-analysis-config.json")
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	var stored ImageAnalysisConfig
+	if err := json.Unmarshal([]byte(content), &stored); err != nil {
+		return nil, false, fmt.Errorf("failed to parse image analysis config: %w", err)
+	}
+
+	cfg := &ImageAnalysisConfig{}
+	if stored.Primary != nil {
+		if primary := sanitizeImageGenerationModelConfig(stored.Primary); primary != nil {
+			cfg.Primary = primary
+		}
+	}
+	for _, fallback := range stored.Fallbacks {
+		fb := fallback
+		if sanitized := sanitizeImageGenerationModelConfig(&fb); sanitized != nil {
+			cfg.Fallbacks = append(cfg.Fallbacks, *sanitized)
+		}
+	}
+	if len(cfg.Fallbacks) == 0 {
+		cfg.Fallbacks = nil
+	}
+
+	return cfg, true, nil
+}
+
+func sanitizeImageGenerationModelConfig(cfg *ImageGenerationModelConfig) *ImageGenerationModelConfig {
+	if cfg == nil {
+		return nil
+	}
+
+	provider := strings.TrimSpace(cfg.Provider)
+	modelID := strings.TrimSpace(cfg.ModelID)
+	if provider == "" || modelID == "" {
+		return nil
+	}
+
+	return &ImageGenerationModelConfig{
+		Provider: provider,
+		ModelID:  modelID,
+	}
+}
+
 // LoadProviderKeys reads and decrypts provider API keys from the workspace.
 // Returns a map in the api_keys format used by llm_config.
 // Returns (nil, false, nil) if the file doesn't exist.
@@ -120,6 +260,7 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		Anthropic         string `json:"anthropic,omitempty"`
 		Vertex            string `json:"vertex,omitempty"`
 		GeminiCLI         string `json:"gemini_cli,omitempty"`
+		CodexCLI          string `json:"codex_cli,omitempty"`
 		MiniMax           string `json:"minimax,omitempty"`
 		MiniMaxCodingPlan string `json:"minimax_coding_plan,omitempty"`
 		Bedrock           *struct {
@@ -151,6 +292,9 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.GeminiCLI != "" {
 		m["gemini_cli"] = stored.GeminiCLI
+	}
+	if stored.CodexCLI != "" {
+		m["codex_cli"] = stored.CodexCLI
 	}
 	if stored.MiniMax != "" {
 		m["minimax"] = stored.MiniMax

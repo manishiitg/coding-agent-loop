@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path"
 	"strings"
-	"time"
 
 	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
@@ -22,6 +23,11 @@ var imageGenModelCosts = map[string]float64{
 	"image-01":                       0.0035, // MiniMax Image-01
 }
 
+var imageProviderModels = map[string][]string{
+	"vertex":              {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview", "gemini-2.5-flash-image"},
+	"minimax-coding-plan": {"image-01"},
+}
+
 // ImageGenExecutorConfig holds configuration for the image generation executor
 type ImageGenExecutorConfig struct {
 	Provider        string // e.g. "vertex"
@@ -31,23 +37,50 @@ type ImageGenExecutorConfig struct {
 	UserID          string // user ID for auth scoping
 }
 
-// GetImageGenToolCategory returns the category name for the image gen tool
-func GetImageGenToolCategory() string {
-	return "workspace_image_gen"
+type imageGenContextKey string
+
+const imageGenRuntimeOverrideKey imageGenContextKey = "image_gen_runtime_override"
+
+type ImageGenRuntimeOverride struct {
+	Provider string
+	ModelID  string
+	APIKey   string
 }
 
-// GetImageGenToolDefinition returns the workspace_image_gen tool definition
+// GetWorkspaceImageToolCategory returns the category name for workspace image tools.
+func GetWorkspaceImageToolCategory() string {
+	return "workspace_image"
+}
+
+// GetImageGenToolCategory returns the category name for the image gen tool.
+func GetImageGenToolCategory() string {
+	return GetWorkspaceImageToolCategory()
+}
+
+// GetImageGenToolDefinition returns the image_gen tool definition
 func GetImageGenToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "workspace_image_gen",
-			Description: "Generate images using AI from a text prompt. Saves results to the workspace (Chats/generated-images/) and displays them inline in the chat. Supports aspect ratio, resolution, number of images, and negative prompt options.",
+			Name:        "image_gen",
+			Description: "Generate images using AI from a text prompt. Requires a workspace-relative output_path so the caller decides exactly where the generated image files should be stored. Supports optional provider override, aspect ratio, resolution, number of images, and negative prompt options.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"prompt": map[string]interface{}{
 						"type":        "string",
 						"description": "Text prompt describing the image to generate, or the edit instruction when input_image is provided.",
+					},
+					"output_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Required workspace-relative destination path for the generated image. Example: 'Chats/generated-images/hero.png' or 'Workflow/my-flow/assets/hero'. If number_of_images is greater than 1, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
+					},
+					"provider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional provider override. Supported values: vertex or minimax-coding-plan. Vertex supports gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image. MiniMax coding plan supports image-01.",
+					},
+					"model_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image, or image-01. If omitted, the default for the selected provider is used.",
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -78,7 +111,7 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 						"description": "Optional description of what to exclude from the generated images.",
 					},
 				},
-				"required": []interface{}{"prompt"},
+				"required": []interface{}{"prompt", "output_path"},
 			}),
 		},
 	}
@@ -86,8 +119,6 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 
 // imageGenResult is the JSON structure returned to the LLM
 type imageGenResult struct {
-	// Images is only populated when workspace saving is unavailable (fallback)
-	Images       []imageGenResultImage `json:"images,omitempty"`
 	Model        string                `json:"model"`
 	CostPerImage float64               `json:"cost_per_image"`
 	Prompt       string                `json:"prompt"`
@@ -96,27 +127,277 @@ type imageGenResult struct {
 	Note         string                `json:"note,omitempty"`
 }
 
-type imageGenResultImage struct {
-	Data     string `json:"data"`      // base64-encoded
-	MIMEType string `json:"mime_type"` // e.g. "image/png"
+const (
+	defaultImageGenProvider = "vertex"
+	defaultImageGenModelID  = "gemini-3.1-flash-image-preview"
+)
+
+func defaultImageModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "minimax-coding-plan":
+		return "image-01"
+	default:
+		return defaultImageGenModelID
+	}
+}
+
+func inferImageProviderFromModel(modelID string) string {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	switch {
+	case strings.HasPrefix(modelID, "gemini-"), strings.HasPrefix(modelID, "imagen-"):
+		return "vertex"
+	case modelID == "image-01":
+		return "minimax-coding-plan"
+	default:
+		return ""
+	}
+}
+
+func normalizeImageProviderAndModel(provider, modelID string) (string, string, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.TrimSpace(modelID)
+
+	if provider == "" && modelID != "" {
+		provider = inferImageProviderFromModel(modelID)
+	}
+	if provider == "" {
+		provider = defaultImageGenProvider
+	}
+	if modelID == "" {
+		modelID = defaultImageModelForProvider(provider)
+	}
+
+	switch provider {
+	case "vertex", "minimax-coding-plan":
+		return provider, modelID, nil
+	default:
+		return "", "", fmt.Errorf("unsupported image generation provider %q. %s", provider, supportedImageProviderSummary())
+	}
+}
+
+func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "vertex":
+		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
+	case "minimax-coding-plan":
+		return apiKeys != nil && apiKeys.MiniMaxCodingPlan != nil && strings.TrimSpace(*apiKeys.MiniMaxCodingPlan) != ""
+	default:
+		return false
+	}
+}
+
+func supportedImageProviderSummary() string {
+	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image), minimax-coding-plan (image-01)"
+}
+
+func imageModelsSummaryForProvider(provider string) string {
+	models := imageProviderModels[strings.ToLower(strings.TrimSpace(provider))]
+	if len(models) == 0 {
+		return supportedImageProviderSummary()
+	}
+	return fmt.Sprintf("Supported models for provider %q: %s", provider, strings.Join(models, ", "))
+}
+
+func wrapImageGenerationSelectionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"minimax-coding-plan\", api_key=\"...\") or update config/image-generation-config.json to point to a provider that has auth configured. %s",
+		err,
+		supportedImageProviderSummary(),
+	)
+}
+
+func wrapImageGenerationInitializationError(provider, modelID string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "vertex":
+		return fmt.Errorf(
+			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change config/image-generation-config.json to another provider such as minimax-coding-plan with matching auth. %s",
+			provider, modelID, err,
+			imageModelsSummaryForProvider(provider),
+		)
+	case "minimax-coding-plan":
+		return fmt.Errorf(
+			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"minimax-coding-plan\", api_key=\"...\") or change config/image-generation-config.json to another provider such as vertex with matching auth. %s",
+			provider, modelID, err,
+			imageModelsSummaryForProvider(provider),
+		)
+	default:
+		return fmt.Errorf(
+			"image generation could not start for provider %q and model %q: %w. Configure provider auth with set_provider_auth(...) or update config/image-generation-config.json. %s",
+			provider, modelID, err, supportedImageProviderSummary(),
+		)
+	}
+}
+
+func imageExtensionForMIME(mimeType string) string {
+	switch mimeType {
+	case "image/jpeg":
+		return "jpg"
+	case "image/webp":
+		return "webp"
+	default:
+		return "png"
+	}
+}
+
+func resolveImageOutputPaths(outputPath string, count int, mimeType string) ([]string, error) {
+	cleanPath := path.Clean(strings.TrimSpace(outputPath))
+	if cleanPath == "" || cleanPath == "." {
+		return nil, fmt.Errorf("output_path is required")
+	}
+	if strings.HasPrefix(cleanPath, "/") {
+		return nil, fmt.Errorf("output_path must be workspace-relative, not absolute")
+	}
+	if cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
+		return nil, fmt.Errorf("output_path must stay inside the workspace")
+	}
+
+	dir := path.Dir(cleanPath)
+	if dir == "." || dir == "" {
+		return nil, fmt.Errorf("output_path must include a workspace folder, e.g. Chats/... or Workflow/...")
+	}
+
+	ext := "." + imageExtensionForMIME(mimeType)
+	baseWithoutExt := strings.TrimSuffix(cleanPath, path.Ext(cleanPath))
+	if baseWithoutExt == "" {
+		return nil, fmt.Errorf("output_path must include a file name")
+	}
+
+	if count <= 1 {
+		return []string{baseWithoutExt + ext}, nil
+	}
+
+	paths := make([]string, 0, count)
+	for i := 1; i <= count; i++ {
+		paths = append(paths, fmt.Sprintf("%s-%d%s", baseWithoutExt, i, ext))
+	}
+	return paths, nil
+}
+
+func validateGuardedImageOutputPath(ctx context.Context, cfg ImageGenExecutorConfig, outputPath string) error {
+	cleanOutputPath := path.Clean(strings.TrimSpace(outputPath))
+	if _, err := resolveImageOutputPaths(cleanOutputPath, 1, "image/png"); err != nil {
+		return err
+	}
+	if cfg.WorkspaceAPIURL == "" {
+		return fmt.Errorf("image generation requires a workspace API URL so output_path can be saved in the workspace")
+	}
+
+	guardClient := workspace.NewClient(
+		cfg.WorkspaceAPIURL,
+		workspace.WithUserID(cfg.UserID),
+	)
+	if !guardClient.HasEffectiveWriteGuard(ctx) {
+		return fmt.Errorf("output_path must stay inside the current session's writable folder, but no active session/workflow write guard was found")
+	}
+
+	outputDir := path.Dir(cleanOutputPath)
+	if err := guardClient.ValidatePathWithContext(ctx, outputDir, true); err != nil {
+		return fmt.Errorf("output_path directory is outside the current session's writable folder: %w", err)
+	}
+	if err := guardClient.ValidatePathWithContext(ctx, cleanOutputPath, true); err != nil {
+		return fmt.Errorf("output_path is outside the current session's writable folder: %w", err)
+	}
+	return nil
+}
+
+func applyImageGenToolArgs(cfg ImageGenExecutorConfig, args map[string]any) ImageGenExecutorConfig {
+	if provider, ok := args["provider"].(string); ok && strings.TrimSpace(provider) != "" {
+		cfg.Provider = strings.TrimSpace(provider)
+		cfg.ModelID = ""
+	}
+	if modelID, ok := args["model_id"].(string); ok && strings.TrimSpace(modelID) != "" {
+		cfg.ModelID = strings.TrimSpace(modelID)
+	}
+	return cfg
+}
+
+func resolveImageGenerationTarget(ctx context.Context, cfg ImageGenExecutorConfig) (string, string, *llm.ProviderAPIKeys, error) {
+	apiKeys := loadWorkspaceProviderAPIKeys(ctx, cfg.WorkspaceAPIURL)
+
+	explicitProvider := strings.TrimSpace(cfg.Provider)
+	explicitModelID := strings.TrimSpace(cfg.ModelID)
+	if explicitProvider != "" || explicitModelID != "" {
+		provider, modelID, err := normalizeImageProviderAndModel(explicitProvider, explicitModelID)
+		return provider, modelID, apiKeys, err
+	}
+
+	if cfg.WorkspaceAPIURL != "" {
+		imageCfg, exists, err := services.LoadImageGenerationConfig(ctx, cfg.WorkspaceAPIURL)
+		if err != nil {
+			log.Printf("[IMAGE_GEN] Failed to load image generation config: %v", err)
+		} else if exists && imageCfg != nil {
+			var candidates []services.ImageGenerationModelConfig
+			if imageCfg.Primary != nil {
+				candidates = append(candidates, *imageCfg.Primary)
+			}
+			candidates = append(candidates, imageCfg.Fallbacks...)
+
+			var sawCandidate bool
+			for _, candidate := range candidates {
+				provider, modelID, err := normalizeImageProviderAndModel(candidate.Provider, candidate.ModelID)
+				if err != nil {
+					continue
+				}
+				sawCandidate = true
+				if strings.TrimSpace(cfg.APIKey) != "" || hasImageProviderAuth(provider, apiKeys) {
+					return provider, modelID, apiKeys, nil
+				}
+			}
+			if sawCandidate {
+				return "", "", apiKeys, fmt.Errorf("image generation config requires matching provider auth in config/provider-api-keys.json or an explicit api_key override")
+			}
+		}
+	}
+
+	return defaultImageGenProvider, defaultImageGenModelID, apiKeys, nil
+}
+
+func applyImageGenRuntimeOverride(ctx context.Context, cfg ImageGenExecutorConfig) ImageGenExecutorConfig {
+	override, ok := ctx.Value(imageGenRuntimeOverrideKey).(ImageGenRuntimeOverride)
+	if !ok {
+		return cfg
+	}
+	if override.Provider != "" {
+		cfg.Provider = override.Provider
+	}
+	if override.ModelID != "" {
+		cfg.ModelID = override.ModelID
+	}
+	if override.APIKey != "" {
+		cfg.APIKey = override.APIKey
+	}
+	return cfg
 }
 
 // CreateImageGenExecutor returns an executor that calls InitializeImageGenerationModel,
-// then saves the generated images to the workspace (Chats/generated-images/).
+// then saves the generated images to the caller-provided workspace output path.
 func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
+		cfg = applyImageGenRuntimeOverride(ctx, cfg)
+		cfg = applyImageGenToolArgs(cfg, args)
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {
 			return "", fmt.Errorf("prompt is required")
 		}
-
-		provider := cfg.Provider
-		if provider == "" {
-			provider = "vertex"
+		outputPath, _ := args["output_path"].(string)
+		if strings.TrimSpace(outputPath) == "" {
+			return "", fmt.Errorf("output_path is required")
 		}
-		modelID := cfg.ModelID
-		if modelID == "" {
-			modelID = "gemini-2.5-flash-image"
+		if err := validateGuardedImageOutputPath(ctx, cfg, outputPath); err != nil {
+			return "", err
+		}
+
+		provider, modelID, workspaceAPIKeys, err := resolveImageGenerationTarget(ctx, cfg)
+		if err != nil {
+			return "", wrapImageGenerationSelectionError(err)
 		}
 
 		var apiKeyPtr *string
@@ -125,11 +406,16 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			apiKeyPtr = &k
 		}
 
-		providerAPIKeys := &llm.ProviderAPIKeys{}
-		if provider == "minimax" {
-			providerAPIKeys.MiniMax = apiKeyPtr
-		} else {
-			providerAPIKeys.Vertex = apiKeyPtr
+		providerAPIKeys := workspaceAPIKeys
+		if providerAPIKeys == nil {
+			providerAPIKeys = &llm.ProviderAPIKeys{}
+		}
+		if apiKeyPtr != nil {
+			if provider == "minimax-coding-plan" {
+				providerAPIKeys.MiniMaxCodingPlan = apiKeyPtr
+			} else {
+				providerAPIKeys.Vertex = apiKeyPtr
+			}
 		}
 
 		imageGenCfg := llm.Config{
@@ -145,7 +431,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 		model, err := llm.InitializeImageGenerationModel(imageGenCfg)
 		if err != nil {
 			log.Printf("[IMAGE_GEN] Failed to initialize image generation model: %v", err)
-			return "", fmt.Errorf("failed to initialize image generation model: %w", err)
+			return "", wrapImageGenerationInitializationError(provider, modelID, err)
 		}
 		log.Printf("[IMAGE_GEN] Model initialized successfully")
 
@@ -198,31 +484,22 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 		log.Printf("[IMAGE_GEN] Generated %d image(s) with model=%s", len(resp.Images), modelID)
 
 		var savedPaths []string
-		// fallbackImages holds base64 data only when workspace saving is unavailable
-		var fallbackImages []imageGenResultImage
-
-		timestamp := time.Now().Format("20060102-150405")
-
-		// Workspace client for saving files (optional — skip if no URL configured)
-		var wsClient *workspace.Client
-		if cfg.WorkspaceAPIURL != "" {
-			wsClient = workspace.NewClient(
-				cfg.WorkspaceAPIURL,
-				workspace.WithUserID(cfg.UserID),
-				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
-					Enabled:    true,
-					WritePaths: []string{"Chats/"},
-				}),
-			)
-			// Ensure the generated-images folder exists (ignore 409 — folder already exists is fine)
-			if err := wsClient.CreateFolder(ctx, "Chats/generated-images"); err != nil {
-				errStr := err.Error()
-				if strings.Contains(errStr, "409") || strings.Contains(errStr, "already exists") {
-					log.Printf("[IMAGE_GEN] Chats/generated-images folder already exists, proceeding")
-				} else {
-					log.Printf("[IMAGE_GEN] Warning: failed to create Chats/generated-images folder: %v", err)
-					wsClient = nil // genuine error — proceed without saving
-				}
+		cleanOutputPath := path.Clean(strings.TrimSpace(outputPath))
+		outputDir := path.Dir(cleanOutputPath)
+		wsClient := workspace.NewClient(
+			cfg.WorkspaceAPIURL,
+			workspace.WithUserID(cfg.UserID),
+			workspace.WithFolderGuard(&workspace.FolderGuardConfig{
+				Enabled:    true,
+				WritePaths: []string{outputDir + "/"},
+			}),
+		)
+		if err := wsClient.CreateFolder(ctx, outputDir); err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "409") || strings.Contains(errStr, "already exists") {
+				log.Printf("[IMAGE_GEN] %s folder already exists, proceeding", outputDir)
+			} else {
+				return "", fmt.Errorf("failed to prepare output folder %q: %w", outputDir, err)
 			}
 		}
 
@@ -232,39 +509,23 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 				mimeType = "image/png"
 			}
 
-			if wsClient != nil && len(img.Data) > 0 {
-				// Save to workspace — don't include base64 in response
-				ext := "png"
-				if mimeType == "image/jpeg" {
-					ext = "jpg"
-				} else if mimeType == "image/webp" {
-					ext = "webp"
-				}
-				fileName := fmt.Sprintf("image-%s-%d.%s", timestamp, i+1, ext)
-				savedPath, saveErr := wsClient.UploadBinary(ctx, "Chats/generated-images", fileName, img.Data)
-				if saveErr != nil {
-					log.Printf("[IMAGE_GEN] Warning: failed to save image %d to workspace: %v", i+1, saveErr)
-					// Fall back to base64 for this image
-					fallbackImages = append(fallbackImages, imageGenResultImage{
-						Data:     base64.StdEncoding.EncodeToString(img.Data),
-						MIMEType: mimeType,
-					})
-				} else {
-					log.Printf("[IMAGE_GEN] Saved image %d to workspace: %s", i+1, savedPath)
-					savedPaths = append(savedPaths, savedPath)
-				}
-			} else {
-				// No workspace client — return base64 so the LLM/UI can still show the image
-				fallbackImages = append(fallbackImages, imageGenResultImage{
-					Data:     base64.StdEncoding.EncodeToString(img.Data),
-					MIMEType: mimeType,
-				})
+			targetPaths, pathErr := resolveImageOutputPaths(outputPath, len(resp.Images), mimeType)
+			if pathErr != nil {
+				return "", pathErr
 			}
+			targetPath := targetPaths[i]
+			folderPath := path.Dir(targetPath)
+			fileName := path.Base(targetPath)
+			savedPath, saveErr := wsClient.UploadBinary(ctx, folderPath, fileName, img.Data)
+			if saveErr != nil {
+				return "", fmt.Errorf("failed to save generated image %d to workspace path %q: %w", i+1, targetPath, saveErr)
+			}
+			log.Printf("[IMAGE_GEN] Saved image %d to workspace: %s", i+1, savedPath)
+			savedPaths = append(savedPaths, savedPath)
 		}
 
 		costPerImage := imageGenModelCosts[modelID]
 		result := imageGenResult{
-			Images:       fallbackImages, // nil (omitempty) when all images were saved to workspace
 			Model:        modelID,
 			CostPerImage: costPerImage,
 			Prompt:       prompt,
@@ -272,7 +533,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			Count:        len(resp.Images),
 			Note:         "",
 		}
-		log.Printf("[IMAGE_GEN] Done: saved=%d fallback=%d costPerImage=$%.4f", len(savedPaths), len(fallbackImages), costPerImage)
+		log.Printf("[IMAGE_GEN] Done: saved=%d costPerImage=$%.4f", len(savedPaths), costPerImage)
 
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
@@ -283,27 +544,96 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 	}
 }
 
-// GetImageEditToolCategory returns the category name for the image edit tool
+// GetImageEditToolCategory returns the category name for the image edit tool.
 func GetImageEditToolCategory() string {
-	return "workspace_image_edit"
+	return GetWorkspaceImageToolCategory()
 }
 
-// GetImageEditToolDefinition returns the workspace_image_edit tool definition
+// CreateWorkspaceImageTools returns the LLM-visible workspace image tools.
+func CreateWorkspaceImageTools() []llmtypes.Tool {
+	return []llmtypes.Tool{
+		GetImageGenToolDefinition(),
+		GetImageEditToolDefinition(),
+	}
+}
+
+// CreateWorkspaceImageToolExecutors creates workspace image executors with the provided config.
+func CreateWorkspaceImageToolExecutors(cfg ImageGenExecutorConfig) map[string]func(ctx context.Context, args map[string]any) (string, error) {
+	return map[string]func(ctx context.Context, args map[string]any) (string, error){
+		GetImageGenToolDefinition().Function.Name:  CreateImageGenExecutor(cfg),
+		GetImageEditToolDefinition().Function.Name: CreateImageEditExecutor(cfg),
+	}
+}
+
+// MergeImageToolExecutors creates image tool executors from cfg and merges them
+// into executors (typed map). If categories is non-nil, each tool is also categorised.
+func MergeImageToolExecutors(cfg ImageGenExecutorConfig, executors map[string]func(ctx context.Context, args map[string]any) (string, error), categories map[string]string) {
+	cat := GetWorkspaceImageToolCategory()
+	for name, exec := range CreateWorkspaceImageToolExecutors(cfg) {
+		executors[name] = exec
+		if categories != nil {
+			categories[name] = cat
+		}
+	}
+}
+
+// MergeImageToolExecutorsUntyped is like MergeImageToolExecutors but accepts
+// map[string]any (used by workflow/workshop paths where executor maps are untyped).
+func MergeImageToolExecutorsUntyped(cfg ImageGenExecutorConfig, executors map[string]any, categories map[string]string) {
+	cat := GetWorkspaceImageToolCategory()
+	for name, exec := range CreateWorkspaceImageToolExecutors(cfg) {
+		executors[name] = exec
+		if categories != nil {
+			categories[name] = cat
+		}
+	}
+}
+
+// WrapImageToolExecutorWithRuntimeOverride injects a per-session image provider/model override.
+func WrapImageToolExecutorWithRuntimeOverride(
+	inner func(ctx context.Context, args map[string]any) (string, error),
+	override ImageGenRuntimeOverride,
+) func(ctx context.Context, args map[string]any) (string, error) {
+	override.Provider = strings.TrimSpace(override.Provider)
+	override.ModelID = strings.TrimSpace(override.ModelID)
+	override.APIKey = strings.TrimSpace(override.APIKey)
+	if override.Provider == "" && override.ModelID == "" && override.APIKey == "" {
+		return inner
+	}
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		ctx = context.WithValue(ctx, imageGenRuntimeOverrideKey, override)
+		return inner(ctx, args)
+	}
+}
+
+// GetImageEditToolDefinition returns the image_edit tool definition
 func GetImageEditToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "workspace_image_edit",
-			Description: "Edit an existing image from the workspace using a text instruction. Provide the workspace path of a previously generated image and a prompt describing what to change. Saves the edited image to the workspace and displays it inline.",
+			Name:        "image_edit",
+			Description: "Edit an existing image from the workspace using a text instruction. Requires a workspace-relative output_path so the caller decides exactly where the edited image files should be stored. Supports optional provider override and displays results inline.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"image_path": map[string]interface{}{
 						"type":        "string",
-						"description": "Workspace path of the image to edit (e.g. 'Chats/generated-images/image-20260305-223629-1.png'). Use the saved_paths value from a prior workspace_image_gen result.",
+						"description": "Workspace path of the image to edit (e.g. 'Chats/generated-images/image-20260305-223629-1.png'). Use the saved_paths value from a prior image_gen result.",
+					},
+					"output_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Required workspace-relative destination path for the edited image. If multiple images are returned, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
 					},
 					"prompt": map[string]interface{}{
 						"type":        "string",
 						"description": "Instruction describing how to edit the image. Be explicit — describe the full desired result rather than relative changes.",
+					},
+					"provider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional provider override. Supported values: vertex or minimax-coding-plan. Vertex supports gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image. MiniMax coding plan supports image-01.",
+					},
+					"model_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image, or image-01. If omitted, the default for the selected provider is used.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
@@ -316,7 +646,7 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 						"enum":        []interface{}{"1K", "2K", "4K"},
 					},
 				},
-				"required": []interface{}{"image_path", "prompt"},
+				"required": []interface{}{"image_path", "output_path", "prompt"},
 			}),
 		},
 	}
@@ -326,22 +656,27 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 // edits it using the Gemini image model, and saves the result back to the workspace.
 func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
+		cfg = applyImageGenRuntimeOverride(ctx, cfg)
+		cfg = applyImageGenToolArgs(cfg, args)
 		imagePath, _ := args["image_path"].(string)
 		if imagePath == "" {
 			return "", fmt.Errorf("image_path is required")
+		}
+		outputPath, _ := args["output_path"].(string)
+		if strings.TrimSpace(outputPath) == "" {
+			return "", fmt.Errorf("output_path is required")
+		}
+		if err := validateGuardedImageOutputPath(ctx, cfg, outputPath); err != nil {
+			return "", err
 		}
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {
 			return "", fmt.Errorf("prompt is required")
 		}
 
-		provider := cfg.Provider
-		if provider == "" {
-			provider = "vertex"
-		}
-		modelID := cfg.ModelID
-		if modelID == "" {
-			modelID = "gemini-2.5-flash-image"
+		provider, modelID, workspaceAPIKeys, err := resolveImageGenerationTarget(ctx, cfg)
+		if err != nil {
+			return "", wrapImageGenerationSelectionError(err)
 		}
 
 		var apiKeyPtr *string
@@ -350,11 +685,16 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			apiKeyPtr = &k
 		}
 
-		providerAPIKeys := &llm.ProviderAPIKeys{}
-		if provider == "minimax" {
-			providerAPIKeys.MiniMax = apiKeyPtr
-		} else {
-			providerAPIKeys.Vertex = apiKeyPtr
+		providerAPIKeys := workspaceAPIKeys
+		if providerAPIKeys == nil {
+			providerAPIKeys = &llm.ProviderAPIKeys{}
+		}
+		if apiKeyPtr != nil {
+			if provider == "minimax-coding-plan" {
+				providerAPIKeys.MiniMaxCodingPlan = apiKeyPtr
+			} else {
+				providerAPIKeys.Vertex = apiKeyPtr
+			}
 		}
 
 		imageGenCfg := llm.Config{
@@ -370,7 +710,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 		model, err := llm.InitializeImageGenerationModel(imageGenCfg)
 		if err != nil {
 			log.Printf("[IMAGE_EDIT] Failed to initialize image generation model: %v", err)
-			return "", fmt.Errorf("failed to initialize image generation model: %w", err)
+			return "", wrapImageGenerationInitializationError(provider, modelID, err)
 		}
 		log.Printf("[IMAGE_EDIT] Model initialized successfully")
 
@@ -427,21 +767,21 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 
 		// Save edited images to workspace
 		var savedPaths []string
-		var fallbackImages []imageGenResultImage
-		timestamp := time.Now().Format("20060102-150405")
+		cleanOutputPath := path.Clean(strings.TrimSpace(outputPath))
+		outputDir := path.Dir(cleanOutputPath)
 
 		saveClient := workspace.NewClient(
 			cfg.WorkspaceAPIURL,
 			workspace.WithUserID(cfg.UserID),
 			workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 				Enabled:    true,
-				WritePaths: []string{"Chats/"},
+				WritePaths: []string{outputDir + "/"},
 			}),
 		)
-		if err := saveClient.CreateFolder(ctx, "Chats/generated-images"); err != nil {
+		if err := saveClient.CreateFolder(ctx, outputDir); err != nil {
 			errStr := err.Error()
 			if strings.Contains(errStr, "409") || strings.Contains(errStr, "already exists") {
-				log.Printf("[IMAGE_EDIT] Chats/generated-images folder already exists, proceeding")
+				log.Printf("[IMAGE_EDIT] %s folder already exists, proceeding", outputDir)
 			} else {
 				log.Printf("[IMAGE_EDIT] Warning: failed to create output folder: %v", err)
 			}
@@ -452,29 +792,23 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			if imgMIME == "" {
 				imgMIME = "image/png"
 			}
-			ext := "png"
-			if imgMIME == "image/jpeg" {
-				ext = "jpg"
-			} else if imgMIME == "image/webp" {
-				ext = "webp"
+			targetPaths, pathErr := resolveImageOutputPaths(outputPath, len(resp.Images), imgMIME)
+			if pathErr != nil {
+				return "", pathErr
 			}
-			fileName := fmt.Sprintf("edited-%s-%d.%s", timestamp, i+1, ext)
-			savedPath, saveErr := saveClient.UploadBinary(ctx, "Chats/generated-images", fileName, img.Data)
+			targetPath := targetPaths[i]
+			folderPath := path.Dir(targetPath)
+			fileName := path.Base(targetPath)
+			savedPath, saveErr := saveClient.UploadBinary(ctx, folderPath, fileName, img.Data)
 			if saveErr != nil {
-				log.Printf("[IMAGE_EDIT] Warning: failed to save edited image %d: %v", i+1, saveErr)
-				fallbackImages = append(fallbackImages, imageGenResultImage{
-					Data:     base64.StdEncoding.EncodeToString(img.Data),
-					MIMEType: imgMIME,
-				})
-			} else {
-				log.Printf("[IMAGE_EDIT] Saved edited image %d: %s", i+1, savedPath)
-				savedPaths = append(savedPaths, savedPath)
+				return "", fmt.Errorf("failed to save edited image %d to workspace path %q: %w", i+1, targetPath, saveErr)
 			}
+			log.Printf("[IMAGE_EDIT] Saved edited image %d: %s", i+1, savedPath)
+			savedPaths = append(savedPaths, savedPath)
 		}
 
 		costPerImage := imageGenModelCosts[modelID]
 		result := imageGenResult{
-			Images:       fallbackImages,
 			Model:        modelID,
 			CostPerImage: costPerImage,
 			Prompt:       prompt,
@@ -482,7 +816,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			Count:        len(resp.Images),
 			Note:         "",
 		}
-		log.Printf("[IMAGE_EDIT] Done: saved=%d fallback=%d costPerImage=$%.4f", len(savedPaths), len(fallbackImages), costPerImage)
+		log.Printf("[IMAGE_EDIT] Done: saved=%d costPerImage=$%.4f", len(savedPaths), costPerImage)
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal result: %w", err)

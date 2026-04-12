@@ -261,7 +261,7 @@ func (api *StreamingAPI) handleStoreUserSecret(w http.ResponseWriter, r *http.Re
 
 	userID := GetUserIDFromContext(r.Context())
 
-	if err := api.chatDB.UpsertUserSecret(r.Context(), userID, req.Name, req.EncryptedValue); err != nil {
+	if err := api.chatStore.UpsertUserSecret(r.Context(), userID, req.Name, req.EncryptedValue); err != nil {
 		log.Printf("[SECRETS] Failed to store user secret: %v", err)
 		http.Error(w, "Failed to store secret", http.StatusInternalServerError)
 		return
@@ -282,7 +282,7 @@ func (api *StreamingAPI) handleDeleteUserSecret(w http.ResponseWriter, r *http.R
 
 	userID := GetUserIDFromContext(r.Context())
 
-	if err := api.chatDB.DeleteUserSecret(r.Context(), userID, name); err != nil {
+	if err := api.chatStore.DeleteUserSecret(r.Context(), userID, name); err != nil {
 		log.Printf("[SECRETS] Failed to delete user secret: %v", err)
 		http.Error(w, "Failed to delete secret", http.StatusInternalServerError)
 		return
@@ -297,7 +297,7 @@ func (api *StreamingAPI) handleDeleteUserSecret(w http.ResponseWriter, r *http.R
 func (api *StreamingAPI) handleListStoredSecrets(w http.ResponseWriter, r *http.Request) {
 	userID := GetUserIDFromContext(r.Context())
 
-	secrets, err := api.chatDB.ListUserSecrets(r.Context(), userID)
+	secrets, err := api.chatStore.ListUserSecrets(r.Context(), userID)
 	if err != nil {
 		log.Printf("[SECRETS] Failed to list stored secrets: %v", err)
 		http.Error(w, "Failed to list secrets", http.StatusInternalServerError)

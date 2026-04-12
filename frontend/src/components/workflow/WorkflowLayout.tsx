@@ -56,7 +56,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     />
   )
 })
-import { agentApi, sessionShareApi } from '../../services/api'
+import { agentApi, workflowManifestApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
 import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
@@ -87,25 +87,12 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
       return
     }
 
-    // Load events for this session — try in-memory first, fall back to DB
+    // Load events for this session from the in-memory EventStore. If the
+    // server restarted, there's nothing to replay — the workflow run folder
+    // is the durable source of truth for the run's state.
     const response = await agentApi.getSessionEvents(sessionId, -1)
-    let events = response.events as PollingEvent[]
-    let lastIndex = response.last_processed_index ?? events.length - 1
-
-    // If in-memory EventStore is empty (e.g. after server restart),
-    // fall back to database for workflow_phase (builder) sessions which persist events
-    if (events.length === 0) {
-      try {
-        const dbResponse = await agentApi.getChatSessionEvents(sessionId, 1000, 0)
-        events = dbResponse.events as PollingEvent[]
-        lastIndex = events.length - 1
-        if (events.length > 0) {
-          logger.debug('WorkflowLayout', `Restored ${events.length} events from DB for session ${sessionId}`)
-        }
-      } catch (err) {
-        logger.debug('WorkflowLayout', `DB fallback failed for session ${sessionId}: ${err}`)
-      }
-    }
+    const events = response.events as PollingEvent[]
+    const lastIndex = response.last_processed_index ?? events.length - 1
 
     if (events.length === 0) {
       return
@@ -371,7 +358,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
     if (!workspacePath) return
-    sessionShareApi.getWorkflowManifest(workspacePath)
+    workflowManifestApi.getWorkflowManifest(workspacePath)
       .then(response => {
         const defaults = response?.manifest?.execution_defaults
         if (!defaults) return
@@ -714,14 +701,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           phaseName?: string
         }> = []
 
-        // Add active sessions that belong to this preset
+        // Add active sessions that belong to this preset. We read the
+        // running-workflow registry (workflow-owned storage) instead of
+        // reaching into the chat session metadata.
         for (const s of activeWorkflowSessions) {
           let belongsToPreset = false
           try {
-            const chatSession = await agentApi.getChatSession(s.session_id)
-            const wfMeta = (chatSession.config as any)?.workflow_metadata
-            const sessionPresetId = wfMeta?.preset_id || chatSession.preset_query_id
-            belongsToPreset = sessionPresetId === activePresetId
+            const running = await agentApi.getRunningWorkflow(s.session_id)
+            belongsToPreset = (running.preset_query_id || '') === activePresetId
           } catch { /* ignore — include by default */ belongsToPreset = true }
           if (!belongsToPreset) continue
           sessionsToRestore.push({

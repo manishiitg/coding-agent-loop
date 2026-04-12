@@ -147,7 +147,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       : events;
 
     const HIDDEN_STREAMING = new Set(['streaming_start', 'streaming_chunk', 'streaming_end']);
-    const HIDDEN_DELEGATION_TOOLS = new Set(['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents']);
+    const HIDDEN_DELEGATION_TOOLS = new Set(['delegate', 'query_agent', 'terminate_agent', 'list_agents']);
 
     // Single-pass: dedup + all filter conditions at once
     const seenIds = new Set<string>();
@@ -823,6 +823,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
+        // Check delegation_start expansion state — children render inside the card,
+        // not in the flat list, so expansion changes are invisible to length/key checks.
+        const node = list[i].node
+        const prevNode = prev[i]?.node
+        if (node && prevNode && node.event.type === 'delegation_start' && node.isExpanded !== prevNode.isExpanded) {
+          togglesMatch = false
+          break
+        }
       }
       if (togglesMatch) return prev;
     }
@@ -932,7 +940,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           className="event-tree-item relative z-10"
           style={{ paddingLeft: `${indent}px` }}
         >
-          {hasChildren && (
+          {hasChildren && event.type !== 'delegation_start' && (
             <button
               onClick={() => toggleNode(event.id)}
               className="expand-button"
@@ -961,6 +969,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
                 childrenNodes={isExpanded ? children : undefined}
+                childrenCount={children.length}
                 onToggleNode={toggleNode}
               />
             </div>

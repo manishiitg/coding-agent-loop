@@ -19,6 +19,10 @@ type Section = 'slack' | 'simulate'
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 interface ChatMessage { id: string; text: string; is_bot: boolean; timestamp: string }
 
+function isVisibleSimulatorMessage(text: string): boolean {
+  return text.trim() !== 'Session completed.'
+}
+
 export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModalProps) {
   const [activeSection, setActiveSection] = useState<Section>('slack')
 
@@ -127,9 +131,9 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         ).catch(() => {})
       }
       try {
-        const cfg = await agentApi.getSimulatorConfig()
-        if (cfg.delegation_tier_config && typeof cfg.delegation_tier_config === 'object') {
-          setServerTierConfig(cfg.delegation_tier_config as Record<string, { provider?: string; model_id?: string }>)
+        const cfg = await agentApi.getDelegationTierConfig()
+        if (cfg && typeof cfg === 'object' && Object.keys(cfg).length > 0) {
+          setServerTierConfig(cfg as Record<string, { provider?: string; model_id?: string }>)
         } else {
           setServerTierConfig(null)
         }
@@ -154,7 +158,9 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         const data = await agentApi.getSimulatorMessages(activeThreadId, lastCount)
         if (cancelled) return
         if (data.messages && data.messages.length > 0) {
-          const newMsgs: ChatMessage[] = data.messages.map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp }))
+          const newMsgs: ChatMessage[] = data.messages
+            .filter(m => isVisibleSimulatorMessage(m.text))
+            .map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp }))
           setMessages(prev => {
             const existingIds = new Set(prev.map(m => m.id))
             const unique = newMsgs.filter(m => !existingIds.has(m.id))
@@ -273,7 +279,11 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     try {
       const data = await agentApi.getSimulatorMessages(threadId, 0)
       if (data.messages?.length > 0) {
-        setMessages(data.messages.map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp })))
+        setMessages(
+          data.messages
+            .filter(m => isVisibleSimulatorMessage(m.text))
+            .map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp }))
+        )
       }
     } catch { /* ignore */ }
   }, [])
@@ -544,16 +554,17 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                       {['high', 'medium', 'low'].map(tier => {
                         const cfg = serverTierConfig[tier]
                         if (!cfg?.model_id) return null
+                        const label = cfg.provider ? `${cfg.provider}/${cfg.model_id}` : cfg.model_id
                         return (
                           <span key={tier} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-secondary border border-border">
                             <span className="capitalize font-medium">{tier[0].toUpperCase()}:</span>
-                            <span className="truncate max-w-[120px]">{cfg.model_id.split('/').pop() || cfg.model_id}</span>
+                            <span className="truncate max-w-[200px]">{label}</span>
                           </span>
                         )
                       })}
                     </>
                   ) : (
-                    <span className="text-yellow-500">Not configured — set delegation tiers in LLM Settings</span>
+                    <span className="text-yellow-500">Not configured — uses the same tier config as multi-agent chat</span>
                   )}
                   <div className="ml-auto flex items-center gap-2">
                     <select value={threadMode} onChange={e => handleModeChange(e.target.value as 'threaded' | 'non-threaded')} className="text-xs px-2 py-1 bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary">

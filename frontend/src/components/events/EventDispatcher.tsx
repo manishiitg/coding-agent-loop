@@ -209,6 +209,7 @@ interface EventDispatcherProps {
   backgroundAgentStats?: Map<string, DelegationStats>
   // Hierarchy props for sub-agent log containment
   childrenNodes?: EventNode[]
+  childrenCount?: number // Total children count (available even when collapsed)
   onToggleNode?: (eventId: string) => void
 }
 
@@ -381,6 +382,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   delegationStats,
   backgroundAgentStats,
   childrenNodes,
+  childrenCount,
   onToggleNode
 }) => {
   // Ref for auto-scrolling sub-agent logs
@@ -1252,7 +1254,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         instruction?: string
         reasoning_level?: string
         model_id?: string
-        tool_mode?: string
         servers?: string[]
         agent_template?: string
       }
@@ -1261,7 +1262,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       instruction?: string
       reasoning_level?: string
       model_id?: string
-      tool_mode?: string
       servers?: string[]
       agent_template?: string
       timestamp?: string
@@ -1272,7 +1272,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const delegationId = delegationData?.delegation_id
     const reasoningLevel = delegationData?.reasoning_level
     const modelId = delegationData?.model_id
-    const toolMode = delegationData?.tool_mode
     const servers = delegationData?.servers
     const agentTemplate = delegationData?.agent_template
 
@@ -1327,15 +1326,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 </span>
               )}
               <span className="relative group/mode cursor-default flex items-center">
-                {toolMode === 'code_execution' ? (
-                  <Code2 className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
-                ) : toolMode === 'tool_search' ? (
-                  <Search className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
-                ) : (
-                  <Sparkles className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
-                )}
+                <Code2 className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
                 <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-[10px] font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover/mode:opacity-100 transition-opacity z-50">
-                  {toolMode === 'code_execution' ? 'Code Execution' : toolMode === 'tool_search' ? 'Tool Search' : 'Simple'}
+                  Code Execution
                 </span>
               </span>
               {event.timestamp && (
@@ -1352,7 +1345,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400 flex-wrap">
               {agentTemplate && <span>Template: {agentTemplate}</span>}
               {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
-              <span>Mode: {!toolMode || toolMode === 'simple' ? 'Simple' : toolMode === 'code_execution' ? 'Code Execution' : 'Tool Search'}</span>
               {modelId && <span>Model: {modelId}</span>}
               {servers && servers.length > 0 && <span>Servers: {servers.join(', ')}</span>}
             </div>
@@ -1374,9 +1366,27 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           </div>
         </details>
 
+        {/* Tool calls toggle — show "+ N tool calls" when collapsed, full list when expanded */}
+        {onToggleNode && !childrenNodes && (childrenCount ?? 0) > 0 && (
+          <div className="mt-1 ml-1">
+            <button
+              onClick={() => onToggleNode(event.id)}
+              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+            >
+              + {childrenCount} event{childrenCount !== 1 ? 's' : ''}
+              {liveStats?.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
+            </button>
+          </div>
+        )}
         {/* Hierarchical Execution Logs - Shown when expanded via hierarchy arrow */}
         {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
+            <button
+              onClick={() => onToggleNode(event.id)}
+              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
+            >
+              − collapse
+            </button>
             <div
               ref={scrollRef}
               className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words overscroll-y-contain"
@@ -1783,8 +1793,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if ((prevProps.event.type === 'background_agent_started') && prevProps.backgroundAgentStats !== nextProps.backgroundAgentStats) {
     return false
   }
-  // Check if childrenNodes changed (for sub-agent hierarchy expansion)
-  if (prevProps.childrenNodes !== nextProps.childrenNodes) {
+  // Check if childrenNodes or childrenCount changed (for sub-agent hierarchy expansion)
+  if (prevProps.childrenNodes !== nextProps.childrenNodes || prevProps.childrenCount !== nextProps.childrenCount) {
     return false
   }
   return true

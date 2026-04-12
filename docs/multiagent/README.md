@@ -4,7 +4,7 @@ These docs cover delegation, multi-agent chat, and coordination between manager 
 
 ## Includes
 
-- Sub-agent spawning and plan-driven delegation
+- Sub-agent spawning (direct delegation, no planning phase)
 - Multi-agent chat session behavior
 - Memory tools and cross-session recall
 - Operator controls that primarily support delegation workflows

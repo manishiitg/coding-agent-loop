@@ -333,8 +333,6 @@ The agent session uses the high tier as the main provider.
 | `servers` | `default_servers` from `_global` config |
 | `selected_skills` | `default_skills` from `_global` config (falls back to all discovered) |
 | `use_tool_search_mode` | `true` when >2 servers configured |
-| `delegation_mode` | Always `"plan"` |
-| `enable_workspace_access` | Always `true` |
 | `delegation_tier_config` | From DB `_global` config or env vars |
 | `llm_config.primary` | Same as `provider`/`model_id` (ensures follow-ups recover correct model) |
 | `llm_config.api_keys` | From DB `provider_api_keys` |

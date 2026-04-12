@@ -60,7 +60,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
 
   // Check if this is an image generation/editing tool
   const isImageGenTool = (name: string): boolean => {
-    return name === 'workspace_image_gen' || name === 'workspace_image_edit'
+    return name === 'image_gen' || name === 'image_edit'
   }
 
   // If it's a workspace tool, use the specialized component

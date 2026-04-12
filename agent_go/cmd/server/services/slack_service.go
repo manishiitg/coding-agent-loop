@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,7 +18,121 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
+
+// Slack state is persisted as two small JSON files under <workspace-docs>/config/:
+// slack-config.json (bot_token/app_token/channel/enabled) and
+// slack-feedback-messages.json (uniqueID → Slack message ts/channel mapping).
+// Legacy _system file locations are still read and migrated forward on load.
+// Both are loaded into memory on first access and mutated under a
+// package-level mutex.
+
+var (
+	slackFSMu           sync.Mutex
+	slackMessagesCache  map[string]*slackFeedbackMessageRecord
+	slackMessagesLoaded bool
+)
+
+func slackConfigFilePath() string {
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "slack-config.json")
+}
+
+func slackMessagesFilePath() string {
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "slack-feedback-messages.json")
+}
+
+func legacySlackConfigFilePath() string {
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "slack_config.json")
+}
+
+func legacySlackMessagesFilePath() string {
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "slack_feedback_messages.json")
+}
+
+// slackFeedbackMessageRecord stores the mapping for a single slack feedback request.
+type slackFeedbackMessageRecord struct {
+	UniqueID       string    `json:"unique_id"`
+	SlackMessageTS string    `json:"slack_message_ts"`
+	ChannelID      string    `json:"slack_channel_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func slackFeedbackMessageKey(messageTS, channelID string) string {
+	return messageTS + "|" + channelID
+}
+
+func loadSlackConfigFromDisk() (*SlackConfig, error) {
+	data, err := os.ReadFile(slackConfigFilePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			legacyData, legacyErr := os.ReadFile(legacySlackConfigFilePath())
+			if legacyErr != nil {
+				if os.IsNotExist(legacyErr) {
+					return &SlackConfig{Enabled: false}, nil
+				}
+				return nil, legacyErr
+			}
+			var legacyCfg SlackConfig
+			if err := json.Unmarshal(legacyData, &legacyCfg); err != nil {
+				return nil, fmt.Errorf("failed to parse legacy slack_config.json: %w", err)
+			}
+			if err := saveSlackConfigToDisk(&legacyCfg); err != nil {
+				return nil, err
+			}
+			return &legacyCfg, nil
+		}
+		return nil, err
+	}
+	var cfg SlackConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse slack-config.json: %w", err)
+	}
+	return &cfg, nil
+}
+
+func saveSlackConfigToDisk(cfg *SlackConfig) error {
+	return fsutil.WriteJSONAtomic(slackConfigFilePath(), cfg, 0600)
+}
+
+// getSlackFeedbackMessagesLocked returns the in-memory feedback message map,
+// lazily loading it from disk on first access. Caller must hold slackFSMu.
+func getSlackFeedbackMessagesLocked() (map[string]*slackFeedbackMessageRecord, error) {
+	if slackMessagesLoaded {
+		return slackMessagesCache, nil
+	}
+	data, err := os.ReadFile(slackMessagesFilePath())
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	slackMessagesCache = make(map[string]*slackFeedbackMessageRecord)
+	if os.IsNotExist(err) {
+		legacyData, legacyErr := os.ReadFile(legacySlackMessagesFilePath())
+		if legacyErr != nil && !os.IsNotExist(legacyErr) {
+			return nil, legacyErr
+		}
+		data = legacyData
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &slackMessagesCache); err != nil {
+			slackMessagesCache = nil
+			return nil, fmt.Errorf("failed to parse slack-feedback-messages.json: %w", err)
+		}
+		if saveErr := saveSlackFeedbackMessagesLocked(); saveErr != nil {
+			slackMessagesCache = nil
+			return nil, saveErr
+		}
+	}
+	slackMessagesLoaded = true
+	return slackMessagesCache, nil
+}
+
+// saveSlackFeedbackMessagesLocked persists the in-memory feedback message map.
+// Caller must hold slackFSMu and must have called getSlackFeedbackMessagesLocked first.
+func saveSlackFeedbackMessagesLocked() error {
+	return fsutil.WriteJSONAtomic(slackMessagesFilePath(), slackMessagesCache, 0600)
+}
 
 // FeedbackStoreFunc is a function type for creating feedback requests (to avoid import cycle)
 type FeedbackStoreFunc func(uniqueID string, message string) error
@@ -45,11 +159,10 @@ type SlackConfig struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// SlackService handles Slack integration for human feedback
-// It implements the NotificationConnector interface
+// SlackService handles Slack integration for human feedback. It implements
+// the NotificationConnector interface and persists its configuration and the
+// feedback-message mapping via the helpers above.
 type SlackService struct {
-	db            *sql.DB
-	isPostgres    bool
 	client        *slack.Client
 	socketClient  *socketmode.Client // Socket Mode client for WebSocket connection
 	config        *SlackConfig
@@ -100,66 +213,43 @@ func GetSlackService() *SlackService {
 	return globalSlackService
 }
 
-// InitSlackService initializes the Slack service with database connection
-// This is called on server startup and will automatically start Socket Mode if config is enabled
-func InitSlackService(db *sql.DB) (*SlackService, error) {
-	// Detect postgres by checking the driver type name
-	driverName := fmt.Sprintf("%T", db.Driver())
-	isPostgres := strings.Contains(driverName, "postgres") || strings.Contains(driverName, "pq") || strings.Contains(driverName, "pgx")
+// InitSlackService initializes the Slack service from the filesystem-backed
+// config file. Called on server startup; Socket Mode is started automatically
+// when the config is valid and enabled.
+func InitSlackService() (*SlackService, error) {
 	service := &SlackService{
-		db:           db,
-		isPostgres:   isPostgres,
 		seenMessages: make(map[string]time.Time),
 	}
 
 	// Load config first
-	err := service.loadConfig(context.Background())
-	if err != nil {
+	if err := service.loadConfig(context.Background()); err != nil {
 		SetSlackService(service)
 		return service, err
 	}
 
-	// ReloadConfig will start Socket Mode if config is enabled and valid
-	// This ensures Socket Mode connects on server startup
+	// ReloadConfig will start Socket Mode if config is enabled and valid,
+	// ensuring Socket Mode connects on server startup.
 	if err := service.ReloadConfig(context.Background()); err != nil {
 		log.Printf("[SLACK] Failed to reload config on initialization: %v", err)
-		// Don't fail initialization, just log the error
 	}
 
 	SetSlackService(service)
 	return service, nil
 }
 
-// loadConfig loads Slack configuration from database (Socket Mode only)
+// loadConfig loads Slack configuration from disk.
 func (s *SlackService) loadConfig(ctx context.Context) error {
-	query := `SELECT enabled, bot_token, channel_id, COALESCE(app_token, '') as app_token
-	          FROM slack_feedback_config 
-	          WHERE id = 'slack_config'`
-
-	var enabled bool
-	var botToken, channelID, appToken sql.NullString
-
-	err := s.db.QueryRowContext(ctx, query).Scan(&enabled, &botToken, &channelID, &appToken)
+	slackFSMu.Lock()
+	defer slackFSMu.Unlock()
+	cfg, err := loadSlackConfigFromDisk()
 	if err != nil {
-		if err == sql.ErrNoRows {
-			// No config exists yet, return nil with empty config
-			s.config = &SlackConfig{Enabled: false}
-			return nil
-		}
-		return fmt.Errorf("failed to load Slack config: %w", err)
+		return err
 	}
-
-	s.config = &SlackConfig{
-		Enabled:   enabled,
-		BotToken:  botToken.String,
-		ChannelID: channelID.String,
-		AppToken:  appToken.String,
-	}
-
+	s.config = cfg
 	return nil
 }
 
-// ReloadConfig reloads configuration from database
+// ReloadConfig reloads configuration from disk and (re)starts Socket Mode.
 func (s *SlackService) ReloadConfig(ctx context.Context) error {
 	// Stop existing Socket Mode connection if running
 	s.StopSocketMode()
@@ -412,23 +502,23 @@ func (s *SlackService) StoreMessageMapping(
 	messageTS string,
 	channelID string,
 ) error {
-	var query string
-	if s.isPostgres {
-		query = `INSERT INTO slack_feedback_messages (unique_id, slack_message_ts, slack_channel_id, slack_thread_ts)
-		         VALUES ($1, $2, $3, $4)
-		         ON CONFLICT(unique_id, slack_message_ts) DO NOTHING`
-	} else {
-		query = `INSERT INTO slack_feedback_messages (unique_id, slack_message_ts, slack_channel_id, slack_thread_ts)
-		         VALUES (?, ?, ?, ?)
-		         ON CONFLICT(unique_id, slack_message_ts) DO NOTHING`
-	}
-
-	_, err := s.db.ExecContext(ctx, query, uniqueID, messageTS, channelID, messageTS)
+	slackFSMu.Lock()
+	defer slackFSMu.Unlock()
+	records, err := getSlackFeedbackMessagesLocked()
 	if err != nil {
-		return fmt.Errorf("failed to store message mapping: %w", err)
+		return fmt.Errorf("failed to load slack feedback messages: %w", err)
 	}
-
-	return nil
+	key := slackFeedbackMessageKey(messageTS, channelID)
+	if _, exists := records[key]; exists {
+		return nil
+	}
+	records[key] = &slackFeedbackMessageRecord{
+		UniqueID:       uniqueID,
+		SlackMessageTS: messageTS,
+		ChannelID:      channelID,
+		CreatedAt:      time.Now().UTC(),
+	}
+	return saveSlackFeedbackMessagesLocked()
 }
 
 // GetUniqueIDFromThread retrieves unique_id from a Slack thread reply
@@ -437,25 +527,21 @@ func (s *SlackService) GetUniqueIDFromThread(
 	threadTS string,
 	channelID string,
 ) (string, error) {
-	// First, try to get from database mapping (thread_ts is the parent message timestamp)
-	var query string
-	if s.isPostgres {
-		query = `SELECT unique_id FROM slack_feedback_messages
-		         WHERE slack_message_ts = $1 AND slack_channel_id = $2
-		         LIMIT 1`
-	} else {
-		query = `SELECT unique_id FROM slack_feedback_messages
-		         WHERE slack_message_ts = ? AND slack_channel_id = ?
-		         LIMIT 1`
-	}
-
-	var uniqueID string
-	err := s.db.QueryRowContext(ctx, query, threadTS, channelID).Scan(&uniqueID)
+	// First, try to get from the in-memory mapping (thread_ts is the parent message timestamp).
+	slackFSMu.Lock()
+	records, err := getSlackFeedbackMessagesLocked()
+	var cached string
 	if err == nil {
-		return uniqueID, nil
+		if rec, ok := records[slackFeedbackMessageKey(threadTS, channelID)]; ok && rec != nil {
+			cached = rec.UniqueID
+		}
+	}
+	slackFSMu.Unlock()
+	if cached != "" {
+		return cached, nil
 	}
 
-	// If not found in DB, try to get from Slack message using conversations.replies API
+	// If not found locally, try to get from Slack via the conversations.replies API
 	if s.client == nil {
 		return "", fmt.Errorf("Slack client not initialized")
 	}
@@ -617,11 +703,9 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 		}
 	}
 
-	// Store the message mapping for Socket Mode testing (if we have database access)
-	if s.db != nil {
-		if err := s.StoreMessageMapping(ctx, testUniqueID, messageTS, config.ChannelID); err != nil {
-			log.Printf("[SLACK] Warning: Failed to store test message mapping: %v", err)
-		}
+	// Store the message mapping so Socket Mode replies can look it up later.
+	if err := s.StoreMessageMapping(ctx, testUniqueID, messageTS, config.ChannelID); err != nil {
+		log.Printf("[SLACK] Warning: Failed to store test message mapping: %v", err)
 	}
 
 	return testUniqueID, nil
@@ -712,47 +796,21 @@ func (s *SlackService) TestConnection(ctx context.Context) error {
 	return nil
 }
 
-// SaveConfig saves Slack configuration to database (Socket Mode only)
+// SaveConfig persists Slack configuration to the filesystem-backed config file
+// and reloads the service so Socket Mode restarts with the new settings.
 func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) error {
-	var query string
-	if s.isPostgres {
-		query = `INSERT INTO slack_feedback_config (id, enabled, bot_token, channel_id, app_token, updated_at)
-		         VALUES ('slack_config', $1, $2, $3, $4, CURRENT_TIMESTAMP)
-		         ON CONFLICT(id) DO UPDATE SET
-		           enabled = excluded.enabled,
-		           bot_token = excluded.bot_token,
-		           channel_id = excluded.channel_id,
-		           app_token = excluded.app_token,
-		           updated_at = CURRENT_TIMESTAMP`
-	} else {
-		query = `INSERT INTO slack_feedback_config (id, enabled, bot_token, channel_id, app_token, updated_at)
-		         VALUES ('slack_config', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		         ON CONFLICT(id) DO UPDATE SET
-		           enabled = excluded.enabled,
-		           bot_token = excluded.bot_token,
-		           channel_id = excluded.channel_id,
-		           app_token = excluded.app_token,
-		           updated_at = CURRENT_TIMESTAMP`
-	}
-
-	_, err := s.db.ExecContext(ctx, query,
-		config.Enabled,
-		config.BotToken,
-		config.ChannelID,
-		config.AppToken,
-	)
-
-	if err != nil {
+	slackFSMu.Lock()
+	if err := saveSlackConfigToDisk(config); err != nil {
+		slackFSMu.Unlock()
 		log.Printf("[SLACK] Failed to save config: %v", err)
 		return fmt.Errorf("failed to save Slack config: %w", err)
 	}
+	slackFSMu.Unlock()
 
-	// Reload config
 	if err := s.ReloadConfig(ctx); err != nil {
 		log.Printf("[SLACK] Failed to reload config after save: %v", err)
 		return fmt.Errorf("failed to reload config after save: %w", err)
 	}
-
 	return nil
 }
 

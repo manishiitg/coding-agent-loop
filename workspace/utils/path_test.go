@@ -58,6 +58,33 @@ func TestSanitizeUserID(t *testing.T) {
 	}
 }
 
+// --- IsPerUserPath ---
+
+func TestIsPerUserPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"Chats", true},
+		{"Chats/session.json", true},
+		{"Downloads", true},
+		{"Downloads/file.pdf", true},
+		{"skills", false},
+		{"skills/my-skill.json", false},
+		{"Workflow", false},
+		{"Workflow/project/step.json", false},
+		{"_users", false},
+		{"config", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := IsPerUserPath(tt.path); got != tt.want {
+				t.Errorf("IsPerUserPath(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- ResolveUserPath ---
 
 func TestResolveUserPath(t *testing.T) {
@@ -67,12 +94,23 @@ func TestResolveUserPath(t *testing.T) {
 	}
 	defer os.RemoveAll(docsDir)
 
-	t.Run("ChatsResolvesToRoot", func(t *testing.T) {
+	t.Run("ChatsRoutesToUserDir", func(t *testing.T) {
 		resolved, err := ResolveUserPath(docsDir, "Chats/session.json", "user1")
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed: %v", err)
 		}
-		expected := filepath.Join(docsDir, "Chats", "session.json")
+		expected := filepath.Join(docsDir, "_users", "user1", "Chats", "session.json")
+		if resolved != expected {
+			t.Errorf("got %q, want %q", resolved, expected)
+		}
+	})
+
+	t.Run("DownloadsRoutesToUserDir", func(t *testing.T) {
+		resolved, err := ResolveUserPath(docsDir, "Downloads/file.pdf", "user1")
+		if err != nil {
+			t.Fatalf("ResolveUserPath failed: %v", err)
+		}
+		expected := filepath.Join(docsDir, "_users", "user1", "Downloads", "file.pdf")
 		if resolved != expected {
 			t.Errorf("got %q, want %q", resolved, expected)
 		}
@@ -89,7 +127,7 @@ func TestResolveUserPath(t *testing.T) {
 		}
 	})
 
-	t.Run("UserIDIgnoredForPathResolution", func(t *testing.T) {
+	t.Run("DifferentUsersGetDifferentPaths", func(t *testing.T) {
 		resolved1, err := ResolveUserPath(docsDir, "Chats/session.json", "user1")
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed for user1: %v", err)
@@ -98,24 +136,12 @@ func TestResolveUserPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed for user2: %v", err)
 		}
-		if resolved1 != resolved2 {
-			t.Errorf("Different users should resolve to same path: user1=%q, user2=%q", resolved1, resolved2)
+		if resolved1 == resolved2 {
+			t.Errorf("Different users should resolve to different paths: both got %q", resolved1)
 		}
 	})
 
-	t.Run("FullPathInputSanitized", func(t *testing.T) {
-		fullPath := filepath.Join(docsDir, "Chats", "session.json")
-		resolved, err := ResolveUserPath(docsDir, fullPath, "user1")
-		if err != nil {
-			t.Fatalf("ResolveUserPath failed: %v", err)
-		}
-		expected := filepath.Join(docsDir, "Chats", "session.json")
-		if resolved != expected {
-			t.Errorf("got %q, want %q", resolved, expected)
-		}
-	})
-
-	t.Run("AllPathsShared", func(t *testing.T) {
+	t.Run("SharedPathsSameForAllUsers", func(t *testing.T) {
 		resolved1, err := ResolveUserPath(docsDir, "skills/shared.json", "user1")
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed for user1: %v", err)
@@ -126,6 +152,29 @@ func TestResolveUserPath(t *testing.T) {
 		}
 		if resolved1 != resolved2 {
 			t.Errorf("Shared paths should be identical: user1=%q, user2=%q", resolved1, resolved2)
+		}
+	})
+
+	t.Run("EmptyUserIDFallsToDefault", func(t *testing.T) {
+		resolved, err := ResolveUserPath(docsDir, "Chats/session.json", "")
+		if err != nil {
+			t.Fatalf("ResolveUserPath failed: %v", err)
+		}
+		expected := filepath.Join(docsDir, "_users", GetDefaultUserID(), "Chats", "session.json")
+		if resolved != expected {
+			t.Errorf("got %q, want %q", resolved, expected)
+		}
+	})
+
+	t.Run("FullPathInputSanitized", func(t *testing.T) {
+		fullPath := filepath.Join(docsDir, "Chats", "session.json")
+		resolved, err := ResolveUserPath(docsDir, fullPath, "user1")
+		if err != nil {
+			t.Fatalf("ResolveUserPath failed: %v", err)
+		}
+		expected := filepath.Join(docsDir, "_users", "user1", "Chats", "session.json")
+		if resolved != expected {
+			t.Errorf("got %q, want %q", resolved, expected)
 		}
 	})
 }
@@ -141,9 +190,14 @@ func TestConvertToUserRelativePath(t *testing.T) {
 		want     string
 	}{
 		{
-			"chats-path",
-			"/app/workspace-docs/Chats/session.json",
+			"per-user-chats-path",
+			"/app/workspace-docs/_users/user1/Chats/session.json",
 			"Chats/session.json",
+		},
+		{
+			"per-user-downloads-path",
+			"/app/workspace-docs/_users/default/Downloads/file.pdf",
+			"Downloads/file.pdf",
 		},
 		{
 			"shared-path",

@@ -56,6 +56,9 @@ interface WorkflowReviewState {
   costError: string | null
 }
 
+type WorkflowsSummaryResponse = Awaited<ReturnType<typeof agentApi.getWorkflowsSummary>>
+type WorkflowApiSummary = WorkflowsSummaryResponse['workflows'][number]
+
 // Avatar component
 const EmployeeAvatar: React.FC<{ name: string; color: string; size?: 'sm' | 'md' | 'lg' }> = ({ name, color, size = 'md' }) => {
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -214,7 +217,7 @@ export const EmployeeDashboard: React.FC = () => {
       ])
 
       // Index summary results by workspace path
-      const summaryByPath = new Map<string, typeof summaryResp extends { workflows: Array<infer T> } ? T : never>()
+      const summaryByPath = new Map<string, WorkflowApiSummary>()
       if (summaryResp?.success && summaryResp.workflows) {
         for (const ws of summaryResp.workflows) {
           summaryByPath.set(ws.workspace_path, ws)

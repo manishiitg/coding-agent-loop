@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -214,31 +214,6 @@ End with a summary table.${focusText}`)
     }
   },
   {
-    command: 'summarize',
-    description: 'Summarize conversation history',
-    icon: <FileText className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      if (ctx.tabSessionId && !ctx.isSummarizing && !ctx.isStreaming) {
-        ctx.handleSummarize(ctx.beforeSlash || undefined)
-      }
-    }
-  },
-  {
-    command: 'compact',
-    description: 'Compact conversation context',
-    icon: <Minimize2 className="w-4 h-4" />,
-    modes: ['workflow', 'multi-agent'],
-    hidden: true,
-    source: 'builtin',
-    execute: (ctx) => {
-      if (ctx.tabSessionId && !ctx.isSummarizing && !ctx.isStreaming) {
-        ctx.handleCompact(ctx.beforeSlash || undefined)
-      }
-    }
-  },
-  {
     command: 'build-skill',
     description: 'Build a new skill using the skill-creator',
     icon: <Lightbulb className="w-4 h-4" />,
@@ -277,7 +252,7 @@ End with a summary table.${focusText}`)
       expanded.add('subagents')
       expanded.add('subagents/custom')
       wsStore.setExpandedFolders(expanded)
-      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode) and markdown instructions.'
+      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level) and markdown instructions.'
       const message = ctx.beforeSlash
         ? `${ctx.beforeSlash}\n\n${saContext}`
         : `I want to build a sub-agent template. ${saContext}`
@@ -328,59 +303,53 @@ End with a summary table.${focusText}`)
     }
   },
   {
-    command: 'resume',
-    description: 'Resume a previous conversation',
-    icon: <History className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.openDialog('resume')
-    }
-  },
-  {
-    command: 'spawn',
-    description: 'Enable simple sub-agent delegation (fire-and-forget)',
-    icon: <GitBranch className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setDelegationMode('spawn')
-      ctx.addToast('Simple delegation enabled - Agent can delegate tasks to sub-agents', 'success')
-    }
-  },
-  {
-    command: 'nospawn',
-    description: 'Disable all sub-agent delegation',
-    icon: <GitBranch className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setDelegationMode('off')
-      ctx.addToast('Sub-agent delegation disabled', 'success')
-    }
-  },
-  {
     command: 'workflow-builder',
-    description: 'Generate a workflow spec markdown from this chat',
+    description: 'Turn this conversation into a reusable workflow (Workflow/<name>/)',
     icon: <Layers className="w-4 h-4" />,
     modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
-      const workflowContext = `Create a workflow specification markdown file from this conversation.
+      const instruction = `Turn our current conversation into a new reusable workflow by calling the \`create_workflow\` tool with a valid workflow.json and plan.json.
 
-Requirements:
-- Analyze this chat and extract all required implementation steps.
-- Include "Goal", "Constraints", "Required Tools & MCP Servers", "Key Learnings", "Step-by-step Plan", "Parallel Execution Plan", "Validation Checklist", and "Open Questions".
-- Make each step actionable and self-contained.
-- In "Required Tools & MCP Servers", list exact tool names/MCP servers needed per step and why.
-- In "Parallel Execution Plan", identify which tasks can run in parallel vs what is on the critical path.
-- Capture important implementation learnings from this conversation and add reusable lessons for future runs.
-- Save the output as a .md file in the workspace (for example under Chats/), so I can manually upload/use it later.
-- Return a concise summary plus the exact saved file path.`
+## Step 1 — Pick a folder_name AND a display label
+Workflows have two separate names:
+- **folder_name** (the on-disk path under \`Workflow/\`) — must be **shell-safe kebab-case**: lowercase letters/digits with hyphens between words, no spaces, no underscores, no uppercase, no special characters (e.g. "customer-onboarding", "sales-report", "api-health-check"). 2-5 words, ≤64 chars.
+- **label** (the human-readable display name that goes in \`workflow_json.label\`) — can be any string: spaces, capitalization, punctuation, whatever reads naturally (e.g. "Customer Onboarding", "AWS Cost Analysis Q3", "Müller's Pipeline").
+
+If I gave you a label in my preamble, keep it verbatim as the \`label\` and slugify it for the \`folder_name\`. If I gave you a kebab-case name, use it for \`folder_name\` and also as the starting point for \`label\` (titlecased). Otherwise infer both from what we've been working on. If you cannot produce a clean folder_name, ask me one clarifying question instead of proceeding.
+
+## Step 2 — Pick the capabilities from context
+Analyze this conversation and select ONLY the MCP servers, skills, and LLM tier settings that are actually relevant to the workflow being extracted. **Do not blindly copy every currently-enabled server and skill — pick the ones the steps actually need.** If a server was enabled in chat but never used for this specific work, leave it out.
+
+## Step 3 — Extract the steps
+Re-read the conversation and extract the concrete, repeatable steps the workflow should run. Each step must have:
+- A stable kebab-case \`id\` (e.g. "fetch-data", "analyze-results"), unique within the plan
+- A human \`title\`
+- A detailed \`description\` of what the step does, in enough detail that a worker with no memory of this conversation could execute it
+- A \`success_criteria\` line describing how to tell the step succeeded
+- Optionally \`context_dependencies\` (file names produced by earlier steps) and \`context_output\` (file name this step produces)
+- Most steps should use \`"type": "regular"\`. Use \`"decision"\` / \`"conditional"\` / \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching or human-in-the-loop.
+
+## Step 4 — Call create_workflow
+Build the two JSON objects yourself in this turn and call the privileged tool:
+
+\`create_workflow(folder_name: "<kebab-name>", workflow_json: {..., label: "<human-readable>", ...}, plan_json: {...})\`
+
+**IMPORTANT**: Use the \`create_workflow\` tool — do NOT try to \`mkdir\` or write files with shell commands. The \`Workflow/\` folder is read-only to normal shell writes; \`create_workflow\` is the only path that can create a new workflow folder. The tool validates folder_name (shell-safe kebab-case), enforces required JSON fields, refuses to overwrite existing workflows, and writes both files in one call.
+
+The workflow.json schema (required: schema_version, id, label) and the plan.json schema (required: steps array with type/id/title) are already documented in your system prompt — follow that shape exactly.
+
+## Step 5 — Report back to me
+After the tool returns, tell me:
+- The folder path returned by the tool
+- The display label
+- A one-line summary of what the workflow does
+- The step IDs + titles (numbered list)
+- Tell me I can pick it from the workflow picker to activate it.`
 
       const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${workflowContext}`
-        : workflowContext
+        ? `${ctx.beforeSlash}\n\n${instruction}`
+        : instruction
 
       ctx.onSubmit(message)
     }

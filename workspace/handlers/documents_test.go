@@ -16,6 +16,7 @@ import (
 )
 
 // setupTestDocsDir creates a realistic workspace directory structure for testing
+// with per-user isolation: Chats/ and Downloads/ live under _users/{userID}/
 func setupTestDocsDir(t *testing.T) (string, func()) {
 	t.Helper()
 	docsDir, err := os.MkdirTemp("", "docs-handler-test-*")
@@ -24,17 +25,23 @@ func setupTestDocsDir(t *testing.T) (string, func()) {
 	}
 
 	// Create shared folders at root level
-	for _, folder := range []string{"Chats", "Downloads", "skills"} {
+	for _, folder := range []string{"skills", "Workflow"} {
 		os.MkdirAll(filepath.Join(docsDir, folder), 0755)
 	}
 
-	// Add files to Chats (shared by all users)
+	// Create per-user folders under _users/default/
+	defaultUserDir := filepath.Join(docsDir, utils.UsersDirectory, "default")
+	for _, folder := range []string{"Chats", "Downloads"} {
+		os.MkdirAll(filepath.Join(defaultUserDir, folder), 0755)
+	}
+
+	// Add files to default user's Chats
 	os.WriteFile(
-		filepath.Join(docsDir, "Chats", "session1.json"),
+		filepath.Join(defaultUserDir, "Chats", "session1.json"),
 		[]byte(`{"id":"s1"}`), 0644,
 	)
 
-	// Add files to skills
+	// Add files to skills (shared)
 	os.WriteFile(filepath.Join(docsDir, "skills", "shared-skill.json"), []byte(`{}`), 0644)
 
 	return docsDir, func() { os.RemoveAll(docsDir) }
@@ -104,68 +111,84 @@ func TestRootListingFiltersUsersDirectory(t *testing.T) {
 	docsDir, cleanup := setupTestDocsDir(t)
 	defer cleanup()
 
-	// Create a legacy _users/ directory to verify it gets filtered
-	os.MkdirAll(filepath.Join(docsDir, utils.UsersDirectory, "default", "Chats"), 0755)
-
 	router := setupRouter(docsDir)
 
-	resp := listDocs(t, router, "", utils.GetDefaultUserID())
+	resp := listDocs(t, router, "", "default")
 	paths := collectFilePaths(resp.Data)
 
-	// _users/ should NOT appear in root listing
-	for _, p := range paths {
-		if p == utils.UsersDirectory || p == utils.UsersDirectory+"/" {
-			t.Errorf("_users/ directory should not appear in root listing, found: %s", p)
-		}
+	// _users/ should NOT appear in root listing (internal directory)
+	if contains(paths, utils.UsersDirectory) {
+		t.Error("_users/ should NOT appear in root listing")
 	}
 
-	// Chats/ should appear at root level
+	// Per-user folders should appear with clean paths (from _users/default/)
 	if !contains(paths, "Chats") {
-		t.Error("Chats/ should appear in root listing")
+		t.Error("Chats/ should appear in root listing (from user's directory)")
 	}
 
 	// Shared folders should appear
 	if !contains(paths, "skills") {
 		t.Error("skills/ should appear in root listing")
 	}
+
+	// User's file should be visible under Chats
+	if !contains(paths, "Chats/session1.json") {
+		t.Errorf("session1.json should appear under Chats/, got: %v", paths)
+	}
 }
 
 func TestRootListingWithDotFolder(t *testing.T) {
 	docsDir, cleanup := setupTestDocsDir(t)
 	defer cleanup()
+
 	router := setupRouter(docsDir)
 
-	resp := listDocs(t, router, ".", utils.GetDefaultUserID())
+	resp := listDocs(t, router, ".", "default")
 	paths := collectFilePaths(resp.Data)
 
 	// folder=. should behave the same as empty folder (root listing)
-	for _, p := range paths {
-		if p == utils.UsersDirectory || p == utils.UsersDirectory+"/" {
-			t.Errorf("_users/ should not appear when folder=., found: %s", p)
-		}
+	// _users/ should NOT be visible
+	if contains(paths, utils.UsersDirectory) {
+		t.Error("_users/ should NOT appear in root listing with folder=.")
+	}
+
+	// Per-user Chats should still appear
+	if !contains(paths, "Chats") {
+		t.Error("Chats/ should appear in root listing with folder=.")
 	}
 }
 
-func TestAllUsersShareFilesystem(t *testing.T) {
+func TestPerUserFolderIsolation(t *testing.T) {
 	docsDir, cleanup := setupTestDocsDir(t)
 	defer cleanup()
+
+	// Create a second user with different Chats content
+	user2Dir := filepath.Join(docsDir, utils.UsersDirectory, "user2", "Chats")
+	os.MkdirAll(user2Dir, 0755)
+	os.WriteFile(filepath.Join(user2Dir, "user2-secret.json"), []byte(`{"secret":true}`), 0644)
+
 	router := setupRouter(docsDir)
 
-	// Both users should see the same Chats/ content
-	resp1 := listDocs(t, router, "Chats", "user1")
-	resp2 := listDocs(t, router, "Chats", "user2")
-
+	// Default user sees their own Chats
+	resp1 := listDocs(t, router, "Chats", "default")
 	paths1 := collectFilePaths(resp1.Data)
-	paths2 := collectFilePaths(resp2.Data)
 
-	if len(paths1) != len(paths2) {
-		t.Errorf("All users should see same Chats/ content: user1=%v, user2=%v", paths1, paths2)
+	if !contains(paths1, "Chats/session1.json") {
+		t.Errorf("Default user should see session1.json, got: %v", paths1)
+	}
+	if contains(paths1, "Chats/user2-secret.json") {
+		t.Error("Default user should NOT see user2's files")
 	}
 
-	found1 := contains(paths1, "session1.json") || contains(paths1, "Chats/session1.json")
-	found2 := contains(paths2, "session1.json") || contains(paths2, "Chats/session1.json")
-	if !found1 || !found2 {
-		t.Errorf("Both users should see session1.json: user1=%v, user2=%v", paths1, paths2)
+	// User2 sees their own Chats
+	resp2 := listDocs(t, router, "Chats", "user2")
+	paths2 := collectFilePaths(resp2.Data)
+
+	if !contains(paths2, "Chats/user2-secret.json") {
+		t.Errorf("User2 should see user2-secret.json, got: %v", paths2)
+	}
+	if contains(paths2, "Chats/session1.json") {
+		t.Error("User2 should NOT see default user's files")
 	}
 }
 
@@ -174,7 +197,7 @@ func TestSharedFoldersSameForAllUsers(t *testing.T) {
 	defer cleanup()
 	router := setupRouter(docsDir)
 
-	resp1 := listDocs(t, router, "skills", utils.GetDefaultUserID())
+	resp1 := listDocs(t, router, "skills", "default")
 	resp2 := listDocs(t, router, "skills", "user2")
 
 	paths1 := collectFilePaths(resp1.Data)
@@ -194,13 +217,13 @@ func TestNoUserIDFallsToDefault(t *testing.T) {
 	defer cleanup()
 	router := setupRouter(docsDir)
 
-	// No X-User-ID header — should still work and show shared content
+	// No X-User-ID header — should fall back to default user
 	resp := listDocs(t, router, "Chats", "")
 	paths := collectFilePaths(resp.Data)
 
 	found := contains(paths, "session1.json") || contains(paths, "Chats/session1.json")
 	if !found {
-		t.Errorf("No user ID should still see shared session1.json, got: %v", paths)
+		t.Errorf("No user ID should fall back to default and see session1.json, got: %v", paths)
 	}
 }
 

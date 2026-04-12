@@ -186,8 +186,8 @@ func extractRootCauseError(err error) string {
 // Tools from CreateWorkspaceAdvancedTools() get category "workspace_advanced"
 // All tools from CreateHumanTools() get category "human_tools"
 //
-// Note: workspace_basic and workspace_git tools are deprecated — shell_command covers
-// all file operations and git is handled via shell_command when needed.
+// Note: workspace_basic and workspace_git are internal/deprecated and are not
+// exposed to LLMs as workspace tool categories.
 func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	// sessionInfo: optional [userID, sessionID] for session-aware workspace executors
 	var userID, sessionID string
@@ -203,6 +203,8 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	// Create workspace advanced tools (always included)
 	workspaceAdvancedCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
 	workspaceAdvancedTools := virtualtools.CreateWorkspaceAdvancedTools()
+	workspaceImageCategory := virtualtools.GetWorkspaceImageToolCategory()
+	workspaceImageTools := virtualtools.CreateWorkspaceImageTools()
 
 	// Use session-aware executors when session info is provided
 	var workspaceAdvancedExecutors map[string]func(ctx context.Context, args map[string]any) (string, error)
@@ -211,17 +213,26 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	} else {
 		workspaceAdvancedExecutors = virtualtools.CreateWorkspaceAdvancedToolExecutors()
 	}
-
 	// Add advanced tools
 	allTools = append(allTools, workspaceAdvancedTools...)
+	allTools = append(allTools, workspaceImageTools...)
 	for name, executor := range workspaceAdvancedExecutors {
 		allExecutors[name] = executor
 	}
+	virtualtools.MergeImageToolExecutorsUntyped(virtualtools.ImageGenExecutorConfig{
+		WorkspaceAPIURL: getWorkspaceAPIURL(),
+		UserID:          userID,
+	}, allExecutors, nil)
 
 	// Advanced tools get workspace_advanced category
 	for _, tool := range workspaceAdvancedTools {
 		if tool.Function != nil {
 			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
+		}
+	}
+	for _, tool := range workspaceImageTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = workspaceImageCategory
 		}
 	}
 
@@ -248,9 +259,9 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	return allTools, allExecutors, toolCategories
 }
 
-// enhanceToolDescriptionForChatMode enhances a tool description with chat-mode-specific directory access information
-func enhanceToolDescriptionForChatMode(toolName, originalDescription string) string {
-	// Special tools that don't operate on specific directories
+// enhanceToolDescriptionForChatMode enhances a tool description with chat-mode-specific directory access information.
+// chatsFolder is the full per-user path (e.g. "_users/default/Chats").
+func enhanceToolDescriptionForChatMode(toolName, originalDescription, chatsFolder string) string {
 	specialTools := map[string]bool{
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
@@ -259,7 +270,6 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 		return originalDescription
 	}
 
-	// Write tools are restricted to Chats/ (chat mode only has diff_patch + shell)
 	writeTools := map[string]bool{
 		"diff_patch_workspace_file": true,
 		"execute_shell_command":     true,
@@ -269,18 +279,18 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (CHAT MODE):**")
 
 	if writeTools[toolName] {
-		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY write/modify files in the 'Chats/' folder. All other folders are read-only.")
-		accessInfo.WriteString("\nExample: 'Chats/output.txt', 'Chats/data.json'.")
+		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can ONLY write/modify files in '%s/'. All other folders are read-only.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\nExample: '%s/output.txt', '%s/data.json'.", chatsFolder, chatsFolder))
 	} else {
-		accessInfo.WriteString("\n\nYou have READ access to all workspace folders (Workflow/, skills/, etc.), but you can only WRITE to the 'Chats/' folder.")
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to all workspace folders (Workflow/, skills/, etc.), but you can only WRITE to '%s/'.", chatsFolder))
 	}
 
 	return originalDescription + accessInfo.String()
 }
 
 // enhanceToolDescriptionForMultiAgentMode augments workspace tool descriptions for multi-agent plan mode.
-// Tells the LLM that its primary write folder is Chats/.
-func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription string) string {
+// chatsFolder is the full per-user path (e.g. "_users/default/Chats").
+func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chatsFolder string) string {
 	specialTools := map[string]bool{
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
@@ -289,7 +299,6 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription strin
 		return originalDescription
 	}
 
-	// Write tools in plan/multi-agent mode (diff_patch + shell only)
 	writeTools := map[string]bool{
 		"diff_patch_workspace_file": true,
 		"execute_shell_command":     true,
@@ -299,27 +308,30 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription strin
 	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (MULTI-AGENT MODE):**")
 
 	if writeTools[toolName] {
-		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can write to 'Chats/' (primary). All other folders are read-only unless explicitly allowed.")
-		accessInfo.WriteString("\nSave plan outputs inside the plan folder (e.g. 'Chats/{plan_id}/output.txt').")
+		accessInfo.WriteString(fmt.Sprintf("\n\n⚠️ **IMPORTANT:** You can write to '%s/' (primary). All other folders are read-only unless explicitly allowed.", chatsFolder))
+		accessInfo.WriteString(fmt.Sprintf("\nSave plan outputs inside the plan folder (e.g. '%s/{plan_id}/output.txt').", chatsFolder))
 	} else {
-		accessInfo.WriteString("\n\nYou have READ access to all workspace folders. WRITE access is restricted to 'Chats/' and any explicitly allowed subfolders.")
+		accessInfo.WriteString(fmt.Sprintf("\n\nYou have READ access to all workspace folders. WRITE access is restricted to '%s/' and any explicitly allowed subfolders.", chatsFolder))
 	}
 
 	return originalDescription + accessInfo.String()
 }
 
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode writes.
-// By default, only Chats/ is writable. Pass additionalWriteFolders to allow extra folders (e.g. "skills/custom/").
+// The default writable folder is Downloads/ only — the per-user Chats folder is supplied by callers
+// via additionalWriteFolders so each session writes only to its own _users/<id>/Chats/ subtree.
+// Pass additionalWriteFolders to allow extra folders (e.g. "_users/<id>/Chats/", "skills/custom/").
 // This creates a wrapper that:
 // 1. ALLOWS read access to all folders (skills/, Workflow/, Downloads/, etc.)
-// 2. ONLY ALLOWS write access to Chats/ folder (plus any additionalWriteFolders)
+// 2. ONLY ALLOWS write access to Downloads/ + any additionalWriteFolders the caller passed
 // 3. Restricts shell writes to allowed folders
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), readOnlyFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// No protected folders — all users share the same filesystem
 	protectedFolders := []string{}
 
-	// Allowed write folders: Chats/ and Downloads/
-	allowedWriteFolders := []string{"Chats/", "Downloads/"}
+	// Default writable: Downloads/ only. The per-user Chats folder must come from the caller
+	// via additionalWriteFolders — this prevents accidental writes to the legacy global Chats/.
+	allowedWriteFolders := []string{"Downloads/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
 	// For shell sandboxing, pass all allowed write folders
@@ -433,8 +445,11 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				}
 				// Inject allowed write folders for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
-				// Set chat-mode read paths: all standard user folders + shared resources + read-only workflow context
-				chatReadFolders := []string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
+				// Set chat-mode read paths: shared resources + the per-user folders the caller already
+				// passed in shellAllowedFolders (typically _users/<id>/Chats/ and _users/<id>/memories/).
+				// The legacy global "Chats/" is NOT in defaults — per-user paths come from shellAllowedFolders.
+				chatReadFolders := []string{"Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
+				chatReadFolders = append(chatReadFolders, shellAllowedFolders...)
 				chatReadFolders = append(chatReadFolders, readOnlyFolders...)
 				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
 				// Default working directory for chat mode — workspace root

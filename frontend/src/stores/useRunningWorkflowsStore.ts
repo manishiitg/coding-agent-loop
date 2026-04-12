@@ -186,26 +186,17 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         // Start polling (adaptive based on drawer state)
         get().startRunningPolling(state.drawerIsOpen)
 
-        // Update session metadata
-        agentApi.updateChatSession(params.sessionId, {
-          config: {
-            workflow_metadata: {
-              preset_id: params.presetId,
-              preset_name: params.presetName,
-              workspace_path: params.workspacePath,
-              run_folder: params.runFolder,
-              phase_id: params.phaseId,
-              phase_name: params.phaseName,
-              is_minimized: true,
-              minimized_at: minimizedAt,
-              step_progress: params.progress,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              current_step_title: (params.progress as any)?.last_completed_step_title
-            }
-          }
+        // Mirror minimization state into the workflow-owned running registry.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any).catch(error => {
-          console.warn('[RunningWorkflowsStore] Failed to update session metadata:', error)
+        const currentStepTitle = (params.progress as any)?.last_completed_step_title
+        agentApi.updateRunningWorkflow(params.sessionId, {
+          phase_id: params.phaseId,
+          phase_name: params.phaseName,
+          is_minimized: true,
+          minimized_at: minimizedAt,
+          current_step_title: currentStepTitle,
+        }).catch(error => {
+          console.warn('[RunningWorkflowsStore] Failed to update running workflow:', error)
         })
       },
 
@@ -225,24 +216,12 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         saveRunningWorkflowsToStorage(newRunningWorkflows)
 
 
-        // Clear is_minimized flag in session metadata
-        agentApi.updateChatSession(runningWorkflow.sessionId, {
-          config: {
-            workflow_metadata: {
-              preset_id: runningWorkflow.presetId,
-              preset_name: runningWorkflow.presetName,
-              workspace_path: runningWorkflow.workspacePath,
-              run_folder: runningWorkflow.runFolder,
-              phase_id: runningWorkflow.phaseId,
-              phase_name: runningWorkflow.phaseName,
-              is_minimized: false,
-              step_progress: runningWorkflow.progress,
-              current_step_title: runningWorkflow.currentStepTitle
-            }
-          }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any).catch(error => {
-          console.warn('[RunningWorkflowsStore] Failed to clear session metadata:', error)
+        // Clear is_minimized flag in the running-workflow registry.
+        agentApi.updateRunningWorkflow(runningWorkflow.sessionId, {
+          is_minimized: false,
+          current_step_title: runningWorkflow.currentStepTitle,
+        }).catch(error => {
+          console.warn('[RunningWorkflowsStore] Failed to clear minimization:', error)
         })
 
         return runningWorkflow

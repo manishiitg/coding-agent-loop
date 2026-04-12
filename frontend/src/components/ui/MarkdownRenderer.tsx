@@ -503,7 +503,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
+    const pathRegex = /(`?)\b((?:_users\/[\w.-]+\/(?:Chats|memories)|Chats|Downloads|Workflow|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.
@@ -544,7 +544,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
            if (backticksBefore % 2 === 1) {
              return match
            }
-           if (before === '`' || before === '[' || before === '(' || before === '*' || after === ']' || after === '`' || after === '*') {
+           if (before === '`' || before === '[' || before === '(' || before === '*' || before === '/' || after === ']' || after === '`' || after === '*') {
              return match
            }
         }
@@ -765,7 +765,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
             const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
             const workspaceFilepath = href?.startsWith('#workspace/')
               ? decodeURIComponent(href.replace('#workspace/', ''))
@@ -800,12 +800,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             )
           },
           img: ({ src, alt }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/']
-            const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
-            const resolvedSrc = isWorkspacePath
-              ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/']
+            const workspaceFilepath = src?.startsWith('#workspace/')
+              ? decodeURIComponent(src.replace('#workspace/', ''))
+              : (src && workspacePrefixes.some(p => src.startsWith(p)) ? src : null)
+            const resolvedSrc = workspaceFilepath
+              ? `${getApiBaseUrl()}/api/public/file?path=${btoa(workspaceFilepath)}`
               : src
-            console.log(`[IMAGE_RENDER] MarkdownRenderer src="${src}" isWorkspace=${isWorkspacePath} resolvedSrc="${resolvedSrc}"`)
+            console.log(`[IMAGE_RENDER] MarkdownRenderer src="${src}" workspaceFilepath="${workspaceFilepath}" resolvedSrc="${resolvedSrc}"`)
             return (
               <img
                 src={resolvedSrc}

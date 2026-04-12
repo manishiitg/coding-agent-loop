@@ -2,7 +2,6 @@ export interface SubAgentFrontmatter {
   name: string;
   description: string;
   default_reasoning_level?: string;
-  default_tool_mode?: string;
 }
 
 export interface SubAgent {

@@ -18,8 +18,9 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
@@ -79,14 +80,8 @@ func getWorkspaceAPIURL() string {
 }
 
 // getWorkspaceDocsAbsPath returns the absolute filesystem path to the workspace docs root.
-// Uses WORKSPACE_DOCS_PATH env var if set (e.g. /app/workspace-docs in Docker),
-// otherwise resolves ../workspace-docs relative to the working directory.
 func getWorkspaceDocsAbsPath() string {
-	if p := os.Getenv("WORKSPACE_DOCS_PATH"); p != "" {
-		return p
-	}
-	abs, _ := filepath.Abs("../workspace-docs")
-	return abs
+	return fsutil.WorkspaceDocsRoot()
 }
 
 // readFileFromWorkspace reads a file from the workspace API and returns its content as a string
@@ -466,15 +461,28 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 	return existingFolders
 }
 
-// ActiveWorkflowExecution tracks a currently running workflow execution in memory
+// ActiveWorkflowExecution is the backend half of the workflow/chat decoupling:
+// workflow UI state lives here instead of being mirrored into chat session metadata.
 type ActiveWorkflowExecution struct {
 	QueryID       string    `json:"query_id"`
 	SessionID     string    `json:"session_id"`
 	PresetQueryID string    `json:"preset_query_id,omitempty"`
+	PresetName    string    `json:"preset_name,omitempty"`
 	WorkspacePath string    `json:"workspace_path"`
 	RunFolder     string    `json:"run_folder,omitempty"`
+	PhaseID       string    `json:"phase_id,omitempty"`
+	PhaseName     string    `json:"phase_name,omitempty"`
+	Status        string    `json:"status,omitempty"` // "running", "completed", "failed"
+	UserID        string    `json:"user_id,omitempty"`
+	Title         string    `json:"title,omitempty"`
+	Query         string    `json:"query,omitempty"`
 	TriggeredBy   string    `json:"triggered_by"` // "manual", "cron", "workflow_builder", "workflow_phase"
 	StartedAt     time.Time `json:"started_at"`
+	// Minimization state — frontend sets this when user minimizes a running workflow.
+	IsMinimized      bool   `json:"is_minimized,omitempty"`
+	MinimizedAt      int64  `json:"minimized_at,omitempty"` // unix ms
+	CurrentStepID    string `json:"current_step_id,omitempty"`
+	CurrentStepTitle string `json:"current_step_title,omitempty"`
 }
 
 // RunMetadataLLM captures which model was used for a specific role
@@ -567,7 +575,7 @@ type WorkflowRequest struct {
 type WorkflowUpdateRequest struct {
 	PresetQueryID   string                            `json:"preset_query_id"`
 	WorkflowStatus  *string                           `json:"workflow_status,omitempty"`
-	SelectedOptions *database.WorkflowSelectedOptions `json:"selected_options,omitempty"`
+	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
 	StepID          *string                           `json:"step_id,omitempty"` // Optional step ID for step-specific phase execution
 }
 
@@ -580,7 +588,7 @@ type WorkflowRuntimeState struct {
 	ID              string                            `json:"id"`
 	PresetQueryID   string                            `json:"preset_query_id"`
 	WorkflowStatus  string                            `json:"workflow_status"`
-	SelectedOptions *database.WorkflowSelectedOptions `json:"selected_options,omitempty"`
+	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
 	CreatedAt       time.Time                         `json:"created_at"`
 	UpdatedAt       time.Time                         `json:"updated_at"`
 }
@@ -635,9 +643,9 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	status := database.WorkflowStatusPreVerification
+	status := workflowtypes.WorkflowStatusPreVerification
 	if !req.HumanVerificationRequired {
-		status = database.WorkflowStatusPostVerification
+		status = workflowtypes.WorkflowStatusPostVerification
 	}
 
 	now := time.Now()
@@ -701,9 +709,9 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 			"updated_at":       state.UpdatedAt,
 		},
 		"status": map[string]interface{}{
-			"is_ready":              state.WorkflowStatus == database.WorkflowStatusPostVerification,
-			"requires_verification": state.WorkflowStatus == database.WorkflowStatusPreVerification,
-			"can_execute":           state.WorkflowStatus == database.WorkflowStatusPostVerification,
+			"is_ready":              state.WorkflowStatus == workflowtypes.WorkflowStatusPostVerification,
+			"requires_verification": state.WorkflowStatus == workflowtypes.WorkflowStatusPreVerification,
+			"can_execute":           state.WorkflowStatus == workflowtypes.WorkflowStatusPostVerification,
 		},
 	})
 }
@@ -748,7 +756,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 		state = &WorkflowRuntimeState{
 			ID:             fmt.Sprintf("wfrt_%d", time.Now().UnixNano()),
 			PresetQueryID:  req.PresetQueryID,
-			WorkflowStatus: database.WorkflowStatusPreVerification,
+			WorkflowStatus: workflowtypes.WorkflowStatusPreVerification,
 			CreatedAt:      time.Now(),
 		}
 	}

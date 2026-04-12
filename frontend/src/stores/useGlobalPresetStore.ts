@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { agentApi, sessionShareApi } from '../services/api'
+import { agentApi, workflowManifestApi } from '../services/api'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
@@ -149,7 +149,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         try {
           if (id) {
             // Update existing workflow manifest
-            await sessionShareApi.updateWorkflowManifest({
+            await workflowManifestApi.updateWorkflowManifest({
               workspace_path: selectedFolder.filepath,
               label,
               capabilities: {
@@ -165,7 +165,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             })
           } else {
             // Create new workflow manifest
-            await sessionShareApi.createWorkflowManifest({
+            await workflowManifestApi.createWorkflowManifest({
               label,
               workspace_path: selectedFolder.filepath,
               capabilities: {

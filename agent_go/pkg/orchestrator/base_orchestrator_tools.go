@@ -15,20 +15,27 @@ func getToolNamesByCategory(category string) map[string]bool {
 
 	switch category {
 	case "workspace_tools":
-		// Backward compatible - returns all workspace tools (basic + advanced)
-		executors := virtualtools.CreateWorkspaceToolExecutors()
+		// Backward compatible - returns all LLM-visible workspace tools.
+		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}
-	case "workspace_basic":
-		// New category - returns only basic workspace tools (11 tools)
-		executors := virtualtools.CreateWorkspaceBasicToolExecutors()
-		for toolName := range executors {
+		imageExecutors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
+		for toolName := range imageExecutors {
+			toolNames[toolName] = true
+		}
+		browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+		for toolName := range browserExecutors {
 			toolNames[toolName] = true
 		}
 	case "workspace_advanced":
-		// New category - returns only advanced workspace tools (2 tools: shell + image)
+		// LLM-visible advanced workspace tools
 		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+	case "workspace_image":
+		executors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}
@@ -74,7 +81,7 @@ func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []stri
 
 	// Convert specific tools - need to determine category for each tool
 	allCategoryTools := make(map[string]string) // toolName -> category
-	for _, category := range []string{"workspace_tools", "human_tools"} {
+	for _, category := range []string{"workspace_tools", "workspace_browser", "human_tools", "workspace_image"} {
 		categoryToolNames := getToolNamesByCategory(category)
 		for toolName := range categoryToolNames {
 			allCategoryTools[toolName] = category

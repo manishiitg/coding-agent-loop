@@ -2,6 +2,10 @@ import React from 'react'
 import { CheckCircle, XCircle, Layers, Clock, AlertCircle } from 'lucide-react'
 import type { BatchGroupEndEvent as BatchGroupEndEventData } from '../../../generated/event-types'
 
+type BatchGroupEndDisplayEvent = BatchGroupEndEventData & {
+  group_name?: string
+}
+
 interface BatchGroupEndEventProps {
   event: BatchGroupEndEventData
   compact?: boolean
@@ -12,6 +16,7 @@ interface BatchGroupEndEventProps {
 // This component is purely for display purposes.
 export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, compact = false }) => {
   const isSuccess = event.success
+  const groupLabel = ((event as BatchGroupEndDisplayEvent).group_name ?? event.group_id ?? 'N/A').toUpperCase()
 
   if (compact) {
     return (
@@ -22,7 +27,7 @@ export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, c
           ) : (
             <XCircle className="w-3 h-3 text-red-600 dark:text-red-400" />
           )}
-          <span className="font-medium text-gray-900 dark:text-gray-100">Group {event.group_name?.toUpperCase() || 'N/A'}</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">Group {groupLabel}</span>
           <span className={isSuccess ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
             {isSuccess ? 'Completed' : 'Failed'}
           </span>
@@ -51,7 +56,7 @@ export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, c
           <div className={`font-bold ${titleColor} flex items-center gap-2`}>
             Batch Group {isSuccess ? 'Completed' : 'Failed'}
             <span className={`text-[10px] font-normal ${isSuccess ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300'} px-1.5 py-0.5 rounded opacity-100 border border-transparent font-mono`}>
-              {event.group_name?.toUpperCase() || 'N/A'}
+              {groupLabel}
             </span>
           </div>
           <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">

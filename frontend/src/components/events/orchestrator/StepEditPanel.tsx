@@ -183,7 +183,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // workspace_tools expanded by default to show tool configuration
   const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set(['workspace_tools']));
   // State for expanded workspace sub-categories (expanded by default to show tools)
-  // Maps to backend categories: workspace_advanced (4 tools), workspace_browser (1 tool)
+  // Maps to backend categories: workspace_advanced, workspace_image, workspace_browser
   // Note: expandedWorkspaceSubCategories removed - workspace tools are shown flat now
 
   // Track the step to detect when step changes (using title + index as stable identifier)
@@ -347,7 +347,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Sub-categories that belong to workspace_tools parent
-  const WORKSPACE_SUB_CATEGORIES = ['workspace_advanced'];
+  const WORKSPACE_SUB_CATEGORIES = ['workspace_advanced', 'workspace_image', 'workspace_browser'];
 
   const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
     // Empty array means all tools enabled by default
@@ -360,9 +360,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (enabledTools.length === 0) return true;
     // Check if parent workspace_tools:* is enabled (covers all sub-categories)
     if (WORKSPACE_SUB_CATEGORIES.includes(category) && isCategoryEnabled('workspace_tools', enabledTools)) return true;
-    // Check if sub-category is enabled (e.g., workspace_basic:*)
+    // Check if sub-category is enabled (e.g., workspace_advanced:*)
     if (isCategoryEnabled(category, enabledTools)) return true;
-    // Check if specific tool is enabled (e.g., workspace_basic:list_workspace_files)
+    // Check if specific tool is enabled (e.g., workspace_advanced:read_image)
     return enabledTools.includes(formatToolEntry(category, toolName));
   };
 
@@ -483,7 +483,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (enabledTools.length === 0) return true; // Default: all enabled
     // Check if parent workspace_tools:* is enabled
     if (WORKSPACE_SUB_CATEGORIES.includes(category) && isCategoryEnabled('workspace_tools', enabledTools)) return true;
-    // Check if sub-category itself is enabled (e.g., workspace_basic:*)
+    // Check if sub-category itself is enabled (e.g., workspace_advanced:*)
     if (isCategoryEnabled(category, enabledTools)) return true;
 
     const enabledInSubCategory = subCategoryTools.filter(toolName =>
@@ -1683,12 +1683,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <input
                       type="checkbox"
                       checked={(() => {
-                        const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
+                        const allWorkspaceTools = getToolsByCategory('workspace_tools', capabilities?.workspace);
                         if (enabledCustomTools.length === 0) return true;
                         if (isCategoryEnabled('workspace_tools', enabledCustomTools)) return true;
-                        if (isCategoryEnabled('workspace_advanced', enabledCustomTools)) return true;
-                        const enabledCount = advancedTools.filter(t => isToolEnabled('workspace_advanced', t, enabledCustomTools)).length;
-                        return enabledCount === advancedTools.length;
+                        const enabledCount = allWorkspaceTools.filter(t => {
+                          const category = getCategoryForTool(t) || 'workspace_tools';
+                          return isToolEnabled(category, t, enabledCustomTools);
+                        }).length;
+                        return enabledCount === allWorkspaceTools.length;
                       })()}
                       onChange={(e) => {
                         if (e.target.checked) {
@@ -1702,12 +1704,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Workspace Tools</span>
                     <span className="text-xs text-gray-500 dark:text-gray-500">
                       {(() => {
-                        const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
-                        if (enabledCustomTools.length === 0) return `(${advancedTools.length}/${advancedTools.length} tools)`;
-                        if (isCategoryEnabled('workspace_tools', enabledCustomTools)) return `(${advancedTools.length}/${advancedTools.length} tools)`;
-                        if (isCategoryEnabled('workspace_advanced', enabledCustomTools)) return `(${advancedTools.length}/${advancedTools.length} tools)`;
-                        const enabledCount = advancedTools.filter(t => isToolEnabled('workspace_advanced', t, enabledCustomTools)).length;
-                        return `(${enabledCount}/${advancedTools.length} tools)`;
+                        const allWorkspaceTools = getToolsByCategory('workspace_tools', capabilities?.workspace);
+                        if (enabledCustomTools.length === 0) return `(${allWorkspaceTools.length}/${allWorkspaceTools.length} tools)`;
+                        if (isCategoryEnabled('workspace_tools', enabledCustomTools)) return `(${allWorkspaceTools.length}/${allWorkspaceTools.length} tools)`;
+                        const enabledCount = allWorkspaceTools.filter(t => {
+                          const category = getCategoryForTool(t) || 'workspace_tools';
+                          return isToolEnabled(category, t, enabledCustomTools);
+                        }).length;
+                        return `(${enabledCount}/${allWorkspaceTools.length} tools)`;
                       })()}
                     </span>
                   </label>
@@ -1729,8 +1733,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </div>
                 {expandedToolCategories.has('workspace_tools') && (
                   <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                    {getToolsByCategory('workspace_advanced', capabilities?.workspace).map((toolName: string) => {
-                      const toolIsEnabled = isToolEnabled('workspace_advanced', toolName, enabledCustomTools);
+                    {getToolsByCategory('workspace_tools', capabilities?.workspace).map((toolName: string) => {
+                      const toolCategory = getCategoryForTool(toolName) || 'workspace_tools';
+                      const toolIsEnabled = isToolEnabled(toolCategory, toolName, enabledCustomTools);
                       return (
                         <label key={toolName} className="flex items-center gap-2 cursor-pointer">
                           <input
@@ -1738,9 +1743,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                             checked={toolIsEnabled}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setEnabledCustomTools(prev => enableTool('workspace_advanced', toolName, prev));
+                                setEnabledCustomTools(prev => enableTool(toolCategory, toolName, prev));
                               } else {
-                                setEnabledCustomTools(prev => disableTool('workspace_advanced', toolName, prev));
+                                setEnabledCustomTools(prev => disableTool(toolCategory, toolName, prev));
                               }
                             }}
                             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"

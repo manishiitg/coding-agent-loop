@@ -106,10 +106,6 @@ RUN go version
 # Copy configuration files
 COPY --from=builder /app/agent_go/configs ./configs
 
-# Copy database migration files (required for schema creation on startup)
-COPY --from=builder /app/agent_go/pkg/database/migrations ./pkg/database/migrations
-COPY --from=builder /app/agent_go/pkg/database/migrations_postgres ./pkg/database/migrations_postgres
-
 # Create reports and logs directories
 RUN mkdir -p reports logs && chown -R appuser:appgroup /app
 

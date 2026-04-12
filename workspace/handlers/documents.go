@@ -185,13 +185,19 @@ func CreateDocument(c *gin.Context) {
 	})
 }
 
-// getAllDocumentsRecursively recursively reads all files and folders from a directory
-func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit, offset int) ([]models.Document, error) {
+// getAllDocumentsRecursively recursively reads all files and folders from a directory.
+// Follows symbolic links (directories are reported under their symlink path) and uses
+// resolved-path cycle detection so the same underlying directory is never walked twice.
+func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit, offset int, includeMetadata ...bool) ([]models.Document, error) {
+	metadata := true
+	if len(includeMetadata) > 0 {
+		metadata = includeMetadata[0]
+	}
 	var documents []models.Document
 	count := 0
 	skipped := 0
+	visited := map[string]bool{}
 
-	// Common heavy directories to ignore
 	ignoredDirs := map[string]bool{
 		".git":         true,
 		"node_modules": true,
@@ -204,129 +210,96 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 		"venv":         true,
 	}
 
-	err := filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {
+	var walk func(path string) error
+	walk = func(path string) error {
+		// os.Stat follows symlinks, so symlinked directories are recognised as directories.
+		info, err := os.Stat(path)
 		if err != nil {
-			return err
-		}
-
-		// Skip heavy directories entirely
-		if info.IsDir() && ignoredDirs[info.Name()] {
-			return filepath.SkipDir
-		}
-
-		// Skip the root search path itself only if it's not a folder we want to include
-		if path == searchPath {
-			// If the search path is a directory and we're querying a specific folder,
-			// we need to include it in the results
-			if info.IsDir() && searchPath != docsDir {
-				// This is a specific folder query - include the folder itself
-				relPathFromDocs, err := filepath.Rel(docsDir, path)
-				if err != nil {
-					return nil
-				}
-
-				doc := models.Document{
-					FilePath:     relPathFromDocs,
-					Type:         "folder", // Mark as folder
-					LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
-				}
-
-				// Apply offset and limit for folders too? Usually we want folders.
-				// For now, let's treat folders as part of the count if we want strictly flat list pagination.
-				// But mostly we want files. Let's keep folders but limit files?
-				// To be safe and simple, we count everything.
-				if offset > 0 && skipped < offset {
-					skipped++
-					return nil
-				}
-				
-				// Don't limit root folder or count it
-				
-				documents = append(documents, doc)
-				// count++ 
-			}
 			return nil
 		}
 
-		// Calculate current depth relative to search path
-		relPath, err := filepath.Rel(searchPath, path)
-		if err != nil {
-			return nil // Skip files/folders that can't be relativized
+		name := filepath.Base(path)
+		if info.IsDir() && ignoredDirs[name] {
+			return nil
 		}
 
-		// Calculate depth by counting path separators
-		currentDepth := 0
-		if relPath != "." {
-			currentDepth = strings.Count(relPath, string(filepath.Separator))
-		}
+		isRoot := path == searchPath
 
-		// Skip if max depth exceeded
-		if maxDepth >= 0 && currentDepth > maxDepth {
-			if info.IsDir() {
-				return filepath.SkipDir // Skip this directory and its contents
+		// Cycle protection: if we've already walked this underlying directory
+		// (reached via a different symlink path), skip it entirely.
+		if info.IsDir() {
+			if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
+				if visited[resolved] {
+					return nil
+				}
+				visited[resolved] = true
 			}
-			return nil // Skip this file
 		}
 
-		// Determine folder relative to docs directory
+		if !isRoot {
+			relFromSearch, err := filepath.Rel(searchPath, path)
+			if err != nil {
+				return nil
+			}
+			currentDepth := 0
+			if relFromSearch != "." {
+				currentDepth = strings.Count(relFromSearch, string(filepath.Separator))
+			}
+			if maxDepth >= 0 && currentDepth > maxDepth {
+				return nil
+			}
+		}
+
 		relPathFromDocs, err := filepath.Rel(docsDir, path)
 		if err != nil {
-			return nil // Skip files/folders that can't be relativized
+			return nil
 		}
 
-		// Apply pagination
-		if offset > 0 && skipped < offset {
-			skipped++
-			if info.IsDir() {
-				// Don't skip dir children just because the dir itself is skipped in pagination
-				// unless we are way past. But filepath.Walk is depth-first usually.
-				// Actually, if we skip a dir, we might skip its children if we return SkipDir.
-				// We should just return nil to continue walking but not add to result.
-				return nil 
+		// Add entry — the root searchPath is only added when it's a specific subfolder query.
+		addEntry := true
+		if isRoot && !(info.IsDir() && searchPath != docsDir) {
+			addEntry = false
+		}
+		if addEntry {
+			if offset > 0 && skipped < offset {
+				skipped++
+			} else if info.IsDir() {
+				doc := models.Document{
+					FilePath: relPathFromDocs,
+					Type:     "folder",
+				}
+				if metadata {
+					doc.LastModified = info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00")
+				}
+				documents = append(documents, doc)
+			} else if limit <= 0 || count < limit {
+				doc := models.Document{
+					FilePath: relPathFromDocs,
+				}
+				if metadata {
+					doc.IsImage = isImageFile(name)
+					doc.LastModified = info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00")
+				}
+				documents = append(documents, doc)
+				count++
 			}
-			return nil
 		}
 
 		if info.IsDir() {
-			// This is a folder - add it to the list
-			doc := models.Document{
-				FilePath:     relPathFromDocs,
-				Type:         "folder", // Mark as folder
-				LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return nil
 			}
-			documents = append(documents, doc)
-			// Don't count folders towards the limit to ensure full tree structure
-		} else {
-			// Check file limit before adding
-			if limit > 0 && count >= limit {
-				return nil // Skip this file, but continue walking to find folders
+			for _, e := range entries {
+				if err := walk(filepath.Join(path, e.Name())); err != nil {
+					return err
+				}
 			}
-
-			// This is a file - include all files regardless of type
-			// For listing, we don't read file content to improve performance
-			// Content is only read when using read_workspace_file tool
-
-			// Check if it's an image
-			isImage := isImageFile(info.Name())
-
-			doc := models.Document{
-				FilePath:     relPathFromDocs,
-				Type:         "file",
-				IsImage:      isImage,
-				LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
-			}
-			documents = append(documents, doc)
-			count++
 		}
-
 		return nil
-	})
-	
-	// Handle SkipAll error as success (it's our signal to stop)
-	if err == filepath.SkipAll {
-		err = nil
 	}
-	
+
+	err := walk(searchPath)
 	return documents, err
 }
 
@@ -449,9 +422,9 @@ func ListDocuments(c *gin.Context) {
 	// Build search path with user isolation
 	var searchPath string
 	var err error
-	var isRootListing bool
-	if normalizedFolder != "" && normalizedFolder != "." {
-		// Resolve path
+	isRootListing := normalizedFolder == "" || normalizedFolder == "."
+	if !isRootListing {
+		// Resolve path (per-user folders route to _users/{userID}/)
 		searchPath, err = resolveUserPath(c, normalizedFolder)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -462,9 +435,7 @@ func ListDocuments(c *gin.Context) {
 			return
 		}
 	} else {
-		// Root listing
 		searchPath = docsDir
-		isRootListing = true
 	}
 
 	// Check if the folder exists before attempting to read it
@@ -491,7 +462,8 @@ func ListDocuments(c *gin.Context) {
 
 	// Use recursive function to get all documents with max depth
 	// Force unlimited files (limit=-1) and no offset (offset=0) to ensure full tree structure is returned for the UI
-	documents, err := getAllDocumentsRecursively(searchPath, docsDir, req.MaxDepth, -1, 0)
+	// Skip metadata (last_modified, is_image) for root listings to reduce response size
+	documents, err := getAllDocumentsRecursively(searchPath, docsDir, req.MaxDepth, -1, 0, !isRootListing)
 	if err != nil {
 		// Check if error is due to directory not existing
 		if os.IsNotExist(err) {
@@ -512,17 +484,59 @@ func ListDocuments(c *gin.Context) {
 		return
 	}
 
-	// For root listing, filter out _users/ directory (legacy)
-	if isRootListing {
-		var filteredDocs []models.Document
-		for _, doc := range documents {
-			if strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") || doc.FilePath == utils.UsersDirectory {
-				continue // Skip _users/ legacy directory if it still exists
+	// For non-root per-user folder listings, rewrite paths to strip _users/{userID}/ prefix
+	// e.g. _users/default/Chats/session.json → Chats/session.json
+	if !isRootListing && utils.IsPerUserPath(normalizedFolder) {
+		for i := range documents {
+			if cleanPath, convErr := utils.ConvertToUserRelativePath(
+				filepath.Join(docsDir, documents[i].FilePath), docsDir,
+			); convErr == nil {
+				documents[i].FilePath = cleanPath
 			}
-			filteredDocs = append(filteredDocs, doc)
 		}
-		documents = filteredDocs
 	}
+
+	// For root listing, replace per-user folders with contents from _users/{userID}/
+	// and filter out the _users/ directory itself
+	if isRootListing {
+		// Remove per-user folder entries and _users/ entries from root scan
+		var sharedDocuments []models.Document
+		for _, doc := range documents {
+			// Skip _users/ directory and its contents
+			if doc.FilePath == utils.UsersDirectory || strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") {
+				continue
+			}
+			// Skip root-level per-user folders (they'll be replaced with user-scoped ones)
+			if utils.IsPerUserPath(doc.FilePath) {
+				continue
+			}
+			sharedDocuments = append(sharedDocuments, doc)
+		}
+
+		// Scan per-user folders from _users/{userID}/ and add with clean paths
+		for _, prefix := range utils.PerUserPrefixes() {
+			userFolderPath, _ := resolveUserPath(c, prefix)
+			if _, statErr := os.Stat(userFolderPath); statErr != nil {
+				continue // user folder doesn't exist yet
+			}
+			userDocs, scanErr := getAllDocumentsRecursively(userFolderPath, docsDir, req.MaxDepth, -1, 0, false)
+			if scanErr != nil {
+				continue
+			}
+			// Rewrite paths: _users/{userID}/Chats/... → Chats/...
+			for i := range userDocs {
+				if cleanPath, convErr := utils.ConvertToUserRelativePath(
+					filepath.Join(docsDir, userDocs[i].FilePath), docsDir,
+				); convErr == nil {
+					userDocs[i].FilePath = cleanPath
+				}
+			}
+			sharedDocuments = append(sharedDocuments, userDocs...)
+		}
+		documents = sharedDocuments
+	}
+
+
 
 	// Filter out blocked paths before building hierarchy
 	if len(blockedPaths) > 0 {

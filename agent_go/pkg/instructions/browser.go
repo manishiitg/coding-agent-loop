@@ -41,11 +41,16 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	}
 
 	// Add session limits — applies to all browser types
+	closeRule := "- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot."
+	if isCdp {
+		// CDP connects to user's real browser — closing would kill their tab
+		closeRule = "- **Do NOT close the browser** when done — it is the user's real browser. Only close if the user explicitly asks."
+	}
 	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
 		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
 		"- **Per workflow:** max %d concurrent browser sessions across all agents.\n"+
 		"- **Global:** max %d concurrent browser sessions across all workflows.\n"+
-		"- Always **close the browser** when done (agent_browser command=\"close\" or browser_close) to free the session slot.\n"+
+		"%s\n"+
 		"- **Multiple browsers in a workflow:** Each parallel agent MUST use a **unique session name** "+
 		"(e.g. session=\"twitter_research\", session=\"linkedin_lookup\"). "+
 		"If two agents both use session=\"default\", they will share the same browser instead of getting separate ones. "+
@@ -53,6 +58,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		browser.MaxBrowserSessionsPerAgent,
 		browser.MaxBrowserSessionsPerWorkflow,
 		browser.MaxBrowserSessionsGlobal,
+		closeRule,
 	)
 
 	if cfg.IsIsolated {

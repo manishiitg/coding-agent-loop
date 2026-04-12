@@ -6,8 +6,13 @@
  */
 
 import type { PollingEvent } from '../services/api-types'
+import type { BatchGroupStartEvent as BatchGroupStartEventData } from '../generated/event-types'
 import { getTypedEventData } from '../generated/event-types'
 import { EVENT_TYPES } from '../constants/runningWorkflows'
+
+type BatchGroupStartEventWithLegacyName = BatchGroupStartEventData & {
+  group_name?: string
+}
 
 /**
  * Workflow information extracted from events
@@ -187,8 +192,9 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
       } else {
         const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
         if (batchGroupStartData) {
-          if (batchGroupStartData.group_name) {
-            info.currentGroupName = batchGroupStartData.group_name
+          const groupName = (batchGroupStartData as BatchGroupStartEventWithLegacyName).group_name ?? batchGroupStartData.group_id
+          if (groupName) {
+            info.currentGroupName = groupName
           }
           if (batchGroupStartData.group_index !== undefined) {
             info.currentGroupIndex = batchGroupStartData.group_index

@@ -336,6 +336,20 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 				}
 			}
 
+			// Block write tools from modifying system-managed planning files.
+			// plan.json, step_config.json, and workflow_layout.json must only be modified
+			// via dedicated tools (update_regular_step, update_step_config, etc.) that
+			// serialize the full struct to JSON. Raw file writes (diff_patch, update_workspace_file)
+			// can corrupt these files — e.g. when diff hunks fail to match and the
+			// fallback appends fragments, producing invalid JSON.
+			if isWriteCopy {
+				for _, paramName := range paramsToValidateCopy {
+					if pathStr, ok := args[paramName].(string); ok && isProtectedPlanningPath(pathStr) {
+						return "", fmt.Errorf("ACCESS DENIED: %q is a system-managed planning file. Use the dedicated plan/step update tools (update_regular_step, update_decision_step, update_step_config, set_workflow_objective, etc.) instead of %s", pathStr, toolNameCopy)
+					}
+				}
+			}
+
 			// Inject event emitter into context before calling executor
 			ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
 			// Inject snapshotted folder guard paths into context for shell execution
@@ -385,4 +399,22 @@ func (bo *BaseOrchestrator) PrepareWorkspaceToolsWithExplicitPaths(readPaths, wr
 	// }
 
 	return tools, wrappedExecutors
+}
+
+// isProtectedPlanningPath checks if a workspace-relative path points to a
+// system-managed planning file that must not be modified via raw file writes.
+// These files are managed by dedicated tools that serialize full structs to JSON.
+func isProtectedPlanningPath(relPath string) bool {
+	// Normalize: strip leading slashes
+	normalized := strings.TrimLeft(relPath, "/")
+	parts := strings.Split(normalized, "/")
+	for i, part := range parts {
+		if part == "planning" && i+1 < len(parts) {
+			filename := parts[i+1]
+			if filename == "plan.json" || filename == "step_config.json" || filename == "workflow_layout.json" {
+				return true
+			}
+		}
+	}
+	return false
 }

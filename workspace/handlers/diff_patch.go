@@ -1182,25 +1182,12 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 		} else {
 
-			// No match found for the whole hunk, try falling back to just additions
+			// No match found — return an error instead of blindly appending
+			// additions to the bottom, which corrupts structured files (JSON, etc.)
 
-			fmt.Printf("⚠️ Could not find match for hunk, falling back to simple additions\n")
+			fmt.Printf("❌ Could not find match for hunk — refusing to apply to prevent corruption\n")
 
-			var additions []string
-
-			for _, hl := range h.lines {
-
-				if strings.HasPrefix(hl, "+") {
-
-					additions = append(additions, hl[1:])
-
-				}
-
-			}
-
-			newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
-
-			resultLines = strings.Split(newResult, "\n")
+			return "", fmt.Errorf("patch hunk failed to apply: could not find matching context lines in the file. Use read_workspace_file to get current content and retry with an accurate diff")
 
 		}
 

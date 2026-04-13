@@ -2136,6 +2136,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				return executionResult, updatedContextFiles, err
 			}
 
+			// Exit immediately if execution failed after exhausting all retry attempts.
+			// Without this check, sub-agent execution errors are silently swallowed:
+			// the error is non-nil but the function returns nil error at the end,
+			// causing the orchestrator to think the sub-agent completed successfully.
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("🛑 Step %d execution failed after %d attempts - propagating error", stepIndex+1, maxRetryAttempts), err)
+				return executionResult, updatedContextFiles, fmt.Errorf("step %d execution failed after %d retry attempts: %w", stepIndex+1, maxRetryAttempts, err)
+			}
+
 		} // End of main execution block
 
 		// Learn code mode: save the newly written main.py to learnings (only when LLM generated it)

@@ -1,12 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
-
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // EmployeeFile represents a single employee record stored in config/employees.json.
@@ -45,25 +42,25 @@ var (
 )
 
 func employeesFilePath() string {
-	return filepath.Join(getWorkspaceDocsAbsPath(), "config", "employees.json")
+	return "config/employees.json"
 }
 
 func employeeWorkflowsFilePath() string {
-	return filepath.Join(getWorkspaceDocsAbsPath(), "config", "employee-workflows.json")
+	return "config/employee-workflows.json"
 }
 
 // readEmployeesFile reads config/employees.json and returns the slice of employees.
 // Returns an empty slice if the file does not exist.
 func readEmployeesFile() ([]EmployeeFile, error) {
-	data, err := os.ReadFile(employeesFilePath())
+	data, exists, err := readFileFromWorkspace(context.Background(), employeesFilePath())
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []EmployeeFile{}, nil
-		}
 		return nil, err
 	}
+	if !exists {
+		return []EmployeeFile{}, nil
+	}
 	var employees []EmployeeFile
-	if err := json.Unmarshal(data, &employees); err != nil {
+	if err := json.Unmarshal([]byte(data), &employees); err != nil {
 		return nil, err
 	}
 	return employees, nil
@@ -73,21 +70,25 @@ func readEmployeesFile() ([]EmployeeFile, error) {
 func writeEmployeesFile(employees []EmployeeFile) error {
 	employeesMu.Lock()
 	defer employeesMu.Unlock()
-	return fsutil.WriteJSONAtomic(employeesFilePath(), employees, 0644)
+	data, err := json.MarshalIndent(employees, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileToWorkspace(context.Background(), employeesFilePath(), string(data))
 }
 
 // readEmployeeWorkflowsFile reads config/employee-workflows.json and returns
 // a map of workflow_path → employee_id. Returns an empty map if the file does not exist.
 func readEmployeeWorkflowsFile() (map[string]string, error) {
-	data, err := os.ReadFile(employeeWorkflowsFilePath())
+	data, exists, err := readFileFromWorkspace(context.Background(), employeeWorkflowsFilePath())
 	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]string{}, nil
-		}
 		return nil, err
 	}
+	if !exists {
+		return map[string]string{}, nil
+	}
 	var assignments map[string]string
-	if err := json.Unmarshal(data, &assignments); err != nil {
+	if err := json.Unmarshal([]byte(data), &assignments); err != nil {
 		return nil, err
 	}
 	return assignments, nil
@@ -98,5 +99,9 @@ func readEmployeeWorkflowsFile() (map[string]string, error) {
 func writeEmployeeWorkflowsFile(assignments map[string]string) error {
 	employeeWorkflowsMu.Lock()
 	defer employeeWorkflowsMu.Unlock()
-	return fsutil.WriteJSONAtomic(employeeWorkflowsFilePath(), assignments, 0644)
+	data, err := json.MarshalIndent(assignments, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileToWorkspace(context.Background(), employeeWorkflowsFilePath(), string(data))
 }

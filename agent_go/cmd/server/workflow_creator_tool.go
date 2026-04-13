@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
+	pathpkg "path"
 	"regexp"
 	"strings"
 
@@ -19,8 +18,8 @@ var kebabCaseWorkflowName = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
 // registerWorkflowCreatorTool registers the create_workflow tool on the multi-agent chat agent.
 // This tool is the privileged path for creating new workflow folders — it bypasses the
-// session's Chats/ folder guard by writing directly via os.WriteFile into the shared
-// workspace-docs root. The handler enforces:
+// session's Chats/ folder guard by writing through the workspace API into the shared
+// workspace root. The handler enforces:
 //   - kebab-case name validation
 //   - required-field validation for workflow.json and plan.json
 //   - no-overwrite of existing workflows
@@ -66,10 +65,8 @@ func (api *StreamingAPI) registerWorkflowCreatorTool(underlyingAgent *mcpagent.A
 }
 
 // handleWorkflowCreatorTool validates the arguments, creates the workflow folder, and writes
-// workflow.json and planning/plan.json directly via the filesystem.
+// workflow.json and planning/plan.json through the workspace API.
 func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map[string]interface{}) (string, error) {
-	_ = ctx
-
 	// 1. Validate folder_name (the on-disk path segment — must be shell-safe).
 	// The human-readable display name lives in workflow_json.label and can be anything.
 	folderName, _ := args["folder_name"].(string)
@@ -113,52 +110,41 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 		return "", err
 	}
 
-	// 5. Resolve filesystem paths (shared workspace root — Workflow/ is not per-user)
-	docsPath := getWorkspaceDocsAbsPath()
-	if docsPath == "" {
-		return "", fmt.Errorf("workspace docs path is not configured")
-	}
-	workflowFolder := filepath.Join(docsPath, "Workflow", folderName)
-	planningFolder := filepath.Join(workflowFolder, "planning")
-	workflowJSONPath := filepath.Join(workflowFolder, "workflow.json")
-	planJSONPath := filepath.Join(planningFolder, "plan.json")
+	// 5. Resolve workspace paths (shared workspace root — Workflow/ is not per-user)
+	workflowFolder := pathpkg.Join("Workflow", folderName)
+	workflowJSONPath := pathpkg.Join(workflowFolder, "workflow.json")
+	planJSONPath := pathpkg.Join(workflowFolder, "planning", "plan.json")
 
 	// 6. Refuse to overwrite existing workflows
-	if _, err := os.Stat(workflowFolder); err == nil {
+	if _, exists, err := readFileFromWorkspace(ctx, workflowJSONPath); err != nil {
+		return "", fmt.Errorf("failed to check workflow existence: %w", err)
+	} else if exists {
 		return "", fmt.Errorf("workflow folder Workflow/%s already exists — pick a different folder_name or update the existing workflow via the workflow canvas", folderName)
 	}
 
-	// 7. Create folders
-	if err := os.MkdirAll(planningFolder, 0755); err != nil {
-		return "", fmt.Errorf("failed to create workflow folder: %w", err)
-	}
-
-	// 8. Marshal and write workflow.json
+	// 7. Marshal and write workflow.json
 	workflowBytes, err := json.MarshalIndent(workflowMap, "", "  ")
 	if err != nil {
-		// Cleanup partial state on failure
-		_ = os.RemoveAll(workflowFolder)
 		return "", fmt.Errorf("failed to marshal workflow.json: %w", err)
 	}
-	if err := os.WriteFile(workflowJSONPath, workflowBytes, 0644); err != nil {
-		_ = os.RemoveAll(workflowFolder)
+	if err := writeRawFileToWorkspace(ctx, workflowJSONPath, string(workflowBytes)); err != nil {
 		return "", fmt.Errorf("failed to write workflow.json: %w", err)
 	}
 
-	// 9. Marshal and write plan.json
+	// 8. Marshal and write plan.json
 	planBytes, err := json.MarshalIndent(planMap, "", "  ")
 	if err != nil {
-		_ = os.RemoveAll(workflowFolder)
+		_ = deleteWorkspaceFolder(ctx, workflowFolder)
 		return "", fmt.Errorf("failed to marshal plan.json: %w", err)
 	}
-	if err := os.WriteFile(planJSONPath, planBytes, 0644); err != nil {
-		_ = os.RemoveAll(workflowFolder)
+	if err := writeRawFileToWorkspace(ctx, planJSONPath, string(planBytes)); err != nil {
+		_ = deleteWorkspaceFolder(ctx, workflowFolder)
 		return "", fmt.Errorf("failed to write plan.json: %w", err)
 	}
 
 	log.Printf("[WORKFLOW CREATOR] Created new workflow: Workflow/%s (workflow.json=%d bytes, plan.json=%d bytes)", folderName, len(workflowBytes), len(planBytes))
 
-	// 10. Collect step summary for the response
+	// 9. Collect step summary for the response
 	stepSummary := summarizePlanSteps(planMap)
 
 	result := map[string]interface{}{

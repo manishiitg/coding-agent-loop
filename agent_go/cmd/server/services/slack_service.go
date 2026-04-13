@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,8 +17,6 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
-
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
 
 // Slack state is persisted as two small JSON files under <workspace-docs>/config/:
@@ -36,19 +33,19 @@ var (
 )
 
 func slackConfigFilePath() string {
-	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "slack-config.json")
+	return "config/slack-config.json"
 }
 
 func slackMessagesFilePath() string {
-	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "slack-feedback-messages.json")
+	return "config/slack-feedback-messages.json"
 }
 
 func legacySlackConfigFilePath() string {
-	return filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "slack_config.json")
+	return "_system/slack_config.json"
 }
 
 func legacySlackMessagesFilePath() string {
-	return filepath.Join(fsutil.WorkspaceDocsRoot(), "_system", "slack_feedback_messages.json")
+	return "_system/slack_feedback_messages.json"
 }
 
 // slackFeedbackMessageRecord stores the mapping for a single slack feedback request.
@@ -64,36 +61,41 @@ func slackFeedbackMessageKey(messageTS, channelID string) string {
 }
 
 func loadSlackConfigFromDisk() (*SlackConfig, error) {
-	data, err := os.ReadFile(slackConfigFilePath())
+	ctx := context.Background()
+	data, exists, err := readWorkspaceFile(ctx, workspaceAPIURL(), slackConfigFilePath())
 	if err != nil {
-		if os.IsNotExist(err) {
-			legacyData, legacyErr := os.ReadFile(legacySlackConfigFilePath())
-			if legacyErr != nil {
-				if os.IsNotExist(legacyErr) {
-					return &SlackConfig{Enabled: false}, nil
-				}
-				return nil, legacyErr
-			}
-			var legacyCfg SlackConfig
-			if err := json.Unmarshal(legacyData, &legacyCfg); err != nil {
-				return nil, fmt.Errorf("failed to parse legacy slack_config.json: %w", err)
-			}
-			if err := saveSlackConfigToDisk(&legacyCfg); err != nil {
-				return nil, err
-			}
-			return &legacyCfg, nil
-		}
 		return nil, err
 	}
+	if !exists {
+		legacyData, legacyExists, legacyErr := readWorkspaceFile(ctx, workspaceAPIURL(), legacySlackConfigFilePath())
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		if !legacyExists {
+			return &SlackConfig{Enabled: false}, nil
+		}
+		var legacyCfg SlackConfig
+		if err := json.Unmarshal([]byte(legacyData), &legacyCfg); err != nil {
+			return nil, fmt.Errorf("failed to parse legacy slack_config.json: %w", err)
+		}
+		if err := saveSlackConfigToDisk(&legacyCfg); err != nil {
+			return nil, err
+		}
+		return &legacyCfg, nil
+	}
 	var cfg SlackConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal([]byte(data), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse slack-config.json: %w", err)
 	}
 	return &cfg, nil
 }
 
 func saveSlackConfigToDisk(cfg *SlackConfig) error {
-	return fsutil.WriteJSONAtomic(slackConfigFilePath(), cfg, 0600)
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeWorkspaceFile(context.Background(), workspaceAPIURL(), slackConfigFilePath(), string(data))
 }
 
 // getSlackFeedbackMessagesLocked returns the in-memory feedback message map,
@@ -102,20 +104,23 @@ func getSlackFeedbackMessagesLocked() (map[string]*slackFeedbackMessageRecord, e
 	if slackMessagesLoaded {
 		return slackMessagesCache, nil
 	}
-	data, err := os.ReadFile(slackMessagesFilePath())
-	if err != nil && !os.IsNotExist(err) {
+	ctx := context.Background()
+	data, exists, err := readWorkspaceFile(ctx, workspaceAPIURL(), slackMessagesFilePath())
+	if err != nil {
 		return nil, err
 	}
 	slackMessagesCache = make(map[string]*slackFeedbackMessageRecord)
-	if os.IsNotExist(err) {
-		legacyData, legacyErr := os.ReadFile(legacySlackMessagesFilePath())
-		if legacyErr != nil && !os.IsNotExist(legacyErr) {
+	if !exists {
+		legacyData, legacyExists, legacyErr := readWorkspaceFile(ctx, workspaceAPIURL(), legacySlackMessagesFilePath())
+		if legacyErr != nil {
 			return nil, legacyErr
 		}
-		data = legacyData
+		if legacyExists {
+			data = legacyData
+		}
 	}
 	if len(data) > 0 {
-		if err := json.Unmarshal(data, &slackMessagesCache); err != nil {
+		if err := json.Unmarshal([]byte(data), &slackMessagesCache); err != nil {
 			slackMessagesCache = nil
 			return nil, fmt.Errorf("failed to parse slack-feedback-messages.json: %w", err)
 		}
@@ -131,7 +136,11 @@ func getSlackFeedbackMessagesLocked() (map[string]*slackFeedbackMessageRecord, e
 // saveSlackFeedbackMessagesLocked persists the in-memory feedback message map.
 // Caller must hold slackFSMu and must have called getSlackFeedbackMessagesLocked first.
 func saveSlackFeedbackMessagesLocked() error {
-	return fsutil.WriteJSONAtomic(slackMessagesFilePath(), slackMessagesCache, 0600)
+	data, err := json.MarshalIndent(slackMessagesCache, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeWorkspaceFile(context.Background(), workspaceAPIURL(), slackMessagesFilePath(), string(data))
 }
 
 // FeedbackStoreFunc is a function type for creating feedback requests (to avoid import cycle)

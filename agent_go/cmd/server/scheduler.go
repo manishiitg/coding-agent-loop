@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -253,33 +252,17 @@ type discoveredWorkflow struct {
 func (s *SchedulerService) discoverWorkflows(ctx context.Context) []discoveredWorkflow {
 	var results []discoveredWorkflow
 
-	// The workspace root is workspace-docs/ relative to the working directory
-	workflowRoot := filepath.Join("../workspace-docs", "Workflow")
-	entries, err := os.ReadDir(workflowRoot)
+	discovered, err := DiscoverWorkflowManifests(ctx)
 	if err != nil {
-		// Try without ../ prefix (server may already be in root)
-		workflowRoot = filepath.Join("workspace-docs", "Workflow")
-		entries, err = os.ReadDir(workflowRoot)
-		if err != nil {
-			scheduleLogf("[SCHEDULER] Cannot scan workflow directory: %v", err)
-			return nil
-		}
+		scheduleLogf("[SCHEDULER] Cannot scan workflow directory: %v", err)
+		return nil
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		// Workspace path is relative: "Workflow/<name>"
-		wsPath := "Workflow/" + entry.Name()
-		manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath)
-		if mErr != nil || !found {
-			continue
-		}
-		if len(manifest.Schedules) > 0 {
+	for _, item := range discovered {
+		if len(item.Manifest.Schedules) > 0 {
 			results = append(results, discoveredWorkflow{
-				WorkspacePath: wsPath,
-				Manifest:      manifest,
+				WorkspacePath: item.WorkspacePath,
+				Manifest:      item.Manifest,
 			})
 		}
 	}
@@ -1319,28 +1302,15 @@ func findScheduleByIDAny(ctx context.Context, scheduleID string) (*ScheduleSearc
 // findScheduleByID scans all workspace manifests to find a schedule by ID.
 // Returns (workspacePath, manifest, scheduleIndex, error).
 func findScheduleByID(ctx context.Context, scheduleID string) (string, *WorkflowManifest, int, error) {
-	workflowRoot := filepath.Join("../workspace-docs", "Workflow")
-	entries, err := os.ReadDir(workflowRoot)
+	discovered, err := DiscoverWorkflowManifests(ctx)
 	if err != nil {
-		workflowRoot = filepath.Join("workspace-docs", "Workflow")
-		entries, err = os.ReadDir(workflowRoot)
-		if err != nil {
-			return "", nil, 0, fmt.Errorf("cannot scan workflow directory: %w", err)
-		}
+		return "", nil, 0, fmt.Errorf("cannot scan workflow directory: %w", err)
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		wsPath := "Workflow/" + entry.Name()
-		manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath)
-		if mErr != nil || !found {
-			continue
-		}
-		for i, sched := range manifest.Schedules {
+	for _, item := range discovered {
+		for i, sched := range item.Manifest.Schedules {
 			if sched.ID == scheduleID {
-				return wsPath, manifest, i, nil
+				return item.WorkspacePath, item.Manifest, i, nil
 			}
 		}
 	}

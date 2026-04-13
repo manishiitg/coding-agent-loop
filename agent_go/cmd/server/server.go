@@ -607,14 +607,13 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Initialize the operator-state store (bot connector configs + user
 	// secrets) and the global cost ledger.
-	workspaceDocsAbs := getWorkspaceDocsAbsPath()
-	chatStore, err := chathistory.NewFilesystemStore(workspaceDocsAbs)
+	chatStore, err := chathistory.NewWorkspaceAPIStore(getWorkspaceAPIURL())
 	if err != nil {
-		log.Fatalf("Failed to initialize filesystem operator store: %v", err)
+		log.Fatalf("Failed to initialize workspace API operator store: %v", err)
 	}
 	defer chatStore.Close()
-	costLedger := costledger.NewLedger(workspaceDocsAbs)
-	fmt.Printf("💾 Operator store: filesystem (%s)\n", workspaceDocsAbs)
+	costLedger := costledger.NewLedger(getWorkspaceAPIURL())
+	fmt.Printf("💾 Operator store: workspace API (%s)\n", getWorkspaceAPIURL())
 
 	// Initialize Slack service for human feedback
 	slackSvc, err := slackservice.InitSlackService()
@@ -1861,12 +1860,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
-	if docsRoot := getWorkspaceDocsAbsPath(); docsRoot != "" {
-		for _, rel := range []string{perUserMemoryFolder, perUserChatsFolder} {
-			abs := filepath.Join(docsRoot, rel)
-			if err := os.MkdirAll(abs, 0755); err != nil {
-				log.Printf("[SESSION] Warning: could not pre-create per-user folder %s: %v", abs, err)
-			}
+	for _, rel := range []string{perUserMemoryFolder, perUserChatsFolder} {
+		if err := createWorkspaceFolder(context.Background(), rel); err != nil {
+			log.Printf("[SESSION] Warning: could not pre-create per-user folder %s: %v", rel, err)
 		}
 	}
 
@@ -4791,104 +4787,87 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// One file per session — overwrites on each follow-up with the full cumulative history.
 		// Resolve workspace-docs root so files are visible in the UI.
 		if isWorkflowPhase && workflowPhaseFolder != "" && len(finalHistory) > 0 {
-			wsRoot := filepath.Join("..", "workspace-docs")
-			builderDir := filepath.Join(wsRoot, workflowPhaseFolder, "builder")
-			if err := os.MkdirAll(builderDir, 0755); err != nil {
-				log.Printf("[BUILDER LOG] Failed to create builder dir %s: %v", builderDir, err)
-			} else {
-				// 1. Save conversation log (one file per session, overwritten on each turn)
-				convData := map[string]interface{}{
-					"session_id":           sessionID,
-					"phase_id":             workflowPhaseID,
-					"conversation_history": finalHistory,
-					"updated_at":           time.Now().Format(time.RFC3339),
+			builderDir := filepath.Join(workflowPhaseFolder, "builder")
+			convData := map[string]interface{}{
+				"session_id":           sessionID,
+				"phase_id":             workflowPhaseID,
+				"conversation_history": finalHistory,
+				"updated_at":           time.Now().Format(time.RFC3339),
+			}
+			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
+				logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
+				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
+					log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
+				} else {
+					log.Printf("[BUILDER LOG] Saved conversation log (%d messages) to %s", len(finalHistory), logPath)
 				}
-				if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-					// One file per session, overwritten on each turn with cumulative history.
-					// Uses session ID in filename for stable overwrites within a session.
-					logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
-					if err := os.WriteFile(logPath, convJSON, 0644); err != nil {
-						log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
+			}
+
+			if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
+				promptTokens, completionTokens, _, cacheTokens, reasoningTokens, llmCallCount, _,
+					inputCost, outputCost, reasoningCost, cacheCost, totalCost, _ := underlying.GetTokenUsageWithPricing()
+
+				fmtM := func(tokens int) string {
+					return fmt.Sprintf("%.3fM", float64(tokens)/1_000_000.0)
+				}
+
+				phaseKey := workflowPhaseID
+				modelUsage := &orchestrator.ModelTokenUsage{
+					Provider:         finalProvider,
+					InputTokens:      promptTokens,
+					OutputTokens:     completionTokens,
+					InputTokensM:     fmtM(promptTokens),
+					OutputTokensM:    fmtM(completionTokens),
+					CacheTokens:      cacheTokens,
+					CacheTokensM:     fmtM(cacheTokens),
+					ReasoningTokens:  reasoningTokens,
+					ReasoningTokensM: fmtM(reasoningTokens),
+					LLMCallCount:     llmCallCount,
+					InputCost:        inputCost,
+					OutputCost:       outputCost,
+					ReasoningCost:    reasoningCost,
+					CacheCost:        cacheCost,
+					TotalCost:        totalCost,
+				}
+
+				workflowRoot := workflowPhaseFolder
+				legacyTokenFilePath := filepath.Join(workflowRoot, "token_usage.json")
+				tokenFilePath := filepath.Join(workflowRoot, "costs", "phase", "token_usage.json")
+				var tokenFile orchestrator.PhaseTokenUsageFile
+				if existingData, exists, err := readFileFromWorkspace(context.Background(), tokenFilePath); err == nil && exists {
+					_ = json.Unmarshal([]byte(existingData), &tokenFile)
+				} else if existingData, exists, err := readFileFromWorkspace(context.Background(), legacyTokenFilePath); err == nil && exists {
+					_ = json.Unmarshal([]byte(existingData), &tokenFile)
+				}
+				now := time.Now()
+				orchestrator.ApplyModelUsageToPhaseTokenUsageFile(&tokenFile, phaseKey, underlying.ModelID, modelUsage, now)
+
+				if tokenJSON, err := json.MarshalIndent(tokenFile, "", "  "); err == nil {
+					if err := writeRawFileToWorkspace(context.Background(), tokenFilePath, string(tokenJSON)); err != nil {
+						log.Printf("[BUILDER LOG] Failed to write phase token usage: %v", err)
 					} else {
-						log.Printf("[BUILDER LOG] Saved conversation log (%d messages) to %s", len(finalHistory), logPath)
+						if err := deleteWorkspaceFile(context.Background(), legacyTokenFilePath); err != nil {
+							log.Printf("[BUILDER LOG] Failed to delete legacy token_usage.json: %v", err)
+						}
+						log.Printf("[BUILDER LOG] Updated %s (phase=%s, $%.4f this turn)", tokenFilePath, phaseKey, totalCost)
 					}
 				}
 
-				// 2. Update costs/phase/token_usage.json for workflow phase sessions.
-				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
-					promptTokens, completionTokens, _, cacheTokens, reasoningTokens, llmCallCount, _,
-						inputCost, outputCost, reasoningCost, cacheCost, totalCost, _ := underlying.GetTokenUsageWithPricing()
+				dailyTokenFilePath := filepath.Join(workflowRoot, "costs", "phase", "daily", orchestrator.CostDateKey(now)+".json")
+				var dailyTokenFile orchestrator.DailyPhaseTokenUsageFile
+				if existingData, exists, err := readFileFromWorkspace(context.Background(), dailyTokenFilePath); err == nil && exists {
+					_ = json.Unmarshal([]byte(existingData), &dailyTokenFile)
+				}
+				dailyTokenFile.Date = orchestrator.CostDateKey(now)
+				dailyTokenFile.UpdatedAt = now
+				if dailyTokenFile.TokenUsage == nil {
+					dailyTokenFile.TokenUsage = &orchestrator.PhaseTokenUsageFile{}
+				}
+				orchestrator.ApplyModelUsageToPhaseTokenUsageFile(dailyTokenFile.TokenUsage, phaseKey, underlying.ModelID, modelUsage, now)
 
-					fmtM := func(tokens int) string {
-						return fmt.Sprintf("%.3fM", float64(tokens)/1_000_000.0)
-					}
-
-					phaseKey := workflowPhaseID
-					modelUsage := &orchestrator.ModelTokenUsage{
-						Provider:         finalProvider,
-						InputTokens:      promptTokens,
-						OutputTokens:     completionTokens,
-						InputTokensM:     fmtM(promptTokens),
-						OutputTokensM:    fmtM(completionTokens),
-						CacheTokens:      cacheTokens,
-						CacheTokensM:     fmtM(cacheTokens),
-						ReasoningTokens:  reasoningTokens,
-						ReasoningTokensM: fmtM(reasoningTokens),
-						LLMCallCount:     llmCallCount,
-						InputCost:        inputCost,
-						OutputCost:       outputCost,
-						ReasoningCost:    reasoningCost,
-						CacheCost:        cacheCost,
-						TotalCost:        totalCost,
-					}
-
-					workflowRoot := filepath.Join(wsRoot, workflowPhaseFolder)
-					legacyTokenFilePath := filepath.Join(workflowRoot, "token_usage.json")
-					tokenFilePath := orchestrator.ResolvePhaseTokenUsagePath(workflowRoot)
-					if err := os.MkdirAll(filepath.Dir(tokenFilePath), 0755); err != nil {
-						log.Printf("[BUILDER LOG] Failed to create phase costs dir %s: %v", filepath.Dir(tokenFilePath), err)
-						return
-					}
-					var tokenFile orchestrator.PhaseTokenUsageFile
-					if existingData, err := os.ReadFile(tokenFilePath); err == nil {
-						json.Unmarshal(existingData, &tokenFile)
-					} else if existingData, err := os.ReadFile(legacyTokenFilePath); err == nil {
-						json.Unmarshal(existingData, &tokenFile)
-					}
-					now := time.Now()
-					orchestrator.ApplyModelUsageToPhaseTokenUsageFile(&tokenFile, phaseKey, underlying.ModelID, modelUsage, now)
-
-					if tokenJSON, err := json.MarshalIndent(tokenFile, "", "  "); err == nil {
-						if err := os.WriteFile(tokenFilePath, tokenJSON, 0644); err != nil {
-							log.Printf("[BUILDER LOG] Failed to write phase token usage: %v", err)
-						} else {
-							if err := os.Remove(legacyTokenFilePath); err != nil && !os.IsNotExist(err) {
-								log.Printf("[BUILDER LOG] Failed to delete legacy token_usage.json: %v", err)
-							}
-							log.Printf("[BUILDER LOG] Updated %s (phase=%s, $%.4f this turn)", tokenFilePath, phaseKey, totalCost)
-						}
-					}
-
-					dailyTokenFilePath := orchestrator.ResolveDailyPhaseTokenUsagePath(workflowRoot, now)
-					if err := os.MkdirAll(filepath.Dir(dailyTokenFilePath), 0755); err != nil {
-						log.Printf("[BUILDER LOG] Failed to create daily phase costs dir %s: %v", filepath.Dir(dailyTokenFilePath), err)
-						return
-					}
-					var dailyTokenFile orchestrator.DailyPhaseTokenUsageFile
-					if existingData, err := os.ReadFile(dailyTokenFilePath); err == nil {
-						json.Unmarshal(existingData, &dailyTokenFile)
-					}
-					dailyTokenFile.Date = orchestrator.CostDateKey(now)
-					dailyTokenFile.UpdatedAt = now
-					if dailyTokenFile.TokenUsage == nil {
-						dailyTokenFile.TokenUsage = &orchestrator.PhaseTokenUsageFile{}
-					}
-					orchestrator.ApplyModelUsageToPhaseTokenUsageFile(dailyTokenFile.TokenUsage, phaseKey, underlying.ModelID, modelUsage, now)
-
-					if dailyTokenJSON, err := json.MarshalIndent(dailyTokenFile, "", "  "); err == nil {
-						if err := os.WriteFile(dailyTokenFilePath, dailyTokenJSON, 0644); err != nil {
-							log.Printf("[BUILDER LOG] Failed to write daily phase token usage: %v", err)
-						}
+				if dailyTokenJSON, err := json.MarshalIndent(dailyTokenFile, "", "  "); err == nil {
+					if err := writeRawFileToWorkspace(context.Background(), dailyTokenFilePath, string(dailyTokenJSON)); err != nil {
+						log.Printf("[BUILDER LOG] Failed to write daily phase token usage: %v", err)
 					}
 				}
 			}
@@ -6826,26 +6805,23 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		workflowPhaseFolder, hasFolderForSession := api.sessionWorkspaceFolders[sessionID]
 		api.sessionWorkspaceMu.RUnlock()
 		if hasFolderForSession && workflowPhaseFolder != "" && len(finalHistory) > 0 {
-			wsRoot := filepath.Join("..", "workspace-docs")
-			builderDir := filepath.Join(wsRoot, workflowPhaseFolder, "builder")
-			if err := os.MkdirAll(builderDir, 0755); err == nil {
-				phaseID := ""
-				if hasReq {
-					phaseID = req.PhaseID
-				}
-				convData := map[string]interface{}{
-					"session_id":           sessionID,
-					"phase_id":             phaseID,
-					"conversation_history": finalHistory,
-					"updated_at":           time.Now().Format(time.RFC3339),
-				}
-				if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-					logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
-					if err := os.WriteFile(logPath, convJSON, 0644); err != nil {
-						log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
-					} else {
-						log.Printf("[BG AGENT] Persisted builder conversation after synthetic turn (%d messages) to %s", len(finalHistory), logPath)
-					}
+			builderDir := filepath.Join(workflowPhaseFolder, "builder")
+			phaseID := ""
+			if hasReq {
+				phaseID = req.PhaseID
+			}
+			convData := map[string]interface{}{
+				"session_id":           sessionID,
+				"phase_id":             phaseID,
+				"conversation_history": finalHistory,
+				"updated_at":           time.Now().Format(time.RFC3339),
+			}
+			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
+				logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
+				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
+					log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
+				} else {
+					log.Printf("[BG AGENT] Persisted builder conversation after synthetic turn (%d messages) to %s", len(finalHistory), logPath)
 				}
 			}
 		}

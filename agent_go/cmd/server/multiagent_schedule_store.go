@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -97,24 +95,13 @@ type DiscoveredMultiAgentSchedules struct {
 }
 
 func DiscoverMultiAgentSchedules(ctx context.Context) ([]DiscoveredMultiAgentSchedules, error) {
-	// Scan _users/ directory on disk
-	usersRoot := filepath.Join("../workspace-docs", "_users")
-	entries, err := os.ReadDir(usersRoot)
+	userIDs, err := listWorkspaceChildFolderNames(ctx, "_users")
 	if err != nil {
-		usersRoot = filepath.Join("workspace-docs", "_users")
-		entries, err = os.ReadDir(usersRoot)
-		if err != nil {
-			// No _users dir yet — not an error
-			return nil, nil
-		}
+		return nil, nil
 	}
 
 	var results []DiscoveredMultiAgentSchedules
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		userID := entry.Name()
+	for _, userID := range userIDs {
 		f, exists, err := ReadMultiAgentSchedules(ctx, userID)
 		if err != nil {
 			scheduleLogf("[SCHEDULER] Warning: failed to read multi-agent schedules for user %s: %v", userID, err)
@@ -228,21 +215,12 @@ func ListMultiAgentScheduleRuns(ctx context.Context, userID string, scheduleID s
 // findMultiAgentScheduleByID scans all user directories for a multi-agent schedule.
 // Returns (userID, scheduleFile, scheduleIndex, error).
 func findMultiAgentScheduleByID(ctx context.Context, scheduleID string) (string, *MultiAgentScheduleFile, int, error) {
-	usersRoot := filepath.Join("../workspace-docs", "_users")
-	entries, err := os.ReadDir(usersRoot)
+	userIDs, err := listWorkspaceChildFolderNames(ctx, "_users")
 	if err != nil {
-		usersRoot = filepath.Join("workspace-docs", "_users")
-		entries, err = os.ReadDir(usersRoot)
-		if err != nil {
-			return "", nil, 0, fmt.Errorf("cannot scan _users directory: %w", err)
-		}
+		return "", nil, 0, fmt.Errorf("cannot scan _users directory: %w", err)
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		userID := entry.Name()
+	for _, userID := range userIDs {
 		f, exists, err := ReadMultiAgentSchedules(ctx, userID)
 		if err != nil || !exists {
 			continue

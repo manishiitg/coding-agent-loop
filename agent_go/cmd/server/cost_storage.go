@@ -3,8 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
-	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -42,61 +41,62 @@ func ensureWorkspaceCostMigration(ctx context.Context, workspacePath string) err
 	return nil
 }
 
-func workspaceAbsPath(workspacePath string) string {
-	return filepath.Join(getWorkspaceDocsAbsPath(), filepath.FromSlash(filepath.Clean(workspacePath)))
+func workspaceCostPath(workspacePath string, parts ...string) string {
+	all := []string{normalizeWorkspacePath(workspacePath)}
+	all = append(all, parts...)
+	return pathpkg.Clean(pathpkg.Join(all...))
 }
 
 func migrateLegacyCostFiles(ctx context.Context, workspacePath string) error {
-	absWorkspacePath := workspaceAbsPath(workspacePath)
-	if err := migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, filepath.Join(absWorkspacePath, "runs"), orchestrator.CostScopeExecution); err != nil {
+	if err := migrateLegacyScopedTokenUsage(ctx, workspacePath, workspaceCostPath(workspacePath, "runs"), orchestrator.CostScopeExecution); err != nil {
 		return err
 	}
-	if err := migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, filepath.Join(absWorkspacePath, "evaluation", "runs"), orchestrator.CostScopeEvaluation); err != nil {
+	if err := migrateLegacyScopedTokenUsage(ctx, workspacePath, workspaceCostPath(workspacePath, "evaluation", "runs"), orchestrator.CostScopeEvaluation); err != nil {
 		return err
 	}
-	if err := migrateLegacyPhaseTokenUsage(absWorkspacePath, workspacePath); err != nil {
+	if err := migrateLegacyPhaseTokenUsage(ctx, workspacePath); err != nil {
 		return err
 	}
 	return nil
 }
 
-func migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, legacyRoot string, scope orchestrator.CostScope) error {
-	info, err := os.Stat(legacyRoot)
+func listWorkspaceFilesRecursive(ctx context.Context, folderPath string) ([]string, error) {
+	listing, _, err := listWorkspaceFolder(ctx, folderPath, 100)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return nil, err
+	}
+	var filePaths []string
+	collectWorkspaceFilePaths(listing, &filePaths)
+	return filePaths, nil
+}
+
+func migrateLegacyScopedTokenUsage(ctx context.Context, workspacePath, legacyRoot string, scope orchestrator.CostScope) error {
+	filePaths, err := listWorkspaceFilesRecursive(ctx, legacyRoot)
+	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return nil
-	}
 
-	return filepath.WalkDir(legacyRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() || d.Name() != "token_usage.json" {
-			return nil
+	for _, filePath := range filePaths {
+		if pathpkg.Base(filePath) != "token_usage.json" {
+			continue
 		}
 
-		runFolder, err := filepath.Rel(legacyRoot, filepath.Dir(path))
+		runFolder := strings.TrimPrefix(pathpkg.Dir(filePath), legacyRoot+"/")
+		if runFolder == pathpkg.Dir(filePath) || runFolder == "." || runFolder == "" {
+			continue
+		}
+
+		content, exists, err := readFileFromWorkspace(ctx, filePath)
 		if err != nil {
 			return err
 		}
-		runFolder = filepath.ToSlash(runFolder)
-		if runFolder == "." || runFolder == "" {
-			return nil
-		}
-
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		if !exists {
+			continue
 		}
 
 		var tokenFile orchestrator.TokenUsageFile
-		if err := json.Unmarshal(content, &tokenFile); err != nil {
-			return nil
+		if err := json.Unmarshal([]byte(content), &tokenFile); err != nil {
+			continue
 		}
 
 		ts := tokenFile.CreatedAt
@@ -104,16 +104,11 @@ func migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, legacyRoot s
 			ts = tokenFile.UpdatedAt
 		}
 		if ts.IsZero() {
-			if fileInfo, statErr := os.Stat(path); statErr == nil {
-				ts = fileInfo.ModTime().UTC()
-			}
-		}
-		if ts.IsZero() {
 			ts = time.Now().UTC()
 		}
 
-		targetAbsPath := filepath.Join(
-			absWorkspacePath,
+		targetPath := workspaceCostPath(
+			workspacePath,
 			"costs",
 			string(scope),
 			orchestrator.ExtractGroupFolderFromRunFolder(runFolder),
@@ -127,8 +122,8 @@ func migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, legacyRoot s
 			RunFolders:  make(map[string]*orchestrator.TokenUsageFile),
 		}
 
-		if existingContent, readErr := os.ReadFile(targetAbsPath); readErr == nil && len(existingContent) > 0 {
-			if err := json.Unmarshal(existingContent, dailyFile); err == nil && dailyFile.RunFolders == nil {
+		if existingContent, exists, readErr := readFileFromWorkspace(ctx, targetPath); readErr == nil && exists && existingContent != "" {
+			if err := json.Unmarshal([]byte(existingContent), dailyFile); err == nil && dailyFile.RunFolders == nil {
 				dailyFile.RunFolders = make(map[string]*orchestrator.TokenUsageFile)
 			}
 		}
@@ -136,49 +131,41 @@ func migrateLegacyScopedTokenUsage(absWorkspacePath, workspacePath, legacyRoot s
 		dailyFile.RunFolders[runFolder] = orchestrator.MergeTokenUsageFiles(dailyFile.RunFolders[runFolder], &tokenFile)
 		dailyFile.UpdatedAt = time.Now().UTC()
 
-		if err := os.MkdirAll(filepath.Dir(targetAbsPath), 0o755); err != nil {
-			return err
-		}
-
 		jsonData, err := json.MarshalIndent(dailyFile, "", "  ")
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(targetAbsPath, jsonData, 0o644); err != nil {
+		if err := writeRawFileToWorkspace(ctx, targetPath, string(jsonData)); err != nil {
 			return err
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := deleteWorkspaceFile(ctx, filePath); err != nil {
 			return err
 		}
-
-		return nil
-	})
+	}
+	return nil
 }
 
-func migrateLegacyPhaseTokenUsage(absWorkspacePath, workspacePath string) error {
-	legacyPath := filepath.Join(absWorkspacePath, "token_usage.json")
-	content, err := os.ReadFile(legacyPath)
+func migrateLegacyPhaseTokenUsage(ctx context.Context, workspacePath string) error {
+	legacyPath := workspaceCostPath(workspacePath, "token_usage.json")
+	content, exists, err := readFileFromWorkspace(ctx, legacyPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
+	}
+	if !exists {
+		return nil
 	}
 
-	targetAbsPath := filepath.Join(absWorkspacePath, "costs", "phase", "token_usage.json")
-	if err := os.MkdirAll(filepath.Dir(targetAbsPath), 0o755); err != nil {
-		return err
-	}
+	targetPath := workspaceCostPath(workspacePath, "costs", "phase", "token_usage.json")
 
 	var legacyTokenFile orchestrator.PhaseTokenUsageFile
-	if err := json.Unmarshal(content, &legacyTokenFile); err != nil {
+	if err := json.Unmarshal([]byte(content), &legacyTokenFile); err != nil {
 		return nil
 	}
 	orchestrator.EnsurePhaseTokenUsageFilePricing(&legacyTokenFile)
 
-	if existingContent, readErr := os.ReadFile(targetAbsPath); readErr == nil && len(existingContent) > 0 {
+	if existingContent, exists, readErr := readFileFromWorkspace(ctx, targetPath); readErr == nil && exists && existingContent != "" {
 		var targetTokenFile orchestrator.PhaseTokenUsageFile
-		if err := json.Unmarshal(existingContent, &targetTokenFile); err == nil {
+		if err := json.Unmarshal([]byte(existingContent), &targetTokenFile); err == nil {
 			orchestrator.EnsurePhaseTokenUsageFilePricing(&targetTokenFile)
 
 			if targetTokenFile.ByModel == nil {
@@ -217,20 +204,20 @@ func migrateLegacyPhaseTokenUsage(absWorkspacePath, workspacePath string) error 
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(targetAbsPath, mergedJSON, 0o644); err != nil {
+			if err := writeRawFileToWorkspace(ctx, targetPath, string(mergedJSON)); err != nil {
 				return err
 			}
-			if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+			if err := deleteWorkspaceFile(ctx, legacyPath); err != nil {
 				return err
 			}
 			return nil
 		}
 	}
 
-	if err := os.WriteFile(targetAbsPath, content, 0o644); err != nil {
+	if err := writeRawFileToWorkspace(ctx, targetPath, content); err != nil {
 		return err
 	}
-	if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+	if err := deleteWorkspaceFile(ctx, legacyPath); err != nil {
 		return err
 	}
 	return nil
@@ -241,17 +228,17 @@ func readPhaseTokenUsageFromCosts(ctx context.Context, workspacePath string) (*o
 		return nil, err
 	}
 
-	phasePath := filepath.Join(workspaceAbsPath(workspacePath), "costs", "phase", "token_usage.json")
-	content, err := os.ReadFile(phasePath)
+	phasePath := workspaceCostPath(workspacePath, "costs", "phase", "token_usage.json")
+	content, exists, err := readFileFromWorkspace(ctx, phasePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
+	}
+	if !exists {
+		return nil, nil
 	}
 
 	var tokenFile orchestrator.PhaseTokenUsageFile
-	if err := json.Unmarshal(content, &tokenFile); err != nil {
+	if err := json.Unmarshal([]byte(content), &tokenFile); err != nil {
 		return nil, err
 	}
 	orchestrator.EnsurePhaseTokenUsageFilePricing(&tokenFile)
@@ -263,46 +250,35 @@ func readAllRunTokenUsageFromCosts(ctx context.Context, workspacePath string, sc
 		return nil, err
 	}
 
-	root := filepath.Join(workspaceAbsPath(workspacePath), "costs", string(scope))
-	info, err := os.Stat(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if !info.IsDir() {
-		return map[string]*orchestrator.TokenUsageFile{}, nil
-	}
+	root := workspaceCostPath(workspacePath, "costs", string(scope))
 
 	result := make(map[string]*orchestrator.TokenUsageFile)
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
-			return nil
+	filePaths, err := listWorkspaceFilesRecursive(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, filePath := range filePaths {
+		if !strings.HasSuffix(filePath, ".json") {
+			continue
 		}
 
-		content, err := os.ReadFile(path)
+		content, exists, err := readFileFromWorkspace(ctx, filePath)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		if !exists {
+			continue
 		}
 
 		var dailyFile orchestrator.DailyGroupTokenUsageFile
-		if err := json.Unmarshal(content, &dailyFile); err != nil {
-			return nil
+		if err := json.Unmarshal([]byte(content), &dailyFile); err != nil {
+			continue
 		}
 		orchestrator.EnsureDailyGroupTokenUsageFilePricing(&dailyFile)
 
 		for storedRunFolder, tokenFile := range dailyFile.RunFolders {
 			result[storedRunFolder] = orchestrator.MergeTokenUsageFiles(result[storedRunFolder], tokenFile)
 		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 
 	return result, nil
@@ -374,42 +350,36 @@ func readAllPhaseTokenUsageFromCosts(ctx context.Context, workspacePath string) 
 		return nil, err
 	}
 
-	root := filepath.Join(workspaceAbsPath(workspacePath), "costs", "phase", "daily")
-	info, err := os.Stat(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []workflowPhaseDailyCostEntry{}, nil
-		}
-		return nil, err
-	}
-	if !info.IsDir() {
-		return []workflowPhaseDailyCostEntry{}, nil
-	}
+	root := workspaceCostPath(workspacePath, "costs", "phase", "daily")
 
 	entries := make([]workflowPhaseDailyCostEntry, 0)
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
-			return nil
+	filePaths, err := listWorkspaceFilesRecursive(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, filePath := range filePaths {
+		if !strings.HasSuffix(filePath, ".json") {
+			continue
 		}
 
-		content, err := os.ReadFile(path)
+		content, exists, err := readFileFromWorkspace(ctx, filePath)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		if !exists {
+			continue
 		}
 
 		var dailyFile orchestrator.DailyPhaseTokenUsageFile
-		if err := json.Unmarshal(content, &dailyFile); err != nil {
-			return nil
+		if err := json.Unmarshal([]byte(content), &dailyFile); err != nil {
+			continue
 		}
 		orchestrator.EnsureDailyPhaseTokenUsageFilePricing(&dailyFile)
 		if dailyFile.TokenUsage == nil {
-			return nil
+			continue
 		}
 
-		date := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		date := strings.TrimSuffix(pathpkg.Base(filePath), pathpkg.Ext(filePath))
 		if strings.TrimSpace(dailyFile.Date) != "" {
 			date = dailyFile.Date
 		}
@@ -418,10 +388,6 @@ func readAllPhaseTokenUsageFromCosts(ctx context.Context, workspacePath string) 
 			Date:       date,
 			TokenUsage: dailyFile.TokenUsage,
 		})
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 
 	sort.Slice(entries, func(i, j int) bool {

@@ -1,37 +1,32 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
+	pathpkg "path"
 	"sort"
 	"time"
-
-	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // ChatHistorySession is the metadata returned by the list endpoint.
 type ChatHistorySession struct {
-	SessionID   string `json:"session_id"`
-	AgentMode   string `json:"agent_mode"`
-	Status      string `json:"status"`
-	Query       string `json:"query,omitempty"`
-	UserID      string `json:"user_id"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-	MessageCount int   `json:"message_count"`
+	SessionID    string `json:"session_id"`
+	AgentMode    string `json:"agent_mode"`
+	Status       string `json:"status"`
+	Query        string `json:"query,omitempty"`
+	UserID       string `json:"user_id"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	MessageCount int    `json:"message_count"`
 }
 
-// chatHistoryDir returns the absolute path to a user's chat_history root.
+// chatHistoryRoot returns the workspace-relative path to a user's chat_history root.
 func chatHistoryRoot(userID string) string {
-	return filepath.Join(
-		fsutil.WorkspaceDocsRoot(),
-		fmt.Sprintf("_users/%s/chat_history", sanitizeUserIDForPath(userID)),
-	)
+	return fmt.Sprintf("_users/%s/chat_history", sanitizeUserIDForPath(userID))
 }
 
 // persistChatConversation saves the conversation in the same format as the
@@ -43,12 +38,6 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 	}
 	if userID == "" {
 		userID = "default"
-	}
-
-	dir := filepath.Join(chatHistoryRoot(userID), sessionID)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Printf("[CHAT_HISTORY] Failed to create dir %s: %v", dir, err)
-		return
 	}
 
 	convData := map[string]interface{}{
@@ -64,8 +53,8 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 		return
 	}
 
-	convPath := filepath.Join(dir, "conversation.json")
-	if err := os.WriteFile(convPath, convJSON, 0644); err != nil {
+	convPath := pathpkg.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
+	if err := writeRawFileToWorkspace(context.Background(), convPath, string(convJSON)); err != nil {
 		log.Printf("[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
 	}
@@ -80,32 +69,26 @@ func ListChatHistorySessions(userID string, limit, offset int) ([]ChatHistorySes
 	}
 	root := chatHistoryRoot(userID)
 
-	entries, err := os.ReadDir(root)
+	sessionIDs, err := listWorkspaceChildFolderNames(context.Background(), root)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []ChatHistorySession{}, nil
-		}
 		return nil, err
 	}
 
 	var sessions []ChatHistorySession
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		convPath := filepath.Join(root, e.Name(), "conversation.json")
-		data, err := os.ReadFile(convPath)
-		if err != nil {
+	for _, sessionID := range sessionIDs {
+		convPath := pathpkg.Join(root, sessionID, "conversation.json")
+		data, exists, err := readFileFromWorkspace(context.Background(), convPath)
+		if err != nil || !exists {
 			continue
 		}
 
 		var raw struct {
-			SessionID   string                     `json:"session_id"`
-			AgentMode   string                     `json:"agent_mode"`
-			History     []llmtypes.MessageContent  `json:"conversation_history"`
-			UpdatedAt   string                     `json:"updated_at"`
+			SessionID string                    `json:"session_id"`
+			AgentMode string                    `json:"agent_mode"`
+			History   []llmtypes.MessageContent `json:"conversation_history"`
+			UpdatedAt string                    `json:"updated_at"`
 		}
-		if err := json.Unmarshal(data, &raw); err != nil {
+		if err := json.Unmarshal([]byte(data), &raw); err != nil {
 			continue
 		}
 
@@ -169,10 +152,13 @@ func ReadChatHistoryConversation(userID, sessionID string) (json.RawMessage, err
 	if userID == "" {
 		userID = "default"
 	}
-	convPath := filepath.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
-	data, err := os.ReadFile(convPath)
+	convPath := pathpkg.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
+	data, exists, err := readFileFromWorkspace(context.Background(), convPath)
 	if err != nil {
 		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("conversation not found")
 	}
 	return json.RawMessage(data), nil
 }

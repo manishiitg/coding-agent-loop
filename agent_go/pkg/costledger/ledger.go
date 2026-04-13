@@ -1,18 +1,31 @@
-// Package costledger persists a global append-only LLM cost log to disk and
-// exposes a date-/model-aggregated summary view. There is no per-session
-// state here — just one line per token_usage event across every agent run.
+// Package costledger persists a global append-only LLM cost log through the
+// workspace API and exposes a date-/model-aggregated summary view. There is no
+// per-session state here — just one line per token_usage event across every
+// agent run.
 package costledger
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
+	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+const ledgerWorkspacePath = "_system/costs.jsonl"
+
+type workspaceAPIResponse struct {
+	Success bool            `json:"success"`
+	Message string          `json:"message"`
+	Error   string          `json:"error"`
+	Data    json.RawMessage `json:"data"`
+}
 
 // Entry is a single cost record — one LLM call.
 type Entry struct {
@@ -62,19 +75,100 @@ type Summary struct {
 	ByModel map[string]*Aggregate `json:"by_model"` // model_id
 }
 
-// Ledger appends token_usage records to _system/costs.jsonl and can produce
-// aggregated summaries. Safe for concurrent appends via an internal mutex.
+// Ledger appends token_usage records to _system/costs.jsonl through the
+// workspace API and can produce aggregated summaries. Safe for concurrent
+// appends within a single process via an internal mutex.
 type Ledger struct {
-	path string
-	mu   sync.Mutex
+	baseURL string
+	client  *http.Client
+	mu      sync.Mutex
 }
 
-// NewLedger creates a ledger rooted at <workspaceDocsRoot>/_system/costs.jsonl.
-// The _system directory is created on first use.
-func NewLedger(workspaceDocsRoot string) *Ledger {
+// NewLedger creates a ledger that persists to _system/costs.jsonl via the
+// workspace API.
+func NewLedger(workspaceAPIURL string) *Ledger {
 	return &Ledger{
-		path: filepath.Join(workspaceDocsRoot, "_system", "costs.jsonl"),
+		baseURL: strings.TrimRight(strings.TrimSpace(workspaceAPIURL), "/"),
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        20,
+				MaxIdleConnsPerHost: 20,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
 	}
+}
+
+func (l *Ledger) workspacePathURL(path string) string {
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return l.baseURL + "/api/documents/" + strings.Join(segments, "/")
+}
+
+func (l *Ledger) readFile(path string) ([]byte, bool, error) {
+	req, err := http.NewRequest(http.MethodGet, l.workspacePathURL(path), nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("costledger: create read request for %s: %w", path, err)
+	}
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("costledger: read %s via workspace API: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("costledger: read response body for %s: %w", path, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("costledger: workspace API returned status %d for %s: %s", resp.StatusCode, path, string(body))
+	}
+
+	var apiResp workspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, false, fmt.Errorf("costledger: parse workspace API response for %s: %w", path, err)
+	}
+	if strings.Contains(apiResp.Message, "File does not exist") || strings.Contains(apiResp.Error, "File not found") {
+		return nil, false, nil
+	}
+	if !apiResp.Success {
+		return nil, false, fmt.Errorf("costledger: workspace API error for %s: %s", path, apiResp.Error)
+	}
+
+	var data struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
+		return nil, false, fmt.Errorf("costledger: parse content for %s: %w", path, err)
+	}
+	return []byte(data.Content), true, nil
+}
+
+func (l *Ledger) writeFile(path string, content []byte) error {
+	requestBody, err := json.Marshal(map[string]string{"content": string(content)})
+	if err != nil {
+		return fmt.Errorf("costledger: marshal content for %s: %w", path, err)
+	}
+	req, err := http.NewRequest(http.MethodPut, l.workspacePathURL(path), bytes.NewReader(requestBody))
+	if err != nil {
+		return fmt.Errorf("costledger: create write request for %s: %w", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("costledger: write %s via workspace API: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("costledger: workspace API returned status %d for %s: %s", resp.StatusCode, path, string(body))
+	}
+	return nil
 }
 
 // Append writes one entry as a JSONL line. Missing Timestamp is filled in.
@@ -90,18 +184,15 @@ func (l *Ledger) Append(e Entry) error {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(l.path), 0755); err != nil {
+
+	content, exists, err := l.readFile(ledgerWorkspacePath)
+	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("costledger: open %s: %w", l.path, err)
+	if exists && len(content) > 0 {
+		line = append(content, line...)
 	}
-	defer f.Close()
-	if _, err := f.Write(line); err != nil {
-		return fmt.Errorf("costledger: append to %s: %w", l.path, err)
-	}
-	return nil
+	return l.writeFile(ledgerWorkspacePath, line)
 }
 
 // Summarize scans the ledger and rolls entries up by date and model. from/to
@@ -117,16 +208,15 @@ func (l *Ledger) Summarize(from, to string) (*Summary, error) {
 		ByModel: make(map[string]*Aggregate),
 	}
 
-	f, err := os.Open(l.path)
+	content, exists, err := l.readFile(ledgerWorkspacePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return summary, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
+	if !exists || len(content) == 0 {
+		return summary, nil
+	}
 
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(content))
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -161,7 +251,7 @@ func (l *Ledger) Summarize(from, to string) (*Summary, error) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("costledger: scan %s: %w", l.path, err)
+		return nil, fmt.Errorf("costledger: scan %s: %w", ledgerWorkspacePath, err)
 	}
 	return summary, nil
 }

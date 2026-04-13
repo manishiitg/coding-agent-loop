@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+func workspaceAPIURL() string {
+	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:8081"
+}
+
 // PublishedLLM is the minimal workspace-backed published LLM record needed by
 // workspace-aware services outside the main server package.
 type PublishedLLM struct {
@@ -106,6 +113,43 @@ func readWorkspaceFile(ctx context.Context, workspaceURL, filePath string) (stri
 		return "", false, fmt.Errorf("failed to extract content from workspace response")
 	}
 	return content, true, nil
+}
+
+func writeWorkspaceFile(ctx context.Context, workspaceURL, filePath, content string) error {
+	pathSegments := strings.Split(filePath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, seg := range pathSegments {
+		encodedSegments[i] = strings.NewReplacer(" ", "%20", "#", "%23", "?", "%3F").Replace(seg)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	requestBody, err := json.Marshal(map[string]string{"content": content})
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	apiURL := workspaceURL + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(requestBody)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // LoadDelegationTierConfig reads delegation tier config (plain JSON) from the workspace.

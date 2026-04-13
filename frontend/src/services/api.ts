@@ -849,39 +849,8 @@ export const agentApi = {
     return response.data
   },
 
-  // Semantic Search Sync API
-  getSemanticSearchStatus: async () => {
-    const response = await workspaceApi.get('/api/semantic/stats')
-    return response.data
-  },
-
-  getSemanticJobStatus: async () => {
-    const response = await workspaceApi.get('/api/semantic/jobs')
-    return response.data
-  },
-
-  triggerSemanticResync: async (dryRun: boolean = false, force: boolean = false) => {
-    const response = await workspaceApi.post('/api/semantic/resync', {
-      dry_run: dryRun,
-      force: force
-    })
-    return response.data
-  },
-
   searchDocuments: async (params: { query: string; search_type?: string; folder?: string; limit?: number }) => {
     const response = await workspaceApi.get('/api/search', { params })
-    return response.data
-  },
-
-  searchSemanticDocuments: async (params: {
-    query: string;
-    folder?: string;
-    limit?: number;
-    similarity_threshold?: number;
-    include_regex?: boolean;
-    regex_limit?: number
-  }) => {
-    const response = await workspaceApi.get('/api/search/semantic', { params })
     return response.data
   },
 

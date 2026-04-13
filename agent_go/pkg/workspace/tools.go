@@ -120,11 +120,6 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 	return executors
 }
 
-// IsSemanticSearchEnabled checks if semantic search is enabled
-func IsSemanticSearchEnabled() bool {
-	return os.Getenv("WORKSPACE_ENABLE_SEMANTIC_SEARCH") == "true" || os.Getenv("ENABLE_SEMANTIC_SEARCH") == "true"
-}
-
 // IsGitSyncEnabled checks if GitHub sync is enabled
 func IsGitSyncEnabled() bool {
 	// Enabled if WORKSPACE_ENABLE_GITHUB_SYNC is true OR if GITHUB_TOKEN is present and not explicitly disabled

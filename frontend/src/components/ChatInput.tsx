@@ -29,14 +29,13 @@ function WorkshopModeToggle() {
   const workflowMode = useWorkflowStore(state => state.workflowMode)
   const setWorkflowMode = useWorkflowStore(state => state.setWorkflowMode)
   const workshopMode = useWorkflowStore(state => {
-    const raw = (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
-    // Normalize legacy "optimizer" to "builder" (modes were merged)
-    return raw === 'optimizer' ? 'builder' : raw
+    return (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
   })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
 
   const builderModes = [
-    { id: 'builder' as const, label: 'Build', title: 'Build & Optimize', description: 'Design, build, test, debug, and optimize the workflow — all tools available.' },
+    { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design, build, and test the workflow — get a working plan with correct output.' },
+    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
     { id: 'debugger' as const, label: 'Ask', title: 'Ask', description: 'Inspect prior runs and failures without re-executing the workflow.' },
     { id: 'runner' as const, label: 'Run', title: 'Run', description: 'Use the finished workflow and focus on execution results.' },
   ]
@@ -1954,7 +1953,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const workflowStore = useWorkflowStore.getState()
     const { workflowMode: currentWorkflowMode, workshopMode: currentWorkshopMode } = getEffectiveWorkflowModes()
 
-    const targetWorkshopMode = cmd.requiredWorkshopMode
+    const requiredWorkshopModes = cmd.requiredWorkshopMode
+      ? (Array.isArray(cmd.requiredWorkshopMode) ? cmd.requiredWorkshopMode : [cmd.requiredWorkshopMode])
+      : []
+    // If current workshop mode is already one of the allowed modes, no switch needed
+    const workshopModeMatches = requiredWorkshopModes.length === 0 || requiredWorkshopModes.includes(currentWorkshopMode as any)
+    // When we need to switch, pick the first allowed mode
+    const targetWorkshopMode = workshopModeMatches ? undefined : requiredWorkshopModes[0]
     const targetWorkflowMode = cmd.requiredWorkflowMode
       ?? (targetWorkshopMode === 'eval'
         ? 'eval'
@@ -1962,7 +1967,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           ? 'output'
           : targetWorkshopMode
             ? 'plan'
-            : undefined)
+            : requiredWorkshopModes.length > 0 && !workshopModeMatches
+              ? 'plan'
+              : undefined)
 
     let switched = false
 
@@ -3725,6 +3732,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={commandSearchQuery}
         position={commandDialogPosition}
         modeCategory={selectedModeCategory}
+        workshopMode={selectedModeCategory === 'workflow' ? getEffectiveWorkflowModes().workshopMode : undefined}
         onManageCommands={handleManageCommands}
         onEditCommand={handleEditCommand}
         onDeleteCommand={handleDeleteCommand}

@@ -139,8 +139,6 @@ export TOOL_EXECUTION_TIMEOUT="15m"
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
 
-# Workspace semantic search configuration (disabled by default - requires Qdrant)
-export WORKSPACE_ENABLE_SEMANTIC_SEARCH="${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}"
 # Set MCP cache directory to ensure consistent path across restarts
 export MCP_CACHE_DIR="${SCRIPT_DIR}/cache"
 echo "🔧 Set MCP_CACHE_DIR to: $MCP_CACHE_DIR"
@@ -253,7 +251,6 @@ echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" >> "$LOG_PATH
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Available Azure Models: $AZURE_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Workspace tools: Enabled" >> "$LOG_PATH"
-echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" >> "$LOG_PATH"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" >> "$LOG_PATH"
 echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" >> "$LOG_PATH"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" >> "$LOG_PATH"
@@ -289,7 +286,6 @@ echo "🔀 Split Execution Learning: $SPLIT_EXECUTION_LEARNING"
 echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
 echo "💾 MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)"
 echo "📁 Workspace Tools: Enabled"
-echo "🔍 Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH"
 echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%, Fixed: ${FIXED_TOKEN_THRESHOLD} tokens, Keep: $SUMMARY_KEEP_LAST_MESSAGES msgs)"
 echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
 echo "📦 Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens"

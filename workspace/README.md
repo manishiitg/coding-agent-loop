@@ -450,8 +450,6 @@ go build -o planner .
 # With GitHub integration
 ./planner server --port 8080 --docs-dir ./workspace-docs --github-repo city-mall/mcp-agent-docs --github-token ghp_your_token_here
 
-# Disable semantic search (saves resources)
-./planner server --port 8080 --docs-dir ./workspace-docs --enable-semantic-search=false
 ```
 
 ### 3. Test the API
@@ -536,15 +534,12 @@ curl -X DELETE "http://localhost:8081/api/folders/examples?confirm=true&commit_m
 - `--docs-dir`: Documents directory (default: ./workspace-docs)
 - `--github-token`: GitHub personal access token
 - `--github-repo`: GitHub repository (username/repo-name)
-- `--enable-semantic-search`: Enable semantic search functionality (default: true)
-
 ### Environment Variables
 ```bash
 export PLANNER_PORT=8080
 export PLANNER_DOCS_DIR=./workspace-docs
 export PLANNER_GITHUB_TOKEN=ghp_your_token_here
 export PLANNER_GITHUB_REPO=username/workspace-docs
-export PLANNER_ENABLE_SEMANTIC_SEARCH=true
 ```
 
 **Note**: GitHub branch is always set to "main" for now.

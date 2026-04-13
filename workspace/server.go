@@ -44,7 +44,14 @@ func runServer(cmd *cobra.Command, args []string) {
 	debug := viper.GetBool("debug")
 	githubToken := viper.GetString("github-token")
 	githubRepo := viper.GetString("github-repo")
-	enableSemanticSearch := viper.GetBool("enable-semantic-search")
+
+	absDocsDir, err := filepath.Abs(docsDir)
+	if err != nil {
+		fmt.Printf("Failed to resolve docs directory: %v\n", err)
+		os.Exit(1)
+	}
+	docsDir = absDocsDir
+	viper.Set("docs-dir", docsDir)
 
 	// Create docs directory if it doesn't exist
 	if err := os.MkdirAll(docsDir, 0755); err != nil {
@@ -149,15 +156,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Initialize semantic search services conditionally
-	if enableSemanticSearch {
-		fmt.Printf("🔧 Initializing semantic search services...\n")
-		handlers.InitializeSemanticServices()
-		fmt.Printf("✅ Semantic search services initialized\n")
-	} else {
-		fmt.Printf("ℹ️  Semantic search is disabled\n")
-	}
-
 	// Create Gin router
 	r := gin.Default()
 
@@ -181,10 +179,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Health check endpoint
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"status":          "healthy",
-			"service":         "planner-api",
-			"docs_dir":        docsDir,
-			"semantic_search": enableSemanticSearch,
+			"status":   "healthy",
+			"service":  "planner-api",
+			"docs_dir": docsDir,
 		})
 	})
 	r.HEAD("/health", func(c *gin.Context) {
@@ -196,8 +193,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	{
 		// Search routes (separate paths to avoid conflicts)
 		api.GET("/search", handlers.SearchDocuments)
-		api.GET("/search/semantic", handlers.SemanticSearch)
-		api.POST("/search/process-file", handlers.ProcessFile)
 
 		// File upload route
 		api.POST("/upload", handlers.UploadFile)
@@ -247,14 +242,6 @@ func runServer(cmd *cobra.Command, args []string) {
 			sync.GET("/status", handlers.GetSyncStatus)
 		}
 
-		// Semantic search monitoring routes
-		semantic := api.Group("/semantic")
-		{
-			semantic.GET("/jobs", handlers.GetJobStatus)
-			semantic.GET("/stats", handlers.GetSemanticStats)
-			semantic.POST("/resync", handlers.TriggerResync)
-		}
-
 		// Workspace backup routes
 		workspace := api.Group("/workspace")
 		{
@@ -270,16 +257,15 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Printf("Failed to listen on port %s: %v\n", port, err)
 		os.Exit(1)
 	}
-	
+
 	// Get the actual port (in case 0 was used)
 	actualPort := listener.Addr().(*net.TCPAddr).Port
 	fmt.Printf("Starting Planner API server on port %d\n", actualPort)
-	
+
 	// Print a specific marker for Electron to parse
 	fmt.Printf("DynamicPort: %d\n", actualPort)
-	
-	absDocsDir, _ := filepath.Abs(docsDir)
-	fmt.Printf("Docs directory: %s\n", absDocsDir)
+
+	fmt.Printf("Docs directory: %s\n", docsDir)
 	fmt.Printf("Health check: http://localhost:%d/health\n", actualPort)
 	fmt.Printf("API docs: http://localhost:%d/api/documents\n", actualPort)
 

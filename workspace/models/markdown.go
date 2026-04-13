@@ -47,60 +47,9 @@ type PatchRequest struct {
 // SearchRequest represents the request to search documents
 type SearchRequest struct {
 	Query        string `form:"query" binding:"required"`
-	Folder       string `form:"folder"`                     // Optional folder to search in
+	Folder       string `form:"folder"` // Optional folder to search in
 	Limit        int    `form:"limit,default=50"`
-	BlockedPaths string `form:"blocked_paths"`              // Comma-separated list of paths to exclude from search
-}
-
-// SemanticSearchRequest represents the request for semantic search
-type SemanticSearchRequest struct {
-	Query        string `form:"query" binding:"required"`
-	Folder       string `form:"folder"`                     // Optional folder to search in
-	Limit        int    `form:"limit,default=10"`           // Default to 10 for semantic search
-	BlockedPaths string `form:"blocked_paths"`              // Comma-separated list of paths to exclude from search
-}
-
-// SemanticSearchResult represents a semantic search result
-type SemanticSearchResult struct {
-	FilePath     string  `json:"file_path"`
-	ChunkText    string  `json:"chunk_text"`
-	ChunkIndex   int     `json:"chunk_index"`
-	Score        float64 `json:"score"`
-	Folder       string  `json:"folder"`
-	FileType     string  `json:"file_type"`
-	WordCount    int     `json:"word_count"`
-	CharCount    int     `json:"char_count"`
-	SearchMethod string  `json:"search_method"` // "semantic" or "regex"
-}
-
-// SemanticSearchResponse represents a semantic search response
-type SemanticSearchResponse struct {
-	Query           string                 `json:"query"`
-	SemanticResults []SemanticSearchResult `json:"semantic_results"`
-	TotalResults    int                    `json:"total_results"`
-	SearchMethod    string                 `json:"search_method"` // "semantic"
-	ProcessingTime  float64                `json:"processing_time_ms"`
-	EmbeddingModel  string                 `json:"embedding_model,omitempty"`
-	VectorDBStatus  string                 `json:"vector_db_status"`
-}
-
-// FileProcessingRequest represents a request to process a file for embeddings
-type FileProcessingRequest struct {
-	FilePath string `json:"file_path" binding:"required"`
-	Content  string `json:"content" binding:"required"`
-	Action   string `json:"action" binding:"required"` // "create", "update", "delete"
-}
-
-// FileProcessingResponse represents the response from file processing
-type FileProcessingResponse struct {
-	FilePath            string                 `json:"file_path"`
-	Action              string                 `json:"action"`
-	ChunksCreated       int                    `json:"chunks_created"`
-	EmbeddingsGenerated int                    `json:"embeddings_generated"`
-	ProcessingTime      float64                `json:"processing_time_ms"`
-	Success             bool                   `json:"success"`
-	Error               string                 `json:"error,omitempty"`
-	Stats               map[string]interface{} `json:"stats,omitempty"`
+	BlockedPaths string `form:"blocked_paths"` // Comma-separated list of paths to exclude from search
 }
 
 // NestedContentRequest represents the request to get nested content

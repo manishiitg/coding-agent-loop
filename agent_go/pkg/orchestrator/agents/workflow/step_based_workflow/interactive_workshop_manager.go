@@ -853,8 +853,22 @@ func GetToolsForWorkshopMode(mode string) []string {
 	tools = append(tools, readOnly...)
 
 	switch mode {
-	case "builder", "optimizer":
-		// BUILD+OPTIMIZE: design workflow, create/modify steps, test execution, configure, debug, optimize
+	case "builder":
+		// BUILD: design workflow, create/modify steps, test execution, configure, build eval
+		tools = append(tools, execution...)
+		tools = append(tools, planMod...)
+		tools = append(tools, variableConfig...)
+		tools = append(tools, skills...)
+		tools = append(tools, "debug_step")
+		tools = append(tools, "run_full_workflow")
+		tools = append(tools, "update_step_config")
+		tools = append(tools, "infer_objective", "set_workflow_objective")
+		tools = append(tools, "review_step_code")
+		tools = append(tools, eval...)
+		tools = append(tools, "optimize_eval_step")
+
+	case "optimizer":
+		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
@@ -1046,6 +1060,11 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	// Auto-detect workshop mode based on step optimization state
 	workshopMode, unoptimizedSteps := detectWorkshopMode(iwm.controller.approvedPlan, stepConfigs)
 	iwm.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Auto-detected mode: %s (unoptimized: %v)", workshopMode, unoptimizedSteps))
+	// Apply frontend override if set
+	if iwm.workshopModeOverride != "" {
+		workshopMode = iwm.workshopModeOverride
+		iwm.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Frontend override applied: %s", workshopMode))
+	}
 
 	// Create workshop agent
 	agent, err := iwm.createInteractiveWorkshopAgent(ctx, workspacePath)
@@ -1239,12 +1258,12 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
-## CURRENT MODE: {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}BUILD & OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else if eq .WorkshopMode "output"}}OUTPUT{{else}}RUN{{end}}
+## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILD{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else if eq .WorkshopMode "output"}}OUTPUT{{else}}RUN{{end}}
 {{.SpecialWorkspaceToolsInstructions}}
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
-**BUILD & OPTIMIZE MODE** — Design, build, test, debug, and optimize the workflow. You have full access to all tools.
+{{if eq .WorkshopMode "builder"}}
+**BUILD MODE** — Design, build, and test the workflow. Focus on getting a working plan with steps that produce correct output.
 
-### Phase 1: Design & Build
+### Design & Build
 - **Do NOT create steps until the plan is fully clear.** The user may be exploring, testing ideas, or not yet ready to commit to a plan. First discuss the approach, ask clarifying questions, and confirm the plan with the user. Only create steps after the user explicitly confirms the plan or asks you to create/add steps.
 - When the user describes what they want, respond with a proposed plan (step breakdown, types, context flow) and ask for confirmation before creating any steps in plan.json
 - If the user is just asking questions, brainstorming, or exploring possibilities, engage in discussion — do NOT jump to creating steps
@@ -1256,8 +1275,24 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+`.
 2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. The LLM writes and runs code inline each time — no persistent script is saved.
 
-### Phase 2: Optimize & Harden
-Once steps are working correctly, shift to optimization. All optimization must be driven by the success criteria.
+### Build Evaluation
+Once steps are producing output, set up evaluation so the optimizer has something to measure against:
+1. Switch to the **Eval** tab (top-level mode) to edit `+"`evaluation/evaluation_plan.json`"+`
+2. Or build eval inline: use `+"`validate_evaluation_plan`"+` to check the JSON, `+"`run_full_evaluation(target_run_folder)`"+` to test it against a completed run
+3. Focus eval steps on **outcomes** (final results, data in target systems) not intermediate files
+4. Use `+"`optimize_eval_step(step_id)`"+` for read-only feedback on eval step quality
+
+### Validate the Design
+Before moving to optimization, ensure the foundation is solid:
+1. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective not set** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, run `+"`infer_objective`"+`, confirm with user before saving.{{end}}
+2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria not set** — ask the user: "What does success look like for this workflow?" Then save via `+"`set_workflow_objective(success_criteria=...)`"+`.{{end}}
+3. Verify context dependencies are wired correctly — each step's context_dependencies should reference context_output from an earlier step.
+4. Test at least one end-to-end run with a single group to confirm the plan works.
+5. Evaluation plan exists with at least one eval step.
+6. When the plan is working and eval is set up, suggest the user switch to **Optimizer mode** to harden it.
+
+{{else if eq .WorkshopMode "optimizer"}}
+**OPTIMIZE MODE** — Make existing steps reliable across all groups and runs. The plan structure should already be working.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
 
 **Ensure the foundation is set:**
@@ -1806,7 +1841,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
 - **run_in_background(name, instruction)** — Spawn independent background agent with same tools
-{{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.{{end}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.{{end}}
 {{end}}
 
 {{if eq .WorkshopMode "debugger"}}
@@ -1844,7 +1879,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **get_workflow_config** — Use this (not `+"`cat workflow.json`"+`) to inspect the workflow's current MCP servers, selected skills, available secrets, and LLM config. For the global installed skill catalog, use `+"`list_skills`"+`.
 - **get_llm_config** — Per-step LLM overrides
 
-{{if eq .WorkshopMode "builder"}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
 - **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
@@ -1888,15 +1923,6 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message to optimize steps **one by one** after each step completes. Example message: "Run the full workflow using run_full_workflow. After each step completes, if it succeeded and is not yet optimized, call optimize_step and apply fixes. If a step fails, retry it once after fixing — if it fails again, skip it and move to the next step. Do NOT retry the same step more than 2 times to avoid infinite loops."
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
 
-{{end}}
-
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
-### Plan Modification
-- **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
-- **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
-- **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
-- **Validation**: update_validation_schema
-- **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
 {{end}}
 
 {{if eq .WorkshopMode "eval"}}

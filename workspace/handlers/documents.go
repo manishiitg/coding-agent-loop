@@ -149,11 +149,6 @@ func CreateDocument(c *gin.Context) {
 		return
 	}
 
-	// Queue file for semantic processing
-	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
-		go fileProcessor.QueueJob(req.FilePath, req.Content, "create")
-	}
-
 	// Parse markdown structure
 	structure := parsers.ParseMarkdown(req.Content)
 
@@ -536,8 +531,6 @@ func ListDocuments(c *gin.Context) {
 		documents = sharedDocuments
 	}
 
-
-
 	// Filter out blocked paths before building hierarchy
 	if len(blockedPaths) > 0 {
 		var filteredDocuments []models.Document
@@ -867,7 +860,7 @@ func GetDocument(c *gin.Context) {
 	doc := models.Document{
 		FilePath: relativePath,
 		Content:  contentStr, // Include content for read_workspace_file tool
-		IsImage: isImage,
+		IsImage:  isImage,
 	}
 
 	// Check if this is a download request (query parameter or Accept header)
@@ -1025,15 +1018,6 @@ func UpdateDocument(c *gin.Context) {
 		return
 	}
 
-	// Queue file for semantic processing
-	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
-		action := "update"
-		if !fileExists {
-			action = "create"
-		}
-		go fileProcessor.QueueJob(filePathParam, req.Content, action)
-	}
-
 	// Return user-relative path in the response
 	relativePath := filePathParam
 
@@ -1119,11 +1103,6 @@ func DeleteDocument(c *gin.Context) {
 			Error:   err.Error(),
 		})
 		return
-	}
-
-	// Queue file for semantic processing (delete embeddings)
-	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
-		go fileProcessor.QueueJob(filePathParam, "", "delete")
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[any]{
@@ -1895,10 +1874,6 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool
 				continue
 			}
 
-			// Queue file for semantic processing (delete embeddings)
-			if fileProcessor := GetFileProcessor(); fileProcessor != nil {
-				go fileProcessor.QueueJob(itemPath, "", "delete")
-			}
 		}
 
 		deletedCount++
@@ -2474,11 +2449,11 @@ func isTextBasedFile(filename, contentType string) bool {
 		"text/x-emacs":              true,
 		"text/x-tex":                true,
 		"text/x-latex":              true,
-		        		"text/x-rst":                true,
-		        		"text/x-adoc":               true,
-		        		"text/x-asciidoc":           true,
-		        		"text/x-org":                true,
-		        	}	// Check MIME type
+		"text/x-rst":                true,
+		"text/x-adoc":               true,
+		"text/x-asciidoc":           true,
+		"text/x-org":                true,
+	} // Check MIME type
 	if allowed, exists := allowedMimeTypes[contentType]; exists {
 		return allowed
 	}

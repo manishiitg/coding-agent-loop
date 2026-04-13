@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
 import type { ExecutionOptions } from '../services/api-types'
 
+export type WorkshopMode = 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+
 export interface CommandContext {
   beforeSlash: string
   activeTabId: string
@@ -30,7 +32,7 @@ export interface CommandDefinition {
   icon: ReactNode
   modes?: ModeCategory[]
   requiredWorkflowMode?: 'plan' | 'eval' | 'output'
-  requiredWorkshopMode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+  requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
   validate?: (ctx: CommandContext) => string | null
   hidden?: boolean
   source: 'builtin' | 'user'

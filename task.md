@@ -1,9 +1,5 @@
 4. chain builder? / 34. workspace builder
 
-30.. also add a slack hook to talk to multi chat agnet 
-
-38. should plan debugger etc bhi multichat agent... how make that more integrate with workflows?
-
 39. add termporal to agents / workflows --- not use something simpler
 
 41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS
@@ -43,3 +39,7 @@
 69. we need to test slack bot provider and add whatsapp later 
 
 70. add schedule for memories in chat
+
+71. see if we can run crons via cli? 
+
+72. see if we can setup workspace as a normal golang instead of docker

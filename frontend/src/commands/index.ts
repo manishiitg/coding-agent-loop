@@ -1,3 +1,3 @@
 export { getCommands, findCommand, findCommandAnyMode, setUserCommands } from './registry'
 export { loadAndRegisterUserCommands } from './user-commands'
-export type { CommandDefinition, CommandContext } from './types'
+export type { CommandDefinition, CommandContext, WorkshopMode } from './types'

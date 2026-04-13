@@ -6,7 +6,6 @@ import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
 import GitSyncStatus from './workspace/GitSyncStatus'
 import BrowserProcesses from './workspace/BrowserProcesses'
-import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
 import RenameFileDialog from './workspace/RenameFileDialog'
@@ -112,9 +111,6 @@ export default function Workspace({
   // Server refresh search state (re-fetch file tree when local search finds nothing)
   const [serverSearchLoading, setServerSearchLoading] = useState(false)
 
-  // Search Sync Details state
-  const [showSearchSyncDetails, setShowSearchSyncDetails] = useState(false)
-
   // Multi-file upload state
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
@@ -163,7 +159,6 @@ export default function Workspace({
     setNeedsRefresh
   } = useWorkspaceStore()
 
-  const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
   const isGitSyncEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.github_sync_enabled ?? false)
   const fetchCapabilities = useCapabilitiesStore(s => s.fetchCapabilities)
 
@@ -2084,20 +2079,6 @@ export default function Workspace({
                         <CheckSquare className="w-4 h-4" />
                         Select Files
                       </button>
-                      {isSemanticSearchEnabled && (
-                      <button
-                        onClick={() => {
-                          setShowSearchSyncDetails(true)
-                          setShowActionsDropdown(false)
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        Search Sync Details
-                      </button>
-                      )}
                     </div>
                   </div>
                   )}
@@ -2115,19 +2096,6 @@ export default function Workspace({
               {!isSelectionMode && isGitSyncEnabled && (
                 <div className="relative">
                   <GitSyncStatus onSync={() => fetchFiles(activeFolder, { force: true })} isVisible={!minimized} />
-                </div>
-              )}
-
-              {/* Search Sync Status - Hidden button, controlled via dropdown - Hidden in selection mode */}
-              {!isSelectionMode && isSemanticSearchEnabled && (
-                <div className="relative">
-                  <SemanticSearchSync
-                    onResync={() => fetchFiles(activeFolder, { force: true })}
-                    isVisible={!minimized}
-                    hideButton={true}
-                    showDetailsExternal={showSearchSyncDetails}
-                    onDetailsClose={() => setShowSearchSyncDetails(false)}
-                  />
                 </div>
               )}
 

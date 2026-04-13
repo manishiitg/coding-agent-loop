@@ -11,7 +11,6 @@ interface CapabilitiesState {
   fetchCapabilities: () => Promise<void>
   
   // Helpers
-  isSemanticSearchEnabled: () => boolean
   isGitSyncEnabled: () => boolean
   isLocalMode: () => boolean
 }
@@ -34,10 +33,6 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
             loading: false 
           })
         }
-      },
-
-      isSemanticSearchEnabled: () => {
-        return get().capabilities?.workspace?.semantic_search_enabled ?? false
       },
 
       isGitSyncEnabled: () => {

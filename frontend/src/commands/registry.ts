@@ -1,15 +1,23 @@
 import type { ModeCategory } from '../stores/useModeStore'
-import type { CommandDefinition } from './types'
+import type { CommandDefinition, WorkshopMode } from './types'
 import { builtinCommands } from './builtin-commands'
 
 let userCommands: CommandDefinition[] = []
 
-function matchesMode(cmd: CommandDefinition, mode?: ModeCategory): boolean {
+function matchesMode(cmd: CommandDefinition, mode?: ModeCategory, workshopMode?: WorkshopMode): boolean {
   if (cmd.hidden) return false
   if (mode === undefined || mode === null) return true
 
   if (mode === 'workflow') {
-    return cmd.modes?.includes('workflow') ?? false
+    if (!(cmd.modes?.includes('workflow') ?? false)) return false
+    // Filter by workshop mode if set
+    if (workshopMode && cmd.requiredWorkshopMode) {
+      const allowed = Array.isArray(cmd.requiredWorkshopMode)
+        ? cmd.requiredWorkshopMode
+        : [cmd.requiredWorkshopMode]
+      return allowed.includes(workshopMode)
+    }
+    return true
   }
 
   if (mode === 'multi-agent') {
@@ -23,8 +31,8 @@ export function setUserCommands(cmds: CommandDefinition[]) {
   userCommands = cmds
 }
 
-export function getCommands(mode?: ModeCategory): CommandDefinition[] {
-  return [...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode))
+export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode): CommandDefinition[] {
+  return [...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode, workshopMode))
 }
 
 export function findCommand(name: string, mode?: ModeCategory): CommandDefinition | undefined {

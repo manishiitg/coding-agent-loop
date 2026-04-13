@@ -19,20 +19,14 @@ services:
       - PORT=8080
       - DOCS_DIR=/app/workspace-docs
 
-      # Qdrant Configuration
-      - QDRANT_URL=http://qdrant:6333
-
       # OpenAI Configuration
       - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_api_key_here}
-      - OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 
       # Optional: Debug mode
       - DEBUG=${DEBUG:-false}
 
       # MCP Cache Configuration
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
-      # Semantic Search Configuration
-      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
       - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
       - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/app/gws-credentials.json
     extra_hosts:
@@ -40,9 +34,6 @@ services:
     volumes:
       - ./workspace-docs:/app/workspace-docs
       - ./agent_go/gws-credentials.json:/app/gws-credentials.json:ro
-      - workspace_data:/app/data
-    # depends_on:
-    #   - qdrant
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
@@ -122,6 +113,4 @@ services:
 volumes:
   ollama_data:
   workspace-docs:
-  workspace_data:
-  qdrant_data:
   agent_data:

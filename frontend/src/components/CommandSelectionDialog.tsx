@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Terminal, Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
-import { getCommands, type CommandDefinition } from '../commands'
+import { getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
 
 interface CommandSelectionDialogProps {
@@ -11,6 +11,7 @@ interface CommandSelectionDialogProps {
   searchQuery: string
   position: { bottom: number; left: number }
   modeCategory?: ModeCategory
+  workshopMode?: WorkshopMode
   onManageCommands?: () => void
   onEditCommand?: (command: CommandDefinition) => void
   onDeleteCommand?: (command: CommandDefinition) => void
@@ -23,6 +24,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   searchQuery,
   position,
   modeCategory,
+  workshopMode,
   onManageCommands,
   onEditCommand,
   onDeleteCommand
@@ -67,7 +69,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
   // Filter commands based on search query and current mode
   useEffect(() => {
-    const allCommands = getCommands(modeCategory)
+    const allCommands = getCommands(modeCategory, workshopMode)
 
     if (!searchQuery.trim()) {
       setFilteredCommands(allCommands)
@@ -97,7 +99,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
     setFilteredCommands(filtered)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [searchQuery, modeCategory])
+  }, [searchQuery, modeCategory, workshopMode])
 
   // Scroll selected item into view
   useEffect(() => {

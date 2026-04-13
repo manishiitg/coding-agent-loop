@@ -1581,8 +1581,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 			"provider": tracingProvider,
 		},
 		"workspace": map[string]interface{}{
-			"semantic_search_enabled": workspace.IsSemanticSearchEnabled(),
-			"github_sync_enabled":     workspace.IsGitSyncEnabled(),
+			"github_sync_enabled": workspace.IsGitSyncEnabled(),
 		},
 		"servers":    []string{},
 		"local_mode": IsLocalMode(),
@@ -3237,140 +3236,211 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Create Chats/ folder if it doesn't exist
-				if err := skills.CreateFolder("Chats"); err != nil {
-					log.Printf("[WORKSPACE] Warning: Could not create Chats/ folder: %v", err)
-				}
+			if err := skills.CreateFolder("Chats"); err != nil {
+				log.Printf("[WORKSPACE] Warning: Could not create Chats/ folder: %v", err)
+			}
 
-				// Create skills/ folder if it doesn't exist
-				if err := skills.CreateFolder("skills"); err != nil {
-					log.Printf("[WORKSPACE] Warning: Could not create skills/ folder: %v", err)
+			// Create skills/ folder if it doesn't exist
+			if err := skills.CreateFolder("skills"); err != nil {
+				log.Printf("[WORKSPACE] Warning: Could not create skills/ folder: %v", err)
+			} else {
+				// Create skills/custom/ folder for Skill Builder
+				if err := skills.CreateFolder("skills/custom"); err != nil {
+					log.Printf("[WORKSPACE] Warning: Could not create skills/custom/ folder: %v", err)
 				} else {
-					// Create skills/custom/ folder for Skill Builder
-					if err := skills.CreateFolder("skills/custom"); err != nil {
-						log.Printf("[WORKSPACE] Warning: Could not create skills/custom/ folder: %v", err)
+					log.Printf("[WORKSPACE] Ensured skills/ and skills/custom/ folders exist")
+				}
+			}
+
+			// Create subagents/ folder if it doesn't exist
+			if err := skills.CreateFolder("subagents"); err != nil {
+				log.Printf("[WORKSPACE] Warning: Could not create subagents/ folder: %v", err)
+			} else {
+				if err := skills.CreateFolder("subagents/custom"); err != nil {
+					log.Printf("[WORKSPACE] Warning: Could not create subagents/custom/ folder: %v", err)
+				}
+			}
+
+			// Create memories/ folder if it doesn't exist
+			if err := skills.CreateFolder("memories"); err != nil {
+				log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
+			}
+
+			// Chat mode: LLM-visible workspace tools (advanced + image)
+			// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
+			// These tools are restricted to the current workspace/chat folder guard.
+			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
+			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+			workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
+			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          currentUserID,
+			}, workspaceExecutors, nil)
+			log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
+			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
+			if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
+				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
+			}
+			_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
+
+			// Merge @context file paths into additional folder-guard write access.
+			// workflowReadOnlyFolders was computed above.
+			fileContextWriteFolders := extractFileContextWriteFolders(req.Query)
+			if len(fileContextWriteFolders) > 0 {
+				log.Printf("[FILE CONTEXT] Extracted write folder-guard paths from @context: %v", fileContextWriteFolders)
+			}
+			if len(workflowReadOnlyFolders) > 0 {
+				log.Printf("[FILE CONTEXT] Extracted read-only folder-guard paths from #workflow: %v", workflowReadOnlyFolders)
+			}
+
+			// Workflow phase: grant write access only to specific subfolders within the workflow folder.
+			// planning/ is intentionally excluded (read-only for the workflow builder).
+			// Full read access to the workflow folder is unrestricted by the guard.
+			if isWorkflowPhase && workflowPhaseFolder != "" {
+				workflowWriteSubfolders := []string{"knowledgebase/", "execution/", "learnings/", "scripts/", "runs/"}
+				for _, sub := range workflowWriteSubfolders {
+					fileContextWriteFolders = append(fileContextWriteFolders, workflowPhaseFolder+"/"+sub)
+				}
+				log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access restricted to subfolders of %s: %v", workflowPhaseFolder, workflowWriteSubfolders)
+			}
+
+			// Apply folder guard to restrict writes based on mode
+			// Multi-agent (plan) mode: primary write folder is Chats/
+			// Chat mode: writes go to Chats/
+			if !isWorkflowPhase {
+				// Per-user memory and chat folders replace the legacy global "memories/" and "Chats/" write paths.
+				perUserMemWrite := perUserMemoryFolder + "/"
+				perUserChatsWrite := perUserChatsFolder + "/"
+				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
+				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
+				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
+				additionalFolders = append(additionalFolders, perUserMemWrite)
+				additionalFolders = append(additionalFolders, perUserChatHistory)
+				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
+				workspace.SetSessionWorkingDir(sessionID, "")
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", "config/", perUserMemWrite}, additionalFolders...)
+				readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
+				readPaths = append(readPaths, workflowReadOnlyFolders...)
+				workspace.SetSessionFolderGuard(sessionID,
+					readPaths,
+					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
+				)
+				log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
+			} else {
+				perUserMemWrite := perUserMemoryFolder + "/"
+				perUserChatsWrite := perUserChatsFolder + "/"
+				perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
+				extraFolders := append([]string{"config/"}, resolvedGrants.WriteFolders...)
+				extraFolders = append(extraFolders, fileContextWriteFolders...)
+				extraFolders = append(extraFolders, perUserMemWrite)
+				extraFolders = append(extraFolders, perUserChatsWrite)
+				extraFolders = append(extraFolders, perUserChatHistory)
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
+				workspace.SetSessionWorkingDir(sessionID, "")
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
+				readPaths = append(readPaths, workflowReadOnlyFolders...)
+				workspace.SetSessionFolderGuard(sessionID,
+					readPaths,
+					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
+				)
+				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders)
+			}
+
+			// Apply skill folder guard if skills are selected (read-only access to selected skills only)
+			if len(req.SelectedSkills) > 0 {
+				log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", req.SelectedSkills)
+			}
+
+			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for chat mode", len(workspaceTools))
+
+			underlyingAgent := llmAgent.GetUnderlyingAgent()
+			for _, tool := range workspaceTools {
+				if tool.Function == nil {
+					log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
+					continue
+				}
+				toolName := tool.Function.Name
+				if executor, exists := workspaceExecutors[toolName]; exists {
+					// Enhance tool description based on mode
+					var enhancedDescription string
+					if !isWorkflowPhase {
+						enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description, perUserChatsFolder)
 					} else {
-						log.Printf("[WORKSPACE] Ensured skills/ and skills/custom/ folders exist")
+						enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolder)
 					}
-				}
 
-				// Create subagents/ folder if it doesn't exist
-				if err := skills.CreateFolder("subagents"); err != nil {
-					log.Printf("[WORKSPACE] Warning: Could not create subagents/ folder: %v", err)
-				} else {
-					if err := skills.CreateFolder("subagents/custom"); err != nil {
-						log.Printf("[WORKSPACE] Warning: Could not create subagents/custom/ folder: %v", err)
+					// Convert Parameters to map[string]interface{}
+					var params map[string]interface{}
+					if tool.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(tool.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
 					}
-				}
-
-				// Create memories/ folder if it doesn't exist
-				if err := skills.CreateFolder("memories"); err != nil {
-					log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
-				}
-
-				// Chat mode: LLM-visible workspace tools (advanced + image)
-				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
-				// These tools are restricted to the current workspace/chat folder guard.
-				workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
-				var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
-				workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
-				virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
-					WorkspaceAPIURL: getWorkspaceAPIURL(),
-					UserID:          currentUserID,
-				}, workspaceExecutors, nil)
-				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
-				// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
-				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
-					virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
-				}
-				_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
-
-				// Merge @context file paths into additional folder-guard write access.
-				// workflowReadOnlyFolders was computed above.
-				fileContextWriteFolders := extractFileContextWriteFolders(req.Query)
-				if len(fileContextWriteFolders) > 0 {
-					log.Printf("[FILE CONTEXT] Extracted write folder-guard paths from @context: %v", fileContextWriteFolders)
-				}
-				if len(workflowReadOnlyFolders) > 0 {
-					log.Printf("[FILE CONTEXT] Extracted read-only folder-guard paths from #workflow: %v", workflowReadOnlyFolders)
-				}
-
-				// Workflow phase: grant write access only to specific subfolders within the workflow folder.
-				// planning/ is intentionally excluded (read-only for the workflow builder).
-				// Full read access to the workflow folder is unrestricted by the guard.
-				if isWorkflowPhase && workflowPhaseFolder != "" {
-					workflowWriteSubfolders := []string{"knowledgebase/", "execution/", "learnings/", "scripts/", "runs/"}
-					for _, sub := range workflowWriteSubfolders {
-						fileContextWriteFolders = append(fileContextWriteFolders, workflowPhaseFolder+"/"+sub)
+					if params == nil {
+						log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+						continue
 					}
-					log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access restricted to subfolders of %s: %v", workflowPhaseFolder, workflowWriteSubfolders)
-				}
 
-				// Apply folder guard to restrict writes based on mode
-				// Multi-agent (plan) mode: primary write folder is Chats/
-				// Chat mode: writes go to Chats/
+					// Get tool category from the category map - REQUIRED
+					toolCategory := toolCategories[toolName]
+					if toolCategory == "" {
+						log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
+						return
+					}
+
+					// Executor is already the correct type (func(ctx, args) (string, error))
+					// No type assertion needed unlike workflow where executors are map[string]interface{}
+					if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && req.ImageGenConfig != nil {
+						executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
+							Provider: req.ImageGenConfig.Provider,
+							ModelID:  req.ImageGenConfig.ModelID,
+							APIKey:   req.ImageGenConfig.APIKey,
+						})
+					}
+
+					if err := underlyingAgent.RegisterCustomTool(
+						toolName,
+						enhancedDescription,
+						params,
+						executor,
+						toolCategory,
+					); err != nil {
+						log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+						sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
+						return
+					}
+					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
+				}
+			}
+			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for chat mode", len(workspaceTools))
+
+			// Register browser tool if browser access is enabled
+			if enableBrowserAccess {
+				browserTools := virtualtools.CreateWorkspaceBrowserTools()
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
+				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+
+				// Apply same folder guard as workspace tools (reuse fileContextWriteFolders/workflowReadOnlyFolders from above)
 				if !isWorkflowPhase {
-					// Per-user memory and chat folders replace the legacy global "memories/" and "Chats/" write paths.
-					perUserMemWrite := perUserMemoryFolder + "/"
-					perUserChatsWrite := perUserChatsFolder + "/"
-					perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
 					additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 					additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-					additionalFolders = append(additionalFolders, perUserMemWrite)
-					additionalFolders = append(additionalFolders, perUserChatHistory)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
-					workspace.SetSessionWorkingDir(sessionID, "")
-					readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "skills/", "subagents/", "Downloads/", "Workflow/", "config/", perUserMemWrite}, additionalFolders...)
-					readPaths = append(readPaths, resolvedGrants.ReadOnlyExtra...)
-					readPaths = append(readPaths, workflowReadOnlyFolders...)
-					workspace.SetSessionFolderGuard(sessionID,
-						readPaths,
-						append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, additionalFolders...),
-					)
-					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, write: %v, read-only: %v, grants: %v)", perUserChatsWrite, perUserMemWrite, additionalFolders, workflowReadOnlyFolders, resolvedGrants.AppliedNames)
+					browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
 				} else {
-					perUserMemWrite := perUserMemoryFolder + "/"
-					perUserChatsWrite := perUserChatsFolder + "/"
-					perUserChatHistory := strings.TrimSuffix(perUserChatsFolder, "Chats") + "chat_history/"
-					extraFolders := append([]string{"config/"}, resolvedGrants.WriteFolders...)
-					extraFolders = append(extraFolders, fileContextWriteFolders...)
-					extraFolders = append(extraFolders, perUserMemWrite)
-					extraFolders = append(extraFolders, perUserChatsWrite)
-					extraFolders = append(extraFolders, perUserChatHistory)
-					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
-					workspace.SetSessionWorkingDir(sessionID, "")
-					readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
-					readPaths = append(readPaths, workflowReadOnlyFolders...)
-					workspace.SetSessionFolderGuard(sessionID,
-						readPaths,
-						append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
-					)
-					log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders)
+					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
+					browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
+					browserExtraFolders = append(browserExtraFolders, perUserChatsFolder+"/")
+					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
 				}
+				log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
 
-				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
-				if len(req.SelectedSkills) > 0 {
-					log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", req.SelectedSkills)
-				}
-
-				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for chat mode", len(workspaceTools))
-
-				underlyingAgent := llmAgent.GetUnderlyingAgent()
-				for _, tool := range workspaceTools {
+				for _, tool := range browserTools {
 					if tool.Function == nil {
-						log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
 						continue
 					}
 					toolName := tool.Function.Name
-					if executor, exists := workspaceExecutors[toolName]; exists {
-						// Enhance tool description based on mode
-						var enhancedDescription string
-						if !isWorkflowPhase {
-							enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description, perUserChatsFolder)
-						} else {
-							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolder)
-						}
-
-						// Convert Parameters to map[string]interface{}
+					if executor, exists := browserExecutors[toolName]; exists {
 						var params map[string]interface{}
 						if tool.Function.Parameters != nil {
 							paramsBytes, err := json.Marshal(tool.Function.Parameters)
@@ -3379,96 +3449,25 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 						if params == nil {
-							log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+							log.Printf("[BROWSER TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
 							continue
-						}
-
-						// Get tool category from the category map - REQUIRED
-						toolCategory := toolCategories[toolName]
-						if toolCategory == "" {
-							log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
-							sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
-							return
-						}
-
-						// Executor is already the correct type (func(ctx, args) (string, error))
-						// No type assertion needed unlike workflow where executors are map[string]interface{}
-						if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && req.ImageGenConfig != nil {
-							executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
-								Provider: req.ImageGenConfig.Provider,
-								ModelID:  req.ImageGenConfig.ModelID,
-								APIKey:   req.ImageGenConfig.APIKey,
-							})
 						}
 
 						if err := underlyingAgent.RegisterCustomTool(
 							toolName,
-							enhancedDescription,
+							tool.Function.Description,
 							params,
 							executor,
-							toolCategory,
+							browserCategory,
 						); err != nil {
-							log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-							sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
-							return
-						}
-						log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
-					}
-				}
-				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for chat mode", len(workspaceTools))
-
-				// Register browser tool if browser access is enabled
-				if enableBrowserAccess {
-					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
-					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-
-					// Apply same folder guard as workspace tools (reuse fileContextWriteFolders/workflowReadOnlyFolders from above)
-					if !isWorkflowPhase {
-						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
-						additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
-					} else {
-						browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
-						browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
-						browserExtraFolders = append(browserExtraFolders, perUserChatsFolder+"/")
-						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
-					}
-					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
-
-					for _, tool := range browserTools {
-						if tool.Function == nil {
+							log.Printf("[BROWSER TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
 							continue
 						}
-						toolName := tool.Function.Name
-						if executor, exists := browserExecutors[toolName]; exists {
-							var params map[string]interface{}
-							if tool.Function.Parameters != nil {
-								paramsBytes, err := json.Marshal(tool.Function.Parameters)
-								if err == nil {
-									json.Unmarshal(paramsBytes, &params)
-								}
-							}
-							if params == nil {
-								log.Printf("[BROWSER TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
-								continue
-							}
-
-							if err := underlyingAgent.RegisterCustomTool(
-								toolName,
-								tool.Function.Description,
-								params,
-								executor,
-								browserCategory,
-							); err != nil {
-								log.Printf("[BROWSER TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-								continue
-							}
-							log.Printf("[BROWSER TOOLS] Registered browser tool: %s (category: %s)", toolName, browserCategory)
-						}
+						log.Printf("[BROWSER TOOLS] Registered browser tool: %s (category: %s)", toolName, browserCategory)
 					}
-					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
 				}
+				log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
+			}
 
 			// Register delegation tool for multi-agent chat (all non-workflow-phase simple sessions).
 			if !isWorkflowPhase {
@@ -3577,43 +3576,43 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
 
-						// Register workflow run tools (run_workflow, run_step)
-						wfRunTools := createWorkflowRunTools()
-						wfRunExecutors := createWorkflowRunExecutors(api)
-						for _, tool := range wfRunTools {
-							if tool.Function == nil {
-								continue
+					// Register workflow run tools (run_workflow, run_step)
+					wfRunTools := createWorkflowRunTools()
+					wfRunExecutors := createWorkflowRunExecutors(api)
+					for _, tool := range wfRunTools {
+						if tool.Function == nil {
+							continue
+						}
+						toolName := tool.Function.Name
+						if exec, exists := wfRunExecutors[toolName]; exists {
+							var params map[string]interface{}
+							if tool.Function.Parameters != nil {
+								paramsBytes, _ := json.Marshal(tool.Function.Parameters)
+								json.Unmarshal(paramsBytes, &params)
 							}
-							toolName := tool.Function.Name
-							if exec, exists := wfRunExecutors[toolName]; exists {
-								var params map[string]interface{}
-								if tool.Function.Parameters != nil {
-									paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-									json.Unmarshal(paramsBytes, &params)
-								}
-								// Wrap to inject session context
-								capturedExec := exec
-								wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
-									ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
-									return capturedExec(ctx, args)
-								}
-								if err := delegationAgent.RegisterCustomToolWithTimeout(
-									toolName,
-									tool.Function.Description,
-									params,
-									wrappedExec,
-									0,
-									delegationCategory,
-								); err != nil {
-									log.Printf("[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
-								} else {
-									log.Printf("[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
-								}
+							// Wrap to inject session context
+							capturedExec := exec
+							wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
+								ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+								return capturedExec(ctx, args)
+							}
+							if err := delegationAgent.RegisterCustomToolWithTimeout(
+								toolName,
+								tool.Function.Description,
+								params,
+								wrappedExec,
+								0,
+								delegationCategory,
+							); err != nil {
+								log.Printf("[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
+							} else {
+								log.Printf("[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
 							}
 						}
 					}
 				}
 			}
+		}
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
@@ -5824,69 +5823,121 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Register workspace tools for sub-agent
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image).
-			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
-			workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
-			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
-				WorkspaceAPIURL: getWorkspaceAPIURL(),
-				UserID:          subAgentUserID,
-			}, workspaceExecutors, nil)
-			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
-			// Inject secrets as environment variables for sub-agent shell execution (SECRET_ prefix for whitelist)
-			delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
-			if subAgentEnv != nil && len(delegationSecrets) > 0 {
-				for _, s := range delegationSecrets {
-					subAgentEnv["SECRET_"+s.Name] = s.Value
+		workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
+		workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
+		virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+			WorkspaceAPIURL: getWorkspaceAPIURL(),
+			UserID:          subAgentUserID,
+		}, workspaceExecutors, nil)
+		log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
+		// Inject secrets as environment variables for sub-agent shell execution (SECRET_ prefix for whitelist)
+		delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
+		if subAgentEnv != nil && len(delegationSecrets) > 0 {
+			for _, s := range delegationSecrets {
+				subAgentEnv["SECRET_"+s.Name] = s.Value
+			}
+			log.Printf("[SECRETS] Injected %d secrets as env vars for sub-agent shell execution", len(delegationSecrets))
+		}
+		// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
+		if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
+			virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
+		}
+		_, _, toolCategories := createCustomTools(false, subAgentUserID, sessionID)
+
+		// Conditional grants already resolved above into subResolvedGrants.
+		// Merge parent @context paths and #workflow references into delegated folder-guard access.
+		// @context paths get write access; #workflow paths get read-only access.
+		fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
+		if len(fileContextWriteFolders) > 0 {
+			log.Printf("[DELEGATION] Extracted write folder-guard paths from parent @context: %v", fileContextWriteFolders)
+		}
+		if len(workflowReadOnlyFolders) > 0 {
+			log.Printf("[DELEGATION] Extracted read-only folder-guard paths from parent #workflow: %v", workflowReadOnlyFolders)
+		}
+
+		// Apply per-user folder guard for all sub-agents.
+		// Writes scoped to _users/<subAgentUserID>/Chats/ and _users/<subAgentUserID>/memories/.
+		{
+			subPerUserChatsFolder := perUserChatsFolderFor(subAgentUserID)
+			subPerUserChatsWrite := subPerUserChatsFolder + "/"
+			subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
+			subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
+			extraFolders := append([]string{"config/"}, subResolvedGrants.WriteFolders...)
+			extraFolders = append(extraFolders, fileContextWriteFolders...)
+			extraFolders = append(extraFolders, subPerUserMemWrite)
+			extraFolders = append(extraFolders, subPerUserChatHistory)
+			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
+			workspace.SetSessionWorkingDir(sessionID, "")
+			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
+			readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
+			readPaths = append(readPaths, workflowReadOnlyFolders...)
+			workspace.SetSessionFolderGuard(sessionID,
+				readPaths,
+				append([]string{subPerUserChatsWrite, "Downloads/", "config/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
+			)
+		}
+
+		// Register workspace tools
+		for _, tool := range workspaceTools {
+			if tool.Function == nil {
+				continue
+			}
+			toolName := tool.Function.Name
+			if executor, exists := workspaceExecutors[toolName]; exists {
+				enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolderFor(subAgentUserID))
+
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
 				}
-				log.Printf("[SECRETS] Injected %d secrets as env vars for sub-agent shell execution", len(delegationSecrets))
-			}
-			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
-			if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
-				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
-			}
-			_, _, toolCategories := createCustomTools(false, subAgentUserID, sessionID)
+				if params == nil {
+					continue
+				}
 
-			// Conditional grants already resolved above into subResolvedGrants.
-			// Merge parent @context paths and #workflow references into delegated folder-guard access.
-			// @context paths get write access; #workflow paths get read-only access.
-			fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
-			if len(fileContextWriteFolders) > 0 {
-				log.Printf("[DELEGATION] Extracted write folder-guard paths from parent @context: %v", fileContextWriteFolders)
-			}
-			if len(workflowReadOnlyFolders) > 0 {
-				log.Printf("[DELEGATION] Extracted read-only folder-guard paths from parent #workflow: %v", workflowReadOnlyFolders)
-			}
+				toolCategory := toolCategories[toolName]
+				if toolCategory == "" {
+					continue
+				}
 
-			// Apply per-user folder guard for all sub-agents.
-			// Writes scoped to _users/<subAgentUserID>/Chats/ and _users/<subAgentUserID>/memories/.
-			{
-				subPerUserChatsFolder := perUserChatsFolderFor(subAgentUserID)
-				subPerUserChatsWrite := subPerUserChatsFolder + "/"
-				subPerUserMemWrite := perUserMemoryFolderFor(subAgentUserID) + "/"
-				subPerUserChatHistory := strings.TrimSuffix(subPerUserChatsFolder, "Chats") + "chat_history/"
-				extraFolders := append([]string{"config/"}, subResolvedGrants.WriteFolders...)
-				extraFolders = append(extraFolders, fileContextWriteFolders...)
-				extraFolders = append(extraFolders, subPerUserMemWrite)
-				extraFolders = append(extraFolders, subPerUserChatHistory)
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
-				workspace.SetSessionWorkingDir(sessionID, "")
-				readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
-				readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
-				readPaths = append(readPaths, workflowReadOnlyFolders...)
-				workspace.SetSessionFolderGuard(sessionID,
-					readPaths,
-					append([]string{subPerUserChatsWrite, "Downloads/", "config/", subPerUserMemWrite, subPerUserChatHistory}, extraFolders...),
-				)
-			}
+				if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && parentReq.ImageGenConfig != nil {
+					executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
+						Provider: parentReq.ImageGenConfig.Provider,
+						ModelID:  parentReq.ImageGenConfig.ModelID,
+						APIKey:   parentReq.ImageGenConfig.APIKey,
+					})
+				}
 
-			// Register workspace tools
-			for _, tool := range workspaceTools {
+				if err := underlyingAgent.RegisterCustomTool(
+					toolName,
+					enhancedDescription,
+					params,
+					executor,
+					toolCategory,
+				); err != nil {
+					log.Printf("[DELEGATION] Warning: Failed to register tool %s for sub-agent: %v", toolName, err)
+				}
+			}
+		}
+
+		// Register browser tools if enabled
+		if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
+			browserTools := virtualtools.CreateWorkspaceBrowserTools()
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(parentReq))
+			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+
+			browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
+			browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
+			browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
+
+			for _, tool := range browserTools {
 				if tool.Function == nil {
 					continue
 				}
 				toolName := tool.Function.Name
-				if executor, exists := workspaceExecutors[toolName]; exists {
-					enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description, perUserChatsFolderFor(subAgentUserID))
-
+				if executor, exists := browserExecutors[toolName]; exists {
 					var params map[string]interface{}
 					if tool.Function.Parameters != nil {
 						paramsBytes, err := json.Marshal(tool.Function.Parameters)
@@ -5898,83 +5949,31 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 						continue
 					}
 
-					toolCategory := toolCategories[toolName]
-					if toolCategory == "" {
-						continue
-					}
-
-					if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && parentReq.ImageGenConfig != nil {
-						executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
-							Provider: parentReq.ImageGenConfig.Provider,
-							ModelID:  parentReq.ImageGenConfig.ModelID,
-							APIKey:   parentReq.ImageGenConfig.APIKey,
-						})
-					}
-
 					if err := underlyingAgent.RegisterCustomTool(
 						toolName,
-						enhancedDescription,
+						tool.Function.Description,
 						params,
 						executor,
-						toolCategory,
+						browserCategory,
 					); err != nil {
-						log.Printf("[DELEGATION] Warning: Failed to register tool %s for sub-agent: %v", toolName, err)
+						log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
 					}
 				}
 			}
+		}
 
-			// Register browser tools if enabled
-			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
-				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(parentReq))
-				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+		// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
+		// This prevents runaway delegation chains.
 
-				browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
-				browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
-				browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
-
-				for _, tool := range browserTools {
-					if tool.Function == nil {
-						continue
-					}
-					toolName := tool.Function.Name
-					if executor, exists := browserExecutors[toolName]; exists {
-						var params map[string]interface{}
-						if tool.Function.Parameters != nil {
-							paramsBytes, err := json.Marshal(tool.Function.Parameters)
-							if err == nil {
-								json.Unmarshal(paramsBytes, &params)
-							}
-						}
-						if params == nil {
-							continue
-						}
-
-						if err := underlyingAgent.RegisterCustomTool(
-							toolName,
-							tool.Function.Description,
-							params,
-							executor,
-							browserCategory,
-						); err != nil {
-							log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
-						}
-					}
-				}
-			}
-
-			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
-			// This prevents runaway delegation chains.
-
-			// Minimal worker context — tells the sub-agent its role and output conventions.
-			subWorkerChatsFolder := perUserChatsFolderFor(subAgentUserID)
-			underlyingAgent.AppendSystemPrompt(fmt.Sprintf(`## Your Role
+		// Minimal worker context — tells the sub-agent its role and output conventions.
+		subWorkerChatsFolder := perUserChatsFolderFor(subAgentUserID)
+		underlyingAgent.AppendSystemPrompt(fmt.Sprintf(`## Your Role
 You are a focused background worker. Complete the assigned task using available tools and return a clear, concise result.
 - You cannot spawn further sub-agents
 - You have no shared memory with the caller — all context is in the instruction you received
 - Save any output files under %s/ (use the sub-folder specified in your instruction, or create a descriptive one if none is given)
 - Return a summary of what you did and what you found`, subWorkerChatsFolder))
-			log.Printf("[DELEGATION] Added worker context to sub-agent (chats=%s)", subWorkerChatsFolder)
+		log.Printf("[DELEGATION] Added worker context to sub-agent (chats=%s)", subWorkerChatsFolder)
 	}
 
 	log.Printf("[DELEGATION] Sub-agent created, executing instruction at depth %d", currentDepth)

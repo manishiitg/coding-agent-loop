@@ -10,9 +10,6 @@ services:
       - PORT=8080
       - DOCS_DIR=/app/workspace-docs
       
-      # Semantic Search Configuration
-      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=false
-      
       # Optional: Debug mode
       - DEBUG=${DEBUG:-false}
       

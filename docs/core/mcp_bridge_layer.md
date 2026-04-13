@@ -38,7 +38,6 @@ The `workspace` container runs a dedicated Planner API that the orchestrator int
     *   `GET /api/glob` (File discovery via glob patterns)
 *   **Search & Semantic Intelligence:**
     *   `GET /api/search` (Lexical grep search)
-    *   `GET /api/search/semantic` (Vector search via Qdrant)
     *   `POST /api/search/process-file`
 *   **System & Execution:**
     *   `POST /api/execute` (Secure shell command execution within the workspace)

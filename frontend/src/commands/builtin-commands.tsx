@@ -1,15 +1,93 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench, Play, GitBranch, CheckCircle } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
+  {
+    command: 'test-step',
+    description: 'Run a step once to test if it works during design',
+    icon: <Play className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'builder',
+    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: <step-id> /test-step',
+    source: 'builtin',
+    execute: (ctx) => {
+      const stepId = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Test step "${stepId}" — quick design validation, not optimization.
+
+1. Read variables.json to pick a group. Find the latest iteration from runs/.
+2. Run execute_step(step_id="${stepId}", group_name=<group>).
+3. When it completes, read the output file and show me:
+   - Did it succeed or fail?
+   - What output did it produce? (show key fields, not the full dump)
+   - If it failed: what went wrong? (read the execution log)
+4. Based on the result, suggest whether the step description needs changes.
+
+Do NOT fix anything automatically — just report what happened.`)
+    }
+  },
+  {
+    command: 'design-flow',
+    description: 'Validate context dependency chain between steps',
+    icon: <GitBranch className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'builder',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? `\nPay special attention to: ${focus}` : ''
+      ctx.onSubmit(`Read planning/plan.json and analyze the context flow between steps.${focusText}
+
+Check for:
+1. **Broken chain** — step depends on a context_output that no earlier step produces
+2. **Orphaned outputs** — step produces context_output that no later step consumes
+3. **Circular dependencies** — A depends on B depends on A
+4. **Implicit dependencies** — step description references data from another step but context_dependencies doesn't list it
+5. **Type mismatches** — upstream produces a JSON file but downstream expects CSV, or field names don't align
+6. **Missing validation** — steps that produce context_output but have no validation_schema
+
+Show me:
+- A dependency graph: step-a (produces X) → step-b (consumes X, produces Y) → step-c (consumes Y)
+- Any issues found with severity (CRITICAL / WARNING / INFO)
+- Suggested fixes for each issue`)
+    }
+  },
+  {
+    command: 'ready-to-optimize',
+    description: 'Check if workflow is ready to move to optimizer mode',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'builder',
+    source: 'builtin',
+    execute: (ctx) => {
+      ctx.onSubmit(`Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
+
+1. **Objective set?** — Read planning/plan.json root "objective" field. FAIL if empty/missing.
+2. **Success criteria set?** — Read planning/plan.json root "success_criteria" field. FAIL if empty/missing.
+3. **All steps have descriptions?** — Check every step in plan.json has a non-empty description. FAIL if any are empty.
+4. **Context flow valid?** — Check every context_dependency references an existing context_output from an earlier step. FAIL if broken links.
+5. **Variables configured?** — Read variables/variables.json, check at least one group exists with values. FAIL if empty.
+6. **At least one successful run?** — Check runs/ folder for any completed iteration. FAIL if no runs exist.
+7. **Validation schemas exist?** — Check that steps producing context_output have a validation_schema. WARN if missing.
+8. **Evaluation plan exists?** — Check evaluation/evaluation_plan.json exists and has at least one eval step. WARN if missing.
+9. **Step configs set?** — Check planning/step_config.json has entries for all steps with execution mode declared. WARN if missing.
+
+Summary:
+- READY if 0 FAILs
+- NOT READY if any FAILs — list what needs to be done
+- If READY with WARNs — "Ready but recommended to fix these first"`)
+    }
+  },
   {
     command: 'harden',
     description: 'Harden the workflow from the latest run\'s eval results',
     icon: <Shield className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -23,7 +101,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: 'optimizer',
     validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
     source: 'builtin',
     execute: (ctx) => {
@@ -49,7 +127,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -111,7 +189,7 @@ Then ask the user: "Would you like me to set up a recurring schedule to keep imp
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -165,7 +243,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -183,7 +261,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
+    requiredWorkshopMode: ['builder', 'optimizer'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

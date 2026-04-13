@@ -545,65 +545,6 @@ export interface GitConflict {
   type: 'merge' | 'push' | 'pull';
 }
 
-// Semantic Search Sync types
-export interface SemanticSearchStatus {
-  enabled?: boolean; // Optional property for disabled state
-  services: {
-    qdrant: {
-      available: boolean;
-    };
-    embedding: {
-      available: boolean;
-      model: {
-        available: boolean;
-        enabled: boolean;
-        model: string;
-        provider: string;
-      };
-    };
-  };
-  jobs: {
-    job_stats: {
-      completed: number;
-      pending: number;
-      processing: number;
-      failed?: number;
-    };
-    running: boolean;
-    worker_count: number;
-  };
-  timestamp: number;
-}
-
-export interface SemanticJobStatus {
-  job_stats: {
-    completed: number;
-    pending: number;
-    processing: number;
-    failed?: number;
-  };
-  running: boolean;
-  worker_count: number;
-}
-
-export interface SemanticResyncRequest {
-  dry_run?: boolean;
-  force?: boolean;
-}
-
-export interface SemanticResyncResponse {
-  success: boolean;
-  message: string;
-  data: {
-    docs_dir: string;
-    qdrant_url: string;
-    dry_run: boolean;
-    force: boolean;
-    status: string;
-    note: string;
-  };
-}
-
 export interface GitSyncRequest {
   force: boolean;
   resolve_conflicts: boolean;
@@ -895,7 +836,6 @@ export interface CapabilitiesResponse {
     provider: string;
   };
   workspace: {
-    semantic_search_enabled: boolean;
     github_sync_enabled: boolean;
   };
   servers: string[];

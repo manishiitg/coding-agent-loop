@@ -14,8 +14,6 @@ services:
       - PORT=8080
       - DOCS_DIR=/app/workspace-docs
       
-      # Semantic Search Configuration
-      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
       - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
       
       # Optional: Debug mode

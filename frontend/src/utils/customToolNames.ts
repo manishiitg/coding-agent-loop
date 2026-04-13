@@ -46,7 +46,7 @@ export type CustomToolName = WorkspaceToolName | HumanToolName;
 
 // Helper to get all tools for a category
 // Supports: workspace_tools (all visible workspace tools), workspace_advanced, workspace_image, workspace_browser, human_tools
-export function getToolsByCategory(category: string, capabilities?: { semantic_search_enabled?: boolean, github_sync_enabled?: boolean }): string[] {
+export function getToolsByCategory(category: string, capabilities?: { github_sync_enabled?: boolean }): string[] {
   void capabilities
 
   switch (category) {
@@ -68,7 +68,7 @@ export function getToolsByCategory(category: string, capabilities?: { semantic_s
 }
 
 // Helper to get all available custom tools
-export function getAllCustomTools(capabilities?: { semantic_search_enabled?: boolean, github_sync_enabled?: boolean }): string[] {
+export function getAllCustomTools(capabilities?: { github_sync_enabled?: boolean }): string[] {
   void capabilities;
 
   return [

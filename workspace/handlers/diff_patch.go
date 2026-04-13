@@ -158,11 +158,6 @@ func DiffPatchDocument(c *gin.Context) {
 		return
 	}
 
-	// Queue file for semantic processing (update embeddings)
-	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
-		go fileProcessor.QueueJob(filePathParam, newContent, "update")
-	}
-
 	// Return simple success response
 	c.JSON(http.StatusOK, models.APIResponse[models.DiffPatchResponse]{
 		Success: true,
@@ -506,7 +501,7 @@ func validateAndRepairJSON(content string) string {
 	repaired := reTrailingComma.ReplaceAllString(cleaned, "$1")
 
 	// Try to add missing commas between lines that look like they should be separated by commas
-	// Broad version: match line ending in alphanumeric, quote, brace, or bracket 
+	// Broad version: match line ending in alphanumeric, quote, brace, or bracket
 	// and next line starting with alphanumeric, quote, brace, or bracket
 	reMissingComma := regexp.MustCompile(`([a-zA-Z\d"\}\]])\s*\n\s*([a-zA-Z\d"\{\[])`)
 	repaired = reMissingComma.ReplaceAllString(repaired, "$1,\n$2")
@@ -536,27 +531,17 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 	fmt.Printf("🔍 Trying fallback approach for agent-generated diffs\n")
 
-	
-
 	lines := strings.Split(diffContent, "\n")
 
 	resultLines := strings.Split(currentContent, "\n")
 
-	
-
 	type hunk struct {
-
 		lines []string
-
 	}
-
-	
 
 	var hunks []hunk
 
 	var currentHunk *hunk
-
-	
 
 	for _, line := range lines {
 
@@ -573,8 +558,6 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 			continue
 
 		}
-
-		
 
 		if currentHunk != nil {
 
@@ -600,15 +583,11 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 	}
 
-
-
 	if len(hunks) == 0 {
 
 		return "", fmt.Errorf("no hunks found in diff")
 
 	}
-
-
 
 	// Apply hunks one by one
 
@@ -618,11 +597,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 		// A match is where all ' ' and '-' lines in the hunk match the lines in the file
 
-		
-
 		matchIndex := -1
-
-		
 
 		// Collect expected lines (context and removals)
 
@@ -638,509 +613,111 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 		}
 
-		
+		if len(expectedLines) == 0 {
 
-				if len(expectedLines) == 0 {
+			// Pure addition hunk, apply to bottom
 
-		
+			var additions []string
 
-					// Pure addition hunk, apply to bottom
+			for _, hl := range h.lines {
 
-		
+				if strings.HasPrefix(hl, "+") {
 
-					var additions []string
-
-		
-
-					for _, hl := range h.lines {
-
-		
-
-						if strings.HasPrefix(hl, "+") {
-
-		
-
-							additions = append(additions, hl[1:])
-
-		
-
-						}
-
-		
-
-					}
-
-		
-
-					newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
-
-		
-
-					resultLines = strings.Split(newResult, "\n")
-
-		
-
-					continue
-
-		
+					additions = append(additions, hl[1:])
 
 				}
 
-		
+			}
 
-		
+			newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
 
-		
+			resultLines = strings.Split(newResult, "\n")
 
-						fmt.Printf("🔍 Attempting to match hunk with %d expected lines against %d file lines\n", len(expectedLines), len(resultLines))
+			continue
 
-		
+		}
 
-		
+		fmt.Printf("🔍 Attempting to match hunk with %d expected lines against %d file lines\n", len(expectedLines), len(resultLines))
 
-		
+		// Fuzzy match: find position with minimum mismatches
 
-				
+		bestMatchIndex := -1
 
-		
+		minMismatches := len(expectedLines) + 1
 
-		
+		maxAllowedMismatches := 0
 
-		
+		if len(expectedLines) >= 4 {
 
-						// Fuzzy match: find position with minimum mismatches
+			// For larger hunks, allow ~15-20% mismatch
 
-		
+			maxAllowedMismatches = len(expectedLines) / 6
 
-		
+			if maxAllowedMismatches < 1 {
 
-		
+				maxAllowedMismatches = 1
 
-						bestMatchIndex := -1
+			}
 
-		
+			if maxAllowedMismatches > 3 {
 
-		
+				maxAllowedMismatches = 3 // Cap at 3 mismatches max
 
-		
+			}
 
-						minMismatches := len(expectedLines) + 1
+		}
 
-		
+		for i := 0; i <= len(resultLines)-len(expectedLines); i++ {
 
-		
+			mismatches := 0
 
-		
+			for j, el := range expectedLines {
 
-						
+				if strings.TrimSpace(resultLines[i+j]) != strings.TrimSpace(el) {
 
-		
+					mismatches++
 
-		
+					if mismatches > maxAllowedMismatches {
 
-		
+						break
 
-								maxAllowedMismatches := 0
+					}
 
-		
+				}
 
-		
+			}
 
-		
+			if mismatches < minMismatches {
 
-						
+				minMismatches = mismatches
 
-		
+				bestMatchIndex = i
 
-		
+			}
 
-		
+			if mismatches == 0 {
 
-								if len(expectedLines) >= 4 {
+				break // Perfect match!
 
-		
+			}
 
-		
+		}
 
-		
+		if minMismatches <= maxAllowedMismatches {
 
-						
+			matchIndex = bestMatchIndex
 
-		
+			fmt.Printf("✅ Found fuzzy match at line %d with %d mismatches\n", matchIndex+1, minMismatches)
 
-		
+		}
 
-		
-
-									// For larger hunks, allow ~15-20% mismatch
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-									maxAllowedMismatches = len(expectedLines) / 6
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-									if maxAllowedMismatches < 1 {
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-										maxAllowedMismatches = 1
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-									}
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-									if maxAllowedMismatches > 3 {
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-										maxAllowedMismatches = 3 // Cap at 3 mismatches max
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-									}
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-								}
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-				
-
-		
-
-		
-
-		
-
-						for i := 0; i <= len(resultLines)-len(expectedLines); i++ {
-
-		
-
-		
-
-		
-
-							mismatches := 0
-
-		
-
-		
-
-		
-
-							for j, el := range expectedLines {
-
-		
-
-		
-
-		
-
-								if strings.TrimSpace(resultLines[i+j]) != strings.TrimSpace(el) {
-
-		
-
-		
-
-		
-
-									mismatches++
-
-		
-
-		
-
-		
-
-									if mismatches > maxAllowedMismatches {
-
-		
-
-		
-
-		
-
-										break
-
-		
-
-		
-
-		
-
-									}
-
-		
-
-		
-
-		
-
-								}
-
-		
-
-		
-
-		
-
-							}
-
-		
-
-		
-
-		
-
-							if mismatches < minMismatches {
-
-		
-
-		
-
-		
-
-								minMismatches = mismatches
-
-		
-
-		
-
-		
-
-								bestMatchIndex = i
-
-		
-
-		
-
-		
-
-							}
-
-		
-
-		
-
-		
-
-							if mismatches == 0 {
-
-		
-
-		
-
-		
-
-								break // Perfect match!
-
-		
-
-		
-
-		
-
-							}
-
-		
-
-		
-
-		
-
-						}
-
-		
-
-		
-
-		
-
-						
-
-		
-
-		
-
-		
-
-						if minMismatches <= maxAllowedMismatches {
-
-		
-
-		
-
-		
-
-							matchIndex = bestMatchIndex
-
-		
-
-		
-
-		
-
-							fmt.Printf("✅ Found fuzzy match at line %d with %d mismatches\n", matchIndex+1, minMismatches)
-
-		
-
-		
-
-		
-
-						}
-
-		
-
-		
-
-		
-
-				
-
-		
-
-		
-
-		
-
-						if matchIndex != -1 {
-
-		
-
-		
-
-		
-
-				
+		if matchIndex != -1 {
 
 			// Found a match! Apply changes
 
 			var newResultLines []string
 
 			newResultLines = append(newResultLines, resultLines[:matchIndex]...)
-
-			
 
 			// Track which expected line we are on
 
@@ -1160,7 +737,7 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 					// Removal line, skip it
 
-					expIdx++;
+					expIdx++
 
 				} else if strings.HasPrefix(hl, "+") {
 
@@ -1171,8 +748,6 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 				}
 
 			}
-
-			
 
 			newResultLines = append(newResultLines, resultLines[matchIndex+expIdx:]...)
 
@@ -1193,67 +768,31 @@ func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string
 
 	}
 
-
-
 	result := strings.Join(resultLines, "\n")
 	return result, nil
 }
 
-	
+// couldBeJSON is a helper to check if content might be JSON
 
-	
+func couldBeJSON(content string) bool {
 
-	
+	trimmed := strings.TrimSpace(content)
 
-	// couldBeJSON is a helper to check if content might be JSON
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 
-	
+}
 
-	func couldBeJSON(content string) bool {
+// isJSON is a helper to check if content is valid JSON
 
-	
+func isJSON(content string) bool {
 
-		trimmed := strings.TrimSpace(content)
+	var js interface{}
 
-	
+	return json.Unmarshal([]byte(content), &js) == nil
 
-		return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
 
-	
-
-	}
-
-	
-
-	
-
-	
-
-	// isJSON is a helper to check if content is valid JSON
-
-	
-
-	func isJSON(content string) bool {
-
-	
-
-		var js interface{}
-
-	
-
-		return json.Unmarshal([]byte(content), &js) == nil
-
-	
-
-	}
-
-	
-
-	
-
-
-
-// applyAdditionsToBottom appends additions to the end of the content, 
+// applyAdditionsToBottom appends additions to the end of the content,
 
 // but tries to be smart about JSON structure.
 
@@ -1265,19 +804,13 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 	}
 
-
-
 	result := content
-
-	
 
 	// Check if it's JSON
 
 	var js interface{}
 
 	isJSON := json.Unmarshal([]byte(result), &js) == nil
-
-
 
 	if isJSON {
 
@@ -1292,8 +825,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 			prefix := result[:lastBraceIndex]
 
 			suffix := result[lastBraceIndex:]
-
-
 
 			// Try to see if we need a comma
 
@@ -1319,8 +850,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 			}
 
-
-
 			for i, addition := range additions {
 
 				prefix += addition
@@ -1343,8 +872,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 			}
 
-
-
 			result = prefix + suffix
 
 			fmt.Printf("🔧 Inserted %d lines before last '}' for JSON fallback\n", len(additions))
@@ -1358,8 +885,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 			prefix := result[:lastBracketIndex]
 
 			suffix := result[lastBracketIndex:]
-
-
 
 			// Try to see if we need a comma
 
@@ -1385,8 +910,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 			}
 
-
-
 			for i, addition := range additions {
 
 				prefix += addition
@@ -1408,8 +931,6 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 				prefix += "\n"
 
 			}
-
-
 
 			result = prefix + suffix
 
@@ -1435,60 +956,40 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 		}
 
+		// Final attempt to validate and pretty-print if it's JSON
 
+		var finalJs interface{}
 
-				// Final attempt to validate and pretty-print if it's JSON
+		if err := json.Unmarshal([]byte(result), &finalJs); err == nil {
 
+			if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
 
+				result = string(indented) + "\n"
 
-				var finalJs interface{}
+				fmt.Printf("✅ Re-formatted fallback result as valid JSON\n")
 
+			}
 
+		} else {
+			// Try to repair common JSON issues
+			reTrailingComma := regexp.MustCompile(`,\s*([}\]])`)
+			repaired := reTrailingComma.ReplaceAllString(result, "$1")
 
-				if err := json.Unmarshal([]byte(result), &finalJs); err == nil {
+			// Try to add missing commas between lines that look like they should be separated by commas
+			// This matches a line ending in a value (not comma, brace, or bracket)
+			// followed by a line starting with a new value or key (not closing brace or bracket)
+			reMissingComma := regexp.MustCompile(`([^,\[{\s])\n\s*([^}\]\s])`)
+			repaired = reMissingComma.ReplaceAllString(repaired, "$1,\n$2")
 
-
-
-					if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
-
-
-
-						result = string(indented) + "\n"
-
-
-
-						fmt.Printf("✅ Re-formatted fallback result as valid JSON\n")
-
-
-
-					}
-
-
-
-				} else {
-					// Try to repair common JSON issues
-					reTrailingComma := regexp.MustCompile(`,\s*([}\]])`)
-					repaired := reTrailingComma.ReplaceAllString(result, "$1")
-
-					// Try to add missing commas between lines that look like they should be separated by commas
-					// This matches a line ending in a value (not comma, brace, or bracket) 
-					// followed by a line starting with a new value or key (not closing brace or bracket)
-					reMissingComma := regexp.MustCompile(`([^,\[{\s])\n\s*([^}\]\s])`)
-					repaired = reMissingComma.ReplaceAllString(repaired, "$1,\n$2")
-
-					if err := json.Unmarshal([]byte(repaired), &finalJs); err == nil {
-						if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
-							result = string(indented) + "\n"
-							fmt.Printf("✅ Repaired and re-formatted fallback result as valid JSON\n")
-						}
-					} else {
-						fmt.Printf("⚠️ Failed to repair JSON: %v\n", err)
-					}
+			if err := json.Unmarshal([]byte(repaired), &finalJs); err == nil {
+				if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
+					result = string(indented) + "\n"
+					fmt.Printf("✅ Repaired and re-formatted fallback result as valid JSON\n")
 				}
-
-
-
-		
+			} else {
+				fmt.Printf("⚠️ Failed to repair JSON: %v\n", err)
+			}
+		}
 
 	} else {
 
@@ -1510,13 +1011,9 @@ func applyAdditionsToBottom(content string, additions []string) (string, error) 
 
 	}
 
-	
-
 	return result, nil
 
 }
-
-
 
 // ApplyDiffPatchDirect is an exported function for testing that applies a diff patch directly
 // without going through the HTTP API. This allows tests to use the same diff patching logic.

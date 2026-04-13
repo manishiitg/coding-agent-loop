@@ -220,9 +220,8 @@ if [ "$WITH_WORKSPACE" = true ]; then
         exit 1
     fi
 
-    if [ -z "${WORKSPACE_DOCS_PATH:-}" ]; then
-        WORKSPACE_DOCS_PATH="${SCRIPT_DIR}/../workspace-docs"
-    fi
+    # Always use local workspace-docs for native workspace (ignore Docker paths from .env)
+    WORKSPACE_DOCS_PATH="${SCRIPT_DIR}/../workspace-docs"
     mkdir -p "$WORKSPACE_DOCS_PATH"
     WORKSPACE_DOCS_PATH="$(cd "$WORKSPACE_DOCS_PATH" && pwd)"
     export WORKSPACE_DOCS_PATH

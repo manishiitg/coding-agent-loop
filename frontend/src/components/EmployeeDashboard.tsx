@@ -208,7 +208,9 @@ export const EmployeeDashboard: React.FC = () => {
 
       // Fetch summaries + eval reports in parallel (2 calls instead of N*2)
       const [summaryResp, evalResults] = await Promise.all([
-        agentApi.getWorkflowsSummary(allWorkspacePaths).catch(() => null),
+        allWorkspacePaths.length > 0
+          ? agentApi.getWorkflowsSummary(allWorkspacePaths).catch(() => null)
+          : Promise.resolve(null),
         Promise.all(
           discoveredWorkflows.map((wf: DiscoveredWorkflow) =>
             agentApi.getEvaluationReports(wf.workspace_path).catch(() => null).then(r => ({ wp: wf.workspace_path, data: r }))

@@ -2,6 +2,7 @@ package common
 
 import (
 	"log"
+	"os"
 	"strings"
 	"sync"
 )
@@ -196,6 +197,15 @@ func DeduplicateStrings(strs []string) []string {
 		}
 	}
 	return result
+}
+
+// IsNativeWorkspace reports whether the workspace server is running natively
+// on the host (not inside Docker). When true, shell commands, CDP connections,
+// and MCP API URLs should use localhost/127.0.0.1 instead of host.docker.internal.
+//
+// Detection: NATIVE_WORKSPACE=true is set by run_server_with_logging.sh --with-workspace.
+func IsNativeWorkspace() bool {
+	return os.Getenv("NATIVE_WORKSPACE") == "true"
 }
 
 // QuoteShellArg quotes a shell argument if it contains special characters

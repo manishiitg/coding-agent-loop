@@ -263,18 +263,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	return output, nil
 }
 
-// resolveCdpURL builds the CDP URL for agent-browser running inside Docker.
-// agent-browser executes inside the workspace Docker container, so "localhost"
-// refers to the container, not the host. We use host.docker.internal to reach
-// the host's Chrome. Chrome rejects non-IP Host headers, so we mark the URL
-// for runtime resolution in client.go (getent resolves hostname→IP inside container).
-// CDP_HOST env var overrides this (e.g. "localhost" when not using Docker).
+// resolveCdpURL builds the CDP URL for agent-browser.
+// CDP_HOST env var overrides auto-detection.
+// In native mode, agent-browser runs on the host so localhost reaches Chrome directly.
+// In Docker mode, agent-browser runs inside the workspace container so we use
+// host.docker.internal (client.go resolves it to an IP for Chrome compatibility).
 func resolveCdpURL(port int) string {
 	if host := os.Getenv("CDP_HOST"); host != "" {
 		return fmt.Sprintf("http://%s:%d", host, port)
 	}
-	// Use host.docker.internal — client.go will resolve this to an IP at runtime
-	// inside the container to avoid Chrome rejecting non-IP Host headers.
+	if common.IsNativeWorkspace() {
+		return fmt.Sprintf("http://localhost:%d", port)
+	}
 	return fmt.Sprintf("http://host.docker.internal:%d", port)
 }
 

@@ -6,9 +6,29 @@
 # Get script directory first (needed for both test and server modes)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check for test-connections mode
 TEST_CONNECTIONS=false
-if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; then
+BACKGROUND_MODE=false
+WITH_WORKSPACE=false
+POSITIONAL_ARGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --test-connections|--test-mcp|-t)
+            TEST_CONNECTIONS=true
+            ;;
+        --background|-b)
+            BACKGROUND_MODE=true
+            ;;
+        --with-workspace)
+            WITH_WORKSPACE=true
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$TEST_CONNECTIONS" = true ]; then
     TEST_CONNECTIONS=true
     echo "🔌 Testing MCP Server Connections"
     echo "========================================="
@@ -29,7 +49,7 @@ if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; t
     fi
     
     # Get config file path (default or from second argument)
-    MCP_CONFIG="${2:-configs/mcp_servers_clean.json}"
+    MCP_CONFIG="${POSITIONAL_ARGS[0]:-configs/mcp_servers_clean.json}"
     
     # Verify main.go exists
     if [ ! -f "main.go" ]; then
@@ -49,9 +69,7 @@ if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; t
     exit $?
 fi
 
-# Check if background mode is requested
-BACKGROUND_MODE=false
-if [[ "$1" == "--background" || "$1" == "-b" ]]; then
+if [ "$BACKGROUND_MODE" = true ]; then
     BACKGROUND_MODE=true
     echo "🚀 Starting MCP Agent Server with Logging (Background Mode)"
 else
@@ -59,16 +77,68 @@ else
 fi
 echo "========================================="
 
-# Kill any existing server on port 8000
-echo "🔪 Checking for existing server on port 8000..."
-if lsof -ti:8000 > /dev/null 2>&1; then
-    echo "⚠️  Found existing server on port 8000, killing it..."
-    lsof -ti:8000 | xargs kill -9
-    sleep 2
-    echo "✅ Existing server killed"
+find_random_free_port_in_range() {
+    local start="$1"
+    local end="$2"
+    local exclude_csv="${3:-}"
+    local attempts=50
+    local range_size=$((end - start + 1))
+    local attempt
+    local port
+
+    is_port_excluded() {
+        local candidate="$1"
+        if [ -z "$exclude_csv" ]; then
+            return 1
+        fi
+
+        local old_ifs="$IFS"
+        IFS=','
+        for excluded in $exclude_csv; do
+            if [ "$candidate" = "$excluded" ]; then
+                IFS="$old_ifs"
+                return 0
+            fi
+        done
+        IFS="$old_ifs"
+        return 1
+    }
+
+    for attempt in $(seq 1 "$attempts"); do
+        port=$((start + RANDOM % range_size))
+        if ! is_port_excluded "$port" && ! lsof -ti:"$port" > /dev/null 2>&1; then
+            echo "$port"
+            return 0
+        fi
+    done
+
+    for port in $(seq "$start" "$end"); do
+        if ! is_port_excluded "$port" && ! lsof -ti:"$port" > /dev/null 2>&1; then
+            echo "$port"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+if [ -n "${AGENT_PORT:-}" ]; then
+    echo "🔎 Using requested agent server port: $AGENT_PORT"
+    if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
+        echo "❌ Error: Requested AGENT_PORT $AGENT_PORT is already in use"
+        exit 1
+    fi
 else
-    echo "✅ No existing server found on port 8000"
+    echo "🔎 Selecting random agent server port in range 18000-19000..."
+    AGENT_PORT="$(find_random_free_port_in_range 18000 19000)"
+    if [ -z "$AGENT_PORT" ]; then
+        echo "❌ Error: No free port available in range 18000-19000"
+        exit 1
+    fi
 fi
+export AGENT_PORT
+export MCP_AGENT_SERVER_URL="http://127.0.0.1:${AGENT_PORT}"
+echo "✅ Using agent server port: $AGENT_PORT"
 
 # Source environment variables from .env file if it exists
 if [ -f "../agent_go/.env" ]; then
@@ -106,6 +176,11 @@ echo "🔧 Set MCP_GENERATED_DIR to: $MCP_GENERATED_DIR"
 # Only override for desktop/native deployments where workspace runs on the host.
 # export WORKSPACE_DOCS_PATH="/app/workspace-docs"  # default, no need to set
 
+WORKSPACE_PID=""
+WORKSPACE_LOG_PATH=""
+WORKSPACE_DIR="${SCRIPT_DIR}/../workspace"
+FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
+
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
     echo "❌ Error: Failed to change to script directory: $SCRIPT_DIR"
@@ -118,6 +193,59 @@ if [ -f "${SCRIPT_DIR}/../go.work" ]; then
     export GOWORK="${SCRIPT_DIR}/../go.work"
     echo "🔧 GOWORK=$GOWORK (using local multi-llm-provider-go)"
 fi
+
+if [ "$WITH_WORKSPACE" = true ]; then
+    if [ -n "${WORKSPACE_PORT:-}" ]; then
+        echo "🔎 Using requested workspace server port: $WORKSPACE_PORT"
+        if lsof -ti:"$WORKSPACE_PORT" > /dev/null 2>&1; then
+            echo "❌ Error: Requested WORKSPACE_PORT $WORKSPACE_PORT is already in use"
+            exit 1
+        fi
+    else
+        echo "🔎 Selecting random workspace server port in range 18000-19000..."
+        WORKSPACE_PORT="$(find_random_free_port_in_range 18000 19000 "$AGENT_PORT")"
+        if [ -z "$WORKSPACE_PORT" ]; then
+            echo "❌ Error: No free workspace port available in range 18000-19000"
+            exit 1
+        fi
+    fi
+else
+    WORKSPACE_PORT="${WORKSPACE_PORT:-8081}"
+fi
+export WORKSPACE_PORT
+
+if [ "$WITH_WORKSPACE" = true ]; then
+    if [ ! -f "${WORKSPACE_DIR}/main.go" ]; then
+        echo "❌ Error: workspace main.go not found: ${WORKSPACE_DIR}/main.go"
+        exit 1
+    fi
+
+    if [ -z "${WORKSPACE_DOCS_PATH:-}" ]; then
+        WORKSPACE_DOCS_PATH="${SCRIPT_DIR}/../workspace-docs"
+    fi
+    mkdir -p "$WORKSPACE_DOCS_PATH"
+    WORKSPACE_DOCS_PATH="$(cd "$WORKSPACE_DOCS_PATH" && pwd)"
+    export WORKSPACE_DOCS_PATH
+    export WORKSPACE_API_URL="http://127.0.0.1:${WORKSPACE_PORT}"
+
+    export NATIVE_WORKSPACE="true"
+    echo "🧩 Native workspace start enabled"
+    echo "🔧 WORKSPACE_API_URL=$WORKSPACE_API_URL"
+    echo "🔧 WORKSPACE_DOCS_PATH=$WORKSPACE_DOCS_PATH"
+fi
+
+write_frontend_runtime_config() {
+    mkdir -p "$(dirname "$FRONTEND_RUNTIME_CONFIG_PATH")"
+    cat > "$FRONTEND_RUNTIME_CONFIG_PATH" <<EOF
+window.__APP_RUNTIME_CONFIG__ = {
+  apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
+  workspaceApiBaseUrl: "${WORKSPACE_API_URL:-http://127.0.0.1:${WORKSPACE_PORT}}"
+};
+EOF
+    echo "📝 Frontend runtime config written to: $FRONTEND_RUNTIME_CONFIG_PATH"
+}
+
+write_frontend_runtime_config
 
 # Explicitly set single-user mode (no authentication required)
 export MULTI_USER_MODE="false"
@@ -200,6 +328,11 @@ echo "📝 Truncating log files for clean start..."
 echo "✅ Server log file truncated: $LOG_PATH"
 > "logs/llm_debug.log"
 echo "✅ LLM log file truncated: logs/llm_debug.log"
+if [ "$WITH_WORKSPACE" = true ]; then
+    WORKSPACE_LOG_PATH="logs/workspace_debug.log"
+    > "$WORKSPACE_LOG_PATH"
+    echo "✅ Workspace log file truncated: $WORKSPACE_LOG_PATH"
+fi
 
 # Log rotation cap (used by background daemon)
 LOG_ROTATE_LINES=500000
@@ -256,28 +389,113 @@ echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_T
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" >> "$LOG_PATH"
 echo "- Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)" >> "$LOG_PATH"
 echo "- Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens" >> "$LOG_PATH"
+echo "- Agent API URL: $MCP_AGENT_SERVER_URL" >> "$LOG_PATH"
+if [ "$WITH_WORKSPACE" = true ]; then
+    echo "- Native Workspace: Enabled (${WORKSPACE_API_URL}, docs=${WORKSPACE_DOCS_PATH})" >> "$LOG_PATH"
+fi
 echo "=========================================" >> "$LOG_PATH"
 echo "" >> "$LOG_PATH"
 
 # Start background log rotation: keep only last 500000 lines every 30 seconds
+rotate_log_file() {
+    local file_path="$1"
+    if [ -f "$file_path" ]; then
+        lines=$(wc -l < "$file_path" 2>/dev/null)
+        if [ "$lines" -gt "$LOG_ROTATE_LINES" ]; then
+            excess=$((lines - LOG_ROTATE_LINES))
+            sed -i '' "1,${excess}d" "$file_path"
+        fi
+    fi
+}
+
 log_rotate_daemon() {
     while true; do
         sleep 30
-        if [ -f "$LOG_PATH" ]; then
-            lines=$(wc -l < "$LOG_PATH" 2>/dev/null)
-            if [ "$lines" -gt "$LOG_ROTATE_LINES" ]; then
-                excess=$((lines - LOG_ROTATE_LINES))
-                # Remove oldest lines in-place (sed -i preserves the file inode so
-                # the Go server's open file descriptor keeps writing to the same file)
-                sed -i '' "1,${excess}d" "$LOG_PATH"
-            fi
+        rotate_log_file "$LOG_PATH"
+        if [ "$WITH_WORKSPACE" = true ] && [ -n "$WORKSPACE_LOG_PATH" ]; then
+            rotate_log_file "$WORKSPACE_LOG_PATH"
         fi
     done
 }
 log_rotate_daemon &
 LOG_ROTATE_PID=$!
-trap "kill $LOG_ROTATE_PID 2>/dev/null; wait $LOG_ROTATE_PID 2>/dev/null" EXIT
+
+stop_native_workspace() {
+    if [ -n "$WORKSPACE_PID" ] && kill -0 "$WORKSPACE_PID" 2>/dev/null; then
+        echo "🛑 Stopping native workspace server (PID: $WORKSPACE_PID)..."
+        kill "$WORKSPACE_PID" 2>/dev/null
+        wait "$WORKSPACE_PID" 2>/dev/null
+    fi
+}
+
+cleanup_on_exit() {
+    kill "$LOG_ROTATE_PID" 2>/dev/null
+    wait "$LOG_ROTATE_PID" 2>/dev/null
+    if [ "$BACKGROUND_MODE" != true ]; then
+        stop_native_workspace
+    fi
+}
+
+trap cleanup_on_exit EXIT
+trap "exit 130" INT TERM
 echo "🔄 Log rotation started (keeping last $LOG_ROTATE_LINES lines, PID: $LOG_ROTATE_PID)"
+
+wait_for_workspace_health() {
+    local health_url="${WORKSPACE_API_URL%/}/health"
+    local attempt
+    for attempt in $(seq 1 90); do
+        if curl -fsS "$health_url" >/dev/null 2>&1; then
+            echo "✅ Native workspace is healthy at: $health_url"
+            return 0
+        fi
+        if ! kill -0 "$WORKSPACE_PID" 2>/dev/null; then
+            echo "❌ Error: Native workspace exited during startup. Check logs: $WORKSPACE_LOG_PATH"
+            tail -20 "$WORKSPACE_LOG_PATH"
+            return 1
+        fi
+        sleep 1
+    done
+
+    echo "❌ Error: Native workspace did not become healthy in time. Check logs: $WORKSPACE_LOG_PATH"
+    tail -20 "$WORKSPACE_LOG_PATH"
+    return 1
+}
+
+start_native_workspace() {
+    if [ "$WITH_WORKSPACE" != true ]; then
+        return 0
+    fi
+
+    if lsof -ti:"$WORKSPACE_PORT" > /dev/null 2>&1; then
+        echo "❌ Error: Port $WORKSPACE_PORT is already in use."
+        echo "   Stop the existing process or set WORKSPACE_PORT to another value."
+        return 1
+    fi
+
+    echo "🚀 Starting native workspace server..."
+    echo "📝 Workspace log file: $WORKSPACE_LOG_PATH"
+    echo "🌐 Workspace API URL: $WORKSPACE_API_URL"
+
+    echo "🚀 Native Workspace Session Started: $(date)" > "$WORKSPACE_LOG_PATH"
+    echo "=========================================" >> "$WORKSPACE_LOG_PATH"
+    echo "- Port: $WORKSPACE_PORT" >> "$WORKSPACE_LOG_PATH"
+    echo "- Docs Path: $WORKSPACE_DOCS_PATH" >> "$WORKSPACE_LOG_PATH"
+    echo "=========================================" >> "$WORKSPACE_LOG_PATH"
+    echo "" >> "$WORKSPACE_LOG_PATH"
+
+    if [ "$BACKGROUND_MODE" = true ]; then
+        nohup bash -lc "cd \"$WORKSPACE_DIR\" && exec go run . server --debug --port \"$WORKSPACE_PORT\" --docs-dir \"$WORKSPACE_DOCS_PATH\"" >> "$WORKSPACE_LOG_PATH" 2>&1 &
+    else
+        (
+            cd "$WORKSPACE_DIR" || exit 1
+            exec go run . server --debug --port "$WORKSPACE_PORT" --docs-dir "$WORKSPACE_DOCS_PATH"
+        ) >> "$WORKSPACE_LOG_PATH" 2>&1 &
+    fi
+
+    WORKSPACE_PID=$!
+    echo "✅ Native workspace process started (PID: $WORKSPACE_PID)"
+    wait_for_workspace_health
+}
 
 # Start the server with enhanced logging and structured output LLM
 echo "🚀 Starting MCP Agent Server with enhanced logging..."
@@ -286,6 +504,7 @@ echo "🔀 Split Execution Learning: $SPLIT_EXECUTION_LEARNING"
 echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
 echo "💾 MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)"
 echo "📁 Workspace Tools: Enabled"
+echo "🌐 Agent API URL: $MCP_AGENT_SERVER_URL"
 echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%, Fixed: ${FIXED_TOKEN_THRESHOLD} tokens, Keep: $SUMMARY_KEEP_LAST_MESSAGES msgs)"
 echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
 echo "📦 Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens"
@@ -352,13 +571,18 @@ else
     fi
 fi
 
+if [ "$WITH_WORKSPACE" = true ]; then
+    start_native_workspace || exit 1
+fi
+
 # Run the server with all the enhanced configuration
 echo "🚀 Starting server with 'go run'..."
 
 if [ "$BACKGROUND_MODE" = true ]; then
     # Background mode: run in background and capture PID
     echo "🔄 Starting server in background mode..."
-    go run main.go server \
+    nohup go run main.go server \
+        --port "$AGENT_PORT" \
         --log-level debug \
         --debug \
         --db-type "$DB_TYPE_FLAG" \
@@ -373,29 +597,40 @@ if [ "$BACKGROUND_MODE" = true ]; then
     echo "✅ Server started in background (PID: $SERVER_PID)"
     echo "📝 Logs are being written to: $LOG_PATH"
     echo "🛑 To stop the server, run: kill $SERVER_PID"
+    echo "🌐 Agent API URL: $MCP_AGENT_SERVER_URL"
+    if [ "$WITH_WORKSPACE" = true ]; then
+        echo "✅ Native workspace is running in background (PID: $WORKSPACE_PID)"
+        echo "📝 Workspace logs are being written to: $WORKSPACE_LOG_PATH"
+        echo "🌐 Workspace health: ${WORKSPACE_API_URL%/}/health"
+    fi
     
     # Wait a moment to check if server started successfully
     sleep 3
     if ! kill -0 $SERVER_PID 2>/dev/null; then
         echo "❌ Error: Server process died immediately. Check logs: $LOG_PATH"
         tail -20 "$LOG_PATH"
+        if [ "$WITH_WORKSPACE" = true ]; then
+            stop_native_workspace
+        fi
         exit 1
     fi
     
-    # Check if server is listening on port 8000
-    if lsof -ti:8000 > /dev/null 2>&1; then
-        echo "✅ Server is running and listening on port 8000"
+    # Check if server is listening on the selected port
+    if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
+        echo "✅ Server is running and listening on port $AGENT_PORT"
     else
-        echo "⚠️  Warning: Server process is running but not listening on port 8000 yet"
+        echo "⚠️  Warning: Server process is running but not listening on port $AGENT_PORT yet"
         echo "   Check logs: $LOG_PATH"
     fi
 else
     # Foreground mode: run in foreground with output visible
     echo "🔄 Starting server in foreground mode..."
     echo "   (Press Ctrl+C to stop)"
+    echo "   Agent API URL: $MCP_AGENT_SERVER_URL"
     echo ""
     
     go run main.go server \
+        --port "$AGENT_PORT" \
         --log-level debug \
         --debug \
         --db-type "$DB_TYPE_FLAG" \

@@ -17,16 +17,16 @@ func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:8081"
+	return "http://127.0.0.1:8081"
 }
 
 // WorkspaceFile represents a file from the workspace API
 type WorkspaceFile struct {
 	FilePath string `json:"filepath"`
-	Type    string `json:"type"` // "file" or "folder"
-	Content string `json:"content,omitempty"`
-	Name        string `json:"-"` // Computed from filepath
-	IsDir       bool   `json:"-"` // Computed from type
+	Type     string `json:"type"` // "file" or "folder"
+	Content  string `json:"content,omitempty"`
+	Name     string `json:"-"` // Computed from filepath
+	IsDir    bool   `json:"-"` // Computed from type
 }
 
 // WorkspaceListResponse represents the response from listing files

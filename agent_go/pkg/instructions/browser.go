@@ -4,7 +4,17 @@ import (
 	"fmt"
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
+
+// cdpHost returns the hostname to use in CDP instructions.
+// In native mode, use localhost. In Docker mode, use host.docker.internal.
+func cdpHost() string {
+	if common.IsNativeWorkspace() {
+		return "localhost"
+	}
+	return "host.docker.internal"
+}
 
 // BrowserConfig holds the resolved browser state for prompt generation.
 type BrowserConfig struct {
@@ -99,13 +109,14 @@ When a website has a file upload input (e.g. file picker, drag-and-drop zone), u
 
 // GetCdpModeInstructions returns instructions specific to CDP mode (connected to user's real Chrome).
 func GetCdpModeInstructions() string {
-	return `
+	host := cdpHost()
+	return fmt.Sprintf(`
 ## Browser Mode: CDP (Connected to User's Chrome)
 
 You are controlling the **user's real Chrome browser** via Chrome DevTools Protocol (CDP).
 
 **Key behaviors:**
-- The user can **see everything you do** in their browser — actions are visible in real-time
+- The user can **see everything you do** in their browser ��� actions are visible in real-time
 - The browser may have **existing cookies, login sessions, and tabs** — you can leverage authenticated sessions without re-logging in
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - **Take screenshots** to show the user what you see, since they can also verify visually
@@ -115,15 +126,13 @@ You are controlling the **user's real Chrome browser** via Chrome DevTools Proto
 **Connection behavior (important):**
 - CDP endpoint is already configured by the backend from the selected port.
 - Do **NOT** ask the user for a websocket debugger URL or run "curl localhost:9222/json/version".
-- In containerized runs, localhost points to the container, not the host browser.
-- When you describe or troubleshoot the endpoint, use host.docker.internal:<port> (Linux: host IP such as 172.17.0.1:<port>).
-- Do not suggest localhost:<port> for container-side agent_browser connectivity.
+- When you describe or troubleshoot the endpoint, use %s:<port>.
 
 **Best practices:**
 - Start with a **snapshot** to see the current page state before taking any action
 - Use **session="default"** unless you need multiple isolated sessions
 - Be careful with form submissions and purchases — this is the user's real browser with real accounts
-`
+`, host)
 }
 
 // GetHeadlessModeInstructions returns instructions specific to headless browser mode.
@@ -197,19 +206,21 @@ For detailed usage, read: execute_shell_command(command="cat skills/agent-browse
 
 // GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
 func GetCdpBrowserInstructions() string {
-	return `## Browser Automation (CDP — Connected to User's Chrome)
+	host := cdpHost()
+	cdpURL := fmt.Sprintf("http://%s:9222", host)
+	return fmt.Sprintf(`## Browser Automation (CDP — Connected to User's Chrome)
 
-You have the ` + "`agent_browser`" + ` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
+You have the `+"`agent_browser`"+` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
 
 ### Basic Workflow
-1. **Open a page:** agent_browser(command="open", args=["--cdp", "http://host.docker.internal:9222", "https://example.com"], session="default")
-2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["--cdp", "http://host.docker.internal:9222", "-i"], session="default")
+1. **Open a page:** agent_browser(command="open", args=["--cdp", "%[1]s", "https://example.com"], session="default")
+2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["--cdp", "%[1]s", "-i"], session="default")
 3. **Interact** using element refs from snapshot:
-   - Click: agent_browser(command="click", args=["--cdp", "http://host.docker.internal:9222", "@e1"], session="default")
-   - Fill text: agent_browser(command="fill", args=["--cdp", "http://host.docker.internal:9222", "@e2", "search query"], session="default")
-   - Press key: agent_browser(command="press", args=["--cdp", "http://host.docker.internal:9222", "Enter"], session="default")
+   - Click: agent_browser(command="click", args=["--cdp", "%[1]s", "@e1"], session="default")
+   - Fill text: agent_browser(command="fill", args=["--cdp", "%[1]s", "@e2", "search query"], session="default")
+   - Press key: agent_browser(command="press", args=["--cdp", "%[1]s", "Enter"], session="default")
 4. **Re-snapshot** after each interaction to see the updated page state
-5. **Screenshot:** agent_browser(command="screenshot", args=["--cdp", "http://host.docker.internal:9222", "page.png"], session="default")
+5. **Screenshot:** agent_browser(command="screenshot", args=["--cdp", "%[1]s", "page.png"], session="default")
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
 
@@ -221,18 +232,18 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - If a site requires login and the user is already logged in, navigate directly to the target page
 
 ### CDP Connection
-Always pass ` + "`--cdp http://host.docker.internal:9222`" + ` in the args array for every agent_browser call. Do NOT use localhost.
+Always pass `+"`--cdp %[1]s`"+` in the args array for every agent_browser call.
 
 **In code execution mode:** Call agent_browser via HTTP API:
-` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"--cdp\", \"http://host.docker.internal:9222\", \"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
-**As direct tool call:** agent_browser(command="snapshot", args=["--cdp", "http://host.docker.internal:9222", "-i"], session="default")
+`+"```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"--cdp\", \"%[1]s\", \"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```"+`
+**As direct tool call:** agent_browser(command="snapshot", args=["--cdp", "%[1]s", "-i"], session="default")
 
 ### Advanced: Direct CDP WebSocket Access
 For operations that need more control (targeting specific tabs, running complex JS, inspecting DOM):
-` + "```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('http://host.docker.internal:9222/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://host.docker.internal:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```" + `
-**Rules for direct CDP:** Always use ` + "`Host: localhost`" + ` header and ` + "`suppress_origin=True`" + ` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
+`+"```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
+**Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
 
-For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`, cdpURL, host)
 }
 
 // GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).

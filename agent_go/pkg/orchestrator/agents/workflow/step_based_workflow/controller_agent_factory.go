@@ -1817,7 +1817,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 				tracker := browser.GetSessionTracker()
 				workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 				if workspaceAPIURL == "" {
-					workspaceAPIURL = "http://localhost:8081"
+					workspaceAPIURL = "http://127.0.0.1:8081"
 				}
 				browserClient := browser.NewClient(workspaceAPIURL)
 				// Close all browser sessions tracked under this isolated agent ID
@@ -1924,7 +1924,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 				tracker := browser.GetSessionTracker()
 				workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 				if workspaceAPIURL == "" {
-					workspaceAPIURL = "http://localhost:8081"
+					workspaceAPIURL = "http://127.0.0.1:8081"
 				}
 				browserClient := browser.NewClient(workspaceAPIURL)
 				// Close all browser sessions tracked under this isolated agent ID

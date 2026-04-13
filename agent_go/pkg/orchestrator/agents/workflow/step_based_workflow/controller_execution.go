@@ -359,7 +359,7 @@ func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:8081"
+	return "http://127.0.0.1:8081"
 }
 
 // normalizePathForWorkspaceAPI normalizes a relative path to be relative to workspace-docs root.

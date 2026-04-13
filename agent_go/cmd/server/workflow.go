@@ -76,7 +76,7 @@ func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:8081"
+	return "http://127.0.0.1:8081"
 }
 
 // getWorkspaceDocsAbsPath returns the absolute filesystem path to the workspace docs root.
@@ -573,10 +573,10 @@ type WorkflowRequest struct {
 
 // WorkflowUpdateRequest represents a workflow update request
 type WorkflowUpdateRequest struct {
-	PresetQueryID   string                            `json:"preset_query_id"`
-	WorkflowStatus  *string                           `json:"workflow_status,omitempty"`
+	PresetQueryID   string                                 `json:"preset_query_id"`
+	WorkflowStatus  *string                                `json:"workflow_status,omitempty"`
 	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
-	StepID          *string                           `json:"step_id,omitempty"` // Optional step ID for step-specific phase execution
+	StepID          *string                                `json:"step_id,omitempty"` // Optional step ID for step-specific phase execution
 }
 
 // --- In-memory workflow runtime state (replaces DB workflows table) ---
@@ -585,12 +585,12 @@ type WorkflowUpdateRequest struct {
 // This replaces the DB-backed workflows table. State doesn't survive server restarts
 // (which is fine — workflow_status is only meaningful during active execution).
 type WorkflowRuntimeState struct {
-	ID              string                            `json:"id"`
-	PresetQueryID   string                            `json:"preset_query_id"`
-	WorkflowStatus  string                            `json:"workflow_status"`
+	ID              string                                 `json:"id"`
+	PresetQueryID   string                                 `json:"preset_query_id"`
+	WorkflowStatus  string                                 `json:"workflow_status"`
 	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
-	CreatedAt       time.Time                         `json:"created_at"`
-	UpdatedAt       time.Time                         `json:"updated_at"`
+	CreatedAt       time.Time                              `json:"created_at"`
+	UpdatedAt       time.Time                              `json:"updated_at"`
 }
 
 // workflowRuntimeStore is the in-memory store for workflow execution state.

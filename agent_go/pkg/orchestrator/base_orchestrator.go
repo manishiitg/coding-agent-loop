@@ -63,7 +63,7 @@ type BaseOrchestrator struct {
 	WorkspaceTools         []llmtypes.Tool
 	WorkspaceToolExecutors map[string]interface{}
 	WorkspaceClient        *workspace.Client // Direct typed access to workspace API
-	ToolCategories         map[string]string  // Tool name to category mapping
+	ToolCategories         map[string]string // Tool name to category mapping
 
 	// Orchestrator type and configuration
 	orchestratorType OrchestratorType
@@ -74,12 +74,12 @@ type BaseOrchestrator struct {
 	temperature          float64
 	agentMode            string
 	selectedServers      []string
-	selectedTools        []string   // Selected tools in "server:tool" format
-	selectedSkills       []string       // Selected skill folder names for workflow
-	secrets              []SecretEntry  // Decrypted secrets to inject into agents
-	useCodeExecutionMode bool           // MCP code execution mode
-	llmConfig            *LLMConfig // LLM configuration
-	maxTurns             int        // Maximum turns for the orchestrator
+	selectedTools        []string      // Selected tools in "server:tool" format
+	selectedSkills       []string      // Selected skill folder names for workflow
+	secrets              []SecretEntry // Decrypted secrets to inject into agents
+	useCodeExecutionMode bool          // MCP code execution mode
+	llmConfig            *LLMConfig    // LLM configuration
+	maxTurns             int           // Maximum turns for the orchestrator
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string
@@ -246,7 +246,7 @@ func NewBaseOrchestrator(
 	// internal operations like ReadWorkspaceFile, ListWorkspaceFiles, etc.
 	wsURL := os.Getenv("WORKSPACE_API_URL")
 	if wsURL == "" {
-		wsURL = "http://localhost:8081"
+		wsURL = "http://127.0.0.1:8081"
 	}
 	orchestrator.WorkspaceClient = workspace.NewClient(wsURL)
 

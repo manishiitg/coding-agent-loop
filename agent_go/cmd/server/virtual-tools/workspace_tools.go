@@ -15,7 +15,7 @@ func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:8081"
+	return "http://127.0.0.1:8081"
 }
 
 // WorkspaceFileContent is the response shape for read_workspace_file (used by orchestrator and server)
@@ -42,7 +42,7 @@ type WorkspaceAPIResponse struct {
 
 // WorkspaceFolderItem is a single item in a folder listing (can have Children for nested listing)
 type WorkspaceFolderItem struct {
-	FilePath    string                `json:"filepath"`
+	FilePath string                `json:"filepath"`
 	Type     string                `json:"type"`
 	Children []WorkspaceFolderItem `json:"children,omitempty"`
 }
@@ -120,7 +120,6 @@ const (
 	// FolderGuardAllowedWriteFolderKey is the context key for the only folder allowed for writes (chat mode)
 	FolderGuardAllowedWriteFolderKey = common.FolderGuardAllowedWriteFolderKey
 )
-
 
 // CreateWorkspaceToolExecutors creates the execution functions for all workspace tools (basic + advanced)
 func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {

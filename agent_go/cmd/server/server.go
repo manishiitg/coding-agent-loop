@@ -703,7 +703,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	go func() {
 		workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 		if workspaceAPIURL == "" {
-			workspaceAPIURL = "http://localhost:8081"
+			workspaceAPIURL = "http://127.0.0.1:8081"
 		}
 		client := browser.NewClient(workspaceAPIURL)
 		// Send a kill-all command via workspace-api to clean up any leftover browsers
@@ -979,7 +979,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Initialize Bot Conversation Manager
 	workspaceURL := os.Getenv("WORKSPACE_API_URL")
 	if workspaceURL == "" {
-		workspaceURL = "http://localhost:8081"
+		workspaceURL = "http://127.0.0.1:8081"
 	}
 	botManager := slackservice.NewBotConversationManager(chatStore, configPath, workspaceURL)
 	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
@@ -1159,7 +1159,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		defer syncCancel()
 		workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 		if workspaceAPIURL == "" {
-			workspaceAPIURL = "http://localhost:8081"
+			workspaceAPIURL = "http://127.0.0.1:8081"
 		}
 		installed, errs := todo_creation_human.SyncSystemSkills(syncCtx, workspaceAPIURL)
 		if len(errs) > 0 {
@@ -1221,11 +1221,15 @@ func (api *StreamingAPI) GetAPIURL() string {
 	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
 }
 
-// GetCodeExecAPIURL returns the API URL as seen from inside the workspace container.
-// Shell commands in code execution mode run inside the Docker workspace-api container,
-// so they need host.docker.internal to reach the Go server on the host.
-// Falls back to the normal API URL when workspace is not Dockerized.
+// GetCodeExecAPIURL returns the API URL as seen from wherever shell commands execute.
+// In Docker mode, shell commands run inside the workspace-api container and need
+// host.docker.internal to reach the Go server on the host.
+// In native mode, shell commands run directly on the host, so they use 127.0.0.1.
 func (api *StreamingAPI) GetCodeExecAPIURL() string {
+	if common.IsNativeWorkspace() {
+		return fmt.Sprintf("http://127.0.0.1:%d", api.config.Port)
+	}
+
 	wsURL := getWorkspaceAPIURL()
 	// If workspace API points to localhost (Docker-mapped port), shell commands
 	// run inside Docker and need host.docker.internal to reach the host
@@ -5160,7 +5164,7 @@ func (api *StreamingAPI) cleanupBrowserSessions(sessionID string) {
 	}
 	workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 	if workspaceAPIURL == "" {
-		workspaceAPIURL = "http://localhost:8081"
+		workspaceAPIURL = "http://127.0.0.1:8081"
 	}
 	client := browser.NewClient(workspaceAPIURL)
 	tracker.CloseAllForChat(sessionID, client)

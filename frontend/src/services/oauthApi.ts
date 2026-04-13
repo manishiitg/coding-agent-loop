@@ -3,7 +3,7 @@
  * Handles OAuth authentication flows for MCP servers
  */
 
-import { getAuthToken } from './api';
+import { getApiBaseUrl, getAuthToken } from './api';
 
 // Helper to get auth headers
 function getAuthHeaders(): HeadersInit {
@@ -51,7 +51,7 @@ export interface OAuthLogoutRequest {
 export class OAuthApi {
   private baseUrl: string;
 
-  constructor(baseUrl: string = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')) {
+  constructor(baseUrl: string = getApiBaseUrl()) {
     this.baseUrl = baseUrl;
   }
 
@@ -114,4 +114,4 @@ export class OAuthApi {
 }
 
 // Export a default instance
-export const oauthApi = new OAuthApi(import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : ''));
+export const oauthApi = new OAuthApi(getApiBaseUrl());

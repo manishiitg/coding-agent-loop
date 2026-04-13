@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getAuthToken } from './api'
+import { getApiBaseUrl, getAuthToken } from './api'
 import type {
   LLMDefaultsResponse,
   APIKeyValidationRequest,
@@ -31,7 +31,7 @@ export interface GetModelMetadataResponse {
 
 // Create axios instance for LLM configuration API (use Vite env so deploy URL works)
 const llmConfigApi = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : ''),
+  baseURL: getApiBaseUrl(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

@@ -145,7 +145,12 @@ func (iso *Isolator) generateSandboxProfile() string {
 	if len(iso.ReadPaths) > 0 {
 		sb.WriteString("(allow file-read*\n")
 		for _, path := range iso.ReadPaths {
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", path))
+			// Handle both relative and absolute paths
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
 		}
 		sb.WriteString(")\n\n")
 	}
@@ -154,7 +159,12 @@ func (iso *Isolator) generateSandboxProfile() string {
 	if len(iso.WritePaths) > 0 {
 		sb.WriteString("(allow file-read* file-write*\n")
 		for _, path := range iso.WritePaths {
-			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", path))
+			// Handle both relative and absolute paths
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
 		}
 		sb.WriteString(")\n\n")
 	}

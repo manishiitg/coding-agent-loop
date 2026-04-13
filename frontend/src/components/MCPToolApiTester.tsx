@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Play, Copy, Check, AlertCircle, Loader2 } from 'lucide-react'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
-import { getAuthToken } from '../services/api'
+import { getApiBaseUrl, getAuthToken } from '../services/api'
 
 interface MCPToolApiTesterProps {
   isOpen: boolean
@@ -57,7 +57,7 @@ export default function MCPToolApiTester({
     return JSON.stringify(example, null, 2)
   }
 
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+  const apiBaseUrl = getApiBaseUrl()
 
   const executeTool = async () => {
     setLoading(true)

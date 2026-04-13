@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2, ServerOff, RefreshCw } from 'lucide-react'
+import { getApiBaseUrl } from '../services/api'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')
-const HEALTH_URL = `${API_BASE_URL}/api/health`
 const RETRY_MS = { min: 1000, max: 5000 }
 const TIMEOUT_MS = 5000
 
@@ -14,12 +13,20 @@ export default function ServerConnectionStatus({ children }: { children: React.R
   const [error, setError] = useState<string | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mounted = useRef(true)
+  const displayApiBaseUrl = getApiBaseUrl()
 
   const checkHealth = useCallback(async (): Promise<boolean> => {
     const ac = new AbortController()
     const t = setTimeout(() => ac.abort(), TIMEOUT_MS)
+    const apiBaseUrl = getApiBaseUrl()
+    const healthUrl = `${apiBaseUrl}/api/health`
     try {
-      const res = await fetch(HEALTH_URL, { signal: ac.signal })
+      console.info('[ServerConnectionStatus] checking health', {
+        apiBaseUrl,
+        healthUrl,
+        runtimeConfig: typeof window !== 'undefined' ? (window as any).__APP_RUNTIME_CONFIG__ : undefined,
+      })
+      const res = await fetch(healthUrl, { signal: ac.signal })
       clearTimeout(t)
       if (!res.ok) {
         setError(`Server returned ${res.status}`)
@@ -110,7 +117,7 @@ export default function ServerConnectionStatus({ children }: { children: React.R
           )}
         </div>
         <div className="bg-gray-800/50 rounded-lg px-4 py-2 inline-block">
-          <code className="text-gray-400 text-sm">{API_BASE_URL}</code>
+          <code className="text-gray-400 text-sm">{displayApiBaseUrl}</code>
         </div>
         {state === 'error' && (
           <button onClick={retry} className="flex items-center gap-2 mx-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">

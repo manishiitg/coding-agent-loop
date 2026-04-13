@@ -99,30 +99,76 @@ export type {
 } from './api-types'
 
 // Resolve API base URL: use build-time env if set; otherwise fallback based on mode
+function getRuntimeConfig(): { apiBaseUrl?: string; workspaceApiBaseUrl?: string } {
+  if (typeof window === 'undefined') return {}
+  return (window as any).__APP_RUNTIME_CONFIG__ || {}
+}
+
+function logResolvedUrlOnce(key: string, payload: Record<string, unknown>) {
+  if (typeof window === 'undefined') return
+  const marker = `__logged_${key}`
+  if ((window as any)[marker]) return
+  ;(window as any)[marker] = true
+  console.info(`[api-config] ${key}`, payload)
+}
+
 export function getApiBaseUrl(): string {
+  const runtime = getRuntimeConfig()
+  if (runtime.apiBaseUrl) {
+    logResolvedUrlOnce('apiBaseUrl', { source: 'runtime-config', resolved: runtime.apiBaseUrl, runtime })
+    return runtime.apiBaseUrl
+  }
+
   // Use Electron API if available
   if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiBaseUrl) {
-    return (window as any).electronAPI.getApiBaseUrl()
+    const resolved = (window as any).electronAPI.getApiBaseUrl()
+    logResolvedUrlOnce('apiBaseUrl', { source: 'electron', resolved, runtime })
+    return resolved
   }
 
   const env = import.meta.env.VITE_API_BASE_URL
-  if (env) return env
+  if (env) {
+    logResolvedUrlOnce('apiBaseUrl', { source: 'vite-env', resolved: env, runtime })
+    return env
+  }
   // Only fallback to localhost:8000 in DEV mode
-  if (import.meta.env.DEV) return 'http://localhost:8000'
+  if (import.meta.env.DEV) {
+    const resolved = 'http://localhost:8000'
+    logResolvedUrlOnce('apiBaseUrl', { source: 'dev-fallback', resolved, runtime })
+    return resolved
+  }
   // In production (including preview/docker), use relative path (same origin)
+  logResolvedUrlOnce('apiBaseUrl', { source: 'relative-origin', resolved: '', runtime })
   return ''
 }
 
 function getWorkspaceApiBaseUrl(): string {
+  const runtime = getRuntimeConfig()
+  if (runtime.workspaceApiBaseUrl) {
+    logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'runtime-config', resolved: runtime.workspaceApiBaseUrl, runtime })
+    return runtime.workspaceApiBaseUrl
+  }
+
   // Use Electron API if available
   if (typeof window !== 'undefined' && (window as any).electronAPI?.getWorkspaceApiBaseUrl) {
-    return (window as any).electronAPI.getWorkspaceApiBaseUrl()
+    const resolved = (window as any).electronAPI.getWorkspaceApiBaseUrl()
+    logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'electron', resolved, runtime })
+    return resolved
   }
 
   const env = import.meta.env.VITE_WORKSPACE_API_URL
-  if (env) return env
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/api/wp`
-  return 'http://localhost:8081'
+  if (env) {
+    logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'vite-env', resolved: env, runtime })
+    return env
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    const resolved = `${window.location.origin}/api/wp`
+    logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'origin-proxy', resolved, runtime })
+    return resolved
+  }
+  const resolved = 'http://127.0.0.1:8081'
+  logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'dev-fallback', resolved, runtime })
+  return resolved
 }
 
 const API_BASE_URL = getApiBaseUrl()

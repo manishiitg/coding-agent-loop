@@ -4,6 +4,9 @@ services:
     build:
       context: ./workspace
       dockerfile: Dockerfile
+    profiles:
+      - workspace
+      - full
     # Required capabilities for mount namespace isolation
     cap_add:
       - SYS_ADMIN  # Needed for unshare -m and mount operations
@@ -65,11 +68,9 @@ services:
       - ./frontend:/app/frontend:ro
     environment:
       - NODE_ENV=development
+      # Frontend talks directly to host-native services by default.
       - VITE_API_BASE_URL=http://localhost:8000
-      - VITE_WORKSPACE_API_URL=http://localhost:8081
-    depends_on:
-      workspace-api:
-        condition: service_healthy
+      - VITE_WORKSPACE_API_URL=http://127.0.0.1:8081
     restart: unless-stopped
 
   # Agent Server (opt-in: use --profile full)

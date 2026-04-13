@@ -141,6 +141,22 @@ func (iso *Isolator) generateSandboxProfile() string {
 	sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", baseDir))
 	sb.WriteString(")\n\n")
 
+	// Allow the shell to read the working directory and its parents for getcwd().
+	// Without this, sandbox-exec blocks getcwd() traversal and the shell fails with
+	// "shell-init: error retrieving current directory: Operation not permitted".
+	// (literal) matches the directory entry itself, not its contents.
+	workDir := iso.WorkDir
+	if workDir != "" {
+		sb.WriteString("; Allow working directory access for getcwd()\n")
+		sb.WriteString(fmt.Sprintf("(allow file-read* (subpath \"%s\"))\n", workDir))
+		// Also allow reading each parent up to baseDir so getcwd() can traverse
+		for dir := filepath.Dir(workDir); strings.HasPrefix(dir, baseDir) && dir != baseDir; dir = filepath.Dir(dir) {
+			sb.WriteString(fmt.Sprintf("(allow file-read-data (literal \"%s\"))\n", dir))
+		}
+		sb.WriteString(fmt.Sprintf("(allow file-read-data (literal \"%s\"))\n", baseDir))
+		sb.WriteString("\n")
+	}
+
 	// Allow read-only access to read paths
 	if len(iso.ReadPaths) > 0 {
 		sb.WriteString("(allow file-read*\n")

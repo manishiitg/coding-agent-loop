@@ -19,6 +19,7 @@ type Isolator struct {
 	BaseDir      string // Workspace base directory (default: /app/workspace-docs)
 }
 
+
 const defaultBaseDir = "/app/workspace-docs"
 
 // getBaseDir returns the configured base directory or the default
@@ -136,20 +137,20 @@ func (iso *Isolator) generateSandboxProfile() string {
 	}
 
 	// Mode 2: Allow-list mode (workflow mode with ReadPaths/WritePaths)
-	// CRITICAL: Deny BOTH read and write access to workspace by default
-	sb.WriteString("(deny file-read* file-write*\n")
-	sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", baseDir))
-	sb.WriteString(")\n\n")
+	//
+	// Strategy: deny the project root directory (source code, server configs,
+	// .env files) then re-allow only workspace-docs subpaths within it.
+	// Everything else (home dir tool configs, system paths) stays accessible
+	// so CLIs like aws, gcloud, kubectl, docker etc. work normally.
+	projectRoot := filepath.Dir(baseDir)
+	sb.WriteString("; Deny project root (source code, server configs, .env)\n")
+	sb.WriteString(fmt.Sprintf("(deny file-read* file-write* (subpath \"%s\"))\n\n", projectRoot))
 
 	// Allow the shell to read the working directory and its parents for getcwd().
-	// Without this, sandbox-exec blocks getcwd() traversal and the shell fails with
-	// "shell-init: error retrieving current directory: Operation not permitted".
-	// (literal) matches the directory entry itself, not its contents.
 	workDir := iso.WorkDir
 	if workDir != "" {
-		sb.WriteString("; Allow working directory access for getcwd()\n")
+		sb.WriteString("; Allow working directory access\n")
 		sb.WriteString(fmt.Sprintf("(allow file-read* (subpath \"%s\"))\n", workDir))
-		// Also allow reading each parent up to baseDir so getcwd() can traverse
 		for dir := filepath.Dir(workDir); strings.HasPrefix(dir, baseDir) && dir != baseDir; dir = filepath.Dir(dir) {
 			sb.WriteString(fmt.Sprintf("(allow file-read-data (literal \"%s\"))\n", dir))
 		}
@@ -157,11 +158,11 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString("\n")
 	}
 
-	// Allow read-only access to read paths
+	// Allow read-only access to configured read paths (within workspace-docs)
 	if len(iso.ReadPaths) > 0 {
+		sb.WriteString("; Allowed read paths\n")
 		sb.WriteString("(allow file-read*\n")
 		for _, path := range iso.ReadPaths {
-			// Handle both relative and absolute paths
 			fullPath := path
 			if !strings.HasPrefix(path, "/") {
 				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
@@ -171,11 +172,11 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString(")\n\n")
 	}
 
-	// Allow read AND write access to write paths (override the deny)
+	// Allow read+write access to configured write paths
 	if len(iso.WritePaths) > 0 {
+		sb.WriteString("; Allowed write paths\n")
 		sb.WriteString("(allow file-read* file-write*\n")
 		for _, path := range iso.WritePaths {
-			// Handle both relative and absolute paths
 			fullPath := path
 			if !strings.HasPrefix(path, "/") {
 				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
@@ -185,13 +186,11 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString(")\n\n")
 	}
 
-
-	// CRITICAL: Explicit deny for blocked paths (takes precedence, added last)
+	// Explicit deny for blocked paths (takes precedence, added last)
 	if len(iso.BlockedPaths) > 0 {
 		sb.WriteString("; Explicit deny for blocked paths (overrides allows)\n")
 		sb.WriteString("(deny file-read* file-write*\n")
 		for _, path := range iso.BlockedPaths {
-			// Handle both relative and absolute paths
 			fullPath := path
 			if !strings.HasPrefix(path, "/") {
 				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))

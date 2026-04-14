@@ -163,9 +163,9 @@ func TestMacOSSandboxProfile(t *testing.T) {
 	if !strings.Contains(profile, "(allow default)") {
 		t.Error("Sandbox profile missing default allow")
 	}
-	// CRITICAL: Should deny BOTH read and write access by default for security
+	// CRITICAL: Should deny the project root (source code, configs) for security
 	if !strings.Contains(profile, "(deny file-read* file-write*") {
-		t.Error("Sandbox profile missing workspace read+write denial")
+		t.Error("Sandbox profile missing project root denial")
 	}
 
 	// Verify paths are included

@@ -191,11 +191,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
 	}
 
-	// Block absolute host paths when folder guard is active (Docker only).
-	// Docker Desktop for Mac auto-mounts /Users/ into containers via VirtioFS,
-	// so commands with absolute host paths could bypass workspace sandbox.
-	// In native mode, the sandbox-exec isolator handles access control directly.
-	if params.FolderGuard != nil && params.FolderGuard.Enabled && !common.IsNativeWorkspace() {
+	// Block absolute host paths when folder guard is active.
+	// Docker: VirtioFS auto-mounts /Users/ into containers, so absolute paths bypass sandbox.
+	// Native: sandbox-exec profile only restricts workspace-docs subpaths, not the wider
+	// filesystem, so this check is needed here too as defense-in-depth.
+	if params.FolderGuard != nil && params.FolderGuard.Enabled {
 		if err := blockAbsoluteHostPaths(params.Command); err != nil {
 			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", params.Command)
 			return ShellCommandResult{}, err

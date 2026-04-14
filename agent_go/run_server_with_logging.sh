@@ -574,6 +574,22 @@ if [ "$WITH_WORKSPACE" = true ]; then
     start_native_workspace || exit 1
 fi
 
+# Clean up stale agent-browser runtime state (dead PID/socket files)
+# Prevents "CDP response channel closed" errors from leftover state.
+for ab_dir in "$HOME/.agent-browser" "/tmp/.agent-browser"; do
+    if [ -d "$ab_dir" ]; then
+        for pidfile in "$ab_dir"/*.pid; do
+            [ -f "$pidfile" ] || continue
+            ab_pid=$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')
+            if [ -n "$ab_pid" ] && ! kill -0 "$ab_pid" 2>/dev/null; then
+                base="${pidfile%.pid}"
+                echo "🧹 Cleaning stale agent-browser state: PID $ab_pid ($(basename "$pidfile"))"
+                rm -f "$pidfile" "${base}.sock" "${base}.stream" "${base}.engine" "${base}.version"
+            fi
+        done
+    fi
+done
+
 # Run the server with all the enhanced configuration
 echo "🚀 Starting server with 'go run'..."
 

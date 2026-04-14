@@ -561,6 +561,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatal("[AUTH] FATAL: AUTH_SECRET env var must be set when MULTI_USER_MODE=true. Generate a random secret and add it to your deployment configuration.")
 	}
 
+	// Clean up stale agent-browser runtime state (dead PID files, sockets)
+	// to prevent "CDP response channel closed" errors on first browser use.
+	browser.CleanupStaleRuntimeState()
+
 	fmt.Printf("🚀 Starting Streaming API Server\n")
 	fmt.Printf("📡 Host: %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🤖 Primary Provider: %s | Model: %s\n", config.Provider, config.ModelID)

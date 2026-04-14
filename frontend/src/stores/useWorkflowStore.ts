@@ -19,6 +19,7 @@ const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
 const CANVAS_VIEW_MODE_KEY = 'workflow_canvas_view_mode'
+const WORKSHOP_MODE_BY_PRESET_KEY = 'workflow_workshop_mode_by_preset'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -444,16 +445,37 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // === Workflow Mode State ===
       workflowMode: 'plan',
       workshopMode: 'builder' as const,
-      workshopModeByPreset: {},
+      workshopModeByPreset: (() => {
+        try {
+          const saved = localStorage.getItem(WORKSHOP_MODE_BY_PRESET_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved)
+            if (parsed && typeof parsed === 'object') return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load workshopModeByPreset:', error)
+        }
+        return {}
+      })(),
       setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
-        set((state) => ({
-          workshopMode: mode,
-          workflowMode: mode === 'eval' ? 'eval' : mode === 'output' ? 'output' : 'plan',
-          workshopModeByPreset: presetId
+        set((state) => {
+          const updated = presetId
             ? { ...state.workshopModeByPreset, [presetId]: mode }
-            : state.workshopModeByPreset,
-        }))
+            : state.workshopModeByPreset
+          if (presetId) {
+            try {
+              localStorage.setItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
+            } catch (error) {
+              console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
+            }
+          }
+          return {
+            workshopMode: mode,
+            workflowMode: mode === 'eval' ? 'eval' : mode === 'output' ? 'output' : 'plan',
+            workshopModeByPreset: updated,
+          }
+        })
       },
       evaluationPlan: null,
       evaluationStepProgress: null,
@@ -1685,24 +1707,35 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Workflow Mode Actions
       setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
-        set(state => ({
-          workflowMode: mode,
-          workshopMode: mode === 'eval'
-            ? 'eval'
+        set(state => {
+          // When switching to plan, prefer the preset's remembered sub-mode over the global one
+          const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
+          const resolvedWorkshopMode = mode === 'eval'
+            ? 'eval' as const
             : mode === 'output'
-              ? 'output'
-              : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' : state.workshopMode),
-          workshopModeByPreset: presetId
+              ? 'output' as const
+              : (rememberedForPreset && rememberedForPreset !== 'eval' && rememberedForPreset !== 'output'
+                  ? rememberedForPreset
+                  : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' as const : state.workshopMode))
+          const updated = presetId
             ? {
                 ...state.workshopModeByPreset,
-                [presetId]: mode === 'eval'
-                  ? 'eval'
-                  : mode === 'output'
-                    ? 'output'
-                    : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' : state.workshopMode)
+                [presetId]: resolvedWorkshopMode
               }
             : state.workshopModeByPreset
-        }))
+          if (presetId) {
+            try {
+              localStorage.setItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
+            } catch (error) {
+              console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
+            }
+          }
+          return {
+            workflowMode: mode,
+            workshopMode: resolvedWorkshopMode,
+            workshopModeByPreset: updated,
+          }
+        })
       },
 
       setEvaluationPlan: (plan: EvaluationPlan | null) => {

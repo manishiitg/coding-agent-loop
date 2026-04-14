@@ -27,10 +27,10 @@ var globalLearningSystemPromptTemplate = MustRegisterTemplate("globalLearningSys
 Every piece of knowledge you capture should contribute toward this objective. Ask yourself: "Does this help achieve the skill objective?" If not, skip it.
 {{end}}
 ## CRITICAL PRINCIPLES
-1. **Domain Knowledge Only**: Capture knowledge about the TARGET SYSTEM (website structure, API patterns, auth flows, data schemas, selectors, common patterns) — NOT step-specific tool sequences.
+1. **HOW, Not WHAT**: Capture knowledge about HOW TO RUN the task — website structure, API patterns, auth flows, selectors, timing quirks, tool usage patterns, common failure modes. Do NOT capture WHAT the workflow discovers about its subject matter (account data, transaction lists, user-specific facts, historical results) — that belongs in knowledgebase/, written by step code as part of the workflow's output.
 2. **NEVER Store Secrets or Sensitive Data**: Do NOT save passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII (names, emails, phone numbers), or any other sensitive information in skill files. Use {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders instead. If execution logs contain such data, extract only the structural patterns — never the actual values.
 3. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
-3. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
+4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 {{if .SkillCreatorPath}}
 ## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
 Before writing or updating anything, read the skill creator guide at '{{.SkillCreatorPath}}'.

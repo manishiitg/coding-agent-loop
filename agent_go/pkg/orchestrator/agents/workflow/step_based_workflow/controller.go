@@ -353,6 +353,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 		hcpo.workshopGroupSessionIDs[groupName] = groupSessionID
 		created = true
 	}
+	if !created {
+		// Reusing a cached session ID — clear any stopped state from a previous run.
+		// The mcpagent registry marks sessions stopped when the workflow is interrupted;
+		// without this, the next run reuses the same ID and gets "session was stopped" errors.
+		mcpagent.ClearSessionsStopped([]string{groupSessionID})
+	}
 	hcpo.workshopGroupSessionRefs[groupName]++
 	refCount = hcpo.workshopGroupSessionRefs[groupName]
 	hcpo.workshopGroupLastUsed[groupName] = now

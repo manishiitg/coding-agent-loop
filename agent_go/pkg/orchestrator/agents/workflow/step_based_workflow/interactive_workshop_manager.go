@@ -1468,6 +1468,29 @@ Every step reads from prior steps and writes for downstream steps:
 - Use for global templates, reference data, configurations, or accumulated results shared across ALL runs.
 - Steps can read from and write to knowledgebase/ — reference files as 'knowledgebase/file.ext' in step descriptions.
 - Use **update_step_config** with 'disable_knowledgebase: true' for steps that don't need persistent storage access.
+
+### Knowledgebase vs Global Learnings — when to use which
+Both persist across runs, but they serve very different purposes:
+
+**learnings/_global/SKILL.md — HOW to run the step/workflow**
+- Execution know-how: selectors, API quirks, timing, tool patterns, which MCP tools to use, pitfalls the agent hit before
+- Written by: the learning agent automatically after step execution (or by the builder manually)
+- Read as: text injected into each step's system prompt so execution agents know how to do the task
+- Examples:
+  - "OTP field appears ~3s after PAN submit — poll with browser_snapshot, don't use time.sleep"
+  - "HDFC balance is inside the .account-summary div — use browser_snapshot and find the ref"
+  - "call_mcp('gmail', 'search_messages', ...) returns max 50 results — paginate with page_token"
+
+**knowledgebase/ — WHAT we've learned about the domain**
+- Accumulated domain knowledge and data the workflow produces over time: facts, results, discovered records, business rules, reference material the user cares about
+- Written by: step code explicitly (Python/shell) as part of doing the workflow's actual job
+- Read as: file contents read during step execution when a step needs this accumulated context
+- Examples:
+  - knowledgebase/bank_accounts.json — list of all accounts we've discovered across runs
+  - knowledgebase/transaction_categories.md — category rules built up from manual review
+  - knowledgebase/monthly_balances/2026-01.json — historical snapshots the workflow keeps
+
+**Rule of thumb**: If it tells the agent **how to do the task**, it belongs in learnings (the learning agent adds it automatically). If it's **knowledge the workflow has gathered about its subject matter**, it belongs in knowledgebase (steps write it explicitly as part of their output).
 {{end}}
 ### Step 4: When to Use Orchestrator (Sub-Workflow / Pipeline) with Sub-Agents
 

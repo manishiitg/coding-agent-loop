@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, AlertTriangle,
-  Bot, User, Send, RotateCcw, Plus, MessageSquare, Layers, Play,
+  Bot, User, Send, RotateCcw, Plus, MessageSquare, Layers, Play, Trash2,
 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { agentApi } from '../../services/api'
 import { useLLMStore } from '../../stores'
-import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo } from '../../services/api-types'
+import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow } from '../../services/api-types'
 
 interface BotConnectorModalProps {
   isOpen: boolean
@@ -45,6 +45,11 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [pollingForReply, setPollingForReply] = useState(false)
   const [showBotToken, setShowBotToken] = useState(false)
   const [showAppToken, setShowAppToken] = useState(false)
+
+  // ── Channel routing ───────────────────────────────────────────────────────
+  const [workflows, setWorkflows] = useState<DiscoveredWorkflow[]>([])
+  const [newChannelID, setNewChannelID] = useState('')
+  const [newWorkflowID, setNewWorkflowID] = useState('')
 
   // ── Simulate ──────────────────────────────────────────────────────────────
   const { delegationTierConfig } = useLLMStore()
@@ -91,6 +96,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     setEmailsSaved(false)
     loadEmails()
     loadSlack()
+    agentApi.listWorkflowManifests().then(data => setWorkflows(data.workflows || [])).catch(() => {})
 
     agentApi.getSimulatorMode().then(data => {
       setThreadMode(data.threaded ? 'threaded' : 'non-threaded')
@@ -201,6 +207,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         enabled: slackConfig.enabled, bot_token: slackConfig.bot_token || '',
         app_token: slackConfig.app_token || '', channel_id: slackConfig.channel_id || '',
         bot_mode: slackConfig.bot_mode || false,
+        channel_routing: slackConfig.channel_routing || {},
       }
       await agentApi.updateSlackFeedbackConfig(request)
       setSlackSuccess('Saved successfully!')
@@ -460,6 +467,80 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                               </label>
                             </div>
                           </Card>
+
+                          {/* Channel → Workflow Routing */}
+                          {slackConfig.bot_mode && (
+                            <Card className="p-4">
+                              <div className="flex flex-col gap-3">
+                                <div>
+                                  <h3 className="text-sm font-medium text-foreground">Channel → Workflow Routing</h3>
+                                  <p className="text-xs text-muted-foreground mt-0.5">Messages from mapped channels run a workflow instead of multi-agent chat</p>
+                                </div>
+
+                                {/* Existing mappings */}
+                                {Object.entries(slackConfig.channel_routing || {}).length > 0 && (
+                                  <div className="flex flex-col gap-1.5">
+                                    {Object.entries(slackConfig.channel_routing || {}).map(([chId, wfId]) => {
+                                      const wf = workflows.find(w => w.manifest.id === wfId)
+                                      return (
+                                        <div key={chId} className="flex items-center gap-2">
+                                          <code className="flex-shrink-0 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono w-36 truncate">{chId}</code>
+                                          <span className="text-xs text-muted-foreground flex-shrink-0">→</span>
+                                          <span className="flex-1 text-xs truncate text-foreground">{wf ? wf.manifest.label : <span className="text-yellow-500">{wfId} (not found)</span>}</span>
+                                          <button
+                                            onClick={() => {
+                                              const updated = { ...slackConfig.channel_routing }
+                                              delete updated[chId]
+                                              setSlackConfig({ ...slackConfig, channel_routing: updated })
+                                            }}
+                                            className="p-1 text-muted-foreground hover:text-red-500 transition-colors rounded flex-shrink-0"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Add new mapping row */}
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={newChannelID}
+                                    onChange={e => setNewChannelID(e.target.value)}
+                                    placeholder="Channel ID (C...)"
+                                    className="w-36 flex-shrink-0 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                                  />
+                                  <select
+                                    value={newWorkflowID}
+                                    onChange={e => setNewWorkflowID(e.target.value)}
+                                    className="flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                  >
+                                    <option value="">Select workflow…</option>
+                                    {workflows.map(w => (
+                                      <option key={w.manifest.id} value={w.manifest.id}>{w.manifest.label}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    onClick={() => {
+                                      if (!newChannelID.trim() || !newWorkflowID) return
+                                      setSlackConfig({
+                                        ...slackConfig,
+                                        channel_routing: { ...(slackConfig.channel_routing || {}), [newChannelID.trim()]: newWorkflowID },
+                                      })
+                                      setNewChannelID('')
+                                      setNewWorkflowID('')
+                                    }}
+                                    disabled={!newChannelID.trim() || !newWorkflowID}
+                                    className="p-1.5 text-primary hover:bg-primary/10 disabled:opacity-40 rounded transition-colors flex-shrink-0"
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            </Card>
+                          )}
 
                           <Card className="p-4 bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700">
                             <div className="flex items-start gap-2">

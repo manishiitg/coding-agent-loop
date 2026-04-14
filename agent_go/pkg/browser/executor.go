@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -251,11 +253,22 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	// Execute via client
-	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, &ExecuteOptions{
+	opts := &ExecuteOptions{
 		Timeout:          timeout,
 		FolderGuard:      folderGuard,
 		WorkingDirectory: workingDir,
-	})
+	}
+	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+
+	// Auto-recover from "CDP response channel closed" — Chrome crashed but the
+	// agent-browser runtime is still alive with a dead CDP connection. Remove the
+	// session files so the retry starts a fresh runtime + Chrome.
+	if err != nil && strings.Contains(err.Error(), "CDP response channel closed") {
+		log.Printf("[BROWSER] CDP connection dead for session %q, removing stale session files and retrying", session)
+		removeSessionFiles(session)
+		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+	}
+
 	if err != nil {
 		return "", err
 	}
@@ -291,5 +304,33 @@ func getTimeoutForCommand(command string) time.Duration {
 		return 10 * time.Second // Close should be quick
 	default:
 		return 30 * time.Second // Default timeout for most operations
+	}
+}
+
+// removeSessionFiles removes agent-browser session state files (.pid, .sock, etc.)
+// so the next command starts a fresh runtime + Chrome instead of connecting to a
+// dead one. Does not kill any processes — the orphaned runtime is harmless.
+func removeSessionFiles(session string) {
+	homeDir, _ := os.UserHomeDir()
+	dirs := []string{}
+	if homeDir != "" {
+		dirs = append(dirs, filepath.Join(homeDir, ".agent-browser"))
+	}
+	tmpDir := "/tmp/.agent-browser"
+	if homeDir == "" || tmpDir != filepath.Join(homeDir, ".agent-browser") {
+		dirs = append(dirs, tmpDir)
+	}
+
+	for _, dir := range dirs {
+		removed := false
+		for _, ext := range []string{".pid", ".sock", ".stream", ".engine", ".version"} {
+			f := filepath.Join(dir, session+ext)
+			if err := os.Remove(f); err == nil {
+				removed = true
+			}
+		}
+		if removed {
+			log.Printf("[BROWSER] Removed stale session files for %q in %s", session, dir)
+		}
 	}
 }

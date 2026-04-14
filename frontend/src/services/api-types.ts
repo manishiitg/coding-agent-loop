@@ -285,6 +285,7 @@ export interface SlackConfig {
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   channel_id?: string
   bot_mode?: boolean  // Enable @mention bot mode
+  channel_routing?: Record<string, string>  // Maps Slack channel IDs to workflow preset IDs
 }
 
 export interface SlackConfigRequest {
@@ -293,6 +294,7 @@ export interface SlackConfigRequest {
   app_token: string  // App-level token (xapp-...) for Socket Mode
   channel_id: string
   bot_mode: boolean  // Enable @mention bot mode
+  channel_routing?: Record<string, string>  // Maps Slack channel IDs to workflow preset IDs
 }
 
 export interface SlackConfigResponse {

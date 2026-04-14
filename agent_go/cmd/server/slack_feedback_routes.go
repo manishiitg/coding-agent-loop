@@ -15,20 +15,22 @@ import (
 
 // SlackConfigRequest represents a request to update Slack config (Socket Mode only)
 type SlackConfigRequest struct {
-	Enabled   bool   `json:"enabled"`
-	BotToken  string `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
-	AppToken  string `json:"app_token"` // App-level token (xapp-...) for Socket Mode
-	ChannelID string `json:"channel_id"`
-	BotMode   bool   `json:"bot_mode"` // Enable @mention bot mode (starts agent sessions from Slack)
+	Enabled        bool              `json:"enabled"`
+	BotToken       string            `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
+	AppToken       string            `json:"app_token"` // App-level token (xapp-...) for Socket Mode
+	ChannelID      string            `json:"channel_id"`
+	BotMode        bool              `json:"bot_mode"`        // Enable @mention bot mode (starts agent sessions from Slack)
+	ChannelRouting map[string]string `json:"channel_routing"` // Maps Slack channel IDs to workflow preset IDs
 }
 
 // SlackConfigResponse represents the Slack configuration response
 type SlackConfigResponse struct {
-	Enabled   bool   `json:"enabled"`
-	BotToken  string `json:"bot_token,omitempty"` // Masked in GET
-	AppToken  string `json:"app_token,omitempty"` // Masked in GET
-	ChannelID string `json:"channel_id,omitempty"`
-	BotMode   bool   `json:"bot_mode"`
+	Enabled        bool              `json:"enabled"`
+	BotToken       string            `json:"bot_token,omitempty"`  // Masked in GET
+	AppToken       string            `json:"app_token,omitempty"`  // Masked in GET
+	ChannelID      string            `json:"channel_id,omitempty"`
+	BotMode        bool              `json:"bot_mode"`
+	ChannelRouting map[string]string `json:"channel_routing,omitempty"` // Maps Slack channel IDs to workflow preset IDs
 }
 
 // SlackTestResponse represents test connection response
@@ -82,19 +84,24 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 
 		config := slackService.GetConfig()
 
-		// Check bot_mode from the filesystem-backed bot connector config.
+		// Check bot_mode and channel routing from the filesystem-backed bot connector config.
 		botMode := false
+		var channelRouting map[string]string
 		botCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
 		if botCfg != nil {
 			botMode = botCfg.BotMode
+			if botCfg.AllowedChannels != "" && botCfg.AllowedChannels != "[]" && botCfg.AllowedChannels != "{}" {
+				_ = json.Unmarshal([]byte(botCfg.AllowedChannels), &channelRouting)
+			}
 		}
 
 		resp := SlackConfigResponse{
-			Enabled:   config.Enabled,
-			BotToken:  config.BotToken,
-			AppToken:  config.AppToken,
-			ChannelID: config.ChannelID,
-			BotMode:   botMode,
+			Enabled:        config.Enabled,
+			BotToken:       config.BotToken,
+			AppToken:       config.AppToken,
+			ChannelID:      config.ChannelID,
+			BotMode:        botMode,
+			ChannelRouting: channelRouting,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -137,13 +144,22 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		// Save bot_mode to the filesystem-backed bot connector config.
+		// Marshal channel routing into AllowedChannels JSON.
+		allowedChannelsJSON := ""
+		if len(req.ChannelRouting) > 0 {
+			if data, err := json.Marshal(req.ChannelRouting); err == nil {
+				allowedChannelsJSON = string(data)
+			}
+		}
+
+		// Save bot_mode and channel routing to the filesystem-backed bot connector config.
 		if _, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
-			ID:      "slack",
-			Enabled: req.Enabled,
-			BotMode: req.BotMode,
+			ID:              "slack",
+			Enabled:         req.Enabled,
+			BotMode:         req.BotMode,
+			AllowedChannels: allowedChannelsJSON,
 		}); err != nil {
-			log.Printf("[SLACK] Failed to save bot_mode: %v", err)
+			log.Printf("[SLACK] Failed to save bot config: %v", err)
 			// Non-fatal — Slack config itself was saved
 		}
 
@@ -161,9 +177,10 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		response := SlackConfigResponse{
-			Enabled:   config.Enabled,
-			ChannelID: config.ChannelID,
-			BotMode:   req.BotMode,
+			Enabled:        config.Enabled,
+			ChannelID:      config.ChannelID,
+			BotMode:        req.BotMode,
+			ChannelRouting: req.ChannelRouting,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

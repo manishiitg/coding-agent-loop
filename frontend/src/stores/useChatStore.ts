@@ -227,6 +227,8 @@ export interface ChatTab {
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
     isRestoringSession?: boolean  // True while session events are being loaded from backend
     isViewOnly?: boolean // True when tab is in view-only mode (e.g. shared session or bot connector)
+    isScheduledRun?: boolean // True when tab is observing a scheduled-run session (read-only live view)
+    scheduledJobName?: string // Display name of the scheduled job, surfaced in the view-only banner
   }
 }
 

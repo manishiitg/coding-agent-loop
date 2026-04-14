@@ -864,6 +864,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "update_step_config")
 		tools = append(tools, "infer_objective", "set_workflow_objective")
 		tools = append(tools, "review_step_code")
+		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
 		tools = append(tools, "optimize_eval_step")
 
@@ -877,6 +878,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, skills...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
+		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
 		tools = append(tools, "optimize_eval_step")
 
@@ -3316,6 +3318,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, disable knowledgebase access for this step (removes knowledgebase read/write paths from folder guard). Useful for steps that don't need persistent storage.",
 				},
+				"disable_parallel_tool_execution": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, force the LLM to emit only one tool call per turn for this step. Use when tool calls must run strictly sequentially (e.g., stateful browser sessions, file edits with ordering dependencies, or when the agent is making mistakes by racing parallel calls). Default (omit/false) = parallel tool calls allowed. For todo_task steps, child tasks inherit this setting from the parent.",
+				},
 				"use_code_execution_mode": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, enable code execution mode — the agent writes and executes Python/shell code via mcpbridge to interact with MCP tools, rather than calling them directly. Useful for complex data processing or programmatic control over MCP tools. If false, explicitly disables code execution. Omit to inherit the preset default.",
@@ -3535,6 +3541,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["disable_knowledgebase"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					targetConfig.AgentConfigs.DisableKnowledgebase = &b
+				}
+			}
+			if val, ok := args["disable_parallel_tool_execution"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.DisableParallelToolExecution = &b
 				}
 			}
 			if val, ok := args["optimized"]; ok && val != nil {

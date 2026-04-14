@@ -4,11 +4,13 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck, AlertTriangle,
-  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText
+  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
+import { useChatStore } from '../../stores/useChatStore'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import type { ScheduledJob, ScheduledJobRun, SchedulerConfig, RunFolderInfo, RunMetadataModels, TokenUsageFile } from '../../services/api-types'
 import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
@@ -33,6 +35,7 @@ interface JobPopupState {
   popup: ActivePopup
   selectedRunFolder?: string
   sessionId?: string
+  presetQueryId?: string
 }
 
 type RunCostData = {
@@ -686,6 +689,55 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     } catch { /* ignore */ }
     finally { setTriggering(null) }
   }
+
+  const openScheduledRunInChat = useCallback(async (sessionId: string, jobName: string, presetQueryId: string) => {
+    if (!sessionId || !presetQueryId) return
+
+    useGlobalPresetStore.getState().setActivePreset('workflow', presetQueryId)
+    useWorkflowStore.getState().setShowChatArea(true)
+
+    const chatStore = useChatStore.getState()
+    const existingTab = Object.values(chatStore.chatTabs).find(t => t.sessionId === sessionId)
+    const desiredName = `Schedule: ${jobName}`
+
+    if (existingTab) {
+      // Rebind the tab to this preset and tag it as a read-only scheduled-run view.
+      // Auto-restore may have created the tab under a different (or empty) presetQueryId
+      // because it couldn't determine the source preset; rebinding makes the tab appear
+      // under the correct workflow and surfaces the schedule banner/badge.
+      chatStore.setTabMetadata(existingTab.tabId, {
+        mode: 'workflow',
+        presetQueryId,
+        isViewOnly: true,
+        isScheduledRun: true,
+        scheduledJobName: jobName,
+      })
+      if (existingTab.name !== desiredName) {
+        useChatStore.setState((state) => {
+          const t = state.chatTabs[existingTab.tabId]
+          if (!t) return state
+          return { chatTabs: { ...state.chatTabs, [existingTab.tabId]: { ...t, name: desiredName } } }
+        })
+      }
+      chatStore.switchTab(existingTab.tabId)
+      onClose()
+      return
+    }
+
+    const tabId = await chatStore.createChatTab(
+      desiredName,
+      {
+        mode: 'workflow',
+        presetQueryId,
+        isViewOnly: true,
+        isScheduledRun: true,
+        scheduledJobName: jobName,
+      },
+      sessionId,
+    )
+    chatStore.switchTab(tabId)
+    onClose()
+  }, [onClose])
 
   const handleStopRun = async (job: ScheduledJob) => {
     if (!window.confirm('Stop this running execution?')) return
@@ -1388,6 +1440,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                               runFolders: [],
                                               popup: 'live',
                                               sessionId: run.session_id,
+                                              presetQueryId: job.preset_query_id,
                                             })}
                                             className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
                                           >
@@ -1395,6 +1448,20 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                           </button>
                                         </TooltipTrigger>
                                         <TooltipContent side="left">Live execution view</TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                    {/* Open in chat (read-only) — only for live running jobs */}
+                                    {run.status === 'running' && run.session_id && job.preset_query_id && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.preset_query_id!)}
+                                            className="p-1 text-blue-500 hover:text-blue-400 transition-colors"
+                                          >
+                                            <MessageSquare className="w-3 h-3" />
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">Open in chat (read-only)</TooltipContent>
                                       </Tooltip>
                                     )}
                                     {/* Stop button for running jobs */}
@@ -1499,6 +1566,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           sessionId={popupState.sessionId}
           jobName={popupState.jobName}
           onClose={() => setPopupState(null)}
+          onOpenInChat={popupState.presetQueryId ? () => {
+            const sid = popupState.sessionId!
+            const name = popupState.jobName
+            const pid = popupState.presetQueryId!
+            setPopupState(null)
+            openScheduledRunInChat(sid, name, pid)
+          } : undefined}
         />
       )}
 

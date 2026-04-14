@@ -704,12 +704,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Add active sessions that belong to this preset. We read the
         // running-workflow registry (workflow-owned storage) instead of
         // reaching into the chat session metadata.
+        // If the registry returns a preset, only include the session when it matches
+        // the active preset. If the lookup fails (404 = pure chat session in the
+        // builder, never registered as a workflow execution), default to including
+        // it — those are legitimate workflow_phase chats that the user expects to
+        // see. Schedule-spawned sessions ARE registered, so a non-matching preset
+        // correctly excludes them on this preset.
         for (const s of activeWorkflowSessions) {
-          let belongsToPreset = false
+          let belongsToPreset = true
           try {
             const running = await agentApi.getRunningWorkflow(s.session_id)
-            belongsToPreset = (running.preset_query_id || '') === activePresetId
-          } catch { /* ignore — include by default */ belongsToPreset = true }
+            if (running.preset_query_id) {
+              belongsToPreset = running.preset_query_id === activePresetId
+            }
+          } catch { /* unregistered session — treat as builder chat for current preset */ }
           if (!belongsToPreset) continue
           sessionsToRestore.push({
             sessionId: s.session_id,

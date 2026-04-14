@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom'
-import { X, Radio } from 'lucide-react'
+import { X, Radio, MessageSquare } from 'lucide-react'
 import { SSEConnection } from '../../services/sse'
 import { EventList } from '../events'
 import { shouldShowEventByMode } from '../events/eventModeUtils'
@@ -12,9 +12,10 @@ interface ScheduleLiveEventsPopupProps {
   sessionId: string
   jobName: string
   onClose: () => void
+  onOpenInChat?: () => void
 }
 
-export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }: ScheduleLiveEventsPopupProps) {
+export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, onOpenInChat }: ScheduleLiveEventsPopupProps) {
   const [allEvents, setAllEvents] = useState<PollingEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [sessionStatus, setSessionStatus] = useState<string>('')
@@ -88,9 +89,21 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }:
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {onOpenInChat && (
+              <button
+                onClick={onOpenInChat}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                title="Open this run as a read-only chat tab"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Open in chat
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Events */}

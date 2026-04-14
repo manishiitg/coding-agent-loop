@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench, Play, GitBranch, CheckCircle } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench, Play, GitBranch, CheckCircle, Search } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -79,6 +79,22 @@ Summary:
 - READY if 0 FAILs
 - NOT READY if any FAILs — list what needs to be done
 - If READY with WARNs — "Ready but recommended to fix these first"`)
+    }
+  },
+  {
+    command: 'review-plan',
+    description: 'Critically analyze the plan for weaknesses and improvements',
+    icon: <Search className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      ctx.onSubmit(`Run review_plan() to critically analyze the current workflow plan.${focusText}
+
+Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.`)
     }
   },
   {

@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, Square, Maximize2, Minimize2, List, ListTree } from 'lucide-react'
+import { X, ArrowDown, Square, Maximize2, Minimize2, List, ListTree, Radio } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -73,6 +73,11 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
     >
       {/* Status Indicator */}
       <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
+
+      {/* Scheduled-run badge — distinguishes read-only schedule observer tabs */}
+      {tab.metadata?.isScheduledRun && (
+        <Radio className="w-3 h-3 text-green-500 animate-pulse" />
+      )}
 
       {/* Tab Name */}
       <span className="whitespace-nowrap">{tab.name}</span>
@@ -152,13 +157,15 @@ export const WorkflowChatTabs: React.FC = () => {
   })
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
-  // Filter to only show workflow tabs for the active preset (have sessionId or isStreaming)
+  // Filter to only show workflow tabs for the active preset.
+  // Strict match — untagged tabs (no presetQueryId) are treated as orphans and hidden,
+  // because the previous "include if untagged" fallback caused tabs to leak across
+  // every preset whenever a session couldn't be tied back to its source preset.
   const activeWorkflowTabs = useMemo(() => {
     const allTabs = Object.values(chatTabs)
     const matched = allTabs.filter(tab =>
       tab.metadata?.mode === 'workflow' &&
-      // Match by preset ID, or include tabs without preset ID (legacy/untagged tabs)
-      (!tab.metadata?.presetQueryId || tab.metadata.presetQueryId === activePresetId)
+      tab.metadata.presetQueryId === activePresetId
     )
     return matched.sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, activePresetId])

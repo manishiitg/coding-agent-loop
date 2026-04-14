@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -940,6 +941,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// Emit step_started event (also emits step progress with status="start")
 	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
+
+	// Narrow the session-level folder guard to this step's paths for the duration of
+	// the step. Session guard is set workspace-wide by the interactive builder and batch
+	// execution (server.go:4002, controller_batch_execution.go:323). Because shell commands
+	// prefer session config over context keys (execute_shell_command.go:146), a broad
+	// session guard would otherwise let a step in iteration-N read/write other iterations
+	// via `cat`/`cp`. Snapshot and restore the prior config so the builder's out-of-step
+	// chat shell commands keep their broader access.
+	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID())
+		var prevRead, prevWrite []string
+		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
+			prevRead = prevCfg.ReadPaths
+			prevWrite = prevCfg.WritePaths
+		}
+		common.SetSessionFolderGuard(sessionID, narrowRead, narrowWrite)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 [FOLDER_GUARD_STEP] Narrowed session %s for step %s: read=%v write=%v", sessionID, step.GetID(), narrowRead, narrowWrite))
+		defer func() {
+			common.SetSessionFolderGuard(sessionID, prevRead, prevWrite)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 [FOLDER_GUARD_STEP] Restored session %s after step %s", sessionID, step.GetID()))
+		}()
+	}
 
 	// Scripted code mode — determined once per step invocation (persists across outer-loop iterations).
 	// Check embedded plan AgentConfigs first; fall back to step_configs.json so that workshop-saved

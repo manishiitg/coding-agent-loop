@@ -134,8 +134,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) workspaceFileExists(ctx context.Conte
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) isStepLearningsFolderEmpty(ctx context.Context, stepID string, stepIndex int, stepPath string) (bool, error) {
-	// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
-	// In evaluation mode, learnings are stored in evaluation/learnings/
+	// getLearningFolderPathByStepID returns a RELATIVE path — workspace functions auto-prepend workspacePath
 	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
 
 	// Use readStepLearningFiles to check for learning files (it already excludes metadata)

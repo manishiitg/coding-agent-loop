@@ -20,20 +20,39 @@ interface OpenRouterSectionProps {
 export function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, metadata }: OpenRouterSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [customModelInput, setCustomModelInput] = useState('')
-  const [customModels, setCustomModels] = useState<string[]>(() => {
-    const saved = localStorage.getItem('openrouter_custom_models')
-    return saved ? JSON.parse(saved) : []
-  })
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishError, setPublishError] = useState<string | null>(null)
-  
-  const { availableOpenRouterModels, refreshAvailableLLMs, saveLLM, testAPIKey: testAPIKeyFromStore } = useLLMStore()
+
+  const {
+    availableOpenRouterModels,
+    customOpenRouterModels: customModels,
+    addCustomOpenRouterModel,
+    removeCustomOpenRouterModel,
+    refreshAvailableLLMs,
+    saveLLM,
+    testAPIKey: testAPIKeyFromStore,
+  } = useLLMStore()
 
   useEffect(() => {
     if (config.api_key) setApiKey(config.api_key)
   }, [config.api_key])
+
+  // One-time migration: move legacy localStorage custom models into the store.
+  useEffect(() => {
+    const legacy = localStorage.getItem('openrouter_custom_models')
+    if (!legacy) return
+    try {
+      const parsed: unknown = JSON.parse(legacy)
+      if (Array.isArray(parsed)) {
+        parsed.filter((m): m is string => typeof m === 'string').forEach(addCustomOpenRouterModel)
+      }
+    } catch {
+      // ignore corrupt legacy value
+    }
+    localStorage.removeItem('openrouter_custom_models')
+  }, [addCustomOpenRouterModel])
 
   const handleAPIKeyChange = (newApiKey: string) => {
     setApiKey(newApiKey)
@@ -45,17 +64,13 @@ export function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus
     const model = customModelInput.trim()
     if (!model || customModels.includes(model)) return
     if (!model.includes('/')) { alert('Model should be in format "provider/model-name"'); return }
-    const newCustomModels = [...customModels, model]
-    setCustomModels(newCustomModels)
-    localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels))
+    addCustomOpenRouterModel(model)
     setCustomModelInput('')
     refreshAvailableLLMs()
   }
 
   const handleRemoveCustomModel = (model: string) => {
-    const newCustomModels = customModels.filter(m => m !== model)
-    setCustomModels(newCustomModels)
-    localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels))
+    removeCustomOpenRouterModel(model)
     refreshAvailableLLMs()
   }
 

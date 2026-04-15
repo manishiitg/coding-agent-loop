@@ -1368,10 +1368,10 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 - Step config: evaluation/step_config.json
 - Internal eval run sandbox: evaluation/runs/iteration-0[/group]/
 - Published report: evaluation/runs/{runFolder}/evaluation_report.json
-- Learnings: evaluation/learnings/{stepID}/
-- Learn-code artifact: evaluation/learnings/{stepID}/main.py
+- Learnings: learnings/{stepID}/
+- Learn-code artifact: learnings/{stepID}/main.py
 
-Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design, scoring, and evaluation step configuration under `+"`evaluation/`"+`. Switch to Build mode for workflow changes.
+Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design, scoring, and evaluation step configuration under `+"`evaluation/`"+`. Eval-step learnings still live under the shared `+"`learnings/{stepID}/`"+` namespace (same as execution steps); step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time. Switch to Build mode for workflow changes.
 {{else if eq .WorkshopMode "output"}}
 **REPORT MODE** — Design the final workflow report artifact that is generated automatically after a workflow group run completes.
 
@@ -2288,7 +2288,6 @@ var workshopVersionedConfigFiles = []string{
 
 var workshopVersionedFolderRoots = []string{
 	"learnings",
-	"evaluation/learnings",
 }
 
 func resolveWorkshopWorkspacePath(controller *StepBasedWorkflowOrchestrator, path string) string {
@@ -6967,7 +6966,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: publish_workflow_version — snapshot the current workflow config and learnings.
 	if err := mcpAgent.RegisterCustomTool(
 		"publish_workflow_version",
-		"Create a numbered snapshot of the current workflow state. Saves planning/config files plus learnings and evaluation learnings under versions/vN/. Use this before risky edits so you can restore later.",
+		"Create a numbered snapshot of the current workflow state. Saves planning/config files plus the learnings/ folder under versions/vN/. Use this before risky edits so you can restore later.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8165,7 +8164,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 - Eval logs: `+"`evaluation/runs/{{.InternalRunFolder}}/logs/`"+`
 {{end}}{{if .TargetRunFolder}}
 - Eval report: `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+`
-{{end}}- Eval learnings: `+"`evaluation/learnings/{{.StepID}}/`"+`
+{{end}}- Eval learnings: `+"`learnings/{{.StepID}}/`"+`
 - **Original execution artifacts**: At runtime, {{"{{TARGET_RUN_PATH}}"}} resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution output files — never hardcode iteration numbers or use the eval sandbox path.
 
 ## ANALYSIS PROCEDURE
@@ -9588,7 +9587,7 @@ func (iwm *InteractiveWorkshopManager) runOptimizeEvalStepAgent(ctx context.Cont
 		workspacePath,
 		fmt.Sprintf("%s/evaluation", workspacePath),
 		fmt.Sprintf("%s/evaluation/runs", workspacePath),
-		fmt.Sprintf("%s/evaluation/learnings", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})

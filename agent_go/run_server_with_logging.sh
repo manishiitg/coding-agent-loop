@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_CONNECTIONS=false
 BACKGROUND_MODE=false
 WITH_WORKSPACE=false
+WITH_FRONTEND=false
+ONLY_FRONTEND=false
 POSITIONAL_ARGS=()
 
 for arg in "$@"; do
@@ -21,6 +23,12 @@ for arg in "$@"; do
             ;;
         --with-workspace)
             WITH_WORKSPACE=true
+            ;;
+        --with-frontend)
+            WITH_FRONTEND=true
+            ;;
+        --only-frontend)
+            ONLY_FRONTEND=true
             ;;
         *)
             POSITIONAL_ARGS+=("$arg")
@@ -67,6 +75,171 @@ if [ "$TEST_CONNECTIONS" = true ]; then
     echo "🚀 Running MCP connection tests..."
     go run main.go mcp test-all --config "$MCP_CONFIG" >> "logs/server_debug.log" 2>&1
     exit $?
+fi
+
+if [ "$ONLY_FRONTEND" = true ]; then
+    echo "🎨 Starting frontend only (Vite + Electron) — no backend, no workspace"
+    echo "========================================="
+
+    cd "$SCRIPT_DIR" || {
+        echo "❌ Error: Failed to change to script directory: $SCRIPT_DIR"
+        exit 1
+    }
+
+    FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+    FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
+    DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
+    FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
+
+    # Fall back to reading ports from the runtime-config.js written by a previous
+    # backend run if AGENT_PORT / WORKSPACE_PORT aren't explicitly set.
+    if [ -z "${AGENT_PORT:-}" ] && [ -f "$FRONTEND_RUNTIME_CONFIG_PATH" ]; then
+        detected_agent_port="$(grep -oE 'apiBaseUrl:[[:space:]]*"http://[^"]+"' "$FRONTEND_RUNTIME_CONFIG_PATH" | grep -oE '[0-9]+"' | tr -d '"' | head -1)"
+        if [ -n "$detected_agent_port" ]; then
+            AGENT_PORT="$detected_agent_port"
+            echo "🔎 Detected AGENT_PORT=$AGENT_PORT from existing runtime-config.js"
+        fi
+    fi
+    if [ -z "${WORKSPACE_PORT:-}" ] && [ -f "$FRONTEND_RUNTIME_CONFIG_PATH" ]; then
+        detected_workspace_port="$(grep -oE 'workspaceApiBaseUrl:[[:space:]]*"http://[^"]+"' "$FRONTEND_RUNTIME_CONFIG_PATH" | grep -oE '[0-9]+"' | tr -d '"' | head -1)"
+        if [ -n "$detected_workspace_port" ]; then
+            WORKSPACE_PORT="$detected_workspace_port"
+            echo "🔎 Detected WORKSPACE_PORT=$WORKSPACE_PORT from existing runtime-config.js"
+        fi
+    fi
+
+    if [ -z "${AGENT_PORT:-}" ]; then
+        echo "❌ Error: AGENT_PORT is not set and could not be detected from $FRONTEND_RUNTIME_CONFIG_PATH"
+        echo "   Either start the backend first (it writes the runtime config), or pass AGENT_PORT explicitly."
+        echo "   Example: AGENT_PORT=18080 ./run_server_with_logging.sh --only-frontend"
+        exit 1
+    fi
+
+    WORKSPACE_PORT="${WORKSPACE_PORT:-8081}"
+
+    export MCP_AGENT_SERVER_URL="http://127.0.0.1:${AGENT_PORT}"
+    export WORKSPACE_API_URL="http://127.0.0.1:${WORKSPACE_PORT}"
+
+    # Sanity-check the backend is actually reachable on that port.
+    if ! curl -fsS "${MCP_AGENT_SERVER_URL}/api/health" >/dev/null 2>&1; then
+        echo "⚠️  Warning: backend at $MCP_AGENT_SERVER_URL did not respond to /api/health."
+        echo "   Make sure the backend is running before the frontend tries to call it."
+    fi
+
+    echo "🔧 Backend (expected running): $MCP_AGENT_SERVER_URL"
+    echo "🔧 Workspace (expected running): $WORKSPACE_API_URL"
+    echo "🔧 Vite port: $FRONTEND_PORT"
+
+    mkdir -p logs
+    mkdir -p "$(dirname "$FRONTEND_RUNTIME_CONFIG_PATH")"
+    cat > "$FRONTEND_RUNTIME_CONFIG_PATH" <<EOF
+window.__APP_RUNTIME_CONFIG__ = {
+  apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
+  workspaceApiBaseUrl: "${WORKSPACE_API_URL}"
+};
+EOF
+    echo "📝 Frontend runtime config written to: $FRONTEND_RUNTIME_CONFIG_PATH"
+
+    FRONTEND_LOG_PATH="logs/frontend_debug.log"
+    ELECTRON_LOG_PATH="logs/electron_debug.log"
+    > "$FRONTEND_LOG_PATH"
+    > "$ELECTRON_LOG_PATH"
+
+    if [ ! -f "${FRONTEND_DIR}/package.json" ]; then
+        echo "❌ Error: frontend package.json not found: ${FRONTEND_DIR}/package.json"
+        exit 1
+    fi
+    if lsof -ti:"$FRONTEND_PORT" > /dev/null 2>&1; then
+        echo "❌ Error: Port $FRONTEND_PORT is already in use. Set FRONTEND_PORT to another value."
+        exit 1
+    fi
+
+    echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    if [ "$BACKGROUND_MODE" = true ]; then
+        nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+    else
+        (
+            cd "$FRONTEND_DIR" || exit 1
+            exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+        ) >> "$FRONTEND_LOG_PATH" 2>&1 &
+    fi
+    FRONTEND_PID=$!
+    echo "✅ Vite dev server started (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+
+    frontend_ready=false
+    for attempt in $(seq 1 60); do
+        if curl -fsS "http://127.0.0.1:${FRONTEND_PORT}" >/dev/null 2>&1; then
+            frontend_ready=true
+            break
+        fi
+        if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
+            echo "❌ Error: Vite dev server exited during startup. Check logs: $FRONTEND_LOG_PATH"
+            tail -20 "$FRONTEND_LOG_PATH"
+            exit 1
+        fi
+        sleep 1
+    done
+    if [ "$frontend_ready" != true ]; then
+        echo "❌ Error: Vite dev server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
+        tail -20 "$FRONTEND_LOG_PATH"
+        kill "$FRONTEND_PID" 2>/dev/null
+        exit 1
+    fi
+
+    if [ ! -f "${DESKTOP_DIR}/package.json" ]; then
+        echo "❌ Error: desktop package.json not found: ${DESKTOP_DIR}/package.json"
+        kill "$FRONTEND_PID" 2>/dev/null
+        exit 1
+    fi
+
+    echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
+    if [ "$BACKGROUND_MODE" = true ]; then
+        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"http://127.0.0.1:${FRONTEND_PORT}\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
+    else
+        (
+            cd "$DESKTOP_DIR" || exit 1
+            DEV_URL="http://127.0.0.1:${FRONTEND_PORT}" exec npm start
+        ) >> "$ELECTRON_LOG_PATH" 2>&1 &
+    fi
+    ELECTRON_PID=$!
+    echo "✅ Electron started (PID: $ELECTRON_PID)"
+
+    cleanup_frontend_only() {
+        if [ "$BACKGROUND_MODE" != true ]; then
+            if [ -n "$ELECTRON_PID" ] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
+                echo "🛑 Stopping Electron (PID: $ELECTRON_PID)..."
+                kill "$ELECTRON_PID" 2>/dev/null
+                wait "$ELECTRON_PID" 2>/dev/null
+            fi
+            if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+                echo "🛑 Stopping Vite (PID: $FRONTEND_PID)..."
+                kill "$FRONTEND_PID" 2>/dev/null
+                wait "$FRONTEND_PID" 2>/dev/null
+            fi
+        fi
+    }
+    trap cleanup_frontend_only EXIT
+    trap "exit 130" INT TERM
+
+    if [ "$BACKGROUND_MODE" = true ]; then
+        echo ""
+        echo "✅ Frontend services running in background:"
+        echo "   - Vite (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+        echo "   - Electron (PID: $ELECTRON_PID)"
+        echo "   Logs: $FRONTEND_LOG_PATH (vite), $ELECTRON_LOG_PATH (electron)"
+        echo "🛑 To stop: kill $FRONTEND_PID $ELECTRON_PID"
+        exit 0
+    fi
+
+    echo ""
+    echo "✅ Frontend services running (foreground):"
+    echo "   - Vite (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+    echo "   - Electron (PID: $ELECTRON_PID)"
+    echo "   Backend expected at: $MCP_AGENT_SERVER_URL"
+    echo "   Press Ctrl+C to stop."
+    echo ""
+    wait "$FRONTEND_PID"
+    exit 0
 fi
 
 if [ "$BACKGROUND_MODE" = true ]; then
@@ -180,6 +353,14 @@ WORKSPACE_PID=""
 WORKSPACE_LOG_PATH=""
 WORKSPACE_DIR="${SCRIPT_DIR}/../workspace"
 FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
+
+FRONTEND_PID=""
+ELECTRON_PID=""
+FRONTEND_LOG_PATH=""
+ELECTRON_LOG_PATH=""
+FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
+DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
@@ -332,6 +513,14 @@ if [ "$WITH_WORKSPACE" = true ]; then
     > "$WORKSPACE_LOG_PATH"
     echo "✅ Workspace log file truncated: $WORKSPACE_LOG_PATH"
 fi
+if [ "$WITH_FRONTEND" = true ]; then
+    FRONTEND_LOG_PATH="logs/frontend_debug.log"
+    ELECTRON_LOG_PATH="logs/electron_debug.log"
+    > "$FRONTEND_LOG_PATH"
+    > "$ELECTRON_LOG_PATH"
+    echo "✅ Frontend log file truncated: $FRONTEND_LOG_PATH"
+    echo "✅ Electron log file truncated: $ELECTRON_LOG_PATH"
+fi
 
 # Log rotation cap (used by background daemon)
 LOG_ROTATE_LINES=500000
@@ -414,6 +603,10 @@ log_rotate_daemon() {
         if [ "$WITH_WORKSPACE" = true ] && [ -n "$WORKSPACE_LOG_PATH" ]; then
             rotate_log_file "$WORKSPACE_LOG_PATH"
         fi
+        if [ "$WITH_FRONTEND" = true ]; then
+            [ -n "$FRONTEND_LOG_PATH" ] && rotate_log_file "$FRONTEND_LOG_PATH"
+            [ -n "$ELECTRON_LOG_PATH" ] && rotate_log_file "$ELECTRON_LOG_PATH"
+        fi
     done
 }
 log_rotate_daemon &
@@ -427,10 +620,37 @@ stop_native_workspace() {
     fi
 }
 
+stop_electron() {
+    if [ -n "$ELECTRON_PID" ] && kill -0 "$ELECTRON_PID" 2>/dev/null; then
+        echo "🛑 Stopping Electron (PID: $ELECTRON_PID)..."
+        kill "$ELECTRON_PID" 2>/dev/null
+        wait "$ELECTRON_PID" 2>/dev/null
+    fi
+}
+
+stop_frontend_dev() {
+    if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        echo "🛑 Stopping Vite dev server (PID: $FRONTEND_PID)..."
+        kill "$FRONTEND_PID" 2>/dev/null
+        wait "$FRONTEND_PID" 2>/dev/null
+    fi
+}
+
+stop_agent_server() {
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "🛑 Stopping agent server (PID: $SERVER_PID)..."
+        kill "$SERVER_PID" 2>/dev/null
+        wait "$SERVER_PID" 2>/dev/null
+    fi
+}
+
 cleanup_on_exit() {
     kill "$LOG_ROTATE_PID" 2>/dev/null
     wait "$LOG_ROTATE_PID" 2>/dev/null
     if [ "$BACKGROUND_MODE" != true ]; then
+        stop_electron
+        stop_frontend_dev
+        stop_agent_server
         stop_native_workspace
     fi
 }
@@ -494,6 +714,119 @@ start_native_workspace() {
     WORKSPACE_PID=$!
     echo "✅ Native workspace process started (PID: $WORKSPACE_PID)"
     wait_for_workspace_health
+}
+
+wait_for_frontend_health() {
+    local health_url="http://127.0.0.1:${FRONTEND_PORT}"
+    local attempt
+    for attempt in $(seq 1 60); do
+        if curl -fsS "$health_url" >/dev/null 2>&1; then
+            echo "✅ Vite dev server is ready at: $health_url"
+            return 0
+        fi
+        if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
+            echo "❌ Error: Vite dev server exited during startup. Check logs: $FRONTEND_LOG_PATH"
+            tail -20 "$FRONTEND_LOG_PATH"
+            return 1
+        fi
+        sleep 1
+    done
+
+    echo "❌ Error: Vite dev server did not become ready in time. Check logs: $FRONTEND_LOG_PATH"
+    tail -20 "$FRONTEND_LOG_PATH"
+    return 1
+}
+
+start_frontend_dev() {
+    if [ "$WITH_FRONTEND" != true ]; then
+        return 0
+    fi
+
+    if [ ! -f "${FRONTEND_DIR}/package.json" ]; then
+        echo "❌ Error: frontend package.json not found: ${FRONTEND_DIR}/package.json"
+        return 1
+    fi
+
+    if lsof -ti:"$FRONTEND_PORT" > /dev/null 2>&1; then
+        echo "❌ Error: Port $FRONTEND_PORT is already in use."
+        echo "   Stop the existing process or set FRONTEND_PORT to another value."
+        return 1
+    fi
+
+    echo "🚀 Starting Vite dev server..."
+    echo "📝 Frontend log file: $FRONTEND_LOG_PATH"
+    echo "🌐 Vite URL: http://127.0.0.1:${FRONTEND_PORT}"
+
+    echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
+    echo "=========================================" >> "$FRONTEND_LOG_PATH"
+    echo "- Port: $FRONTEND_PORT" >> "$FRONTEND_LOG_PATH"
+    echo "=========================================" >> "$FRONTEND_LOG_PATH"
+
+    if [ "$BACKGROUND_MODE" = true ]; then
+        nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+    else
+        (
+            cd "$FRONTEND_DIR" || exit 1
+            exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+        ) >> "$FRONTEND_LOG_PATH" 2>&1 &
+    fi
+
+    FRONTEND_PID=$!
+    echo "✅ Vite dev server process started (PID: $FRONTEND_PID)"
+    wait_for_frontend_health
+}
+
+wait_for_agent_health() {
+    local url="http://127.0.0.1:${AGENT_PORT}/api/health"
+    local attempt
+    for attempt in $(seq 1 180); do
+        if curl -fsS "$url" >/dev/null 2>&1; then
+            echo "✅ Agent server is healthy at: $url"
+            return 0
+        fi
+        if [ -n "$SERVER_PID" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "❌ Error: Agent server exited during startup. Check logs: $LOG_PATH"
+            tail -30 "$LOG_PATH"
+            return 1
+        fi
+        sleep 1
+    done
+
+    echo "❌ Error: Agent server did not become healthy in time. Check logs: $LOG_PATH"
+    tail -30 "$LOG_PATH"
+    return 1
+}
+
+start_electron() {
+    if [ "$WITH_FRONTEND" != true ]; then
+        return 0
+    fi
+
+    if [ ! -f "${DESKTOP_DIR}/package.json" ]; then
+        echo "❌ Error: desktop package.json not found: ${DESKTOP_DIR}/package.json"
+        return 1
+    fi
+
+    local dev_url="http://127.0.0.1:${FRONTEND_PORT}"
+    echo "🚀 Starting Electron (DEV_URL=$dev_url)..."
+    echo "📝 Electron log file: $ELECTRON_LOG_PATH"
+
+    echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
+    echo "=========================================" >> "$ELECTRON_LOG_PATH"
+    echo "- DEV_URL: $dev_url" >> "$ELECTRON_LOG_PATH"
+    echo "=========================================" >> "$ELECTRON_LOG_PATH"
+
+    if [ "$BACKGROUND_MODE" = true ]; then
+        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$dev_url\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
+    else
+        (
+            cd "$DESKTOP_DIR" || exit 1
+            DEV_URL="$dev_url" exec npm start
+        ) >> "$ELECTRON_LOG_PATH" 2>&1 &
+    fi
+
+    ELECTRON_PID=$!
+    echo "✅ Electron process started (PID: $ELECTRON_PID)"
 }
 
 # Start the server with enhanced logging and structured output LLM
@@ -639,39 +972,81 @@ if [ "$BACKGROUND_MODE" = true ]; then
     SERVER_PID=$!
     echo "✅ Server started in background (PID: $SERVER_PID)"
     echo "📝 Logs are being written to: $LOG_PATH"
-    echo "🛑 To stop the server, run: kill $SERVER_PID"
     echo "🌐 Agent API URL: $MCP_AGENT_SERVER_URL"
+
+    if [ "$WITH_FRONTEND" = true ]; then
+        wait_for_agent_health || { stop_native_workspace; exit 1; }
+        start_frontend_dev || { stop_native_workspace; exit 1; }
+        start_electron || { stop_frontend_dev; stop_native_workspace; exit 1; }
+    else
+        sleep 3
+        if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "❌ Error: Server process died immediately. Check logs: $LOG_PATH"
+            tail -20 "$LOG_PATH"
+            if [ "$WITH_WORKSPACE" = true ]; then
+                stop_native_workspace
+            fi
+            exit 1
+        fi
+        if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
+            echo "✅ Server is running and listening on port $AGENT_PORT"
+        else
+            echo "⚠️  Warning: Server process is running but not listening on port $AGENT_PORT yet"
+            echo "   Check logs: $LOG_PATH"
+        fi
+    fi
+
+    echo "🛑 To stop the server, run: kill $SERVER_PID"
     if [ "$WITH_WORKSPACE" = true ]; then
         echo "✅ Native workspace is running in background (PID: $WORKSPACE_PID)"
         echo "📝 Workspace logs are being written to: $WORKSPACE_LOG_PATH"
         echo "🌐 Workspace health: ${WORKSPACE_API_URL%/}/health"
     fi
-    
-    # Wait a moment to check if server started successfully
-    sleep 3
-    if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "❌ Error: Server process died immediately. Check logs: $LOG_PATH"
-        tail -20 "$LOG_PATH"
-        if [ "$WITH_WORKSPACE" = true ]; then
-            stop_native_workspace
-        fi
-        exit 1
+    if [ "$WITH_FRONTEND" = true ]; then
+        echo "✅ Vite dev server is running in background (PID: $FRONTEND_PID)"
+        echo "📝 Frontend logs: $FRONTEND_LOG_PATH"
+        echo "✅ Electron is running in background (PID: $ELECTRON_PID)"
+        echo "📝 Electron logs: $ELECTRON_LOG_PATH"
+        echo "🛑 To stop all, run: kill $SERVER_PID $FRONTEND_PID $ELECTRON_PID${WORKSPACE_PID:+ $WORKSPACE_PID}"
     fi
-    
-    # Check if server is listening on the selected port
-    if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
-        echo "✅ Server is running and listening on port $AGENT_PORT"
-    else
-        echo "⚠️  Warning: Server process is running but not listening on port $AGENT_PORT yet"
-        echo "   Check logs: $LOG_PATH"
-    fi
+elif [ "$WITH_FRONTEND" = true ]; then
+    # Foreground + frontend: detach server so we can start frontend after it's healthy,
+    # then tail the server log so the user still sees server output.
+    echo "🔄 Starting server in foreground mode (with frontend)..."
+    echo "   Agent API URL: $MCP_AGENT_SERVER_URL"
+    nohup go run main.go server \
+        --port "$AGENT_PORT" \
+        --log-level debug \
+        --debug \
+        --db-type "$DB_TYPE_FLAG" \
+        --db-path "./chat_history.db" \
+        --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
+        --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
+        --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
+        --max-turns 50 \
+        --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1 &
+
+    SERVER_PID=$!
+    wait_for_agent_health || exit 1
+    start_frontend_dev || exit 1
+    start_electron || exit 1
+
+    echo ""
+    echo "✅ All services running:"
+    echo "   - Agent server (PID: $SERVER_PID) — $MCP_AGENT_SERVER_URL"
+    echo "   - Vite (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+    echo "   - Electron (PID: $ELECTRON_PID)"
+    echo "   Logs: $LOG_PATH (server), $FRONTEND_LOG_PATH (vite), $ELECTRON_LOG_PATH (electron)"
+    echo "   Press Ctrl+C to stop all."
+    echo ""
+    wait "$SERVER_PID"
 else
     # Foreground mode: run in foreground with output visible
     echo "🔄 Starting server in foreground mode..."
     echo "   (Press Ctrl+C to stop)"
     echo "   Agent API URL: $MCP_AGENT_SERVER_URL"
     echo ""
-    
+
     go run main.go server \
         --port "$AGENT_PORT" \
         --log-level debug \

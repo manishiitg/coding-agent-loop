@@ -202,6 +202,26 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     return getCurrentLLMOption();
   }, [llmConfig, availableLLMs, getCurrentLLMOption]);
 
+  const defaultAgentLLM = useMemo<AgentLLMConfig | null>(() => {
+    if (llmConfig?.provider && llmConfig?.model_id) {
+      return {
+        provider: llmConfig.provider,
+        model_id: llmConfig.model_id
+      };
+    }
+    if (primaryConfig.provider && primaryConfig.model_id) {
+      return {
+        provider: primaryConfig.provider as AgentLLMConfig['provider'],
+        model_id: primaryConfig.model_id
+      };
+    }
+    return null;
+  }, [llmConfig, primaryConfig]);
+
+  const effectiveTier1LLM = useMemo<AgentLLMConfig | null>(() => tier1LLM || defaultAgentLLM, [tier1LLM, defaultAgentLLM]);
+  const effectiveTier2LLM = useMemo<AgentLLMConfig | null>(() => tier2LLM || defaultAgentLLM, [tier2LLM, defaultAgentLLM]);
+  const effectiveTier3LLM = useMemo<AgentLLMConfig | null>(() => tier3LLM || defaultAgentLLM, [tier3LLM, defaultAgentLLM]);
+
   useEffect(() => {
     if (editingPreset) {
       console.log('[PresetModal] Loading preset:', editingPreset);
@@ -338,24 +358,21 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         // For workflow mode, keep tiered defaults plus phase/learning settings.
         // Use the displayed fallback value (from llmConfig) if user didn't explicitly select
         // This ensures the visual selection is saved even if user didn't explicitly click the dropdown
-        const defaultAgentLLM: AgentLLMConfig | undefined = llmConfig?.provider && llmConfig?.model_id ? {
-          provider: llmConfig.provider,
-          model_id: llmConfig.model_id
-        } : undefined;
+        const defaultWorkflowLLM = defaultAgentLLM || undefined;
         const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown }) };
         delete workflowBaseLLMConfig.execution_llm;
 
         finalLLMConfig = {
           ...workflowBaseLLMConfig,
-          learning_llm: learningLLM || defaultAgentLLM,
-          phase_llm: phaseLLM || (tier1LLM ? tier1LLM : defaultAgentLLM),
+          learning_llm: learningLLM || defaultWorkflowLLM,
+          phase_llm: phaseLLM || effectiveTier1LLM || defaultWorkflowLLM,
           use_knowledgebase: useKnowledgebase,
           llm_allocation_mode: 'tiered' as const,
-          ...(tier1LLM && tier2LLM && tier3LLM ? {
+          ...(effectiveTier1LLM && effectiveTier2LLM && effectiveTier3LLM ? {
             tiered_config: {
-              tier_1: { provider: tier1LLM.provider, model_id: tier1LLM.model_id, ...(tier1Fallbacks.length > 0 ? { fallbacks: tier1Fallbacks } : {}) },
-              tier_2: { provider: tier2LLM.provider, model_id: tier2LLM.model_id, ...(tier2Fallbacks.length > 0 ? { fallbacks: tier2Fallbacks } : {}) },
-              tier_3: { provider: tier3LLM.provider, model_id: tier3LLM.model_id, ...(tier3Fallbacks.length > 0 ? { fallbacks: tier3Fallbacks } : {}) },
+              tier_1: { provider: effectiveTier1LLM.provider, model_id: effectiveTier1LLM.model_id, ...(tier1Fallbacks.length > 0 ? { fallbacks: tier1Fallbacks } : {}) },
+              tier_2: { provider: effectiveTier2LLM.provider, model_id: effectiveTier2LLM.model_id, ...(tier2Fallbacks.length > 0 ? { fallbacks: tier2Fallbacks } : {}) },
+              tier_3: { provider: effectiveTier3LLM.provider, model_id: effectiveTier3LLM.model_id, ...(tier3Fallbacks.length > 0 ? { fallbacks: tier3Fallbacks } : {}) },
             }
           } : {}),
         };
@@ -363,7 +380,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
         learningLLM: learningLLM,
         phaseLLM: phaseLLM,
-        defaultAgentLLM: llmConfig?.provider && llmConfig?.model_id ? { provider: llmConfig.provider, model_id: llmConfig.model_id } : undefined,
+        defaultAgentLLM: defaultAgentLLM || undefined,
+        effectiveTier1LLM: effectiveTier1LLM || undefined,
+        effectiveTier2LLM: effectiveTier2LLM || undefined,
+        effectiveTier3LLM: effectiveTier3LLM || undefined,
         finalLLMConfig: finalLLMConfig,
       });
       onSave(
@@ -385,7 +405,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -498,9 +518,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           </div>
                           <LLMSelectionDropdown
                             availableLLMs={availableLLMs}
-                            selectedLLM={tier.llm ? availableLLMs.find(llm =>
-                              llm.provider === tier.llm!.provider && llm.model === tier.llm!.model_id
-                            ) || null : currentLLMOption}
+                            selectedLLM={(() => {
+                              const effectiveTierLLM =
+                                tier.num === 1 ? effectiveTier1LLM :
+                                tier.num === 2 ? effectiveTier2LLM :
+                                effectiveTier3LLM;
+                              if (!effectiveTierLLM) return currentLLMOption;
+                              return availableLLMs.find(llm =>
+                                llm.provider === effectiveTierLLM.provider && llm.model === effectiveTierLLM.model_id
+                              ) || null;
+                            })()}
                             onLLMSelect={(llm) => tier.setLLM({
                               provider: llm.provider as AgentLLMConfig['provider'],
                               model_id: llm.model
@@ -520,10 +547,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               </span>
                             ))}
                             <LLMSelectionDropdown
-                              availableLLMs={availableLLMs.filter(llm =>
-                                !(tier.llm && llm.provider === tier.llm.provider && llm.model === tier.llm.model_id) &&
-                                !tier.fallbacks.some(fb => fb.provider === llm.provider && fb.model_id === llm.model)
-                              )}
+                              availableLLMs={availableLLMs.filter(llm => {
+                                const effectiveTierLLM =
+                                  tier.num === 1 ? effectiveTier1LLM :
+                                  tier.num === 2 ? effectiveTier2LLM :
+                                  effectiveTier3LLM;
+                                return !(
+                                  effectiveTierLLM &&
+                                  llm.provider === effectiveTierLLM.provider &&
+                                  llm.model === effectiveTierLLM.model_id
+                                ) && !tier.fallbacks.some(fb => fb.provider === llm.provider && fb.model_id === llm.model);
+                              })}
                               selectedLLM={null}
                               onLLMSelect={(llm) => tier.setFallbacks(prev => [...prev, { provider: llm.provider, model_id: llm.model }])}
                               onRefresh={loadDefaultsFromBackend}
@@ -559,8 +593,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             availableLLMs={availableLLMs}
                             selectedLLM={phaseLLM ? availableLLMs.find(llm =>
                               llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
-                            ) || null : (tier1LLM ? availableLLMs.find(llm =>
-                              llm.provider === tier1LLM.provider && llm.model === tier1LLM.model_id
+                            ) || null : (effectiveTier1LLM ? availableLLMs.find(llm =>
+                              llm.provider === effectiveTier1LLM.provider && llm.model === effectiveTier1LLM.model_id
                             ) || null : currentLLMOption)}
                             onLLMSelect={(llm) => setPhaseLLM({
                               provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',

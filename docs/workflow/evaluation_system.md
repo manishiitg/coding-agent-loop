@@ -40,7 +40,7 @@ The core evaluation files are:
 - `evaluation/evaluation_plan.json`
 - `evaluation/step_config.json`
 - `evaluation/eval_layout.json`
-- `evaluation/learnings/`
+- `learnings/` — shared with execution-plan learnings (see "Learnings And Step Config In Eval Mode" below)
 
 Frontend eval mode loads these files directly. The eval plan is not embedded in the main workflow manifest structure.
 
@@ -173,14 +173,14 @@ This is implemented in [workflow.go](/Users/mipl/ai-work/mcp-agent-builder-go/ag
 
 ## Learnings And Step Config In Eval Mode
 
-Evaluation mode has its own config and learning paths.
+Evaluation mode has its own step config but shares the learnings namespace with execution steps.
 
 Current behavior:
-- step config comes from `evaluation/step_config.json`
-- learnings go under `evaluation/learnings/`
-- evaluation mode changes the orchestrator's path resolution accordingly
+- step config comes from `evaluation/step_config.json` (separate from `planning/step_config.json`)
+- learnings go under `learnings/{stepID}/` — the same folder execution steps write to
+- cross-plan step-ID uniqueness between `planning/plan.json` and `evaluation/evaluation_plan.json` is enforced at write time by `validateCrossPlanStepIDUniqueness`, so the shared namespace cannot collide
 
-So evaluation does not reuse the main workflow learning/config files.
+Eval steps therefore reuse workflow learnings (e.g. a `_global` SKILL.md written by execution steps is visible to eval steps), but keep an independent `step_config.json`.
 
 ## Validation Of The Eval Plan
 

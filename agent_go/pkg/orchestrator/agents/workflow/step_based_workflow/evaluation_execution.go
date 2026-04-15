@@ -68,8 +68,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Convert evaluation steps to PlanStepInterface
 	breakdownSteps := evaluationPlan.ToPlanSteps()
 
-	// Set evaluation mode flag - this causes learnings to be stored in evaluation/learnings/
-	// and ensures step_config.json is read from evaluation/ directory
+	// Set evaluation mode flag — controls step_config.json lookup (evaluation/step_config.json)
+	// and learning-phase skipping for eval steps. Learnings themselves share the learnings/ namespace
+	// with execution steps; cross-plan step-ID uniqueness is enforced separately.
 	hcpo.isEvaluationMode = true
 
 	// Configure evaluation steps: apply configs from step_config.json, disable validation, enable learning

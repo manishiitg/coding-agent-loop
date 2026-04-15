@@ -237,11 +237,11 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 
 	mockAPI := &mockWorkspaceAPI{
 		files: map[string]string{
-			workspacePath + "/planning/plan.json":                     `{"version":"original-plan"}`,
-			workspacePath + "/planning/step_config.json":              `{"steps":["original-config"]}`,
-			workspacePath + "/variables/variables.json":               `{"customer":"original"}`,
-			workspacePath + "/learnings/step-1/SKILL.md":              "original learning",
-			workspacePath + "/evaluation/learnings/eval-step/SKILL.md": "original eval learning",
+			workspacePath + "/planning/plan.json":        `{"version":"original-plan"}`,
+			workspacePath + "/planning/step_config.json": `{"steps":["original-config"]}`,
+			workspacePath + "/variables/variables.json":  `{"customer":"original"}`,
+			workspacePath + "/learnings/step-1/SKILL.md": "original learning",
+			workspacePath + "/learnings/eval-step/SKILL.md": "original eval learning",
 		},
 	}
 
@@ -265,7 +265,7 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 	if got := mockAPI.files[workspacePath+"/versions/v1/learnings/step-1/SKILL.md"]; got != "original learning" {
 		t.Fatalf("published snapshot missing learning, got %q", got)
 	}
-	if got := mockAPI.files[workspacePath+"/versions/v1/evaluation/learnings/eval-step/SKILL.md"]; got != "original eval learning" {
+	if got := mockAPI.files[workspacePath+"/versions/v1/learnings/eval-step/SKILL.md"]; got != "original eval learning" {
 		t.Fatalf("published snapshot missing evaluation learning, got %q", got)
 	}
 	metaJSON := mockAPI.files[workspacePath+"/versions/v1/version_meta.json"]
@@ -277,7 +277,7 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
 		t.Fatalf("failed to parse version metadata: %v", err)
 	}
-	if len(meta.ManagedFolders) != 2 || meta.ManagedFolders[0] != "learnings" || meta.ManagedFolders[1] != "evaluation/learnings" {
+	if len(meta.ManagedFolders) != 1 || meta.ManagedFolders[0] != "learnings" {
 		t.Fatalf("unexpected managed_folders: %#v", meta.ManagedFolders)
 	}
 
@@ -286,8 +286,8 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 	mockAPI.files[workspacePath+"/planning/output_plan.json"] = `{"added":"later"}`
 	mockAPI.files[workspacePath+"/learnings/step-1/SKILL.md"] = "mutated learning"
 	mockAPI.files[workspacePath+"/learnings/step-2/SKILL.md"] = "stale new learning"
-	delete(mockAPI.files, workspacePath+"/evaluation/learnings/eval-step/SKILL.md")
-	mockAPI.files[workspacePath+"/evaluation/learnings/eval-step-2/SKILL.md"] = "stale eval learning"
+	delete(mockAPI.files, workspacePath+"/learnings/eval-step/SKILL.md")
+	mockAPI.files[workspacePath+"/learnings/eval-step-2/SKILL.md"] = "stale eval learning"
 	mockAPI.mu.Unlock()
 
 	revertReq := httptest.NewRequest(http.MethodPost, "/api/workflow/versions/revert", strings.NewReader(
@@ -315,10 +315,10 @@ func TestWorkflowVersionPublishAndRestoreIncludesLearnings(t *testing.T) {
 	if _, exists := mockAPI.files[workspacePath+"/learnings/step-2/SKILL.md"]; exists {
 		t.Fatalf("stale learning should have been removed during restore")
 	}
-	if got := mockAPI.files[workspacePath+"/evaluation/learnings/eval-step/SKILL.md"]; got != "original eval learning" {
+	if got := mockAPI.files[workspacePath+"/learnings/eval-step/SKILL.md"]; got != "original eval learning" {
 		t.Fatalf("evaluation learning not restored, got %q", got)
 	}
-	if _, exists := mockAPI.files[workspacePath+"/evaluation/learnings/eval-step-2/SKILL.md"]; exists {
+	if _, exists := mockAPI.files[workspacePath+"/learnings/eval-step-2/SKILL.md"]; exists {
 		t.Fatalf("stale evaluation learning should have been removed during restore")
 	}
 }

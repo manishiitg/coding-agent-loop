@@ -1448,7 +1448,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setShowChatArea: (show: boolean) => {
-        set({ showChatArea: show })
+        set(state => ({
+          showChatArea: show,
+          chatAreaExpanded: show ? true : state.chatAreaExpanded
+        }))
       },
 
       setChatAreaExpanded: (expanded: boolean) => {

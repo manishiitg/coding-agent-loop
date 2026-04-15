@@ -492,10 +492,10 @@ func reviewMainPyScript(script string, declaredEnvVars ...string) []string {
 }
 
 // getLearnCodeDirRelPath returns the learnings subdirectory (relative to workspace root).
+// Execution and evaluation steps share the same learnings/ namespace; isEvalMode
+// is retained for call-site clarity and future differentiation if ever needed.
 func getLearnCodeDirRelPath(stepID string, isEvalMode bool) string {
-	if isEvalMode {
-		return fmt.Sprintf("evaluation/learnings/%s", stepID)
-	}
+	_ = isEvalMode
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 

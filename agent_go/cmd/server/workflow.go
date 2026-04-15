@@ -5214,7 +5214,6 @@ var versionedConfigFiles = []string{
 // Folder roots that are versioned recursively when publishing a workflow version
 var versionedFolderRoots = []string{
 	"learnings",
-	"evaluation/learnings",
 }
 
 // handlePublishVersion creates a new numbered version snapshot of workflow config files

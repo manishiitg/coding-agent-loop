@@ -561,19 +561,16 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepID string
 	return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, getArtifactFolderName(stepID, stepPath))
 }
 
-// getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID (NEW FORMAT)
-// For all steps (regular, branch, sub-agent): "learnings/{stepID}/"
-// For evaluation steps (when isEvaluationMode=true): "evaluation/learnings/{stepID}/"
-// All steps have their own unique step IDs, so we just use the stepID directly
-// NOTE: This returns a RELATIVE path for use with workspace functions (ReadWorkspaceFile, WriteWorkspaceFile, etc.)
-// The baseWorkspacePath parameter is IGNORED and kept only for backward compatibility - will be removed in future
+// getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID.
+// All steps (regular, branch, sub-agent, evaluation) share the "learnings/{stepID}/"
+// namespace; validateCrossPlanStepIDUniqueness guarantees no collision between
+// plan.json and evaluation_plan.json step IDs.
+// Returns a RELATIVE path for use with workspace functions — they auto-prepend workspacePath.
+// baseWorkspacePath and isEvaluationMode are retained for call-site compatibility.
 func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string, isEvaluationMode bool) string {
-	// All steps (regular, branch, sub-agent) have their own unique step IDs
-	// Just use the stepID directly without any suffix
-	// Return RELATIVE path - workspace functions auto-prepend workspacePath
-	if isEvaluationMode {
-		return fmt.Sprintf("evaluation/learnings/%s", stepID)
-	}
+	_ = baseWorkspacePath
+	_ = stepPath
+	_ = isEvaluationMode
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 

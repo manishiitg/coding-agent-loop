@@ -138,7 +138,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
 	// This captures the state before the learning agent potentially modifies the files
 	// Use RELATIVE path - workspace functions auto-prepend workspacePath
-	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
 	learningsBase := hcpo.getLearningsBasePath()
 	stepLearningsPath := filepath.Join(learningsBase, learningPathIdentifier)
 

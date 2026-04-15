@@ -3465,6 +3465,12 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
@@ -3553,6 +3559,12 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -3797,6 +3809,12 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
@@ -3886,6 +3904,12 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -4007,6 +4031,12 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 		}
 
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -4520,6 +4550,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 
 		// Validate all steps including the new one
 		if err := validatePlanStepIDs(newPlan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed before writing: %w", err)
+		}
+		if err := validateStepIDUniqueness(newPlan); err != nil {
+			return "", fmt.Errorf("plan validation failed before writing: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, newPlan); err != nil {
 			return "", fmt.Errorf("plan validation failed before writing: %w", err)
 		}
 
@@ -5269,6 +5305,12 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateStepIDUniqueness(plan); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 

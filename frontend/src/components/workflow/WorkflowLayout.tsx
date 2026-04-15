@@ -1110,7 +1110,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         </div>
 
         {/* ChatArea Panel - appears on right side, positioned below toolbar */}
-        <div className={`${showChatArea ? (chatAreaExpanded ? 'w-3/4' : 'w-1/2') : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0 bg-white dark:bg-gray-900 absolute right-0 top-0 bottom-0 transition-all duration-300`} style={{ top: '40px' }}>
+        <div className={`${showChatArea ? (chatAreaExpanded ? 'w-full' : 'w-1/2') : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0 bg-white dark:bg-gray-900 absolute right-0 top-0 bottom-0 transition-all duration-300`} style={{ top: '40px' }}>
           {showChatArea && (
             <>
               {/* Workflow Chat Tabs - only shows active workflow tabs */}

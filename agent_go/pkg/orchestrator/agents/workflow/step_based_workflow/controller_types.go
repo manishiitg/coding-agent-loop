@@ -84,7 +84,7 @@ type ExecutionContext struct {
 	SingleStepTarget  int                     // Target step index to run (0-based)
 	SavedScriptOnly   bool                    // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
 	ResumeBranchStep  *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
-	IsEvaluationMode  bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
+	IsEvaluationMode  bool                    // Whether we're running evaluation steps
 	StepPathOverride  string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).

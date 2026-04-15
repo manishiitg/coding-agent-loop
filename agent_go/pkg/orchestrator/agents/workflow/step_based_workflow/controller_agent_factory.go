@@ -830,17 +830,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
 	// Step-specific learnings: write to learnings/{learningPathIdentifier} at workspace root (not inside runs/)
-	// Supports both regular steps (step-{X}) and branch steps (step-{X}-{true/false}-{Y})
-	// In evaluation mode, learnings are stored in evaluation/learnings/
-	var learningsPath string
-	var baseLearningsPath string
-	if hcpo.isEvaluationMode {
-		learningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, learningPathIdentifier)
-		baseLearningsPath = fmt.Sprintf("%s/evaluation/learnings", baseWorkspacePath)
-	} else {
-		learningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
-		baseLearningsPath = fmt.Sprintf("%s/learnings", baseWorkspacePath)
-	}
+	// Supports regular, branch, sub-agent, and evaluation steps — all share the learnings/ namespace;
+	// step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time.
+	learningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
+	baseLearningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 
 	// Build read paths: execution path + base learnings path + execution logs folder
 	readPaths = []string{executionPath}

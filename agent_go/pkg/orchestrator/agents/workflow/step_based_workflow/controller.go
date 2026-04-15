@@ -87,7 +87,7 @@ type StepBasedWorkflowOrchestrator struct {
 	// Skip human input mode tracking (runs learning but skips human feedback)
 	skipHumanInput bool // Whether to skip human feedback requests (auto-approve steps)
 
-	// Evaluation mode tracking (learnings go to evaluation/learnings/)
+	// Evaluation mode tracking
 	isEvaluationMode bool // Whether we're running evaluation steps
 
 	// Learning detail level preference (set once before execution, used for all learning phases)

@@ -123,6 +123,50 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 	return nil
 }
 
+// collectStepIDsRecursive walks steps (and any nested branch steps) and records
+// each ID against the location where it was first seen. Returns a duplicate error
+// on the first collision it encounters. Empty IDs are skipped — presence is the
+// job of validatePlanStepIDs.
+func collectStepIDsRecursive(steps []PlanStepInterface, pathPrefix string, seen map[string]string) error {
+	for i, step := range steps {
+		id := step.GetID()
+		thisLoc := fmt.Sprintf("%s[%d] (title: %q)", pathPrefix, i, step.GetTitle())
+		if id != "" {
+			if prev, dup := seen[id]; dup {
+				return fmt.Errorf("duplicate step ID %q: first at %s, again at %s", id, prev, thisLoc)
+			}
+			seen[id] = thisLoc
+		}
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			if err := collectStepIDsRecursive(conditionalStep.IfTrueSteps, thisLoc+".if_true", seen); err != nil {
+				return err
+			}
+			if err := collectStepIDsRecursive(conditionalStep.IfFalseSteps, thisLoc+".if_false", seen); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateStepIDUniqueness enforces that every step ID is unique across the plan —
+// main steps, orphan steps, and nested branch steps share the same namespace
+// because step IDs are used as learnings/{stepID}/ folder names and collisions
+// silently clobber saved scripts and metadata.
+func validateStepIDUniqueness(plan *PlanningResponse) error {
+	if plan == nil {
+		return nil
+	}
+	seen := make(map[string]string)
+	if err := collectStepIDsRecursive(plan.Steps, "steps", seen); err != nil {
+		return err
+	}
+	if err := collectStepIDsRecursive(plan.OrphanSteps, "orphan_steps", seen); err != nil {
+		return err
+	}
+	return nil
+}
+
 // validateBranchStepIDs recursively validates that all branch steps have IDs
 func validateBranchStepIDs(steps []PlanStepInterface, parentTitle, branchType string) error {
 	for i, step := range steps {
@@ -234,6 +278,9 @@ func validateLoadedPlanStructure(plan *PlanningResponse) error {
 		return fmt.Errorf("plan is nil")
 	}
 	if err := validatePlanStepIDs(plan.Steps); err != nil {
+		return err
+	}
+	if err := validateStepIDUniqueness(plan); err != nil {
 		return err
 	}
 	for i, step := range plan.Steps {

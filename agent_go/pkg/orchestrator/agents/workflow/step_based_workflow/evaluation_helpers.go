@@ -43,6 +43,58 @@ func readEvaluationPlanFromFile(ctx context.Context, workspacePath string, readF
 	return &plan, nil
 }
 
+// validateCrossPlanStepIDUniqueness loads the evaluation plan (if present) and
+// verifies no eval step IDs collide with execution plan IDs. The eval plan is
+// optional — a workflow without evaluation is not an error.
+//
+// This guards the shared learnings/{stepID}/ namespace: both exec and eval
+// steps resolve to the same folder, so duplicate IDs silently clobber saved
+// scripts and metadata.
+func validateCrossPlanStepIDUniqueness(
+	ctx context.Context,
+	workspacePath string,
+	readFile func(context.Context, string) (string, error),
+	execPlan *PlanningResponse,
+) error {
+	if execPlan == nil {
+		return nil
+	}
+	evalPlan, err := readEvaluationPlanFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			return nil
+		}
+		return fmt.Errorf("failed to read evaluation plan for cross-check: %w", err)
+	}
+	if evalPlan == nil || len(evalPlan.Steps) == 0 {
+		return nil
+	}
+
+	execIDs := make(map[string]string)
+	if err := collectStepIDsRecursive(execPlan.Steps, "plan.steps", execIDs); err != nil {
+		return err
+	}
+	if err := collectStepIDsRecursive(execPlan.OrphanSteps, "plan.orphan_steps", execIDs); err != nil {
+		return err
+	}
+
+	evalIDs := make(map[string]string)
+	for i, step := range evalPlan.Steps {
+		if step == nil || strings.TrimSpace(step.ID) == "" {
+			continue
+		}
+		loc := fmt.Sprintf("evaluation_plan.steps[%d] (title: %q)", i, step.Title)
+		if prev, dup := evalIDs[step.ID]; dup {
+			return fmt.Errorf("duplicate step ID %q in evaluation plan: first at %s, again at %s", step.ID, prev, loc)
+		}
+		if execLoc, collision := execIDs[step.ID]; collision {
+			return fmt.Errorf("step ID %q collides across plans: %s (execution) and %s (evaluation) — both map to learnings/%s/, which would silently clobber saved scripts", step.ID, execLoc, loc, step.ID)
+		}
+		evalIDs[step.ID] = loc
+	}
+	return nil
+}
+
 // registerEvaluationValidationTools registers the validate_evaluation_plan tool on an MCP agent.
 // Used by planning_exports.go for workflow-builder chat sessions.
 func registerEvaluationValidationTools(
@@ -70,6 +122,14 @@ func registerEvaluationValidationTools(
 
 			if len(plan.Steps) == 0 {
 				return "Evaluation plan is valid JSON, but no evaluation steps are configured.", nil
+			}
+
+			// Cross-check eval step IDs against execution plan IDs. Both namespaces
+			// share learnings/{stepID}/ folders, so collisions silently clobber.
+			if execPlan, err := readPlanFromFile(ctx, workspacePath, readFile); err == nil && execPlan != nil {
+				if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, execPlan); err != nil {
+					return "", err
+				}
 			}
 
 			seenIDs := make(map[string]struct{}, len(plan.Steps))

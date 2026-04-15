@@ -6,14 +6,14 @@ import { useLLMStore } from '../stores/useLLMStore'
  * This replaces hardcoded defaults with backend configuration
  */
 export function useLLMDefaults() {
-  const { defaultsLoaded, loadDefaultsFromBackend, error } = useLLMStore()
+  const { defaultsLoaded, loadDefaultsFromBackend, loadDelegationTierDefaults, error } = useLLMStore()
 
   useEffect(() => {
-    // Only load defaults if not already loaded
     if (!defaultsLoaded) {
       loadDefaultsFromBackend()
     }
-  }, [defaultsLoaded, loadDefaultsFromBackend])
+    loadDelegationTierDefaults()
+  }, [defaultsLoaded, loadDefaultsFromBackend, loadDelegationTierDefaults])
 
   return {
     defaultsLoaded,

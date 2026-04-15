@@ -49,13 +49,11 @@ type LearningMetadata struct {
 	StepContributions map[string]int `json:"step_contributions,omitempty"`
 }
 
-// getLearningsBasePath returns the correct learnings base path based on evaluation mode
-// In evaluation mode: "evaluation/learnings"
-// In regular mode: "learnings"
+// getLearningsBasePath returns the learnings base path. Both execution and
+// evaluation steps share the "learnings/" namespace — step-ID uniqueness
+// across plan.json and evaluation_plan.json is enforced by
+// validateCrossPlanStepIDUniqueness, so there is no collision risk.
 func (hcpo *StepBasedWorkflowOrchestrator) getLearningsBasePath() string {
-	if hcpo.isEvaluationMode {
-		return "evaluation/learnings"
-	}
 	return "learnings"
 }
 

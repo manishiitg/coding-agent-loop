@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
+
+// execCmd is an alias so tests can swap it out; defaults to exec.Command.
+var execCmd = exec.Command
 
 // ExecutorOption is a functional option for configuring an Executor
 type ExecutorOption func(*Executor)
@@ -55,7 +61,11 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	isCdpMode := e.CdpPort > 0
 	if !isCdpMode {
 		cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-		cmdArgs = append(cmdArgs, "--args", "--disable-blink-features=AutomationControlled")
+		// --no-sandbox removes the sandbox broker process (~100MB saved)
+		// --disable-gpu removes the GPU compositor process (~80MB saved)
+		// Together these cut Chrome's launch footprint roughly in half, which matters
+		// on memory-constrained hosts where Chrome is otherwise OOM-killed on startup.
+		cmdArgs = append(cmdArgs, "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled")
 	}
 	log.Printf("[BROWSER] mode=%s command=%s session=%s", map[bool]string{true: "cdp", false: "headless"}[isCdpMode], command, args["session"])
 
@@ -98,12 +108,39 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		isOpenCommand := command == "open" || command == "goto" || command == "navigate"
 
 		if isOpenCommand {
-			// Check per-agent and per-workflow limits — return error if exceeded
-			if limitMsg := tracker.CheckLimits(session, agentSessionID, workflowSessionID); limitMsg != "" {
-				log.Printf("[BROWSER_TRACKER] LIMIT EXCEEDED: browser=%q agent=%q workflow=%q command=%q agent_count=%d wf_count=%d global=%d",
-					session, agentSessionID, workflowSessionID, command,
-					tracker.CountForAgent(agentSessionID), tracker.CountForWorkflow(workflowSessionID), tracker.Count())
-				return limitMsg, nil // Return as tool output, not error — LLM can read and react
+			// Auto-evict helper: kills runtime + removes files + unregisters from tracker.
+			// Used for both per-agent and global eviction so the new session can proceed
+			// without the LLM needing to close things manually.
+			autoEvict := func(evictSession string) {
+				log.Printf("[BROWSER_TRACKER] Auto-evicting session %q to free slot for %q", evictSession, session)
+				killSessionRuntime(evictSession)
+				removeSessionFiles(evictSession)
+				tracker.Remove(evictSession)
+			}
+
+			// Per-agent limit: if this agent already has too many sessions, evict its
+			// oldest one so the new open can proceed. Mirrors the global-evict behaviour.
+			if agentSessionID != "" && tracker.CountForAgent(agentSessionID) >= MaxBrowserSessionsPerAgent {
+				oldest := tracker.GetOldestSessionForAgent(agentSessionID)
+				if oldest != "" && oldest != session {
+					autoEvict(oldest)
+				}
+			}
+
+			// Per-workflow limit: evict oldest workflow session if needed.
+			if workflowSessionID != "" && tracker.CountForWorkflow(workflowSessionID) >= MaxBrowserSessionsPerWorkflow {
+				// Find oldest workflow session that isn't the one being opened.
+				wfSessions := tracker.SessionsForWorkflow(workflowSessionID)
+				var oldestWf string
+				for _, s := range wfSessions {
+					if s != session {
+						oldestWf = s
+						break
+					}
+				}
+				if oldestWf != "" {
+					autoEvict(oldestWf)
+				}
 			}
 
 			// Check global limit — auto-evict oldest if needed
@@ -112,14 +149,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				if oldest != "" && oldest != session {
 					log.Printf("[BROWSER_TRACKER] Global limit (%d) reached, auto-closing oldest: %q",
 						MaxBrowserSessionsGlobal, oldest)
-					closeArgs := []string{"--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-						"--args", "--disable-blink-features=AutomationControlled",
-						"--session", oldest, "close", "--json"}
-					_, closeErr := e.Client.ExecuteCommand(ctx, closeArgs, &ExecuteOptions{Timeout: 10 * time.Second})
-					if closeErr != nil {
-						log.Printf("[BROWSER_TRACKER] Failed to auto-close session %q: %v", oldest, closeErr)
-					}
-					tracker.Remove(oldest)
+					autoEvict(oldest)
 				}
 			}
 
@@ -252,6 +282,19 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 	}
 
+	// reset: force-kill the daemon and wipe session files without touching the
+	// agent-browser binary. Works even when CDP is dead. Use this when open/close
+	// keep failing — it gives a completely clean slate for the next open.
+	if command == "reset" {
+		log.Printf("[BROWSER] Reset requested for session %q — killing daemon and clearing state", session)
+		killSessionRuntime(session)
+		removeSessionFiles(session)
+		if isHeadless {
+			tracker.Remove(session)
+		}
+		return `{"success":true,"message":"session reset — ready for fresh open"}`, nil
+	}
+
 	// Execute via client
 	opts := &ExecuteOptions{
 		Timeout:          timeout,
@@ -260,13 +303,56 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, opts)
 
-	// Auto-recover from "CDP response channel closed" — Chrome crashed but the
-	// agent-browser runtime is still alive with a dead CDP connection. Remove the
-	// session files so the retry starts a fresh runtime + Chrome.
-	if err != nil && strings.Contains(err.Error(), "CDP response channel closed") {
-		log.Printf("[BROWSER] CDP connection dead for session %q, removing stale session files and retrying", session)
+	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
+	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).
+	isOpenCommand := command == "open" || command == "goto" || command == "navigate"
+	if err == nil && isOpenCommand {
+		captureChromePID(session)
+	}
+
+	// isDeadSession returns true for errors that mean the browser session no longer
+	// exists and we need to start fresh. Both error strings come from agent-browser itself:
+	//   "CDP response channel closed"   — Chrome crashed while connected
+	//   "No such file or directory"     — daemon socket was deleted (e.g. after a reset
+	//                                     that ran concurrently with this command)
+	isDeadSession := func(e error) bool {
+		if e == nil {
+			return false
+		}
+		msg := e.Error()
+		return strings.Contains(msg, "CDP response channel closed") ||
+			strings.Contains(msg, "No such file or directory")
+	}
+
+	// Auto-recover from dead sessions — Chrome crashed or the daemon socket was removed.
+	// Kill the daemon process first (so it releases its port/socket), then
+	// remove session files so the retry starts a completely fresh runtime + Chrome.
+	if isDeadSession(err) {
+		log.Printf("[BROWSER] Dead session detected for %q (%v), killing stale runtime and retrying", session, err)
+		killSessionRuntime(session)
 		removeSessionFiles(session)
+		// If this was a close command, there's nothing left to close — declare success.
+		if command == "close" || command == "quit" || command == "exit" {
+			log.Printf("[BROWSER] Session %q already dead, treating close as success", session)
+			return `{"success":true,"message":"session already closed"}`, nil
+		}
+		// Brief pause so the OS can reclaim memory from the killed Chrome/daemon
+		// before we launch a new Chrome. Without this, the retry often hits OOM
+		// immediately because the killed process hasn't fully released its pages yet.
+		time.Sleep(2 * time.Second)
 		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+		// On successful retry, record Chrome PID for the fresh session.
+		if err == nil && isOpenCommand {
+			captureChromePID(session)
+		}
+	}
+
+	// If the final error is a dead session on an open command, remove it from the
+	// tracker immediately. Otherwise it sits tracked-but-dead and blocks the next
+	// open attempt with LIMIT EXCEEDED until the LLM remembers to call close.
+	if err != nil && isOpenCommand && isDeadSession(err) && isHeadless {
+		log.Printf("[BROWSER_TRACKER] open failed with dead session for %q — removing from tracker so next open isn't blocked", session)
+		tracker.Remove(session)
 	}
 
 	if err != nil {
@@ -307,10 +393,8 @@ func getTimeoutForCommand(command string) time.Duration {
 	}
 }
 
-// removeSessionFiles removes agent-browser session state files (.pid, .sock, etc.)
-// so the next command starts a fresh runtime + Chrome instead of connecting to a
-// dead one. Does not kill any processes — the orphaned runtime is harmless.
-func removeSessionFiles(session string) {
+// sessionDirs returns the directories where agent-browser stores session files.
+func sessionDirs() []string {
 	homeDir, _ := os.UserHomeDir()
 	dirs := []string{}
 	if homeDir != "" {
@@ -320,10 +404,136 @@ func removeSessionFiles(session string) {
 	if homeDir == "" || tmpDir != filepath.Join(homeDir, ".agent-browser") {
 		dirs = append(dirs, tmpDir)
 	}
+	return dirs
+}
 
-	for _, dir := range dirs {
+// captureChromePID records Chrome's PID into a .chrome-pid file right after a
+// successful open command — when Chrome is guaranteed alive and still a child of
+// the daemon. This lets killSessionRuntime use the stored PID later, avoiding the
+// PPID timing race where Chrome has already been reparented or re-launched.
+func captureChromePID(session string) {
+	for _, dir := range sessionDirs() {
+		pidFile := filepath.Join(dir, session+".pid")
+		pidBytes, err := os.ReadFile(pidFile)
+		if err != nil {
+			continue
+		}
+		daemonPID, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+		if err != nil {
+			continue
+		}
+		kids := childPIDs(daemonPID)
+		if len(kids) == 0 {
+			continue
+		}
+		// First child is Chrome (daemon only spawns Chrome).
+		chromePID := kids[0]
+		chromePIDFile := filepath.Join(dir, session+".chrome-pid")
+		if err := os.WriteFile(chromePIDFile, []byte(strconv.Itoa(chromePID)), 0600); err == nil {
+			log.Printf("[BROWSER] Recorded Chrome PID %d for session %q", chromePID, session)
+		}
+		return
+	}
+}
+
+// killChromePID kills Chrome's process group using the given PID.
+// Chrome's PGID equals its own PID, so killing -PGID takes the entire Chrome tree
+// (GPU, renderer, network helpers) in one shot.
+func killChromePID(chromePID int, session string) {
+	if err := syscall.Kill(-chromePID, syscall.SIGKILL); err != nil {
+		// Fallback: kill just the process if group kill fails
+		if p, err2 := os.FindProcess(chromePID); err2 == nil {
+			p.Signal(syscall.SIGKILL) //nolint:errcheck
+		}
+		log.Printf("[BROWSER] Killed Chrome PID %d (group kill failed: %v) for session %q", chromePID, err, session)
+	} else {
+		log.Printf("[BROWSER] Killed Chrome process group PGID=%d for session %q", chromePID, session)
+	}
+}
+
+// killSessionRuntime kills the agent-browser daemon AND its Chrome child processes
+// for the given session. It first tries the stored .chrome-pid (recorded at open
+// time) to avoid the PPID timing race, then falls back to live PPID lookup.
+func killSessionRuntime(session string) {
+	for _, dir := range sessionDirs() {
+		pidFile := filepath.Join(dir, session+".pid")
+		pidBytes, err := os.ReadFile(pidFile)
+		if err != nil {
+			continue
+		}
+		daemonPID, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+		if err != nil {
+			continue
+		}
+
+		// Step 1: kill Chrome.
+		// Prefer the stored .chrome-pid (captured at open time) — reliable even
+		// after Chrome has been reparented or re-launched by the daemon.
+		chromePIDFile := filepath.Join(dir, session+".chrome-pid")
+		if chromePIDBytes, err := os.ReadFile(chromePIDFile); err == nil {
+			if chromePID, err := strconv.Atoi(strings.TrimSpace(string(chromePIDBytes))); err == nil && chromePID > 0 {
+				killChromePID(chromePID, session)
+			}
+		} else {
+			// Fallback: live PPID lookup (works only if Chrome hasn't been reparented yet).
+			for _, chromePID := range childPIDs(daemonPID) {
+				killChromePID(chromePID, session)
+			}
+		}
+
+		// Step 2: kill the daemon itself.
+		proc, err := os.FindProcess(daemonPID)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.SIGKILL); err != nil {
+			log.Printf("[BROWSER] Could not kill runtime PID %d for session %q: %v", daemonPID, session, err)
+		} else {
+			log.Printf("[BROWSER] Killed stale runtime PID %d for session %q", daemonPID, session)
+		}
+	}
+}
+
+// childPIDs returns the direct child PIDs of the given parent PID by scanning /proc (Linux)
+// or using sysctl (macOS). Returns an empty slice if none are found or on error.
+func childPIDs(parentPID int) []int {
+	// Use ps to find direct children — works on both macOS and Linux.
+	out, err := runCommand("ps", "-o", "pid=", "--ppid", strconv.Itoa(parentPID))
+	if err != nil || strings.TrimSpace(out) == "" {
+		// macOS ps uses different flags
+		out, err = runCommand("pgrep", "-P", strconv.Itoa(parentPID))
+		if err != nil || strings.TrimSpace(out) == "" {
+			return nil
+		}
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(line)
+		if err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// runCommand executes a command and returns its stdout output.
+func runCommand(name string, args ...string) (string, error) {
+	cmd := execCmd(name, args...)
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// removeSessionFiles removes agent-browser session state files (.pid, .sock, etc.)
+// so the next command starts a fresh runtime + Chrome instead of connecting to a
+// dead one. Call killSessionRuntime first to stop the daemon before removing its files.
+func removeSessionFiles(session string) {
+	for _, dir := range sessionDirs() {
 		removed := false
-		for _, ext := range []string{".pid", ".sock", ".stream", ".engine", ".version"} {
+		for _, ext := range []string{".pid", ".chrome-pid", ".sock", ".stream", ".engine", ".version"} {
 			f := filepath.Join(dir, session+ext)
 			if err := os.Remove(f); err == nil {
 				removed = true

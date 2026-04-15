@@ -145,6 +145,7 @@ type UpdateWorkflowManifestRequest struct {
 	ExecutionDefaults *WorkflowExecutionDefaults `json:"execution_defaults,omitempty"`
 	Ownership         *WorkflowOwnership         `json:"ownership,omitempty"`
 	Schedules         *[]WorkflowSchedule        `json:"schedules,omitempty"`
+	WorkshopMode      *string                    `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
 }
 
 func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +192,9 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.Schedules != nil {
 		manifest.Schedules = *req.Schedules
+	}
+	if req.WorkshopMode != nil {
+		manifest.ExecutionDefs.WorkshopMode = *req.WorkshopMode
 	}
 
 	// Write updated manifest

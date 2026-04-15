@@ -113,7 +113,10 @@ End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)
 
-var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
+var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .WorkshopHumanFeedback}}## 🚨 HUMAN FEEDBACK (CRITICAL — READ FIRST)
+{{.WorkshopHumanFeedback}}
+
+{{end}}{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
 {{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
@@ -157,6 +160,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	StepTitle                  string
 	StepDescription            string
 	StepContextDependencies    string
+	WorkshopHumanFeedback      string // Human feedback from workshop execute_step or run_full_workflow human_inputs (shown at top, highest priority)
 	StepContextOutput          string
 	WorkspacePath              string
 	IsCodeExecutionMode        string // "true" or "false" - indicates if code execution mode is enabled
@@ -389,6 +393,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		StepExecutionPath:        templateVars["StepExecutionPath"],
 		DecisionReasoning:        templateVars["DecisionReasoning"],
 		PreviousStepsSummary:     templateVars["PreviousStepsSummary"],
+		WorkshopHumanFeedback:    templateVars["WorkshopHumanFeedback"],
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),

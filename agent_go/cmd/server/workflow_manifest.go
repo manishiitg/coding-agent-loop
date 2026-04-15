@@ -55,6 +55,7 @@ type WorkflowExecutionDefaults struct {
 	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
 	EnabledCustomTools           []string `json:"enabled_custom_tools,omitempty"`
+	WorkshopMode                 string   `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner", "debugger", "eval", "output"
 }
 
 // WorkflowOwnership tracks workflow assignment.

@@ -1254,6 +1254,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			previousStepsSummary += "The human provided the following instructions via the interactive workshop.\n"
 			previousStepsSummary += "**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n"
 			previousStepsSummary += fmt.Sprintf("```\n%s\n```\n", hcpo.interactiveWorkflowHumanInput)
+			// Also set as a dedicated top-level variable so the user template can show it prominently.
+			templateVars["WorkshopHumanFeedback"] = fmt.Sprintf("The human provided the following instructions. **You MUST incorporate this into your work. This takes priority over everything else.**\n\n```\n%s\n```", hcpo.interactiveWorkflowHumanInput)
+		} else {
+			templateVars["WorkshopHumanFeedback"] = ""
 		}
 
 		templateVars["PreviousStepsSummary"] = previousStepsSummary

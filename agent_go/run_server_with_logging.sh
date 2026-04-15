@@ -153,17 +153,17 @@ else
     echo "⚠️  No .env file found. Langfuse tracing will be disabled."
 fi
 
+# Browser session limits (explicit export so child process inherits them)
+export MAX_BROWSER_SESSIONS_PER_AGENT=1
+export MAX_BROWSER_SESSIONS_PER_WORKFLOW=4
+export MAX_BROWSER_SESSIONS_GLOBAL=8
+
 # Set environment variables for the server
 export LOG_LEVEL="debug"
 # Use LOG_PATH for the shell script to redirect output
 LOG_PATH="logs/server_debug.log"
 # Unset LOG_FILE to ensure the Go application logs to stdout (avoiding duplicates)
 unset LOG_FILE
-
-export TRACING_PROVIDER="console"
-export LANGFUSE_DEBUG="true"
-export OBSERVABILITY_DEBUG="true"
-export OBSERVABILITY_ENABLED="true"
 
 # Set MCP_GENERATED_DIR to point to agent_go/generated/
 # This ensures code generation happens in the correct location
@@ -553,6 +553,11 @@ else
     echo "✅ camofox-mcp already installed"
 fi
 
+# Always update agent-browser to latest on startup so browser automation stays current.
+echo "📦 Updating agent-browser to latest..."
+npm install -g agent-browser@latest 2>&1 | tail -3
+echo "✅ agent-browser updated: $(agent-browser --version 2>/dev/null || echo 'version unknown')"
+
 # Build mcpbridge binary (required for CLI provider MCP bridge)
 # Install from local source to pick up latest fixes (e.g., virtual tool scoping)
 echo "🔨 Building mcpbridge binary from local source..."
@@ -572,6 +577,29 @@ fi
 
 if [ "$WITH_WORKSPACE" = true ]; then
     start_native_workspace || exit 1
+fi
+
+# Kill all leftover agent-browser daemon processes from previous runs.
+# These accumulate as zombies when Chrome crashes — the daemon stays alive with a
+# dead CDP connection. We kill them all at startup so the new server gets a clean slate.
+ZOMBIE_COUNT=$(pgrep -f 'agent-browser-darwin-arm64' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ZOMBIE_COUNT" -gt 0 ]; then
+    echo "🧹 Killing $ZOMBIE_COUNT leftover agent-browser daemon(s) from previous run..."
+    pkill -9 -f 'agent-browser-darwin-arm64' 2>/dev/null || true
+    echo "✅ agent-browser daemons cleared"
+else
+    echo "✅ No leftover agent-browser daemons"
+fi
+
+# Kill orphaned Chrome for Testing processes (children of killed daemons that survived).
+# These consume hundreds of MB each and cause OOM kills on new Chrome launches.
+CHROME_COUNT=$(pgrep -f 'Google Chrome for Testing' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$CHROME_COUNT" -gt 0 ]; then
+    echo "🧹 Killing $CHROME_COUNT orphaned Chrome for Testing process(es)..."
+    pkill -9 -f 'Google Chrome for Testing' 2>/dev/null || true
+    echo "✅ Chrome for Testing processes cleared"
+else
+    echo "✅ No orphaned Chrome for Testing processes"
 fi
 
 # Clean up stale agent-browser runtime state (dead PID/socket files)

@@ -13,24 +13,28 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
+// needed so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
+type ChannelRoute = slackservice.ChannelRoute
+
 // SlackConfigRequest represents a request to update Slack config (Socket Mode only)
 type SlackConfigRequest struct {
-	Enabled        bool              `json:"enabled"`
-	BotToken       string            `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
-	AppToken       string            `json:"app_token"` // App-level token (xapp-...) for Socket Mode
-	ChannelID      string            `json:"channel_id"`
-	BotMode        bool              `json:"bot_mode"`        // Enable @mention bot mode (starts agent sessions from Slack)
-	ChannelRouting map[string]string `json:"channel_routing"` // Maps Slack channel IDs to workflow preset IDs
+	Enabled        bool                    `json:"enabled"`
+	BotToken       string                  `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
+	AppToken       string                  `json:"app_token"` // App-level token (xapp-...) for Socket Mode
+	ChannelID      string                  `json:"channel_id"`
+	BotMode        bool                    `json:"bot_mode"`        // Enable @mention bot mode (starts agent sessions from Slack)
+	ChannelRouting map[string]ChannelRoute `json:"channel_routing"` // Maps Slack channel IDs to ChannelRoute{workflow_id, workspace_path}
 }
 
 // SlackConfigResponse represents the Slack configuration response
 type SlackConfigResponse struct {
-	Enabled        bool              `json:"enabled"`
-	BotToken       string            `json:"bot_token,omitempty"`  // Masked in GET
-	AppToken       string            `json:"app_token,omitempty"`  // Masked in GET
-	ChannelID      string            `json:"channel_id,omitempty"`
-	BotMode        bool              `json:"bot_mode"`
-	ChannelRouting map[string]string `json:"channel_routing,omitempty"` // Maps Slack channel IDs to workflow preset IDs
+	Enabled        bool                    `json:"enabled"`
+	BotToken       string                  `json:"bot_token,omitempty"`  // Masked in GET
+	AppToken       string                  `json:"app_token,omitempty"`  // Masked in GET
+	ChannelID      string                  `json:"channel_id,omitempty"`
+	BotMode        bool                    `json:"bot_mode"`
+	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"` // Maps Slack channel IDs to ChannelRoute{workflow_id, workspace_path}
 }
 
 // SlackTestResponse represents test connection response
@@ -86,7 +90,7 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 
 		// Check bot_mode and channel routing from the filesystem-backed bot connector config.
 		botMode := false
-		var channelRouting map[string]string
+		var channelRouting map[string]ChannelRoute
 		botCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
 		if botCfg != nil {
 			botMode = botCfg.BotMode

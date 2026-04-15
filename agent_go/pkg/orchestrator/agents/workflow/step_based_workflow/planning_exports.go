@@ -1176,8 +1176,9 @@ func RegisterRunFullWorkflowTool(
 				if len(missingSteps) > 0 {
 					return fmt.Sprintf("❌ Plan has human_input steps that require responses via human_inputs parameter. Missing:\n%s\n\nProvide human_inputs with a response for each step ID listed above.", strings.Join(missingSteps, "\n")), nil
 				}
+				// Note: routing steps without human_inputs are allowed — they will use LLM evaluation
+				// with context from prior steps to pick a route. We log the hint but do NOT block.
 				if len(routingStepHints) > 0 {
-					// Find the first routing step ID for the example
 					exampleStepID := "route-step"
 					for _, step := range session.controller.approvedPlan.Steps {
 						if step.StepType() == StepTypeRouting {
@@ -1185,7 +1186,7 @@ func RegisterRunFullWorkflowTool(
 							break
 						}
 					}
-					return fmt.Sprintf("⚠️ Plan has routing steps that need the user's choice via human_inputs. Without it, the routing agent won't know the user's intent. Missing:\n%s\n\nPlease re-call with human_inputs including the routing step. Example: human_inputs: {\"%s\": \"<user's choice here>\"}", strings.Join(routingStepHints, "\n"), exampleStepID), nil
+					logger.Info(fmt.Sprintf("ℹ️ [run_full_workflow] Routing steps without human_inputs will use default LLM evaluation. To guide route selection, pass human_inputs: {\"%s\": \"<user intent>\"}. Missing: %s", exampleStepID, strings.Join(routingStepHints, ", ")))
 				}
 			}
 

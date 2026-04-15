@@ -10,6 +10,30 @@ import (
 	"syscall"
 )
 
+// KillAllTrackedSessions kills every daemon + Chrome process for all sessions
+// currently tracked by the global SessionTracker. Call this on SIGTERM/SIGINT so
+// Chrome and daemon processes don't linger after the server exits.
+func KillAllTrackedSessions() {
+	tracker := GetSessionTracker()
+	tracker.mu.Lock()
+	sessions := make([]string, 0, len(tracker.sessions))
+	for name := range tracker.sessions {
+		sessions = append(sessions, name)
+	}
+	tracker.mu.Unlock()
+
+	if len(sessions) == 0 {
+		return
+	}
+	log.Printf("[BROWSER_CLEANUP] SIGTERM: killing %d tracked browser session(s): %v", len(sessions), sessions)
+	for _, session := range sessions {
+		killSessionRuntime(session)
+		removeSessionFiles(session)
+	}
+	tracker.Clear()
+	log.Printf("[BROWSER_CLEANUP] All browser sessions killed")
+}
+
 // CleanupStaleRuntimeState removes stale agent-browser runtime files (PID, socket)
 // that point to dead processes. This prevents "CDP response channel closed" errors
 // caused by agent-browser trying to connect to a defunct runtime server.

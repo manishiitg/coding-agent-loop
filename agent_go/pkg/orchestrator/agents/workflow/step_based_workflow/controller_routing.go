@@ -181,6 +181,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		}
 
 		conditionContext = contextBuilder.String()
+
+		// In pure routing mode, also surface any human_inputs override for this step
+		// so the routing evaluator can factor in the user's explicit intent.
+		if hcpo.IsSkipHumanInput() {
+			if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
+				humanOverride := fmt.Sprintf("## Human Input Override (CRITICAL — use this to guide route selection)\n%s\n\n", val)
+				conditionContext = humanOverride + conditionContext
+				hcpo.GetLogger().Info(fmt.Sprintf("🔀 Routing step '%s' (pure mode): prepended human_inputs override to conditionContext (length=%d chars)", step.GetID(), len(val)))
+			}
+		}
+	}
+
+	// For execute-then-route mode, if a human_inputs override was provided, also include it
+	// as conditionContext so the routing evaluator knows the user's original intent directly.
+	// This is needed because the routing evaluator only sees the execution output, not the
+	// original human_input that was injected into the execution agent.
+	if routingStep.Description != "" && conditionContext == "" {
+		if hcpo.IsSkipHumanInput() {
+			if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
+				conditionContext = fmt.Sprintf("## Human Input (provided to guide this routing step)\n%s", val)
+				hcpo.GetLogger().Info(fmt.Sprintf("🔀 Routing step '%s' (execute-then-route mode): set conditionContext to human_inputs override for routing evaluator", step.GetID()))
+			}
+		}
 	}
 
 	// Code execution mode is determined by createConditionalAgent's 3-rule priority:

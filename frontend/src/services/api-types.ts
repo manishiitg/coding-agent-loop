@@ -279,13 +279,21 @@ export interface CompactContextResponse {
 }
 
 // Slack Feedback Configuration types
+
+// ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
+// so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
+export interface ChannelRoute {
+  workflow_id: string
+  workspace_path: string
+}
+
 export interface SlackConfig {
   enabled: boolean
   bot_token?: string  // Masked in GET response
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   channel_id?: string
   bot_mode?: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, string>  // Maps Slack channel IDs to workflow preset IDs
+  channel_routing?: Record<string, ChannelRoute>  // Maps Slack channel IDs to ChannelRoute
 }
 
 export interface SlackConfigRequest {
@@ -294,7 +302,7 @@ export interface SlackConfigRequest {
   app_token: string  // App-level token (xapp-...) for Socket Mode
   channel_id: string
   bot_mode: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, string>  // Maps Slack channel IDs to workflow preset IDs
+  channel_routing?: Record<string, ChannelRoute>  // Maps Slack channel IDs to ChannelRoute
 }
 
 export interface SlackConfigResponse {
@@ -1717,6 +1725,7 @@ export interface WorkflowExecutionDefaults {
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number
   enabled_custom_tools?: string[]
+  workshop_mode?: string // Workshop builder mode: "builder", "optimizer", "runner", "debugger", "eval", "output"
 }
 
 export interface WorkflowOwnership {
@@ -1766,6 +1775,7 @@ export interface UpdateWorkflowManifestRequest {
   execution_defaults?: WorkflowExecutionDefaults
   ownership?: WorkflowOwnership
   schedules?: WorkflowScheduleEntry[]
+  workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
 }
 
 export interface DuplicateWorkflowManifestRequest {

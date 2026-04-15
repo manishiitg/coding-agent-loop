@@ -33,6 +33,15 @@ function WorkshopModeToggle() {
   })
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
 
+  const persistWorkshopMode = (mode: string) => {
+    if (!activePresetId) return
+    const workspacePath = useWorkflowManifestStore.getState().getWorkflowById(activePresetId)?.workspace_path
+    if (!workspacePath) return
+    agentApi.updateWorkflowManifest({ workspace_path: workspacePath, workshop_mode: mode }).catch(() => {
+      // Non-fatal: localStorage still tracks the mode; persist is best-effort
+    })
+  }
+
   const builderModes = [
     { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design, build, and test the workflow — get a working plan with correct output.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
@@ -55,7 +64,14 @@ function WorkshopModeToggle() {
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  onClick={() => setWorkflowMode(id)}
+                  onClick={() => {
+                    setWorkflowMode(id)
+                    // Persist eval/output as the workshop mode so Slack can read it
+                    if (id === 'eval' || id === 'output') {
+                      persistWorkshopMode(id)
+                    }
+                    // 'plan' restores the sub-mode — no extra persist needed
+                  }}
                   className={`px-2.5 py-1 transition-colors ${
                     workflowMode === id
                       ? 'bg-primary text-primary-foreground'
@@ -80,7 +96,10 @@ function WorkshopModeToggle() {
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => setWorkshopMode(id)}
+                    onClick={() => {
+                      setWorkshopMode(id)
+                      persistWorkshopMode(id)
+                    }}
                     className={`px-2 py-1 transition-colors ${
                       workshopMode === id
                         ? 'bg-muted-foreground text-background'

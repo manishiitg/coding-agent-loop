@@ -565,6 +565,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// to prevent "CDP response channel closed" errors on first browser use.
 	browser.CleanupStaleRuntimeState()
 
+	// Start background reaper: kills browser sessions idle for >15 min so
+	// Chrome/daemon processes don't accumulate and exhaust memory.
+	browser.StartIdleReaper(15 * time.Minute)
+
 	fmt.Printf("🚀 Starting Streaming API Server\n")
 	fmt.Printf("📡 Host: %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🤖 Primary Provider: %s | Model: %s\n", config.Provider, config.ModelID)
@@ -717,7 +721,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		if err != nil {
 			// --kill-all may not be supported; fall back to pkill
 			log.Printf("[BROWSER_CLEANUP] --kill-all not supported, trying pkill fallback")
-			killCmd := "pkill -f 'agent-browser' 2>/dev/null; pkill -f chromium 2>/dev/null; echo 'cleanup done'"
+			killCmd := "pkill -9 -f 'agent-browser' 2>/dev/null; pkill -9 -f chromium 2>/dev/null; pkill -9 -f 'Google Chrome for Testing' 2>/dev/null; echo 'cleanup done'"
 			reqBody := browser.ShellExecuteRequest{Command: killCmd, WorkingDirectory: ".", Timeout: 10}
 			jsonBody, _ := json.Marshal(reqBody)
 			req, _ := http.NewRequestWithContext(ctx, "POST", workspaceAPIURL+"/api/execute", bytes.NewBuffer(jsonBody))
@@ -1202,6 +1206,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Close all MCP session connections to prevent orphaned subprocesses
 	fmt.Println("🧹 Closing all MCP sessions...")
 	mcpagent.CloseAllSessions()
+
+	// Kill all active browser daemons and Chrome processes so they don't linger
+	fmt.Println("🧹 Killing all browser sessions...")
+	browser.KillAllTrackedSessions()
 
 	// Create a deadline for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

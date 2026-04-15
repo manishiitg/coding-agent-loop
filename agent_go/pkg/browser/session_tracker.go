@@ -65,6 +65,47 @@ func GetSessionTracker() *SessionTracker {
 	return globalTracker
 }
 
+// StartIdleReaper launches a background goroutine that kills browser sessions
+// idle for longer than idleTimeout. This prevents Chrome/daemon accumulation
+// from agents that open sessions but never close them (workflow crash, LLM forget).
+// Call once at server startup.
+func StartIdleReaper(idleTimeout time.Duration) {
+	if idleTimeout <= 0 {
+		idleTimeout = 15 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			reapIdleSessions(idleTimeout)
+		}
+	}()
+	log.Printf("[BROWSER_REAPER] Started idle session reaper (timeout=%s, check interval=2m)", idleTimeout)
+}
+
+func reapIdleSessions(idleTimeout time.Duration) {
+	tracker := GetSessionTracker()
+	tracker.mu.Lock()
+	var stale []string
+	for name, s := range tracker.sessions {
+		if time.Since(s.lastUsed) > idleTimeout {
+			stale = append(stale, name)
+		}
+	}
+	tracker.mu.Unlock()
+
+	if len(stale) == 0 {
+		return
+	}
+	log.Printf("[BROWSER_REAPER] Reaping %d idle session(s) (idle > %s): %v", len(stale), idleTimeout, stale)
+	for _, session := range stale {
+		killSessionRuntime(session)
+		removeSessionFiles(session)
+		tracker.Remove(session)
+		log.Printf("[BROWSER_REAPER] Reaped idle session %q", session)
+	}
+}
+
 // Touch marks a browser session as recently used (or registers it if new).
 // agentSessionID is the agent-level ID, workflowSessionID is the root workflow/chat ID.
 // Returns true if this is a new browser session.

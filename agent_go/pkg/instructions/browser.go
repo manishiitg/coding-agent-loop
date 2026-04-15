@@ -185,21 +185,11 @@ You are using the Playwright MCP tools (browser_* functions), not agent_browser.
 func GetAgentBrowserQuickStartInstructions() string {
 	return `## Browser Automation (Quick Start)
 
-You have the ` + "`agent_browser`" + ` tool for browser automation. Basic workflow:
+Call agent_browser via HTTP API:
 
-1. **Open a page:** agent_browser(command="open", args=["https://example.com"], session="default")
-2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["-i"], session="default")
-3. **Interact** using element refs from snapshot:
-   - Click: agent_browser(command="click", args=["@e1"], session="default")
-   - Fill text: agent_browser(command="fill", args=["@e2", "search query"], session="default")
-   - Press key: agent_browser(command="press", args=["Enter"], session="default")
-4. **Re-snapshot** after each interaction to see the updated page state
-5. **Screenshot:** agent_browser(command="screenshot", args=["page.png"], session="default")
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If open/click/snapshot keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
-
-**In code execution mode:** Call agent_browser via HTTP API:
-` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }
@@ -212,17 +202,11 @@ func GetCdpBrowserInstructions() string {
 
 You have the `+"`agent_browser`"+` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
 
-### Basic Workflow
-1. **Open a page:** agent_browser(command="open", args=["--cdp", "%[1]s", "https://example.com"], session="default")
-2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["--cdp", "%[1]s", "-i"], session="default")
-3. **Interact** using element refs from snapshot:
-   - Click: agent_browser(command="click", args=["--cdp", "%[1]s", "@e1"], session="default")
-   - Fill text: agent_browser(command="fill", args=["--cdp", "%[1]s", "@e2", "search query"], session="default")
-   - Press key: agent_browser(command="press", args=["--cdp", "%[1]s", "Enter"], session="default")
-4. **Re-snapshot** after each interaction to see the updated page state
-5. **Screenshot:** agent_browser(command="screenshot", args=["--cdp", "%[1]s", "page.png"], session="default")
+Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args:
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+`+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"text\"])\nsnap = browser(\"snapshot\", [\"-i\"])  # re-snapshot after each interaction\n```"+`
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 ### CDP-Specific Behaviors
 - The user can **see everything you do** in their browser — actions are visible in real-time
@@ -230,13 +214,6 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - **Do NOT call close** unless the user asks — it will close their browser tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
-
-### CDP Connection
-Always pass `+"`--cdp %[1]s`"+` in the args array for every agent_browser call.
-
-**In code execution mode:** Call agent_browser via HTTP API:
-`+"```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"--cdp\", \"%[1]s\", \"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```"+`
-**As direct tool call:** agent_browser(command="snapshot", args=["--cdp", "%[1]s", "-i"], session="default")
 
 ### Advanced: Direct CDP WebSocket Access
 For operations that need more control (targeting specific tabs, running complex JS, inspecting DOM):
@@ -252,17 +229,11 @@ func GetHeadlessBrowserInstructions() string {
 
 You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium browser** inside a container.
 
-### Basic Workflow
-1. **Open a page:** agent_browser(command="open", args=["https://example.com"], session="default")
-2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["-i"], session="default")
-3. **Interact** using element refs from snapshot:
-   - Click: agent_browser(command="click", args=["@e1"], session="default")
-   - Fill text: agent_browser(command="fill", args=["@e2", "search query"], session="default")
-   - Press key: agent_browser(command="press", args=["Enter"], session="default")
-4. **Re-snapshot** after each interaction to see the updated page state
-5. **Screenshot:** agent_browser(command="screenshot", args=["page.png"], session="default")
+Call agent_browser via HTTP API:
 
-Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\nbrowser(\"click\", [\"@e1\"])\nbrowser(\"fill\", [\"@e2\", \"search query\"])\nbrowser(\"press\", [\"Enter\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # re-snapshot after each interaction\n\n# If commands keep failing with CDP errors — reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears all state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 ### Headless-Specific Behaviors
 - The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
@@ -270,9 +241,6 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - You can freely **open and close** tabs/sessions without affecting the user
 - Browser state is **ephemeral** — it resets between sessions
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
-
-**In code execution mode:** Call agent_browser via HTTP API:
-` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
 
 For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }

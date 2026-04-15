@@ -18,6 +18,13 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 )
 
+// ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
+// so the bot can read the workflow manifest without scanning all workspaces.
+type ChannelRoute struct {
+	WorkflowID    string `json:"workflow_id"`
+	WorkspacePath string `json:"workspace_path"`
+}
+
 // ThreadID identifies a conversation thread on a platform
 type ThreadID struct {
 	Platform  string // "slack", "discord", "telegram", "whatsapp"
@@ -910,22 +917,47 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	return combined
 }
 
-// resolveChannelWorkflow looks up the workflow preset ID for a given Slack channel ID.
-// Returns "" if no routing is configured for the channel.
-func (m *BotConversationManager) resolveChannelWorkflow(channelID string) string {
+// resolveChannelWorkflow looks up the ChannelRoute for a given Slack channel ID.
+// Returns nil if no routing is configured for the channel.
+func (m *BotConversationManager) resolveChannelWorkflow(channelID string) *ChannelRoute {
 	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), "slack")
 	if err != nil || botCfg == nil {
-		return ""
+		return nil
 	}
 	routing := botCfg.AllowedChannels
 	if routing == "" || routing == "[]" || routing == "{}" {
-		return ""
+		return nil
 	}
-	var channelMap map[string]string
+	var channelMap map[string]ChannelRoute
 	if err := json.Unmarshal([]byte(routing), &channelMap); err != nil {
+		return nil
+	}
+	if route, ok := channelMap[channelID]; ok && route.WorkflowID != "" {
+		return &route
+	}
+	return nil
+}
+
+// readManifestWorkshopMode reads workflow.json for the given workspace path and returns
+// execution_defaults.workshop_mode. Returns "" if not set or on any error.
+func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) string {
+	if workspacePath == "" || m.workspaceURL == "" {
 		return ""
 	}
-	return channelMap[channelID]
+	filePath := workspacePath + "/workflow.json"
+	content, exists, err := readWorkspaceFile(context.Background(), m.workspaceURL, filePath)
+	if err != nil || !exists || content == "" {
+		return ""
+	}
+	var manifest struct {
+		ExecutionDefs struct {
+			WorkshopMode string `json:"workshop_mode"`
+		} `json:"execution_defaults"`
+	}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return ""
+	}
+	return manifest.ExecutionDefs.WorkshopMode
 }
 
 // buildQueryRequest constructs a request map for startSessionInternal.
@@ -940,10 +972,22 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	// Channel → workflow routing: if this Slack channel is mapped to a workflow, run it
 	// instead of the default multi-agent chat mode.
 	if channelID != "" {
-		if workflowID := m.resolveChannelWorkflow(channelID); workflowID != "" {
-			req["agent_mode"] = "workflow"
-			req["preset_query_id"] = workflowID
-			log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s", channelID, workflowID)
+		if route := m.resolveChannelWorkflow(channelID); route != nil {
+			req["preset_query_id"] = route.WorkflowID
+
+			// Read workshop_mode from the workflow manifest (persisted by the frontend when user changes mode).
+			workshopMode := m.readManifestWorkshopMode(route.WorkspacePath)
+			if workshopMode != "" {
+				// Workshop builder mode — use the conversational Workflow Builder agent
+				req["agent_mode"] = "workflow_phase"
+				req["phase_id"] = "workflow-builder"
+				req["workshop_mode"] = workshopMode
+				log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s (workshop_mode=%s)", channelID, route.WorkflowID, workshopMode)
+			} else {
+				// No workshop mode — use the full step-based orchestrator (Execution mode)
+				req["agent_mode"] = "workflow"
+				log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s (execution mode)", channelID, route.WorkflowID)
+			}
 		}
 	}
 

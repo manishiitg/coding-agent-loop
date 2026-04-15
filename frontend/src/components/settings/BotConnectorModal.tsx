@@ -8,7 +8,7 @@ import { Card } from '../ui/Card'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { agentApi } from '../../services/api'
 import { useLLMStore } from '../../stores'
-import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow } from '../../services/api-types'
+import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow, ChannelRoute } from '../../services/api-types'
 
 interface BotConnectorModalProps {
   isOpen: boolean
@@ -480,13 +480,13 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                 {/* Existing mappings */}
                                 {Object.entries(slackConfig.channel_routing || {}).length > 0 && (
                                   <div className="flex flex-col gap-1.5">
-                                    {Object.entries(slackConfig.channel_routing || {}).map(([chId, wfId]) => {
-                                      const wf = workflows.find(w => w.manifest.id === wfId)
+                                    {Object.entries(slackConfig.channel_routing || {}).map(([chId, route]) => {
+                                      const wf = workflows.find(w => w.manifest.id === (route as ChannelRoute).workflow_id)
                                       return (
                                         <div key={chId} className="flex items-center gap-2">
                                           <code className="flex-shrink-0 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono w-36 truncate">{chId}</code>
                                           <span className="text-xs text-muted-foreground flex-shrink-0">→</span>
-                                          <span className="flex-1 text-xs truncate text-foreground">{wf ? wf.manifest.label : <span className="text-yellow-500">{wfId} (not found)</span>}</span>
+                                          <span className="flex-1 text-xs truncate text-foreground">{wf ? wf.manifest.label : <span className="text-yellow-500">{(route as ChannelRoute).workflow_id} (not found)</span>}</span>
                                           <button
                                             onClick={() => {
                                               const updated = { ...slackConfig.channel_routing }
@@ -525,9 +525,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                   <button
                                     onClick={() => {
                                       if (!newChannelID.trim() || !newWorkflowID) return
+                                      const selectedWf = workflows.find(w => w.manifest.id === newWorkflowID)
+                                      const route: ChannelRoute = {
+                                        workflow_id: newWorkflowID,
+                                        workspace_path: selectedWf?.workspace_path || '',
+                                      }
                                       setSlackConfig({
                                         ...slackConfig,
-                                        channel_routing: { ...(slackConfig.channel_routing || {}), [newChannelID.trim()]: newWorkflowID },
+                                        channel_routing: { ...(slackConfig.channel_routing || {}), [newChannelID.trim()]: route },
                                       })
                                       setNewChannelID('')
                                       setNewWorkflowID('')

@@ -122,8 +122,8 @@ PHASE 2 — EVALUATE (one group at a time)
 2. Eval always targets the current iteration-0; the per-group suffix narrows scoring to that group's artifacts.
 3. Confirm evaluation/runs/iteration-0/{group}/evaluation_report.json exists for each evaluated group before continuing.
 
-PHASE 3 — HARDEN
-1. Call harden_workflow(target_run_folder="iteration-0"${focusArg ? ', ' + focusArg : ''}). Reads every group's eval report, identifies failing steps, applies targeted fixes (pre-validation rules, description tightening, main.py patches, KB config, optimized_reason), and marks passing steps as optimized where appropriate.
+PHASE 3 — HARDEN (iteration-scoped, all groups together)
+1. Call harden_workflow(iteration="iteration-0"${focusArg ? ', ' + focusArg : ''}). Note: harden does NOT take a group parameter — it discovers all groups under the iteration, builds a cross-group failure map (e.g. "step X passed for A,B but failed for C"), and fixes failure CLASSES, not per-group instances. That's intentional: cross-group patterns are where harden's value is.
 2. Wait for the harden agent to finish — it runs in the background and notifies on completion.
 
 PHASE 4 — REPORT

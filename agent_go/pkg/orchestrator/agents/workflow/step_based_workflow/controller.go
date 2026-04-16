@@ -112,7 +112,8 @@ type StepBasedWorkflowOrchestrator struct {
 	presetPhaseLLM *AgentLLMConfig // Default for all phase agents (planning, evaluation, plan improvement, etc.)
 
 	// Preset-level feature toggles
-	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
+	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
+	lockKnowledgebase bool // When true, post-step KB update agent never enqueues — graph.json only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
 
 	// Tiered LLM allocation mode
 	tierResolver *TierResolver // nil when no tiered config
@@ -1173,6 +1174,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetType() string {
 // UseKnowledgebase returns whether the knowledgebase feature is enabled
 func (hcpo *StepBasedWorkflowOrchestrator) UseKnowledgebase() bool {
 	return hcpo.useKnowledgebase
+}
+
+// LockKnowledgebase returns whether the post-step KB update agent is frozen.
+// When true, graph.json only mutates via explicit reorganize_knowledgebase calls.
+func (hcpo *StepBasedWorkflowOrchestrator) LockKnowledgebase() bool {
+	return hcpo.lockKnowledgebase
+}
+
+// SetLockKnowledgebase toggles the lock_knowledgebase flag.
+func (hcpo *StepBasedWorkflowOrchestrator) SetLockKnowledgebase(v bool) {
+	hcpo.lockKnowledgebase = v
 }
 
 // Helper methods for human feedback tracking

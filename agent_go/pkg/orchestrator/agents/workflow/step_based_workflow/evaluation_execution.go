@@ -35,11 +35,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Use a special run folder for evaluation results.
 	// Like report generation, evaluation should execute inside the workshop-style
 	// iteration-0 sandbox while still reading artifacts from the requested target run.
+	// Eval always runs against the workflow's current iteration-0. Historical
+	// re-scoring is intentionally not supported — workflow + eval rotate together
+	// in resolveRunFolderWithOptions, so evaluation/runs/iteration-N is paired
+	// with runs/iteration-N by construction. We preserve any group suffix the
+	// caller passed (e.g. "iteration-19/manishiitg" -> "iteration-0/manishiitg")
+	// since multi-group runs share an iteration but split per-group inside it.
 	if targetRunFolder == "" {
-		hcpo.GetLogger().Error("❌ targetRunFolder is empty", nil)
-		return "", fmt.Errorf("targetRunFolder is required for evaluation execution")
+		targetRunFolder = "iteration-0"
 	}
-	internalEvalRunFolder := workshopInternalRunFolderForTarget(targetRunFolder)
+	originalTarget := targetRunFolder
+	targetRunFolder = workshopInternalRunFolderForTarget(targetRunFolder)
+	if targetRunFolder != "iteration-0" && !strings.HasPrefix(targetRunFolder, "iteration-0/") {
+		// workshopInternalRunFolderForTarget always returns iteration-0[/group],
+		// so this is defense-in-depth in case the helper changes.
+		targetRunFolder = "iteration-0"
+	}
+	if targetRunFolder != originalTarget {
+		hcpo.GetLogger().Info(fmt.Sprintf("📍 Eval target normalized: %q -> %q (eval always runs against current run)", originalTarget, targetRunFolder))
+	}
+	internalEvalRunFolder := targetRunFolder
 
 	// We use ".." to step out of the standard "runs/" folder that the orchestrator assumes,
 	// and point to "evaluation/runs/<internalEvalRunFolder>".

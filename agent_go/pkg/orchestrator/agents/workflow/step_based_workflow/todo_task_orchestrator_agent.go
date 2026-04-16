@@ -54,12 +54,19 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 | Execution folder | `+"`"+`{{.ExecutionFolderPath}}/`+"`"+` | READ |
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` | READ/WRITE |
 | Downloads (user files) | `+"`"+`{{.DownloadsPath}}/`+"`"+` | READ/WRITE |
-{{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | READ/WRITE |
+| DB (PERSISTENT, structured JSON) | `+"`"+`{{.DBPath}}/`+"`"+` | READ/WRITE |
+{{if ne .KbAccess "none"}}| Knowledgebase (PERSISTENT, {{.KbAccessLabel}}) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | {{.KbAccessLabel}} |
 {{end}}
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
 - **Output validation**: Your step's output files may be validated after execution. If validation fails, you'll receive feedback and must fix the issues.
 - Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
-{{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
+
+**Three persistent stores — keep them separate when instructing sub-agents:**
+- **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale.
+- **knowledgebase/graph.json** — decisions, facts, strategies built up over time (entities + relationships). Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` directly.
+- **learnings/** — HOW to run the task. Read-only at execution time; the learning agent maintains it.
+
+{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} Sub-agents may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` KB files; writes are blocked.{{else if eq .KbAccess "write"}} Folder guard allows writes, but emit facts in step output and let the KB update agent merge — do not patch graph.json directly.{{end}}
 {{end}}
 
 ---
@@ -158,7 +165,8 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 ## Files
 | Path | Purpose | Persistence |
 | :--- | :--- | :--- |
-{{if eq .UseKnowledgebase "true"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
+| db/ | Structured JSON state shared across runs and groups | Persistent across runs |
+{{if ne .KbAccess "none"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 
 {{if .LearningsPath}}
@@ -313,10 +321,12 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"WorkspacePath":              templateVars["WorkspacePath"],
 		"WorkflowRoot":               templateVars["WorkflowRoot"],
 		"KnowledgebasePath":          templateVars["KnowledgebasePath"],
+		"DBPath":                     templateVars["DBPath"],
 		"FolderGuardReadPaths":       templateVars["FolderGuardReadPaths"],
 		"FolderGuardWritePaths":      templateVars["FolderGuardWritePaths"],
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
-		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
+		"KbAccess":                   templateVars["KbAccess"],
+		"KbAccessLabel":              templateVars["KbAccessLabel"],
 		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",
 		"CodeExecutionSection":       BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["WorkspacePath"]),
 		"PreviousStepsSummary":       templateVars["PreviousStepsSummary"],

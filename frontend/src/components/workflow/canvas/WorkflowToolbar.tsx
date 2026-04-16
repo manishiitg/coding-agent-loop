@@ -27,7 +27,7 @@ import {
   ArrowRight,
   ArrowDown,
   Package,
-  Wand2,
+  Database,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -42,11 +42,11 @@ import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import BulkStepConfigModal from '../BulkStepConfigModal'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
+import KBPopup from '../KBPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
-import FinalOutputPopup from '../FinalOutputPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -270,6 +270,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Learnings popup state
   const [showLearningsPopup, setShowLearningsPopup] = useState(false)
+  const [showKBPopup, setShowKBPopup] = useState(false)
 
   // Execution logs popup state
   const [showExecutionLogsPopup, setShowExecutionLogsPopup] = useState(false)
@@ -279,7 +280,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
-  const [showFinalOutputPopup, setShowFinalOutputPopup] = useState(false)
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
@@ -291,10 +291,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     // Only close if workspacePath actually changed (not on initial mount)
     if (prevWorkspacePathRef.current !== undefined && prevWorkspacePathRef.current !== workspacePath) {
       setShowLearningsPopup(false)
+      setShowKBPopup(false)
       setShowExecutionLogsPopup(false)
       setShowCostsPopup(false)
       setShowEvaluationPopup(false)
-      setShowFinalOutputPopup(false)
       setShowVersionsPopup(false)
     }
     prevWorkspacePathRef.current = workspacePath
@@ -895,6 +895,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
       currentPhase === 'workflow-builder')
+  const isReportWorkspace = workflowWorkspaceView === 'report'
+  const isPlanWorkspace = workflowWorkspaceView === 'plan'
+  const isFlowWorkspace = workflowWorkspaceView === 'flow'
 
   // Handle selecting start point from dropdown
   const handleSelectStartPoint = useCallback((option: StartPointOption) => {
@@ -1123,24 +1126,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workspacePath
   ])
 
-  const handleRunReport = useCallback(async (runFolder: string) => {
-    if (!runFolder || !runFolder.includes('/')) {
-      throw new Error('Select a group-scoped run folder like iteration-2/manish before generating the report.')
-    }
-
-    const options = buildExecutionOptions()
-    const inferredGroupName = extractGroupNameFromFolder(runFolder, variablesManifest)
-    const enabledGroupNames = inferredGroupName
-      ? [inferredGroupName]
-      : (options.enabled_group_names && options.enabled_group_names.length > 0 ? options.enabled_group_names : undefined)
-
-    onStartPhase(REPORT_EXECUTION_PHASE_ID, {
-      ...options,
-      selected_run_folder: runFolder,
-      enabled_group_names: enabledGroupNames,
-    })
-  }, [buildExecutionOptions, onStartPhase, variablesManifest])
-
   const handleRunEvaluation = useCallback(async (runFolder: string) => {
     if (!runFolder || !runFolder.includes('/')) {
       throw new Error('Select a group-scoped run folder like iteration-2/manish before running evaluation.')
@@ -1173,6 +1158,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <button
               onClick={() => {
                 setWorkflowWorkspaceView('builder')
+                // Reset canvas to flow in case user is coming from Report view.
+                if (useWorkflowStore.getState().canvasViewMode === 'report') {
+                  useWorkflowStore.getState().setCanvasViewMode('flow')
+                }
                 onStartPhase('workflow-builder')
               }}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
@@ -1186,6 +1175,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <button
               onClick={() => {
                 setWorkflowWorkspaceView('execution')
+                if (useWorkflowStore.getState().canvasViewMode === 'report') {
+                  useWorkflowStore.getState().setCanvasViewMode('flow')
+                }
                 if (latestExecutionSelection?.runFolder) {
                   setSelectedRunFolder(latestExecutionSelection.runFolder)
                   if (latestExecutionSelection.groupIds.length > 0) {
@@ -1202,6 +1194,55 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               }`}
             >
               Execution
+            </button>
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('flow')
+                // Hide chat entirely so the canvas becomes visible. Just collapsing
+                // chatAreaExpanded is not enough — WorkflowLayout derives effective
+                // expansion as `chatAreaExpandedManual || !workspaceMinimized`, which
+                // re-expands chat whenever the workspace panel isn't minimized.
+                store.setShowChatArea(false)
+                store.setCanvasViewMode('flow')
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                isFlowWorkspace
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Flow
+            </button>
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('plan')
+                store.setShowChatArea(false)
+                store.setCanvasViewMode('plan')
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                isPlanWorkspace
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Plan
+            </button>
+            <button
+              onClick={() => {
+                const store = useWorkflowStore.getState()
+                store.setWorkflowWorkspaceView('report')
+                store.setShowChatArea(false)
+                store.setCanvasViewMode('report')
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                isReportWorkspace
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Report
             </button>
         </div>
         <>
@@ -1484,6 +1525,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {/* Show Knowledgebase — entities/relationships accumulated by the KB update agent */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowKBPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Database className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Knowledgebase</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Show Evaluation Reports - opens popup with evaluation scores */}
         {workspacePath && (
           <Tooltip>
@@ -1499,19 +1555,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
-        {workspacePath && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowFinalOutputPopup(true)}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>Final report</p></TooltipContent>
-          </Tooltip>
-        )}
 
         {/* Show Versions - opens popup with version publish/revert */}
         {workspacePath && (
@@ -1600,6 +1643,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       plan={plan || null}
     />
 
+    {/* Knowledgebase Popup */}
+    <KBPopup
+      isOpen={showKBPopup}
+      onClose={() => setShowKBPopup(false)}
+      workspacePath={workspacePath || null}
+    />
+
     {/* Costs Popup */}
     <CostsPopup
       isOpen={showCostsPopup}
@@ -1626,17 +1676,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       selectedRunFolder={contextRunFolder}
       runFolders={runFoldersNames}
       onRunEvaluation={handleRunEvaluation}
-    />
-
-    <FinalOutputPopup
-      isOpen={showFinalOutputPopup}
-      onClose={() => setShowFinalOutputPopup(false)}
-      workspacePath={workspacePath || null}
-      selectedRunFolder={contextRunFolder}
-      runFolders={runFoldersNames}
-      variablesManifest={variablesManifest}
-      workflowTitle={typeof plan?.title === 'string' ? plan.title : undefined}
-      onRunReport={handleRunReport}
     />
 
     {/* Workflow Versions Popup */}

@@ -99,7 +99,7 @@ Challenge every decision: step boundaries, step types, execution modes, context 
   },
   {
     command: 'harden',
-    description: 'Harden the workflow from the latest run\'s eval results',
+    description: 'Run workflow → eval → harden (full cycle on the latest run)',
     icon: <Shield className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -107,8 +107,32 @@ Challenge every decision: step boundaries, step types, execution modes, context 
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` focus="${focus}"` : ''
-      ctx.onSubmit(`Run harden_workflow(${focusText}) now. Analyze all group eval reports, fix every failing step, and summarize what changed.`)
+      const focusArg = focus ? `focus="${focus}"` : ''
+      const focusLine = focus ? `\nFocus areas for harden: **${focus}**.` : ''
+      ctx.onSubmit(`Run a full execute → evaluate → harden cycle on this workflow. Do all phases autonomously without pausing for confirmation.${focusLine}
+
+PHASE 1 — EXECUTE (one group at a time)
+1. Read variables.json to get the list of enabled group names.
+2. For each group, sequentially: call run_full_workflow(enabled_group_names=["{group}"]) and wait for that group to complete before starting the next. Running one group at a time keeps signal clean (per-group failures are isolated), avoids resource contention (browsers, API rate limits), and lets you abort early if a group is failing badly.
+   - The first group's run triggers paired iteration rotation (iteration-0 → iteration-N for both runs/ and evaluation/runs/). Subsequent partial-group runs in this same cycle reuse iteration-0 without rotating, so all groups end up sharing the same iteration-0 by the time PHASE 2 starts.
+3. If a group fails outright (no usable outputs), note it but continue with remaining groups — partial coverage is still useful for harden. If ALL groups fail, stop and report what went wrong.
+
+PHASE 2 — EVALUATE (one group at a time)
+1. For each group that produced outputs in PHASE 1, sequentially: call run_full_evaluation(target_run_folder="iteration-0/{group}") and wait for it to complete before starting the next.
+2. Eval always targets the current iteration-0; the per-group suffix narrows scoring to that group's artifacts.
+3. Confirm evaluation/runs/iteration-0/{group}/evaluation_report.json exists for each evaluated group before continuing.
+
+PHASE 3 — HARDEN
+1. Call harden_workflow(target_run_folder="iteration-0"${focusArg ? ', ' + focusArg : ''}). Reads every group's eval report, identifies failing steps, applies targeted fixes (pre-validation rules, description tightening, main.py patches, KB config, optimized_reason), and marks passing steps as optimized where appropriate.
+2. Wait for the harden agent to finish — it runs in the background and notifies on completion.
+
+PHASE 4 — REPORT
+Summarize the cycle:
+- Workflow run outcome (groups that succeeded/failed)
+- Evaluation scores per group (highlight any < 8)
+- Harden agent's changes (list each step touched and what was changed)
+- Steps newly marked optimized vs steps still failing
+- What still needs human attention, if anything`)
     }
   },
   {

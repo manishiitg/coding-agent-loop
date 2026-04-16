@@ -158,6 +158,42 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	return content, true, nil
 }
 
+// deleteWorkspaceFile deletes a file from the workspace via the workspace API.
+// Returns nil if the file doesn't exist (404) or was successfully deleted.
+func deleteWorkspaceFile(ctx context.Context, configPath string) error {
+	pathSegments := strings.Split(configPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // writeFileToWorkspace writes content to a file in the workspace via the workspace API
 func writeFileToWorkspace(ctx context.Context, filePath, content string) error {
 	pathSegments := strings.Split(filePath, "/")
@@ -2139,125 +2175,6 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 	return nil
 }
 
-// readFinalOutputConfigFromWorkspace reads planning/output_plan.json from workspace using workspace API.
-// Returns the effective config. Missing/empty plans fall back to the built-in
-// execution-summary report config, while explicitly disabled plans return the
-// disabled config from the file.
-func readFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) (*todo_creation_human.WorkflowFinalOutputConfig, error) {
-	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
-	content, exists, err := readFileFromWorkspace(ctx, configPath)
-	if err != nil {
-		return nil, err
-	}
-	if !exists || strings.TrimSpace(content) == "" {
-		return todo_creation_human.DefaultWorkflowFinalOutputConfig(), nil
-	}
-
-	plan, err := todo_creation_human.ParseWorkflowOutputPlan(content)
-	if err != nil {
-		return nil, err
-	}
-	cfg, _ := todo_creation_human.ResolveWorkflowFinalOutputConfig(plan)
-	return cfg, nil
-}
-
-// writeFinalOutputConfigToWorkspace writes planning/output_plan.json to workspace using workspace API.
-func writeFinalOutputConfigToWorkspace(ctx context.Context, workspacePath string, cfg *todo_creation_human.WorkflowFinalOutputConfig) error {
-	if cfg == nil {
-		return fmt.Errorf("final output config is nil")
-	}
-	plan := cfg.ToOutputPlan()
-	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
-	configJSON, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal output_plan.json: %w", err)
-	}
-	if err := writeFileToWorkspace(ctx, configPath, string(configJSON)); err != nil {
-		return err
-	}
-	return nil
-}
-
-// deleteFinalOutputConfigFromWorkspace deletes planning/output_plan.json from workspace.
-func deleteFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) error {
-	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
-	if err := deleteWorkspaceFile(ctx, configPath); err != nil {
-		return err
-	}
-	return nil
-}
-
-func deleteWorkspaceFile(ctx context.Context, configPath string) error {
-	pathSegments := strings.Split(configPath, "/")
-	encodedSegments := make([]string, len(pathSegments))
-	for i, segment := range pathSegments {
-		encodedSegments[i] = url.PathEscape(segment)
-	}
-	encodedPath := strings.Join(encodedSegments, "/")
-
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
-	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := workspaceHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to call workspace API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
-}
-
-func latestFinalOutputArchivePath(ctx context.Context, workspacePath, runFolder string) (string, bool, error) {
-	groupName := todo_creation_human.FinalOutputArchiveGroup(runFolder)
-	if groupName == "" {
-		return "", false, fmt.Errorf("failed to derive report archive group from run folder %q", runFolder)
-	}
-
-	reportsFolderPath := filepath.ToSlash(filepath.Join(workspacePath, todo_creation_human.DefaultFinalOutputReportsRoot, groupName))
-	listing, exists, err := listWorkspaceFolder(ctx, reportsFolderPath, 1)
-	if err != nil {
-		return "", false, err
-	}
-	if !exists {
-		return "", false, nil
-	}
-
-	candidates := make([]string, 0, len(listing))
-	for _, item := range listing {
-		if item.Type != "file" {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(item.FilePath), ".md") {
-			continue
-		}
-		candidates = append(candidates, filepath.ToSlash(item.FilePath))
-	}
-
-	if len(candidates) == 0 {
-		return "", false, nil
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return filepath.Base(candidates[i]) > filepath.Base(candidates[j])
-	})
-
-	relativePath := strings.TrimPrefix(candidates[0], filepath.ToSlash(workspacePath)+"/")
-	return relativePath, true, nil
-}
 
 // findInStepsWithOffset recursively searches nested steps within a step, handling ConditionalPlanStep offsets correctly
 func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID string, basePath []int, findInSteps func([]todo_creation_human.PlanStepInterface, string, []int) (todo_creation_human.PlanStepInterface, []int)) (todo_creation_human.PlanStepInterface, []int) {
@@ -3085,266 +3002,7 @@ func (api *StreamingAPI) handleBatchUpdateSteps(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleGetFinalOutputConfig returns the current planning/output_plan.json content as a simplified config view.
-func (api *StreamingAPI) handleGetFinalOutputConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	workspacePath := r.URL.Query().Get("workspace_path")
-	if workspacePath == "" {
-		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	cfg, err := readFinalOutputConfigFromWorkspace(r.Context(), workspacePath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read final output config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]interface{}{
-		"success": true,
-		"data": map[string]interface{}{
-			"config": cfg,
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleUpdateFinalOutputConfig updates or deletes planning/output_plan.json via the simplified config view.
-func (api *StreamingAPI) handleUpdateFinalOutputConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		WorkspacePath string                                         `json:"workspace_path"`
-		Config        *todo_creation_human.WorkflowFinalOutputConfig `json:"config"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-	if req.WorkspacePath == "" {
-		http.Error(w, "workspace_path is required", http.StatusBadRequest)
-		return
-	}
-
-	if req.Config == nil {
-		if err := deleteFinalOutputConfigFromWorkspace(r.Context(), req.WorkspacePath); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to delete final output config: %v", err), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Final output config cleared",
-			"data": map[string]interface{}{
-				"config": nil,
-			},
-		})
-		return
-	}
-
-	if err := writeFinalOutputConfigToWorkspace(r.Context(), req.WorkspacePath, req.Config); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write final output config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Final output config updated successfully",
-		"data": map[string]interface{}{
-			"config": req.Config,
-		},
-	})
-}
-
-// handleGetFinalOutputs reads the latest archived final output markdown for a specific group-scoped run folder.
-func (api *StreamingAPI) handleGetFinalOutputs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	workspacePath := r.URL.Query().Get("workspace_path")
-	runFolder := r.URL.Query().Get("run_folder")
-	if workspacePath == "" {
-		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	cfg, err := readFinalOutputConfigFromWorkspace(r.Context(), workspacePath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read final output config: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]interface{}{
-		"success": true,
-		"config":  cfg,
-		"exists":  false,
-	}
-
-	if runFolder == "" {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-	if !strings.Contains(runFolder, "/") {
-		http.Error(w, "run_folder must be group-scoped (iteration-X/group-name)", http.StatusBadRequest)
-		return
-	}
-
-	outputRelativePath, exists, err := latestFinalOutputArchivePath(r.Context(), workspacePath, runFolder)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to resolve archived final output: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if !exists {
-		response["run_folder"] = runFolder
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	outputPath := filepath.ToSlash(filepath.Join(workspacePath, outputRelativePath))
-	content, exists, err := readFileFromWorkspace(r.Context(), outputPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read final output file: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	response["run_folder"] = runFolder
-	response["output_path"] = outputRelativePath
-	response["exists"] = exists
-	if exists {
-		response["content"] = content
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleGenerateFinalOutput generates the final markdown artifact for a group-scoped run folder.
-func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		WorkspacePath string `json:"workspace_path"`
-		RunFolder     string `json:"run_folder"`
-		WorkflowTitle string `json:"workflow_title,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-	if req.WorkspacePath == "" || req.RunFolder == "" {
-		http.Error(w, "workspace_path and run_folder are required", http.StatusBadRequest)
-		return
-	}
-	if !strings.Contains(req.RunFolder, "/") {
-		http.Error(w, "run_folder must be group-scoped (iteration-X/group-name)", http.StatusBadRequest)
-		return
-	}
-
-	currentUserID := GetUserIDFromContext(r.Context())
-	presetPhaseLLM, tieredConfig, presetID, presetErr := api.resolveWorkflowLLMConfigForWorkspace(r.Context(), req.WorkspacePath, currentUserID)
-	if presetErr != nil {
-		http.Error(w, fmt.Sprintf("Failed to resolve workflow LLM config: %v", presetErr), http.StatusInternalServerError)
-		return
-	}
-
-	llmConfig := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: api.provider,
-			ModelID:  api.model,
-		},
-		APIKeys: MergedProviderAPIKeys(r.Context()),
-	}
-
-	customTools, customToolExecutors, toolCategories := createCustomTools(true)
-
-	controller, err := todo_creation_human.NewStepBasedWorkflowOrchestrator(
-		r.Context(),
-		"",
-		"",
-		api.temperature,
-		"workflow",
-		nil,
-		nil,
-		false,
-		api.mcpConfigPath,
-		llmConfig,
-		30,
-		api.logger,
-		nil,
-		nil,
-		customTools,
-		customToolExecutors,
-		toolCategories,
-		presetPhaseLLM,
-		true,
-		tieredConfig,
-	)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create final output controller: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	controller.SetWorkspacePath(req.WorkspacePath)
-	controller.SetObjective(req.WorkflowTitle)
-
-	result, err := controller.GenerateFinalOutput(r.Context(), req.WorkflowTitle, req.RunFolder)
-	if err != nil {
-		log.Printf("[FINAL_OUTPUT] Manual generate failed: workspace=%s run_folder=%s preset=%s user=%s err=%v", req.WorkspacePath, req.RunFolder, presetID, currentUserID, err)
-		http.Error(w, fmt.Sprintf("Failed to generate final output: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
 
 // handleDeleteStep handles deleting a step from plan and config
 func (api *StreamingAPI) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
@@ -5206,7 +4864,7 @@ var versionedConfigFiles = []string{
 	"planning/step_config.json",
 	"planning/workflow_layout.json",
 	"planning/step_override.json",
-	"planning/output_plan.json",
+	"reports/report_plan.md",
 	"variables/variables.json",
 	"evaluation/evaluation_plan.json",
 }

@@ -84,12 +84,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
 	// Knowledgebase folder: Workflow/codeanalysis/knowledgebase/ (persistent files across runs)
 	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+	// DB folder: Workflow/codeanalysis/db/ (structured JSON data, always enabled, shared across runs)
+	dbPath := getDBPath(baseWorkspacePath)
 
-	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder
-	// WRITE: full execution folder (so orchestrator can do work directly) + knowledgebase + learnings
+	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder + db folder
+	// WRITE: full execution folder (so orchestrator can do work directly) + knowledgebase + learnings + db
 
-	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
-	writePaths := []string{executionWorkspacePath, knowledgebasePath, stepLearningsPath}
+	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath, dbPath}
+	writePaths := []string{executionWorkspacePath, knowledgebasePath, stepLearningsPath, dbPath}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	skillStepConfig := getAgentConfigs(step)
@@ -299,16 +301,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	stepConfig := getAgentConfigs(step)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 
-	// Get knowledgebase setting
-	useKnowledgebase := hcpo.UseKnowledgebase()
+	// Resolve KB access mode for this step (explicit step config > preset default).
+	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
+	useKnowledgebase := kbAccess != KBAccessNone
 
 	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
 	docsRoot := GetPromptDocsRoot()
 	fgExecPath := hcpo.getTodoTaskExecutionWorkspacePath()
 	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings")
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgKnowledgebasePath}
-	fgWritePaths := []string{fgExecPath, fgKnowledgebasePath, fgLearningsPath}
+	fgDBPath := getDBPath(baseWorkspacePath)
+	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgDBPath}
+	fgWritePaths := []string{fgExecPath, fgLearningsPath, fgDBPath}
+	if kbAccessAllowsRead(kbAccess) {
+		fgReadPaths = append(fgReadPaths, fgKnowledgebasePath)
+	}
+	if kbAccessAllowsWrite(kbAccess) {
+		fgWritePaths = append(fgWritePaths, fgKnowledgebasePath)
+	}
 
 	templateVars := map[string]string{
 		// Resolve variables in step metadata
@@ -339,11 +349,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.GetBrowserMode() != "" && hcpo.GetBrowserMode() != "none"),
 		// Add code execution mode and knowledgebase flags
 		"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode),
-		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase),
+		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
+		"KbAccess":            kbAccess,
+		"KbAccessLabel":       kbAccessLabel(kbAccess),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),
 		"KnowledgebasePath":     filepath.Join(docsRoot, fgKnowledgebasePath),
+		"DBPath":                filepath.Join(docsRoot, fgDBPath),
 		"WorkflowRoot":          filepath.Join(docsRoot, baseWorkspacePath),
 		"LearningsPath":         filepath.Join(docsRoot, fgLearningsPath),
 	}

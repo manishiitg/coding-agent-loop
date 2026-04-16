@@ -14,6 +14,12 @@ type EvaluationStep struct {
 	SuccessCriteria string            `json:"success_criteria"`
 	AgentConfigs    *AgentConfigs     `json:"-"`                      // runtime config
 	ContextOutput   string            `json:"context_output,omitempty"` // Filename of output produced by the step
+	// DBWrite grants this evaluation step write access to db/. Read is always allowed.
+	// Off by default: evaluation typically reads db/ to score against real state, and its
+	// own writes stay in the sandbox run folder. Set true only for workflows where the eval
+	// step is the canonical data producer (the builder prompt warns about this).
+	// See docs/workflow/persistent_stores_design.md section 1.
+	DBWrite bool `json:"db_write,omitempty"`
 }
 
 // Implement PlanStepInterface for EvaluationStep

@@ -427,9 +427,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Started tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Queued tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
 
-	go func() {
+	// Serialize learning agents through a single-writer queue (see queues.go).
+	// Concurrent step completions used to race on shared learnings/_global/ files via
+	// bare `go func()`. The queue preserves FIFO completion order so cumulative context
+	// builds up naturally and no file-level locking is needed on learnings writes.
+	enqueueLearningJob(func() {
 		var result string
 		var execErr error
 		defer func() {
@@ -445,7 +449,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 		} else {
 			result = fmt.Sprintf("Success learning completed for %s", stepLabel)
 		}
-	}()
+	})
 
 	return true
 }

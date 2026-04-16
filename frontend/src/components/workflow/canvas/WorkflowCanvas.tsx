@@ -11,7 +11,7 @@ import {
   type OnSelectionChangeParams,
   SelectionMode
 } from '@xyflow/react'
-import { Workflow, List, ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
+import { ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { nodeTypes } from '../nodes'
@@ -22,6 +22,7 @@ import { StepLegend } from './StepLegend'
 import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { PlanOutlineView } from './PlanOutlineView'
+import { ReportView } from '../ReportViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { useOutputPlanData } from '../hooks/useOutputPlanData'
@@ -2279,15 +2280,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             workspacePath={workspacePath}
             className="h-full"
           />}
-          {/* Floating view mode toggle — bottom left */}
-          <button
-            onClick={() => setCanvasViewMode('flow')}
-            className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            title="Switch to flow diagram"
-          >
-            <Workflow className="w-3 h-3" />
-            <span>Flow</span>
-          </button>
+        </div>
+      ) : canvasViewMode === 'report' ? (
+        <div className="flex-1 min-h-0 relative">
+          {workspacePath && <ReportView workspacePath={workspacePath} />}
         </div>
       ) : <div className="flex-1 min-h-0 relative flex">
         <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
@@ -2350,16 +2346,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             currentStepId={currentStepId}
           />
         )}
-
-        {/* Floating view mode toggle — top left */}
-        <button
-          onClick={() => setCanvasViewMode('plan')}
-          className="absolute top-3 left-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          title="Switch to plan outline"
-        >
-          <List className="w-3 h-3" />
-          <span>Plan</span>
-        </button>
 
         {/* Floating canvas controls — top right */}
         <div className="absolute top-3 right-3 z-20 flex items-center gap-0.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-1 py-0.5">

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -266,6 +267,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	lockValue := true
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
 	stepConfig.AgentConfigs.Optimized = &lockValue
+	if strings.TrimSpace(stepConfig.AgentConfigs.OptimizedReason) == "" {
+		stepConfig.AgentConfigs.OptimizedReason = "Auto-locked after 3+ successful runs with learnings present and pre-validation schema defined."
+	}
 
 	// Update the config in the slice
 	for i := range configs {

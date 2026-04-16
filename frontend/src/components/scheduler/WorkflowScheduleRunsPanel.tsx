@@ -15,7 +15,7 @@ import type { ScheduledJob, ScheduledJobRun, SchedulerConfig, RunFolderInfo, Run
 import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
-import FinalOutputPopup from '../workflow/FinalOutputPopup'
+import { ReportViewer } from '../workflow/ReportViewer'
 import SchedulePresetPopup from '../SchedulePresetPopup'
 import ScheduleLiveEventsPopup from './ScheduleLiveEventsPopup'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
@@ -1587,15 +1587,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         />
       )}
 
-      {/* Final report popup */}
+      {/* Dynamic report viewer (replaces the deleted static FinalOutputPopup).
+          The report is workspace-scoped now — runFolders/selectedRunFolder are ignored. */}
       {popupState?.popup === 'report' && (
-        <FinalOutputPopup
+        <ReportViewer
           isOpen
           onClose={() => setPopupState(null)}
           workspacePath={popupState.workspacePath}
-          selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
-          runFolders={popupState.runFolders}
-          variablesManifest={null}
         />
       )}
 

@@ -1077,7 +1077,7 @@ func isWorkflowRootValidationPath(fileName string) bool {
 	}
 
 	switch topLevel {
-	case "knowledgebase", "planning", "variables", "learnings", "memory", "output", "evaluation", "runs", "logs":
+	case "knowledgebase", "planning", "variables", "learnings", "memory", "output", "evaluation", "runs", "logs", "db", "soul":
 		return true
 	default:
 		return false

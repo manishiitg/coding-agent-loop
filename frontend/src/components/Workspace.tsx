@@ -711,10 +711,11 @@ export default function Workspace({
             ? workflowFolder.children 
             : filteredFiles
           
-          // Expand top-level workflow structure only — exclude runs/ to avoid expanding all iterations
+          // Expand only the first-level folders inside the workflow root.
+          // filesToExpand is already workflowFolder.children, so level 0 means direct children only.
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
           const excludeFolders = ['planning', 'variables', 'learnings', 'logs', 'runs']
-          expandFoldersToLevel(filesToExpand, 1, additionalFolders, excludeFolders)
+          expandFoldersToLevel(filesToExpand, 0, additionalFolders, excludeFolders)
           
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
@@ -761,6 +762,7 @@ export default function Workspace({
     workflowFolderPath: effectiveWorkflowFolderPath,
     filteredFiles,
     selectedRunFolder,
+    workspaceMinimized: minimized,
     expandedFolders,
     setExpandedFolders
   })

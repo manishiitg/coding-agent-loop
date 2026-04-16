@@ -101,6 +101,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
 		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
 		templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsInstructions()
+		templateData["MainPyAuthoringRules"] = BuildMainPyAuthoringRules()
 		wsPath := templateVars["WorkspacePath"]
 		templateData["AbsWorkspacePath"] = GetPromptDocsRoot() + "/" + wsPath
 		templateData["AbsDocsRoot"] = GetPromptDocsRoot()
@@ -292,6 +293,7 @@ type WorkshopConfig struct {
 	LLMConfig            *orchestrator.LLMConfig
 	PresetPhaseLLM       *AgentLLMConfig
 	UseKnowledgebase     bool
+	LockKnowledgebase    bool
 	LLMAllocationMode    string
 	TieredConfig         *TieredLLMConfig
 	Logger               loggerv2.Logger
@@ -420,6 +422,9 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		controller.SetSecrets(cfg.Secrets)
 		logger.Debug(fmt.Sprintf("[WORKSHOP] Set %d secrets", len(cfg.Secrets)))
 	}
+
+	// Propagate knowledgebase lock flag
+	controller.SetLockKnowledgebase(cfg.LockKnowledgebase)
 
 	// Propagate selected skills
 	if len(cfg.SelectedSkills) > 0 {
@@ -567,6 +572,7 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 	selectedTools []string, toolsParsed bool,
 	useCodeExecutionMode bool,
 	useKnowledgebase bool,
+	lockKnowledgebase bool,
 	selectedSkills []string, skillsParsed bool,
 	secrets []orchestrator.SecretEntry,
 ) {
@@ -576,13 +582,14 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 	}
 	s.controller.SetUseCodeExecutionMode(useCodeExecutionMode)
 	s.controller.useKnowledgebase = useKnowledgebase
+	s.controller.SetLockKnowledgebase(lockKnowledgebase)
 	if skillsParsed {
 		s.controller.SetSelectedSkills(selectedSkills)
 	}
 	s.controller.SetSecrets(secrets)
 
-	// Sync back to session.config so run_full_workflow / run_full_evaluation /
-	// run_full_report (which create fresh controllers from cfg) pick up the latest values.
+	// Sync back to session.config so run_full_workflow / run_full_evaluation (which
+	// create fresh controllers from cfg) pick up the latest values.
 	if s.config != nil {
 		s.config.SelectedServers = selectedServers
 		if toolsParsed {
@@ -590,6 +597,7 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 		}
 		s.config.UseCodeExecutionMode = useCodeExecutionMode
 		s.config.UseKnowledgebase = useKnowledgebase
+		s.config.LockKnowledgebase = lockKnowledgebase
 		s.config.Secrets = append([]orchestrator.SecretEntry(nil), secrets...)
 	}
 }
@@ -662,6 +670,60 @@ func (s *WorkshopChatSession) Close() {
 	}
 	if s.controller != nil {
 		s.controller.CloseWorkshopGroupSessions()
+	}
+}
+
+// RegisterReorganizeKnowledgebaseTool registers a reorganize_knowledgebase tool that
+// applies a natural-language transformation to knowledgebase/graph.json (dedupe entities,
+// rename types, purge bad provenance, etc.). Runs synchronously — the tool handler
+// blocks until the agent finishes — but serialized through kbUpdateQueue so it can't
+// race with a live workflow's post-step KB updates. Shorter-running transformations
+// feel responsive; larger ones will appear as a slow tool call but that's honest UX.
+//
+// See docs/workflow/persistent_stores_design.md section 5 and the post-step KB update
+// agent for the extraction counterpart.
+func RegisterReorganizeKnowledgebaseTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"reorganize_knowledgebase",
+		"Apply a natural-language transformation to knowledgebase/graph.json: dedupe entities, rename types, drop entries from a bad run, merge split records, etc. Takes one argument 'instruction' describing what to do. The agent reads graph.json + index.json, applies the transformation, and resyncs index.json. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"instruction": map[string]interface{}{
+					"type":        "string",
+					"description": "What to do to the knowledgebase graph, in natural language. Examples: 'merge company-acme and company-acme-corp into one entity by label', 'rename all type=organization entries to type=company', 'delete all entities and relationships whose source.run starts with iteration-0/abandoned', 'dedupe relationships by (from, type, to)'. Be specific — the agent follows the instruction literally and will not opportunistically clean up other parts of the graph.",
+				},
+			},
+			"required": []string{"instruction"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			instruction, _ := args["instruction"].(string)
+			instruction = strings.TrimSpace(instruction)
+			if instruction == "" {
+				return "instruction is required — describe the transformation in natural language, e.g. 'merge company-acme and company-acme-corp'", nil
+			}
+			if session == nil || session.controller == nil {
+				return "session controller not available — cannot run KB reorganize", nil
+			}
+			// Use the session's long-lived context so the wait aborts if the user closes
+			// the session. The agent itself runs with context.Background() inside the
+			// queue worker so it survives any individual tool-handler cancellation.
+			summary, err := session.controller.RunKBReorganize(session.sessionCtx, instruction)
+			if err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ reorganize_knowledgebase failed: %v", err))
+				return fmt.Sprintf("KB reorganize failed: %v", err), nil
+			}
+			if summary == "" {
+				return "KB reorganize completed (no summary line returned by agent)", nil
+			}
+			return summary, nil
+		},
+	); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to register reorganize_knowledgebase tool: %v", err))
 	}
 }
 
@@ -803,203 +865,6 @@ func RegisterRunFullEvaluationTool(
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_evaluation tool: %v", err))
-	}
-}
-
-// RegisterRunFullReportTool registers a run_full_report tool that executes the workflow
-// report/output generation against a target execution run. Runs in background.
-func RegisterRunFullReportTool(
-	mcpAgent *mcpagent.Agent,
-	session *WorkshopChatSession,
-	logger loggerv2.Logger,
-) {
-	if err := mcpAgent.RegisterCustomTool(
-		"run_full_report",
-		"Run the full workflow report generation against a target execution run. Report generation always targets iteration-0. Runs in background and notifies when complete.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'manish', 'group-1'). Required — reports are always group-scoped.",
-				},
-			},
-			"required": []string{"group_name"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			iteration := "iteration-0"
-			groupName, _ := args["group_name"].(string)
-			if groupName == "" {
-				return "group_name is required — reports are always group-scoped, e.g. group_name='manish'", nil
-			}
-			// Resolve group_name to actual folder name (e.g. "group-11" → "excellence")
-			groupFolderName := session.resolveGroupFolderName(ctx, groupName)
-			targetRunFolder := iteration + "/" + groupFolderName
-
-			cfg := session.config
-			if cfg == nil {
-				return "session config not available — cannot create report controller", nil
-			}
-
-			execID := fmt.Sprintf("report-full-%s-%d", strings.ReplaceAll(targetRunFolder, "/", "-"), time.Now().UnixNano())
-			execCtx, cancel := context.WithCancel(session.sessionCtx)
-
-			agentSessionID := fmt.Sprintf("workshop-report-%s-%d", strings.ReplaceAll(targetRunFolder, "/", "-"), time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         fmt.Sprintf("full-report-%s", targetRunFolder),
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			session.StepRegistry.Register(exec)
-			displayName := formatWorkshopExecutionName("Report", targetRunFolder)
-			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
-			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: displayName, Cancel: cancel})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := session.controller.GetContextAwareBridge()
-				execMeta := map[string]string{
-					"workshop_mode":  "output",
-					"execution_type": "full-report",
-					"run_folder":     targetRunFolder,
-				}
-				if iterationName != "" {
-					execMeta["iteration"] = iterationName
-				}
-				if groupName != "" {
-					execMeta["group_name"] = groupName
-				}
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-report-execution",
-							AgentName:     displayName,
-							Success:       execErr == nil && !skipNotify,
-							InputData: map[string]string{
-								"run_folder":     targetRunFolder,
-								"workshop_mode":  "output",
-								"execution_type": "report",
-							},
-						}
-						if iterationName != "" {
-							endEvent.InputData["iteration"] = iterationName
-						}
-						if groupName != "" {
-							endEvent.InputData["group_name"] = groupName
-						}
-						if execErr != nil {
-							if skipNotify || execCtx.Err() != nil {
-								endEvent.Result = fmt.Sprintf("Canceled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = firstNonEmpty(result, "Report generated successfully.")
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && session.executionNotifier != nil {
-						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-report-execution",
-						AgentName:     displayName,
-						InputData: map[string]string{
-							"run_folder":     targetRunFolder,
-							"workshop_mode":  "output",
-							"execution_type": "report",
-						},
-					}
-					if iterationName != "" {
-						startEvent.InputData["iteration"] = iterationName
-					}
-					if groupName != "" {
-						startEvent.InputData["group_name"] = groupName
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				reportController, err := NewStepBasedWorkflowOrchestrator(
-					execCtx,
-					"", "", 0.7, "simple",
-					cfg.SelectedServers,
-					cfg.SelectedTools,
-					cfg.UseCodeExecutionMode,
-					cfg.MCPConfigPath,
-					cfg.LLMConfig,
-					100,
-					logger,
-					nil,
-					cfg.EventBridge,
-					cfg.CustomTools,
-					cfg.CustomToolExecutors,
-					cfg.ToolCategories,
-					cfg.PresetPhaseLLM,
-					cfg.UseKnowledgebase,
-					cfg.TieredConfig,
-				)
-				if err != nil {
-					execErr = fmt.Errorf("failed to create report controller: %w", err)
-					return
-				}
-				defer reportController.CloseWorkshopGroupSessions()
-
-				if cfg.SessionID != "" {
-					reportController.SetHTTPSessionID(cfg.SessionID)
-				}
-				if len(cfg.Secrets) > 0 {
-					reportController.SetSecrets(cfg.Secrets)
-				}
-				if cfg.WorkspaceEnvRef != nil {
-					reportController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
-				}
-				if skills := session.controller.GetSelectedSkills(); len(skills) > 0 {
-					reportController.SetSelectedSkills(skills)
-				}
-				if session.controller.GetCdpPort() > 0 {
-					reportController.SetCdpPort(session.controller.GetCdpPort())
-				}
-				reportController.SetExecutionOptions(session.controller.GetExecutionOptions())
-
-				result, execErr = reportController.ExecuteFinalOutputOnly(
-					execCtx,
-					session.controller.GetObjective(),
-					cfg.WorkspacePath,
-					targetRunFolder,
-				)
-				result = firstNonEmpty(strings.TrimSpace(result), "Report generated successfully.")
-			}()
-
-			return fmt.Sprintf("Full report generation started for run %q.\nexecution_id: %q\nThis will regenerate the report artifact for that run.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_report tool: %v", err))
 	}
 }
 

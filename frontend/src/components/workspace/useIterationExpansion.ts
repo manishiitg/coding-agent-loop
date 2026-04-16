@@ -7,6 +7,7 @@ interface UseIterationExpansionProps {
   workflowFolderPath: string | null
   filteredFiles: PlannerFile[]
   selectedRunFolder: string | null
+  workspaceMinimized: boolean
   expandedFolders: Set<string>
   setExpandedFolders: (folders: Set<string>) => void
 }
@@ -21,6 +22,7 @@ export function useIterationExpansion({
   workflowFolderPath,
   filteredFiles,
   selectedRunFolder,
+  workspaceMinimized,
   expandedFolders,
   setExpandedFolders
 }: UseIterationExpansionProps) {
@@ -37,6 +39,13 @@ export function useIterationExpansion({
       selectedRunFolder === 'new'
     ) {
       lastProcessedRunFolderRef.current = null
+      return
+    }
+
+    // When the workspace is minimized, treat the current run as already processed.
+    // This prevents reopening the right panel from auto-expanding iteration/group folders.
+    if (workspaceMinimized) {
+      lastProcessedRunFolderRef.current = selectedRunFolder
       return
     }
 
@@ -153,5 +162,5 @@ export function useIterationExpansion({
     // expandedFolders is intentionally excluded from dependencies - we only want to run when selectedRunFolder changes,
     // not when folders are manually expanded, to allow manual folder expansion
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, selectedRunFolder, setExpandedFolders])
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, selectedRunFolder, workspaceMinimized, setExpandedFolders])
 }

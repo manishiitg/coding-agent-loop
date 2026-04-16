@@ -52,14 +52,21 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 | Execution folder | `+"`"+`{{.WorkspacePath}}/`+"`"+` |
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` |
 | Downloads (user files) | `+"`"+`{{.WorkspacePath}}/Downloads/`+"`"+` |
-{{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` |
+| DB (PERSISTENT, structured JSON) | `+"`"+`{{.DBPath}}/`+"`"+` |
+{{if ne .KbAccess "none"}}| Knowledgebase (PERSISTENT, {{.KbAccessLabel}}) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` |
 {{end}}
 
 **Folder Guard (enforced)**:
 - Allowed READ: {{.FolderGuardReadPaths}}
 - Allowed WRITE: {{.FolderGuardWritePaths}}
 - Step folder is **volatile** — deleted on re-execution. Only write primary results here.
-{{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
+
+**Three persistent stores — do not confuse them:**
+- **db/** — **workflow state and results**. JSON files this step produces/consumes (processed records, cursors, cumulative output). Owned by your step. READ first, upsert by the builder-defined key, write back merged. NEVER overwrite wholesale — that destroys rows from other groups/runs.
+- **knowledgebase/graph.json** — **decisions, facts, strategies built up over time** (entities + relationships). Written **only by the post-step KB update agent**, NOT by you. Your step may read it (via `+"`"+`cat knowledgebase/graph.json`+"`"+` / `+"`"+`jq`+"`"+`) if `+"`"+`KbAccess`+"`"+` grants read. Do NOT write `+"`"+`graph.json`+"`"+` or `+"`"+`index.json`+"`"+` directly — that breaks the KB update agent's merge discipline.
+- **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Read-only for you; the learning agent maintains it after the step. Relevant learnings are already injected under `+"`"+`## Skill`+"`"+` below when applicable.
+
+{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them.{{else if eq .KbAccess "write"}} Write-scoped: the folder guard allows writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` yourself; emit facts in your step output and let the KB agent merge.{{end}}
 {{end}}
 ## EXECUTION RULES
 1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
@@ -273,6 +280,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
 	knowledgebasePath := templateVars["KnowledgebasePath"] // Knowledgebase folder path (persistent files across runs)
+	dbPath := templateVars["DBPath"]                       // DB folder path (structured JSON, always enabled)
 
 	// Get current date and time
 	now := time.Now()
@@ -344,7 +352,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema,                     // Validation schema JSON string
 		"KnowledgebasePath":          knowledgebasePath,                    // Knowledgebase folder path
-		"UseKnowledgebase":           templateVars["UseKnowledgebase"],     // Whether knowledgebase is enabled
+		"DBPath":                     dbPath,                               // DB folder path (always enabled)
+		"KbAccess":                   templateVars["KbAccess"],             // "read" | "write" | "read-write" | "none"
+		"KbAccessLabel":              templateVars["KbAccessLabel"],        // Human-readable label (e.g., "READ/WRITE")
 		"FolderGuardReadPaths":       folderGuardReadPaths,                 // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag

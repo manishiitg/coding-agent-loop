@@ -15,7 +15,6 @@ const (
 	WorkflowStatusPreVerification  = "execution"
 	WorkflowStatusPostVerification = "post-verification"
 	WorkflowStatusEvalExecution    = "evaluation-execution"
-	WorkflowStatusReportExecution  = "report-execution"
 	WorkflowStatusWorkflowBuilder  = "workflow-builder"
 	WorkflowStatusEvalBuilder      = "evaluation-builder"
 )
@@ -32,6 +31,7 @@ type PresetLLMConfig struct {
 
 	// Feature toggles.
 	UseKnowledgebase           *bool `json:"use_knowledgebase,omitempty"`
+	LockKnowledgebase          *bool `json:"lock_knowledgebase,omitempty"`
 	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"`
 	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`
 

@@ -27,11 +27,98 @@ import (
 // This folder is never deleted during cleanup operations and is shared across all runs
 const KnowledgebaseFolderName = "knowledgebase"
 
+// DBFolderName is the name of the persistent structured-data folder at workspace root.
+// Always created on workspace init (no preset toggle, unlike knowledgebase). All regular steps
+// get read+write by default. Evaluation steps get read always, write only if DBWrite: true
+// on the step. Files are JSON by convention; steps should upsert by builder-defined key rather
+// than overwrite wholesale. See docs/workflow/persistent_stores_design.md section 1.
+const DBFolderName = "db"
+
 // getKnowledgebasePath returns the full path to the knowledgebase folder
 // Path format: {workspaceRoot}/knowledgebase/
 // Knowledgebase is at workspace root level (same as runs/, planning/, learnings/) to be shared across all runs
 func getKnowledgebasePath(workspaceRoot string) string {
 	return fmt.Sprintf("%s/%s", workspaceRoot, KnowledgebaseFolderName)
+}
+
+// getDBPath returns the full path to the db folder.
+// Path format: {workspaceRoot}/db/
+func getDBPath(workspaceRoot string) string {
+	return fmt.Sprintf("%s/%s", workspaceRoot, DBFolderName)
+}
+
+// SoulFolderName is the name of the builder's long-term memory folder at workspace root.
+// Contains soul.md — a free-form markdown file maintained by the workflow interactive builder
+// across sessions. Not read or written by execution, evaluation, learning, or KB agents.
+// Kept outside planning/ because planning/ is read-only to the builder (modifications go
+// through typed plan-mod tools); soul.md is updated by shell write directly.
+// See docs/workflow/persistent_stores_design.md section 8.
+const SoulFolderName = "soul"
+
+// SoulFileName is the fixed markdown filename inside soul/.
+const SoulFileName = "soul.md"
+
+// getSoulPath returns the full path to the soul folder.
+// Path format: {workspaceRoot}/soul/
+func getSoulPath(workspaceRoot string) string {
+	return fmt.Sprintf("%s/%s", workspaceRoot, SoulFolderName)
+}
+
+// getSoulFilePath returns the full path to soul/soul.md.
+func getSoulFilePath(workspaceRoot string) string {
+	return fmt.Sprintf("%s/%s/%s", workspaceRoot, SoulFolderName, SoulFileName)
+}
+
+// Knowledgebase access modes — see docs/workflow/persistent_stores_design.md section 3.
+const (
+	KBAccessReadWrite = "read-write"
+	KBAccessRead      = "read"
+	KBAccessWrite     = "write"
+	KBAccessNone      = "none"
+)
+
+// resolveKnowledgebaseAccess resolves the effective KB access mode for a step.
+//
+// Policy: KB access is opt-in per step. Default is "none" — a step only gets KB read
+// or write when knowledgebase_access is explicitly set on its step_config.json entry.
+// The preset-level UseKnowledgebase flag is a prerequisite (when off, all steps are
+// forced to "none" regardless of explicit setting); it controls whether knowledgebase/
+// exists at all, not whether any given step can touch it.
+func resolveKnowledgebaseAccess(stepConfig *AgentConfigs, presetEnabled bool) string {
+	if !presetEnabled {
+		return KBAccessNone
+	}
+	if stepConfig != nil && stepConfig.KnowledgebaseAccess != "" {
+		switch stepConfig.KnowledgebaseAccess {
+		case KBAccessRead, KBAccessWrite, KBAccessReadWrite, KBAccessNone:
+			return stepConfig.KnowledgebaseAccess
+		}
+	}
+	return KBAccessNone
+}
+
+// kbAccessAllowsRead reports whether the given access mode grants read access.
+func kbAccessAllowsRead(mode string) bool {
+	return mode == KBAccessRead || mode == KBAccessReadWrite
+}
+
+// kbAccessAllowsWrite reports whether the given access mode grants write access.
+func kbAccessAllowsWrite(mode string) bool {
+	return mode == KBAccessWrite || mode == KBAccessReadWrite
+}
+
+// kbAccessLabel returns a human-readable label for prompt display.
+func kbAccessLabel(mode string) string {
+	switch mode {
+	case KBAccessReadWrite:
+		return "READ/WRITE"
+	case KBAccessRead:
+		return "READ"
+	case KBAccessWrite:
+		return "WRITE"
+	default:
+		return "NONE"
+	}
 }
 
 // isValidationFailure checks if validation failed (triggers human feedback)
@@ -947,7 +1034,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// via `cat`/`cp`. Snapshot and restore the prior config so the builder's out-of-step
 	// chat shell commands keep their broader access.
 	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID())
+		narrowKBAccess := resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1057,23 +1145,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure step execution folder exists: %v (continuing - folder will be created when files are written)", err))
 		}
-		// Get knowledgebase folder path (persistent files across runs, at workspace root) - only if enabled
+		// Resolve KB access mode for this step (explicit step config > preset default)
+		kbAccess := resolveKnowledgebaseAccess(agentConfigs, hcpo.UseKnowledgebase())
+		useKnowledgebase := kbAccess != KBAccessNone
 		knowledgebasePath := ""
-		useKnowledgebase := hcpo.UseKnowledgebase()
-		// Per-step override: disable_knowledgebase in step config takes precedence
-		if agentConfigs != nil && agentConfigs.DisableKnowledgebase != nil {
-			if *agentConfigs.DisableKnowledgebase {
-				useKnowledgebase = false
-			} else {
-				useKnowledgebase = true
-			}
-		}
 		if useKnowledgebase {
 			knowledgebasePath = getKnowledgebasePath(hcpo.GetWorkspacePath())
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), useKnowledgebase)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess)
+
+		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
+		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.
+		if evalStep, ok := step.(*EvaluationStep); ok && !evalStep.DBWrite {
+			dbPath := getDBPath(hcpo.GetWorkspacePath())
+			filtered := folderGuardWritePaths[:0]
+			for _, p := range folderGuardWritePaths {
+				if p != dbPath {
+					filtered = append(filtered, p)
+				}
+			}
+			folderGuardWritePaths = filtered
+		}
 
 		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
 		if isLearnCodeMode {
@@ -1141,7 +1235,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"WorkspacePath":         toAbsPath(executionWorkspacePath),                         // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
 			"LearningsPath":         toAbsPath(learningsPath),                                  // Absolute learnings folder path
 			"KnowledgebasePath":     toAbsPath(knowledgebasePath),                              // Absolute knowledgebase folder path
-			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                       // Whether knowledgebase is enabled
+			"DBPath":                toAbsPath(getDBPath(hcpo.GetWorkspacePath())),             // Absolute db folder path (always enabled)
+			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                       // Whether knowledgebase is enabled (deprecated, retained for backward compat)
+			"KbAccess":              kbAccess,                                                  // KB access mode: "read" | "write" | "read-write" | "none"
+			"KbAccessLabel":         kbAccessLabel(kbAccess),                                   // Human-readable label for prompt display
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                    // Code execution mode flag (step-specific or preset)
 			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
@@ -2084,7 +2181,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								executionLLM,
 								triggerReason,
 							) {
-								go func() {
+								// Fallback (non-workshop) path: serialize through the shared learningQueue.
+								// This mirrors the tracked path in startTrackedSuccessLearningPhase — both
+								// flow into the same single-writer worker so concurrent step completions
+								// never race on learnings/_global/ files.
+								enqueueLearningJob(func() {
 									bgCtx := context.Background()
 									bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
 									if bgErr != nil {
@@ -2092,8 +2193,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									} else {
 										hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
 									}
-								}()
+								})
 							}
+
+							// Post-step knowledgebase update — independent of learning. Gated by three
+							// conditions inside maybeEnqueueKBUpdate (KB enabled + write access + non-empty
+							// contribution). Silent no-op when any condition fails. Serialized through
+							// kbUpdateQueue so concurrent step completions don't race on graph.json writes.
+							// See docs/workflow/persistent_stores_design.md section 5.
+							hcpo.maybeEnqueueKBUpdate(stepIndex, stepPath, todoStep)
 						}
 					}
 				}

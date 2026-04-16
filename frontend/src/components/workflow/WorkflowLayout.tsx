@@ -341,6 +341,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
   // Auto-expand chat when workspace is open (needs more space alongside workspace)
   const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
+  const lastWorkspaceRunExpansionKeyRef = useRef<string | null>(null)
 
   // Get active workflow preset (file-backed manifests, not DB presets)
   const { getActivePreset } = useGlobalPresetStore()
@@ -383,12 +384,27 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {
+    const selectionKey = selectedRunFolder && selectedRunFolder !== 'new' && workspacePath
+      ? `${workspacePath}::${selectedRunFolder}::${(selectedGroupIds ?? []).slice().sort().join(',')}`
+      : null
+
+    if (!selectionKey) {
+      lastWorkspaceRunExpansionKeyRef.current = null
+      return
+    }
+
     if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {
       // Skip fetch when workspace panel is minimized — mark stale for manual refresh
       if (workspaceMinimized) {
+        lastWorkspaceRunExpansionKeyRef.current = selectionKey
         useWorkspaceStore.getState().setNeedsRefresh(true)
         return
       }
+
+      if (lastWorkspaceRunExpansionKeyRef.current === selectionKey) {
+        return
+      }
+
       // Expand folders in workspace sidebar — skip redundant fetch if Workspace.tsx already loaded files.
       // Workspace.tsx:718 fetches activeFolder on mount/change, so files should already be present.
       const ensureFiles = useWorkspaceStore.getState().files.length > 0
@@ -469,6 +485,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         // Update the expanded folders using the proper setter
         setExpandedFolders(newExpandedFolders)
+        lastWorkspaceRunExpansionKeyRef.current = selectionKey
       }).catch(error => {
         logger.error('WorkflowLayout', 'Failed to fetch files for auto-expansion:', error)
       })

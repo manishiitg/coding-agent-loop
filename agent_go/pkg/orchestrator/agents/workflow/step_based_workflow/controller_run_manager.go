@@ -8,39 +8,90 @@ import (
 	"sort"
 )
 
-// resolveRunFolderWithOptions always resolves to iteration-0.
-// If iteration-0 exists and has content, it is moved to iteration-N (next available) as a backup.
-// A fresh iteration-0 is then created for the new run.
+// resolveRunFolderWithOptions always resolves to iteration-0 under the workflow's
+// runs/ tree. The previous iteration-0 (workflow + eval) is rotated to the same
+// numbered backup so workflow run N and its eval at evaluation/runs/iteration-N
+// stay paired by construction. keep=10 retention applies to both trees.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx context.Context, workspacePath, runMode, selectedRunFolder string) (string, error) {
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
-	iteration0Path := fmt.Sprintf("%s/iteration-0", runsPath)
+	evalRunsPath := fmt.Sprintf("%s/evaluation/runs", workspacePath)
+	if err := hcpo.rotatePairedIterationZero(ctx, runsPath, evalRunsPath, 10); err != nil {
+		return "", err
+	}
+	hcpo.GetLogger().Info("Using iteration-0 for workflow execution")
+	return "iteration-0", nil
+}
 
-	// Check if iteration-0 exists — if so, back it up
-	if hcpo.workspaceFileExists(ctx, iteration0Path) {
-		backupName, err := hcpo.nextAvailableIteration(ctx, runsPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("Failed to determine backup iteration number: %v, will overwrite iteration-0", err))
-		} else {
-			backupPath := fmt.Sprintf("%s/%s", runsPath, backupName)
-			hcpo.GetLogger().Info(fmt.Sprintf("Backing up iteration-0 -> %s", backupName))
-			if err := hcpo.MoveWorkspaceFile(ctx, iteration0Path, backupPath); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to backup iteration-0 to %s: %v, will overwrite", backupName, err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("Backed up iteration-0 -> %s", backupName))
+// rotatePairedIterationZero rotates iteration-0 in both the workflow runs tree
+// and the eval runs tree to the SAME backup name. This keeps run N and its
+// eval N paired, so harden_workflow / report viewers can resolve both halves
+// from one index.
+//
+// The next backup name is computed across both trees (max+1 of any iteration-N
+// in either), so the chosen name is fresh in both. If only one of the iteration-0
+// folders exists, only that one is moved — the other tree just doesn't get a
+// new backup at this index.
+//
+// A fresh workflow iteration-0 is then created. Eval iteration-0 is created
+// lazily by ExecuteEvaluationOnly when an eval run actually starts.
+func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context.Context, runsPath, evalRunsPath string, keep int) error {
+	workflowIter0 := fmt.Sprintf("%s/iteration-0", runsPath)
+	evalIter0 := fmt.Sprintf("%s/iteration-0", evalRunsPath)
+
+	workflowExists := hcpo.workspaceFileExists(ctx, workflowIter0)
+	evalExists := hcpo.workspaceFileExists(ctx, evalIter0)
+
+	if workflowExists || evalExists {
+		backupName := hcpo.nextAvailableIterationAcross(ctx, runsPath, evalRunsPath)
+
+		if workflowExists {
+			workflowBackup := fmt.Sprintf("%s/%s", runsPath, backupName)
+			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s", runsPath, backupName))
+			if err := hcpo.MoveWorkspaceFile(ctx, workflowIter0, workflowBackup); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to back up workflow iteration-0 to %s: %v, will overwrite", backupName, err))
+			}
+		}
+		if evalExists {
+			evalBackup := fmt.Sprintf("%s/%s", evalRunsPath, backupName)
+			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s (paired with workflow)", evalRunsPath, backupName))
+			if err := hcpo.MoveWorkspaceFile(ctx, evalIter0, evalBackup); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("Failed to back up eval iteration-0 to %s: %v, will overwrite", backupName, err))
 			}
 		}
 	}
 
-	// Delete old backup iterations beyond the most recent 10
-	hcpo.pruneOldIterations(ctx, runsPath, 10)
+	hcpo.pruneOldIterations(ctx, runsPath, keep)
+	hcpo.pruneOldIterations(ctx, evalRunsPath, keep)
 
-	// Create fresh iteration-0
-	if err := hcpo.createRunFolderStructure(ctx, iteration0Path); err != nil {
-		return "", fmt.Errorf("failed to create iteration-0: %w", err)
+	if err := hcpo.createRunFolderStructure(ctx, workflowIter0); err != nil {
+		return fmt.Errorf("failed to create workflow iteration-0: %w", err)
 	}
+	return nil
+}
 
-	hcpo.GetLogger().Info("Using iteration-0 for workflow execution")
-	return "iteration-0", nil
+// nextAvailableIterationAcross returns "iteration-{N+1}" where N is the highest
+// iteration-N found across all supplied runs paths. Used to pick a backup name
+// that is fresh in BOTH workflow runs/ and evaluation/runs/, keeping the paired
+// rotation aligned.
+func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIterationAcross(ctx context.Context, paths ...string) string {
+	maxIter := 0
+	re := regexp.MustCompile(`^iteration-(\d+)$`)
+	for _, p := range paths {
+		folders, err := hcpo.listRunFolders(ctx, p)
+		if err != nil {
+			continue
+		}
+		for _, folder := range folders {
+			matches := re.FindStringSubmatch(folder)
+			if len(matches) > 1 {
+				var n int
+				if _, err := fmt.Sscanf(matches[1], "%d", &n); err == nil && n > maxIter {
+					maxIter = n
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("iteration-%d", maxIter+1)
 }
 
 // pruneOldIterations deletes backup iteration folders (iteration-1, iteration-2, ...)
@@ -203,8 +254,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
 		}
+		// Seed empty graph.json + index.json so the KB update agent and readers always find valid files.
+		if err := InitKBGraphFiles(ctx, hcpo.BaseOrchestrator, workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize KB graph files: %v (continuing)", err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Initialized empty KB graph files in %s/%s/", workspacePath, KnowledgebaseFolderName))
+		}
 	} else {
 		hcpo.GetLogger().Info("⏭️ Skipping knowledgebase folder creation (disabled in preset)")
+	}
+
+	// Create db folder at workspace root (always enabled, no preset toggle).
+	// Structured JSON data shared across all runs and groups. See DBFolderName in controller_execution.go.
+	{
+		workspacePath := hcpo.GetWorkspacePath()
+		if err := createFolderViaAPI(ctx, DBFolderName, workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create db folder via API: %v (continuing)", err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created db folder: %s/%s", workspacePath, DBFolderName))
+		}
+	}
+
+	// Create soul folder at workspace root (builder's long-term memory, always enabled).
+	// Only the workflow interactive builder writes here. See SoulFolderName in controller_execution.go.
+	{
+		workspacePath := hcpo.GetWorkspacePath()
+		if err := createFolderViaAPI(ctx, SoulFolderName, workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create soul folder via API: %v (continuing)", err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created soul folder: %s/%s", workspacePath, SoulFolderName))
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))

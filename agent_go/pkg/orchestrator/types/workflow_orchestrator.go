@@ -70,12 +70,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
 				Options:     []WorkflowPhaseOption{},
 			},
-			{
-				ID:          workflowtypes.WorkflowStatusReportExecution,
-				Title:       "Report Execution",
-				Description: "Generate the final workflow report for a completed group run.",
-				Options:     []WorkflowPhaseOption{},
-			},
 		},
 	}
 }
@@ -124,7 +118,8 @@ type WorkflowOrchestrator struct {
 	presetPhaseLLM *step_based_workflow.AgentLLMConfig // Default for all phase agents
 
 	// Preset-level feature toggles
-	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
+	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
+	lockKnowledgebase bool // When true, post-step KB update agent never fires; graph.json mutates only via explicit reorganize_knowledgebase calls
 
 	// Tiered LLM allocation mode
 	tieredConfig *step_based_workflow.TieredLLMConfig
@@ -189,6 +184,16 @@ func (wo *WorkflowOrchestrator) GetExecutionOptions() *step_based_workflow.Execu
 // UseKnowledgebase returns whether the knowledgebase feature is enabled
 func (wo *WorkflowOrchestrator) UseKnowledgebase() bool {
 	return wo.useKnowledgebase
+}
+
+// LockKnowledgebase returns whether the post-step KB update agent is frozen.
+func (wo *WorkflowOrchestrator) LockKnowledgebase() bool {
+	return wo.lockKnowledgebase
+}
+
+// SetLockKnowledgebase toggles the lock_knowledgebase flag.
+func (wo *WorkflowOrchestrator) SetLockKnowledgebase(v bool) {
+	wo.lockKnowledgebase = v
 }
 
 // Human verification types
@@ -333,6 +338,10 @@ func NewWorkflowOrchestrator(
 	if presetLLMConfig != nil && presetLLMConfig.UseKnowledgebase != nil {
 		useKnowledgebase = *presetLLMConfig.UseKnowledgebase
 	}
+	lockKnowledgebase := false
+	if presetLLMConfig != nil && presetLLMConfig.LockKnowledgebase != nil {
+		lockKnowledgebase = *presetLLMConfig.LockKnowledgebase
+	}
 
 	// Override context editing from preset config (base orchestrator defaults to env var)
 	if presetLLMConfig != nil && presetLLMConfig.EnableContextEditing != nil {
@@ -342,10 +351,11 @@ func NewWorkflowOrchestrator(
 
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
-		BaseOrchestrator: baseOrchestrator,
-		presetPhaseLLM:   presetPhaseLLM,
-		useKnowledgebase: useKnowledgebase,
-		tieredConfig:     tieredConfig,
+		BaseOrchestrator:  baseOrchestrator,
+		presetPhaseLLM:    presetPhaseLLM,
+		useKnowledgebase:  useKnowledgebase,
+		lockKnowledgebase: lockKnowledgebase,
+		tieredConfig:      tieredConfig,
 	}
 
 	return wo, nil
@@ -384,10 +394,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	if workflowStatus == workflowtypes.WorkflowStatusEvalExecution {
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == workflowtypes.WorkflowStatusReportExecution {
-		return wo.runReportExecutionOnly(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == workflowtypes.WorkflowStatusWorkflowBuilder {
@@ -481,6 +487,9 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
 
+	// Propagate knowledgebase lock flag
+	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
+
 	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
 	if wo.executionOptions == nil {
@@ -515,98 +524,6 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	return result, nil
 }
 
-// runReportExecutionOnly runs only the report execution phase.
-func (wo *WorkflowOrchestrator) runReportExecutionOnly(ctx context.Context, objective string, selectedOptions *workflowtypes.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info("🚀 Starting Report Execution Phase")
-
-	outputPlanPath := step_based_workflow.DefaultOutputPlanPath
-	outputPlanContent, err := wo.ReadWorkspaceFile(ctx, outputPlanPath)
-	if err != nil {
-		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "no such file") || strings.Contains(errMsg, "document not found") || strings.Contains(errMsg, "file does not exist") || strings.Contains(errMsg, "file not found") {
-			return "", fmt.Errorf("report plan not found at %s. Please create planning/output_plan.json first", outputPlanPath)
-		}
-		return "", fmt.Errorf("failed to read report plan at %s: %w", outputPlanPath, err)
-	}
-
-	outputPlan, err := step_based_workflow.ParseWorkflowOutputPlan(outputPlanContent)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse report plan at %s: %w", outputPlanPath, err)
-	}
-	if outputPlan == nil || outputPlan.PrimaryStep() == nil {
-		return "", fmt.Errorf("no enabled output step found in %s", outputPlanPath)
-	}
-
-	llmConfig := wo.GetLLMConfig()
-	reportAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
-		ctx,
-		"",
-		"",
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(),
-		wo.GetUseCodeExecutionMode(),
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
-		wo.ToolCategories,
-		wo.presetPhaseLLM,
-		wo.useKnowledgebase,
-		wo.tieredConfig,
-	)
-	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create report orchestrator: %v", err), nil)
-		return "", fmt.Errorf("failed to create report orchestrator: %w", err)
-	}
-
-	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
-		reportAgent.SetWorkspaceEnvRef(envRef)
-	}
-	reportAgent.SetMCPSessionID(wo.getSessionID())
-	if wo.httpSessionID != "" {
-		reportAgent.SetHTTPSessionID(wo.httpSessionID)
-	}
-	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
-		reportAgent.SetSelectedSkills(skills)
-	}
-	if secrets := wo.GetSecrets(); len(secrets) > 0 {
-		reportAgent.SetSecrets(secrets)
-	}
-	if wo.cdpPort > 0 {
-		reportAgent.SetCdpPort(wo.cdpPort)
-	}
-
-	if wo.executionOptions == nil {
-		wo.GetLogger().Error("❌ Execution options is NIL - report execution requires execution options", nil)
-		return "", fmt.Errorf("report execution requires execution options to be set (including selected run folder)")
-	}
-
-	reportAgent.SetExecutionOptions(wo.executionOptions)
-
-	targetRunFolder := wo.executionOptions.SelectedRunFolder
-	if targetRunFolder == "" {
-		wo.GetLogger().Error("❌ targetRunFolder is empty in execution options - cannot proceed", nil)
-		return "", fmt.Errorf("report execution requires a selected run folder (iteration/group) in execution options")
-	}
-	if !strings.Contains(targetRunFolder, "/") {
-		return "", fmt.Errorf("report execution requires a group-scoped run folder like iteration-2/manish")
-	}
-
-	result, err := reportAgent.ExecuteFinalOutputOnly(ctx, objective, wo.GetWorkspacePath(), targetRunFolder)
-	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("❌ Report execution failed: %v", err), nil)
-		return "", fmt.Errorf("report execution failed: %w", err)
-	}
-
-	wo.GetLogger().Info("✅ Report execution completed successfully")
-	return result, nil
-}
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
 // This is called for execution status and executes the approved plan
@@ -675,6 +592,9 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	if wo.cdpPort > 0 {
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
+
+	// Propagate knowledgebase lock flag
+	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
 
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {
@@ -752,7 +672,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				validStatuses := []string{
 					workflowtypes.WorkflowStatusPreVerification,
 					workflowtypes.WorkflowStatusEvalExecution,
-					workflowtypes.WorkflowStatusReportExecution,
 					workflowtypes.WorkflowStatusWorkflowBuilder,
 				}
 				valid := false

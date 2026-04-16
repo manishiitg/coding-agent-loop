@@ -1097,8 +1097,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/final-outputs", api.handleGetFinalOutputs).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/final-outputs/generate", api.handleGenerateFinalOutput).Methods("POST", "OPTIONS")
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
@@ -1106,8 +1104,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleGetFinalOutputConfig).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleUpdateFinalOutputConfig).Methods("POST", "OPTIONS")
+	// Dynamic report system (docs/workflow/persistent_stores_design.md section 2).
+	// No backend wrappers — the frontend ReportViewer reads reports/report_plan.md
+	// and db/*.json / knowledgebase/*.json directly via the workspace service's
+	// /api/documents/{path} endpoint (agentApi.getPlannerFileContent).
 
 	// Workflow Version API routes
 	apiRouter.HandleFunc("/workflow/versions", api.handleListVersions).Methods("GET", "OPTIONS")
@@ -4396,6 +4396,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 								// LLM config
 								refreshedKnowledgebase := true
+								refreshedLockKnowledgebase := false
 								log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig: isNil=%v", caps.LLMConfig == nil)
 								if caps.LLMConfig != nil {
 									log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig details: allocationMode=%q tieredConfig=%v",
@@ -4430,6 +4431,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									if caps.LLMConfig.UseKnowledgebase != nil {
 										refreshedKnowledgebase = *caps.LLMConfig.UseKnowledgebase
 									}
+									if caps.LLMConfig.LockKnowledgebase != nil {
+										refreshedLockKnowledgebase = *caps.LLMConfig.LockKnowledgebase
+									}
 								}
 
 								workshopSession.UpdatePresetSettings(
@@ -4437,12 +4441,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									refreshedTools, toolsParsed,
 									caps.UseCodeExecutionMode,
 									refreshedKnowledgebase,
+									refreshedLockKnowledgebase,
 									refreshedSkills, skillsParsed,
 									secretEntries,
 								)
-								log.Printf("[WORKFLOW_PHASE] Refreshed settings from manifest: servers=%d tools=%d codeExec=%v kb=%v skills=%d secrets=%d",
+								log.Printf("[WORKFLOW_PHASE] Refreshed settings from manifest: servers=%d tools=%d codeExec=%v kb=%v kbLock=%v skills=%d secrets=%d",
 									len(selectedServers), len(refreshedTools), caps.UseCodeExecutionMode,
-									refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
+									refreshedKnowledgebase, refreshedLockKnowledgebase, len(refreshedSkills), len(secretEntries))
 							}
 						}
 					} else {
@@ -4509,18 +4514,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					if err := todo_creation_human.RegisterOutputModificationTools(
-						underlyingAgent,
-						phaseWorkspacePath,
-						api.logger,
-						phaseReadFile,
-						phaseWriteFile,
-						phaseMoveFile,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register output modification tools in %s: %v", workflowPhaseID, err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered output modification tools in %s", workflowPhaseID)
-					}
+					// Output-modification tools (validate_report_plan, etc.) removed with the
+					// static report agent. The dynamic report (design doc §2) is edited by writing
+					// reports/report_plan.md directly via shell; no registration needed.
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
 					evalSessionKey := "eval-" + sessionID
@@ -4569,10 +4565,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in %s", workflowPhaseID)
 					}
 					if workshopSession != nil {
-						todo_creation_human.RegisterRunFullReportTool(underlyingAgent, workshopSession, api.logger)
-						log.Printf("[WORKFLOW_PHASE] Registered run_full_report in %s", workflowPhaseID)
 						todo_creation_human.RegisterRunFullWorkflowTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
+						todo_creation_human.RegisterReorganizeKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools
@@ -7605,6 +7601,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				if llmCfg.UseKnowledgebase != nil {
 					cfg.UseKnowledgebase = *llmCfg.UseKnowledgebase
 				}
+				if llmCfg.LockKnowledgebase != nil {
+					cfg.LockKnowledgebase = *llmCfg.LockKnowledgebase
+				}
 
 				// Tiered LLM allocation
 				if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
@@ -7648,8 +7647,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 					log.Printf("[WORKSHOP] Updated image tool executors (provider=%s model=%s)", imgCfg.Provider, imgCfg.ModelID)
 				}
 
-				log.Printf("[WORKSHOP] LLM config loaded: phase=%v tiered=%v kb=%v",
-					cfg.PresetPhaseLLM != nil, cfg.TieredConfig != nil, cfg.UseKnowledgebase)
+				log.Printf("[WORKSHOP] LLM config loaded: phase=%v tiered=%v kb=%v kbLock=%v",
+					cfg.PresetPhaseLLM != nil, cfg.TieredConfig != nil, cfg.UseKnowledgebase, cfg.LockKnowledgebase)
 			}
 		}
 	}

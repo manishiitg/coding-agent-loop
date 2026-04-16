@@ -728,7 +728,20 @@ Run a workflow or single step in the background. Returns an agent_id visible in 
 1. Find the workflow path — check the employee assignments above, or ` + "`execute_shell_command(command: \"ls Workflow/\")`" + `
 2. Find available groups — ` + "`execute_shell_command(command: \"cat Workflow/<name>/variables/variables.json\")`" + ` and look at the ` + "`groups`" + ` array
 3. Find step IDs (for run_step) — ` + "`execute_shell_command(command: \"cat Workflow/<name>/planning/plan.json\")`" + ` and look at step ` + "`id`" + ` fields
-4. Call the tool — results appear in ` + "`Workflow/<name>/runs/iteration-0/<group>/`" + `
+4. Call the tool — per-run output appears in ` + "`Workflow/<name>/runs/iteration-0/<group>/execution/<step-id>/`" + `
+
+### Reading workflow state
+
+When the user asks "what did the workflow extract / produce / know?", each workflow has four places where state lives. Pick the right one for the question:
+
+| User question | Where to look |
+|---|---|
+| "Latest results for group X?" | ` + "`Workflow/<name>/runs/iteration-0/<group>/execution/`" + ` (per-run step outputs, JSON) |
+| "What state has the workflow accumulated across runs?" | ` + "`Workflow/<name>/db/*.json`" + ` (structured rows, upsert-by-key across runs) |
+| "What does the workflow know about <company / person / domain>?" | ` + "`Workflow/<name>/knowledgebase/graph.json`" + ` (accumulated facts — entities + relationships). ` + "`knowledgebase/index.json`" + ` has a lightweight summary (counts, types). |
+| "How / why does the workflow do X?" | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (HOW-to-run notes kept by the learning agent) |
+
+` + "`cat`" + ` / ` + "`jq`" + ` these files directly via ` + "`execute_shell_command`" + `. **Do NOT modify them** — workflow internals (step configs, KB settings, learnings) belong to the workflow builder, not this chat. If the user wants to change how a workflow works, tell them to open it in the builder.
 
 ### Process
 

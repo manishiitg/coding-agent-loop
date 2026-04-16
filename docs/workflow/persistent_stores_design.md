@@ -31,17 +31,37 @@ workspace/
 ├── db/               ← new, always enabled, JSON files only
 ├── knowledgebase/    ← graph-structured domain knowledge (see section 4)
 ├── learnings/        ← procedural skill knowledge (HOW to run)
-├── reports/          ← human-readable run summaries
+├── planning/         ← plan.json, step_config.json (read-only to builder via guard; mutated via plan-mod tools only)
+├── reports/          ← report_plan.md (widget definitions; builder-writable)
+├── soul/             ← new, builder's long-term memory: soul.md (see section 8)
 └── runs/
 ```
+
+Note: `reports/` no longer exists — the report is a live frontend view over `db/` + KB rather than a static archive (see section 2).
 
 ### Behaviour
 
 - Always created on workspace init (no toggle, unlike knowledgebase)
 - All steps get read + write access by default
-- JSON format by convention — no schema enforcement, agents are instructed to use `.json` files
+- JSON format only — per-file schema is defined by the builder at design time (see Write semantics below); no runtime enforcement
 - Never deleted during cleanup
 - Injected into execution agent prompt as an absolute path
+
+### Write semantics (single-db model)
+
+There is exactly one `db/` per workspace — not partitioned by group or iteration. All groups and all reruns write into the same files. This keeps the report simple (one live view) but makes schema design a hard requirement, not a convention.
+
+**Builder responsibility (design time).** When the interactive builder defines a `db/` file, it must decide and record:
+
+- **Primary key** — what uniquely identifies a row (`company_id`, `url`, composite)
+- **Group coexistence** — do multiple groups share the file (then include a `group` field and key by `(group, id)`) or does each group get its own file (`db/companies_{group}.json`)?
+- **Merge rule** — upsert by key (default), append-only, or replace
+
+These decisions go into a short schema note per file — inline in `report_plan.md` near the widget that consumes it, or a dedicated `reports/db_schema.md`. Step agents read the note at execution time so they know the contract.
+
+**Step agent responsibility (runtime).** Agents MUST NOT overwrite `db/` files wholesale. The execution prompt instructs them to: read the file, upsert by the builder-defined key (or append, per the schema note), then write back the merged content.
+
+For reliability a typed helper (`db_upsert(file, key, rows)`) is preferable to raw shell redirection — LLMs under pressure will happily `cat > file.json` with only their own rows and wipe the other groups' data. Leaving writes as shell + prompt is workable short-term but will produce lost-row bugs under stress. Without explicit schemas and write discipline, any workflow with more than one group or rerun will silently clobber prior data the first time two paths share a file.
 
 ### Key implementation touchpoints
 
@@ -56,11 +76,22 @@ workspace/
 | `todo_task_orchestrator_agent.go` | Same |
 | `pre_validation.go:1080` | Add `"db"` to known workflow folder names |
 | `evaluation_types.go` | Add `DBWrite bool` to `EvaluationStep` |
-| `controller_agent_factory.go:800` | Evaluation folder guard: always add `db/` to read; add to write if `DBWrite: true` |
+| `controller_agent_factory.go:800` | Evaluation folder guard: always add `db/` to read; add `db/` to write if `DBWrite: true` |
+| Workflow builder prompt | Recommend `db/eval/` subfolder for eval outputs; warn when enabling `db_write` on an eval step |
 
 ### Evaluation runs and `db/`
 
-Evaluation steps can also read and write `db/` but write access must be explicitly granted per evaluation step. This mirrors the `knowledgebase_access` pattern for regular steps.
+Evaluation steps can read and write `db/` — write access is opt-in per step via a `DBWrite` flag. There is no hard folder-guard split between regular and eval writes; the folder guard grants read and (optionally) write on all of `db/`. How `db/` is organized is up to the plan author.
+
+**Best practice (builder prompt guidance, not enforcement)**
+
+The workflow interactive builder prompt should recommend — but not enforce — that eval output goes to a dedicated namespace so it doesn't clobber regular-step data that the live report displays:
+
+- Suggest `db/eval/` as the default subfolder for eval writes
+- Suggest JSON or markdown under that path (narrative score summaries, structured scores, etc.)
+- Suggest that regular `db/` files and eval output files have disjoint names
+
+If a plan deliberately wants evaluation output mixed into the same `db/` files as regular steps (e.g. the eval step is producing the canonical data, not just scoring it), the builder lets that through. The tradeoff is on the plan author: enabling `DBWrite` on an evaluation step means that step's output is free to mutate whatever `db/` files it touches, including ones the live report reads. The builder should flag this when enabling the toggle.
 
 Add a `db_write` boolean to `EvaluationStep` in `evaluation_types.go`:
 
@@ -76,7 +107,7 @@ type EvaluationStep struct {
 }
 ```
 
-Folder guard for evaluation agents (`controller_agent_factory.go:800`):
+Folder guard (`controller_agent_factory.go:800`):
 - **Read**: always add `db/` to read paths
 - **Write**: add `db/` to write paths only if `DBWrite: true` on the evaluation step
 
@@ -95,12 +126,12 @@ Folder guard for evaluation agents (`controller_agent_factory.go:800`):
 | **Report source** | Raw execution artifacts from `runs/{runFolder}/execution/` | `db/` files + `knowledgebase/graph.json` (workspace-scoped) |
 | **Generation** | Report agent runs once, produces static markdown | No agent — frontend renders live from `report_plan.md` |
 | **Storage** | `reports/{group}/{timestamp}.md` archive | No archive — always reflects current `db/` state |
-| **Definition** | `planning/output_plan.json` (instructions for the agent) | `planning/report_plan.md` (markdown widget definitions) |
+| **Definition** | `planning/output_plan.json` (instructions for the agent) | `reports/report_plan.md` (markdown widget definitions) |
 | **If no data** | Empty report with headings | Report not shown at all |
 
 ### `report_plan.md` format
 
-Stored at `planning/report_plan.md`. Created and maintained by the workflow interactive builder.
+Stored at `reports/report_plan.md`. Created and maintained by the workflow interactive builder.
 
 `##` headings define sections. Fenced blocks define widgets. A `widget:row` block groups widgets side-by-side. Standalone widget blocks are full-width.
 
@@ -156,11 +187,13 @@ Inside `widget:row`, each line is `- {type} | source: {path} | path: {key}`.
 
 Both are workspace-scoped. The report always reflects the latest state.
 
+Widgets can point at any path under `db/` — including eval outputs if the plan writes them under `db/eval/` (the recommended convention, see section 1). The report does not distinguish "regular" vs "eval" data automatically; if the builder wants an Evaluation section in the report, it adds widgets pointed at the eval files explicitly.
+
 **If `db/` has no data yet**, the report is not shown — no empty state, no placeholder widgets.
 
 ### How the frontend renders it
 
-1. Fetch and parse `planning/report_plan.md`
+1. Fetch and parse `reports/report_plan.md`
 2. Split on `##` headings → sections
 3. For each fenced block, parse type + fields
 4. For `widget:row`, parse the inline widget list
@@ -183,7 +216,7 @@ The report is no longer a phase that runs after execution completes. It is purel
 ### What goes away
 
 - `final_output.go` — report agent removed entirely
-- `planning/output_plan.json` — replaced by `planning/report_plan.md`
+- `planning/output_plan.json` — replaced by `reports/report_plan.md`
 - `reports/` folder — no more archive files
 - `WorkflowStatusReportExecution = "report-execution"` phase constant
 - `runReportExecutionOnly()` in `workflow_orchestrator.go`
@@ -378,21 +411,66 @@ A dedicated agent that runs **after each step completes** (parallel to the succe
 
 ### When it runs
 
+Both the success learning agent and the KB update agent run through **single-writer queues** — one worker goroutine per queue, draining jobs FIFO. Step completion enqueues and returns immediately; the workers process one agent at a time.
+
 ```
 Step execution
     ↓
 Validation passes
     ↓
-[goroutine A] Success learning agent  ← existing, updates learnings/_global/
-[goroutine B] KB update agent         ← new, updates knowledgebase/graph.json
+enqueue(learningQueue, job)   → learning worker runs one agent at a time → writes learnings/_global/
+enqueue(kbUpdateQueue, job)   → kb worker runs one agent at a time       → writes knowledgebase/graph.json
 ```
 
-Both run in background, non-blocking. The KB update agent only runs if **all three** conditions are met:
+The two queues are independent — a learning agent can run in parallel with a KB update agent (they write different files), but two learning agents never run concurrently, and two KB update agents never run concurrently.
+
+The KB update agent only enqueues if **all three** conditions are met:
 - Knowledgebase is enabled at the preset level
 - `knowledgebase_access` for the step is `"write"` or `"read-write"`
 - `knowledgebase_contribution` is set for the step (non-empty)
 
-If `knowledgebase_contribution` is not set, the agent is skipped entirely — there is no generic fallback extraction.
+If `knowledgebase_contribution` is not set, the job is skipped entirely — there is no generic fallback extraction.
+
+### Serialization (learning and KB writes)
+
+Both `learnings/_global/` and `knowledgebase/graph.json` are workspace-shared files merged from multiple step outputs. Running merges concurrently creates lost-update races. The fix is structural: a single worker per file group, with a buffered channel for incoming jobs.
+
+```go
+type KBUpdateJob struct {
+    StepID      string
+    OutputPath  string
+    Contribution string
+}
+
+var kbUpdateQueue = make(chan KBUpdateJob, 100)
+
+func startKBUpdateWorker() {
+    go func() {
+        for job := range kbUpdateQueue {
+            runKBUpdateAgent(job) // one at a time, FIFO
+        }
+    }()
+}
+```
+
+Properties this gives:
+- **No merge races** — only one goroutine ever reads-modifies-writes `graph.json`
+- **FIFO by completion order** — step-N's update sees the effects of step-(N-1)'s update, enabling cumulative entity/relationship linking instead of duplicate-then-reconcile
+- **Non-blocking on step execution** — the enqueue is O(1); step completion never waits for learning or KB work
+- **Full-run KB update shares the queue** — the manual `kb-update` phase (section 6) enqueues onto the same `kbUpdateQueue`, so it can't race with a live step's post-step update
+
+Two separate queues:
+- `learningQueue` → one worker → all learning agents serialized
+- `kbUpdateQueue` → one worker → all KB agents (post-step and full-run) serialized
+
+The learning agent today fires in a bare goroutine (`controller_learning.go:432`) with no serialization. It has the same latent race on `learnings/_global/` that the KB agent would have on `graph.json`; the same queue pattern retrofits cleanly and closes both gaps at once.
+
+File writes inside each worker use write-to-temp-then-rename for crash safety:
+```go
+tmp := path + ".tmp"
+os.WriteFile(tmp, data, 0o644)
+os.Rename(tmp, path) // atomic on POSIX
+```
 
 ### What it reads
 
@@ -418,10 +496,12 @@ The `knowledgebase_contribution` string is the primary directive. Fixed rules on
 
 | File | Change |
 |------|--------|
-| `controller_execution.go:2055` | Trigger KB update agent goroutine after validation passes (alongside learning trigger) |
-| New file: `controller_kb_update.go` | KB update orchestration logic (mirrors `controller_learning.go`) |
+| `controller_execution.go:2055` | Enqueue KB update job after validation passes (alongside learning enqueue) — no direct goroutine spawn |
+| New file: `controller_kb_update.go` | KB update orchestration + `kbUpdateQueue` channel and worker (mirrors `controller_learning.go`) |
 | New file: `kb_update_agent.go` | Agent definition and system prompt (mirrors `learning_agent.go`) |
 | `controller_agent_factory.go` | Factory method for KB update agent |
+| `controller_learning.go:432` | **Retrofit:** replace bare `go func()` with `learningQueue` enqueue; add `learningQueue` channel + worker at package init |
+| Server startup (`cmd/server/server.go` or equivalent) | Start `learningQueue` and `kbUpdateQueue` workers once at process init |
 
 ### Folder guard for KB update agent
 
@@ -452,12 +532,17 @@ POST /api/workflow/knowledgebase/update
     ↓
 KBUpdateOrchestrator reads all outputs from runs/{runFolder}/execution/
     ↓
-KB update agent processes each step's output sequentially
+For each step with a non-empty knowledgebase_contribution:
+    enqueue(kbUpdateQueue, job)   ← same queue used by post-step updates
+    ↓
+KB worker drains jobs FIFO — serialized against any live post-step KB updates
     ↓
 graph.json + index.json written/merged
     ↓
 Frontend: KBPopup refreshes
 ```
+
+**Why share the queue:** the full-run phase could otherwise race with a still-running workflow's post-step KB updates, producing lost merges. Enqueuing onto `kbUpdateQueue` means the worker processes manual-phase jobs and live-step jobs in the order they arrive, with no concurrent writers to `graph.json`. The manual phase does not wait for an empty queue before returning to the user — it enqueues and reports a job count; progress is visible via the usual event stream.
 
 ### HTTP endpoint
 
@@ -531,6 +616,12 @@ KB contribution:
 ### Updated: Preset modal
 
 The existing `use_knowledgebase` toggle in `PresetModal.tsx` stays as the workflow-level gate. No change needed here.
+
+### New: `db/` schema notes owned by the builder
+
+Because `db/` is a single workspace-level store shared by all groups and reruns (see section 1), the builder is the only place where the full picture — which steps write which files, which widgets read them — exists. When the builder adds or updates a step that writes to `db/`, it must also declare the schema for each output file: primary key, group coexistence, merge rule.
+
+This is part of the same builder flow that produces `report_plan.md`, since the write side (step) and read side (widget) reference the same `db/` file. Implies either a new plan-modification tool (`set_db_schema`) or an extension to `add_regular_step` / `update_regular_step` so the schema note is persisted alongside the step's db output declaration rather than left to the step agent to infer at runtime.
 
 ### Key implementation touchpoints
 
@@ -637,25 +728,148 @@ The builder does not ask for confirmation on every write — it writes silently,
 ### Location
 
 ```
-planning/soul.md
+soul/soul.md
 ```
 
-Same directory as `plan.json`, `step_config.json`, `report_plan.md`. The builder owns this directory.
+Dedicated top-level folder at workspace root, parallel to `planning/`, `db/`, `knowledgebase/`, `learnings/`. Kept out of `planning/` deliberately: `planning/` is read-only for the builder in workshop mode (modifications go through explicit plan-mod tools like `add_regular_step`, `update_regular_step`), but `soul.md` is free-form markdown that the builder updates frequently from chat context. Giving it its own folder means the builder can shell-write it directly without needing a dedicated mutation tool or a one-off whitelist exception in the `planning/` folder guard.
+
+The `soul/` folder is added to the builder's writable folder-guard paths. Only the workshop builder writes here; no execution or evaluation agent reads or writes it.
 
 ### Key implementation touchpoints
 
 | File | Change |
 |------|--------|
-| `interactive_workshop_manager.go` | Load `planning/soul.md` at session start; inject as `SoulContent` template var into all workshop mode prompts |
-| `interactive_workshop_manager.go` | After significant decisions, write/update `soul.md` via shell tool |
+| `controller_run_manager.go` | Create `soul/` folder on workspace init (alongside `db/`, `knowledgebase/`, etc.) |
+| Builder folder-guard setup (`interactive_workshop_manager.go` / `controller_agent_factory.go`) | Add `soul/` to the builder's writable paths so shell writes to `soul/soul.md` go through |
+| `interactive_workshop_manager.go` | Load `soul/soul.md` at session start; inject as `SoulContent` template var into all workshop mode prompts |
+| `interactive_workshop_manager.go` | After significant decisions, builder writes/updates `soul/soul.md` via shell (guard permits it; no dedicated mutation tool needed) |
 | `cmd/server/workflow.go` | Add `handleGetSoul()`, `handleUpdateSoul()` HTTP handlers |
+| `pre_validation.go:1080` | Add `"soul"` to known workflow folder names |
 | `WorkflowToolbar.tsx` | Expose `soul.md` in the workspace file browser (already visible if file exists) |
 
 ---
 
-## References
+## Implementation notes (2026-04)
 
-- [Graphiti — Real-Time Knowledge Graphs for AI Agents](https://github.com/getzep/graphiti)
-- [Graph-Based Agent Memory: Taxonomy, Techniques, and Applications](https://arxiv.org/html/2602.05665v1)
-- [GraphRAG and Agentic Architecture (Neo4j)](https://neo4j.com/blog/developer/graphrag-and-agentic-architecture-with-neoconverse/)
-- [Why Knowledge Graphs for LLM Personalization (Memgraph)](https://memgraph.com/blog/why-knowledge-graphs-for-llm)
+Written against the shipping code after the bulk of this design landed. Captures deltas from the sections above — read the originals first, treat this as the "what actually happened" addendum. The original sections are left as the design intent; where reality diverged, this section wins.
+
+### Phase sequencing (what shipped when)
+
+| Phase | Scope | Status |
+|---|---|---|
+| **1** | `db/` folder + folder guards + `DBWrite` eval flag; KB access control (`knowledgebase_access` + `knowledgebase_contribution`); `soul/soul.md` | Shipped |
+| **2** | KB graph scaffolding (empty seed only); `learningQueue` + `kbUpdateQueue` single-writer queues; learning retrofit; KB update agent + post-step trigger; `reorganize_knowledgebase` builder tool | Shipped |
+| **3** | Dynamic report system — `ReportViewer.tsx` + parser + toolbar wiring; removal of the old `final_output.go` report agent and everything that fed it | Shipped |
+| **4** | `KBPopup.tsx` (KB viewer + clear + export) | Shipped (partial — see §Deferred) |
+| **Deferred** | Full-run `kb-update` phase (§6), step-config UI panel for `knowledgebase_access` / `knowledgebase_contribution`, Phase 4 `run_full_kb_update` button | Not shipped |
+
+### Major change: Go does NOT parse `graph.json` or `index.json`
+
+Sections 4 and 5 originally envisioned Go-side types (`KBGraph`, `KBEntity`, `KBRelationship`), a `KBDelta` handshake type returned from the KB update agent, `ApplyKBDelta` for Go-side merging, and `RebuildKBIndex` for index regeneration.
+
+**Actual implementation pivoted mid-build**: the LLM owns `graph.json` and `index.json` end-to-end via shell. Go does **not** parse, validate, or merge content. The only Go code touching these files is:
+
+- `kb_graph.go` — 50 lines; two string-literal seed files (`emptyGraphJSON`, `emptyIndexJSON`) and `InitKBGraphFiles` which writes them once on workspace init when they don't exist. No types, no parsing.
+- The KB update agent prompt (`kb_update_agent.go`) — describes the schema in natural language; the agent reads, merges, and writes via `cat`, `jq`, `diff_patch_workspace_file`.
+
+**Consequence:** if the agent's prompt evolves the schema (e.g. adds a `confidence` field), Go's seed files must be updated manually to match. Documented as a constraint at the top of `kb_graph.go`.
+
+### Major change: per-step KB access defaults to `"none"`, not `"read-write"`
+
+Section 3's resolution logic specified:
+
+```
+preset enabled + no explicit step setting → "read-write"
+```
+
+**Actual implementation is stricter**: default is `"none"` regardless of preset state. KB access is opt-in per step.
+
+```go
+if !presetEnabled { return KBAccessNone }       // preset is hard gate
+if explicit setting { return explicit }          // honor it
+return KBAccessNone                              // default: disabled
+```
+
+Rationale: the prior default let any step shell-write into `knowledgebase/` despite the prompt saying "only the KB update agent writes graph.json". Opt-in by default removes the accidental-shell-write path.
+
+**Breaking consequence:** existing workflows that implicitly used KB read access (any step doing `cat knowledgebase/graph.json` without declaring `knowledgebase_access`) will fail folder guard after this ships. Fix per-workflow by setting `"knowledgebase_access": "read"` on affected steps.
+
+### Major change: deprecated fields fully deleted
+
+The design (§3) proposed keeping `DisableKnowledgebase *bool` as a backward-compat shim indefinitely. **Actual:** the shim has been deleted outright. `LearningAfterLoopIteration` (already marked deprecated in the struct) is also gone. Any step_config.json with `"disable_knowledgebase": true` or `"learning_after_loop_iteration": ..."` is silently ignored after this ships.
+
+The `update_step_config` tool's JSON schema no longer exposes either. The builder agent only sees `knowledgebase_access` + `knowledgebase_contribution` as the KB-control knobs.
+
+### Major change: `reorganize_knowledgebase` builder tool (new, not in original design)
+
+Added during Phase 2. The interactive builder can now apply natural-language transformations to `graph.json` (dedupe, rename types, purge bad provenance) via a dedicated one-shot agent `KBReorganizeAgent`. Serialized through the same `kbUpdateQueue` as the post-step KB update agent so they can't race.
+
+- Tool name: `reorganize_knowledgebase(instruction: string)`
+- Agent: `KBReorganizeAgent` in `kb_update_agent.go`
+- Orchestration: `runKBReorganizePhase` / `RunKBReorganize` in `controller_kb_update.go`
+- Registration: `RegisterReorganizeKnowledgebaseTool` in `planning_exports.go`
+- Available in: workflow-builder mode only
+
+### Major change: Section 2 report uses existing workspace API, not new wrappers
+
+Section 2 listed `handleGetReportPlan` and `handleGetDBFile` as new HTTP handlers to write.
+
+**Actual implementation**: those wrappers were built, then deleted. `ReportViewer.tsx` uses the existing workspace document API (`agentApi.getPlannerFileContent` → `/api/documents/{path}`) directly. No new backend endpoints. This removes ~80 lines of Go duplication that mirrored what the workspace service already exposes.
+
+**Path whitelist deferred**: the original design included a server-side whitelist restricting widget sources to `db/**` and `knowledgebase/graph.json` / `index.json`. With the wrappers removed, the whitelist is gone too — widgets can technically point at any workspace file. The builder is expected to keep widget sources sensible (design doc already makes this a builder responsibility).
+
+### Major change: `ChartBlock` removed from `MarkdownRenderer.tsx`
+
+Section 2 originally planned to reuse the SVG bar/line chart in `MarkdownRenderer.tsx`'s existing `ChartBlock` component for `widget:chart` rendering. **Actual**: the markdown chart rendering was removed entirely (not used anywhere else in the app), and `ReportViewer.tsx` ships a simple HTML/CSS bar chart inline instead.
+
+If SVG/line charts become necessary later, lift a small `Chart` component to `frontend/src/components/ui/Chart.tsx` and have both the markdown renderer and the report viewer consume it. Don't re-add chart rendering into `MarkdownRenderer`.
+
+### Major change: scheduler auto-report generation removed
+
+Section 6 described a full-run `kb-update` phase but didn't discuss what happens to the old scheduler behavior of auto-generating reports after workflow runs. **Actual**: `shouldAutoGenerateWorkshopReport` and `generateWorkshopScheduleReport` helpers in `cmd/server/scheduler.go` have been deleted. The dynamic report is a live frontend view — there is no artifact to generate post-run, so scheduled runs now complete without a report side-effect.
+
+### Prompt changes (touching all three agent classes)
+
+All three agent prompts now explicitly distinguish the three persistent stores:
+
+- **`learnings/`** → HOW to run (methods, patterns, quirks)
+- **`knowledgebase/`** → decisions, facts, strategies built up over time (entities + relationships; **only** the post-step KB update agent writes `graph.json`, never a step)
+- **`db/`** → workflow state and results (rows produced/consumed this run; step-owned; upsert-by-key; never overwrite wholesale)
+
+Applied in:
+- Execution agent prompt (`execution_only_agent.go`)
+- Todo-task orchestrator agent prompt (`todo_task_orchestrator_agent.go`)
+- Workshop builder prompt (`interactive_workshop_manager.go`)
+
+The workshop builder prompt also carries the full three-way comparison table and "when to use which" deciding questions so the builder agent can recommend the right store to users asking "where should I put X?"
+
+### Concurrency model landed as single-writer queues (not mutex)
+
+Section 5 considered three options: per-file mutex, single-writer queue, or append-only journal. **Implemented: single-writer queues**, via `queues.go`:
+
+- `learningQueue` — one worker, FIFO; serializes the learning agent. Retrofitted into both the tracked (workshop) and fallback (non-workshop) launch sites. Closes a pre-existing race on `learnings/_global/` files.
+- `kbUpdateQueue` — one worker, FIFO; serializes post-step KB updates **and** `reorganize_knowledgebase` tool invocations (both flows enqueue onto the same channel).
+
+Workers lazy-start via `sync.Once` on first enqueue — no explicit boot wiring. Panic guard per job so a bad agent run can't kill the worker.
+
+### Files actually touched
+
+| Area | New files | Modified | Deleted |
+|---|---|---|---|
+| Persistent stores | `kb_graph.go`, `kb_update_agent.go`, `controller_kb_update.go`, `queues.go`, `workshop_helpers.go` | `controller_execution.go`, `controller_run_manager.go`, `controller_agent_factory.go`, `controller_todo_task.go`, `controller_learning.go`, `controller_batch_execution.go`, `controller_learn_code.go`, `evaluation_types.go`, `execution_only_agent.go`, `todo_task_orchestrator_agent.go`, `planning_agent.go`, `pre_validation.go` | — |
+| Report system | `ReportViewer.tsx`, `reportPlanParser.ts` | `interactive_workshop_manager.go` (prompts + tool schema), `api-types.ts`, `api.ts` | `final_output.go`, `FinalOutputPopup.tsx` |
+| KB UI | `KBPopup.tsx` | `WorkflowToolbar.tsx` (Database icon, popup wiring) | — |
+| Workflow-level | — | `workflow.go`, `server.go`, `scheduler.go`, `workflow_orchestrator.go`, `types.go` (workflowtypes) | — |
+| Markdown renderer | — | `MarkdownRenderer.tsx` (deleted ChartBlock + chart language branch) | — |
+
+Rough LOC impact: **+~2,800 net added, ~5,200 removed** (dominated by the old report-agent deletion).
+
+### Not yet shipped (§Deferred, per original phase 4)
+
+- **Full-run `kb-update` phase (§6)** — manual "rebuild KB from a completed run" trigger with its own HTTP endpoint and orchestrator routing. `KBPopup` reserves space for a button but doesn't call it.
+- **Step-config UI panel** — `knowledgebase_access` dropdown and `knowledgebase_contribution` textarea. Right now the builder must set these via `update_step_config` in chat or via hand-edited `step_config.json`.
+- **Scheduler "Run KB Update" integration** — the scheduler could offer a post-run KB rebuild option; out of scope until §6 ships.
+
+---
+
+## References

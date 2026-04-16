@@ -31,3 +31,7 @@
 71. see if we can run crons via cli? 
 
 72. knowledgebase vs database vs reports vs soul.md?
+
+73. look at if we can use agent-browser instead of playwrite mcp itself as it has lot of new releases
+
+74. if eval scoring can also be learn code? builder should be allowed to set that 

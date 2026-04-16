@@ -36,9 +36,6 @@ import type {
   SlackTestReplyResponse,
   ExecutionLogsResponse,
   EvaluationReportsResponse,
-  WorkflowFinalOutputConfig,
-  WorkflowFinalOutputConfigResponse,
-  WorkflowFinalOutputResponse,
   TokenUsageFile,
   WorkflowCostsResponse,
   WorkspaceStateResponse,
@@ -93,9 +90,6 @@ export type {
   EvaluationReportsResponse,
   EvaluationReport,
   EvaluationStepScore,
-  WorkflowFinalOutputConfig,
-  WorkflowFinalOutputConfigResponse,
-  WorkflowFinalOutputResponse,
 } from './api-types'
 
 // Resolve API base URL: use build-time env if set; otherwise fallback based on mode
@@ -1211,51 +1205,6 @@ export const agentApi = {
     return response.data
   },
 
-  getFinalOutputConfig: async (
-    workspacePath: string
-  ): Promise<WorkflowFinalOutputConfigResponse> => {
-    const response = await api.get('/api/workflow/plan/final-output', {
-      params: { workspace_path: workspacePath }
-    })
-    return response.data
-  },
-
-  updateFinalOutputConfig: async (
-    workspacePath: string,
-    config: WorkflowFinalOutputConfig | null
-  ): Promise<WorkflowFinalOutputConfigResponse> => {
-    const response = await api.post('/api/workflow/plan/final-output', {
-      workspace_path: workspacePath,
-      config
-    })
-    return response.data
-  },
-
-  getFinalOutput: async (
-    workspacePath: string,
-    runFolder?: string
-  ): Promise<WorkflowFinalOutputResponse> => {
-    const response = await api.get('/api/workflow/final-outputs', {
-      params: {
-        workspace_path: workspacePath,
-        run_folder: runFolder || ''
-      }
-    })
-    return response.data
-  },
-
-  generateFinalOutput: async (
-    workspacePath: string,
-    runFolder: string,
-    workflowTitle?: string
-  ): Promise<WorkflowFinalOutputResponse> => {
-    const response = await api.post('/api/workflow/final-outputs/generate', {
-      workspace_path: workspacePath,
-      run_folder: runFolder,
-      workflow_title: workflowTitle || ''
-    })
-    return response.data
-  },
 
   // Delete a step from plan and config
   deleteStep: async (

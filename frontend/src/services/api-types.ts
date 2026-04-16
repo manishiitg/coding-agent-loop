@@ -1288,42 +1288,45 @@ export interface EvaluationAggregate {
   max_possible_score: number;
 }
 
-export interface WorkflowFinalOutputConfig {
-  enabled: boolean;
-  title?: string;
-  instructions?: string;
-  output_filename?: string;
+// ---------------------------------------------------------------------------
+// Dynamic report system (docs/workflow/persistent_stores_design.md section 2)
+// Replaces the static final_output.go agent. The report is a live frontend
+// view over db/ + knowledgebase/graph.json, defined by reports/report_plan.md
+// widget blocks. Files are fetched via the existing workspace document API
+// (agentApi.getPlannerFileContent) — no dedicated backend wrappers.
+// ---------------------------------------------------------------------------
+
+// Widget types supported by report_plan.md. See section 2 of the design doc.
+export type ReportWidgetKind = 'text' | 'chart' | 'table';
+
+// A single widget. `source` is a workspace-relative path (db/x.json or
+// knowledgebase/graph.json / index.json). `path` is a dot-notation key into
+// the JSON. `filter` is an optional `key=value` string for filtering arrays.
+export interface ReportWidget {
+  kind: ReportWidgetKind;
+  source: string;
+  path: string;
+  filter?: string;
 }
 
-export interface WorkflowOutputPlanStep {
-  id: string;
-  title?: string;
-  instructions?: string;
-  pre_validation?: ValidationSchema;
-  output_filename?: string;
-  enabled: boolean;
+// `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`
+// entries of a parent section; never nested.
+export interface ReportWidgetRow {
+  widgets: ReportWidget[];
 }
 
-export interface WorkflowOutputPlan {
-  step?: WorkflowOutputPlanStep | null;
+// One entry under a section — either a full-width widget or a row of widgets.
+export type ReportEntry =
+  | { kind: 'single'; widget: ReportWidget }
+  | { kind: 'row'; row: ReportWidgetRow };
+
+export interface ReportSection {
+  heading: string;   // H2 heading text, e.g. "Overview"
+  entries: ReportEntry[];
 }
 
-export interface WorkflowFinalOutputConfigResponse {
-  success: boolean;
-  data?: {
-    config: WorkflowFinalOutputConfig | null;
-  };
-  error?: string;
-}
-
-export interface WorkflowFinalOutputResponse {
-  success: boolean;
-  config?: WorkflowFinalOutputConfig | null;
-  exists?: boolean;
-  run_folder?: string;
-  output_path?: string;
-  content?: string;
-  error?: string;
+export interface ParsedReportPlan {
+  sections: ReportSection[];
 }
 
 // Consolidated workspace state (NEW - single API call for all workspace data)

@@ -630,16 +630,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveLearnCodeShellGuard(
 	includeCodeDir bool,
 ) *workspace.FolderGuardConfig {
 	stepConfig := getAgentConfigs(step)
-	useKnowledgebase := hcpo.UseKnowledgebase()
-	if stepConfig != nil && stepConfig.DisableKnowledgebase != nil {
-		if *stepConfig.DisableKnowledgebase {
-			useKnowledgebase = false
-		} else {
-			useKnowledgebase = true
-		}
-	}
+	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), useKnowledgebase)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess)
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}
@@ -1357,33 +1350,27 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
 	sb.WriteString("**Your working directory (write all code files here):**\n")
 	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
-	sb.WriteString("**Rules:**\n")
+	sb.WriteString("**This run's working-directory rules:**\n")
 	sb.WriteString(fmt.Sprintf("- Write `main.py` (the entry point) to `%s/main.py`\n", codeDirAbsPath))
 	sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
 	sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
 	sb.WriteString("- Before writing main.py, you may call tools via the API to inspect the current state (e.g. take a browser snapshot, check page content, read files) to understand the system before coding your solution\n")
 	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
 	sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
-	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n")
-	sb.WriteString("- **EDITING**: When updating an existing main.py, prefer using `diff_patch_workspace_file` to apply targeted changes rather than rewriting the entire file. This preserves working code and reduces errors.\n")
-	sb.WriteString("- **LOGGING**: Use `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'` and guard debug prints with `if VERBOSE:`. Log state before/after each major action. For browser automation: print the snapshot/page state after each navigation and interaction so failures show exactly what the page looked like. The only way to debug a failed script is through its stdout.\n")
-	sb.WriteString("- **IMPORTANT**: Do NOT hardcode any user/account/credential values — read ALL dynamic values from the environment variables listed below\n")
-	sb.WriteString("- **CRITICAL**: Always use `os.environ['KEY']` (NO default). NEVER `os.environ.get('KEY', 'hardcoded')` — missing var must raise KeyError, not silently use a hardcoded value.\n")
-	sb.WriteString("- **WARNING**: The step description shows the *current run's* values. This script is **reused for every group/user** — NEVER copy any name, ID, or value from the description into the script or into any `export` commands.\n")
-	sb.WriteString("- **ROBUSTNESS**: This script runs across different groups/users with different data. Handle edge cases: missing fields (use `.get()` with safe defaults for data fields), empty lists, None values, different data formats (e.g. dates as string vs number), missing files (check existence before reading optional files). Always print diagnostic context before failing so the error output explains what went wrong. Do not assume the shape of external data — validate and handle gracefully.\n")
-	sb.WriteString("- **GROUP-AWARE CODE**: The current group name is available via `os.environ.get('VAR_GROUP_NAME', '')`. If the same script keeps failing for specific groups, consider that different groups may require different logic (e.g. different page layouts, different APIs, different data formats). Use the group name to branch behavior when needed — e.g. `if group_name == 'xyz': ...`.\n")
-	sb.WriteString("- **NO FABRICATED DATA**: Your script MUST actually fetch/compute data by calling MCP tools, APIs, or processing real input files. Do NOT hardcode, fabricate, or invent output data. If your script writes output files without making any external calls or reading real input data, it will be rejected. Every value in the output must be traceable to a real data source.\n")
-	sb.WriteString("- **BROWSER AUTOMATION**: When using browser tools (playwright MCP or agent_browser), follow these rules:\n")
-	sb.WriteString("  1. **Always snapshot first**: Take a snapshot before any interaction to see the page state and available refs.\n")
-	sb.WriteString("     - Playwright: `call_mcp('playwright', 'browser_snapshot', {})`\n")
-	sb.WriteString("     - Agent Browser: `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
-	sb.WriteString("  2. **Use ref-based interaction**: Click/type using refs from snapshots. Do NOT use CSS selectors or JavaScript injection.\n")
-	sb.WriteString("     - Playwright: `call_mcp('playwright', 'browser_click', {'ref': 'abc123'})`\n")
-	sb.WriteString("     - Agent Browser: `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['@e1'], 'session': 'main'})`\n")
-	sb.WriteString("  3. **Do NOT use evaluate/eval for interactions**: Never inject JavaScript to click, fill forms, or navigate. Use dedicated commands: click, type/fill, select, navigate/open.\n")
-	sb.WriteString("  4. **Wait by polling snapshots**: Instead of `time.sleep(N)`, poll with snapshots in a loop and check for expected content. Use short sleeps (1-2s) between polls.\n")
-	sb.WriteString("  5. **Discover tools first**: Call `get_api_spec` to learn the exact parameter schemas before writing browser code. Do NOT guess parameter names.\n")
-	sb.WriteString("  6. **Print diagnostics on failure**: When an expected element isn't found, print the snapshot so the fix loop can see what the page looked like.\n\n")
+	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n\n")
+
+	// Shared authoring rules — single source of truth used by this prompt, the workshop
+	// builder prompt, harden_workflow, and review_step_code so all agents that write or
+	// review main.py agree on what "compliant" means.
+	sb.WriteString(BuildMainPyAuthoringRules())
+
+	// Browser automation — execution-mode-specific examples for Playwright + Agent Browser.
+	// Kept here (not in the shared block) because these concrete tool-call examples are most
+	// useful when actively generating new code; review/harden agents don't need them.
+	sb.WriteString("**Browser automation — execution-mode tool call examples:**\n")
+	sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
+	sb.WriteString("- Click: `call_mcp('playwright', 'browser_click', {'ref': 'abc123'})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['@e1'], 'session': 'main'})`\n")
+	sb.WriteString("- Always `get_api_spec` first to see exact parameter schemas. Do NOT guess parameter names.\n\n")
 
 	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
 	if len(varMappingLines) > 0 {

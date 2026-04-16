@@ -8,11 +8,11 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-export type WorkflowWorkspaceView = 'builder' | 'execution' | null
+export type WorkflowWorkspaceView = 'builder' | 'execution' | 'report' | 'plan' | 'flow' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
-export type CanvasViewMode = 'flow' | 'plan'
+export type CanvasViewMode = 'flow' | 'plan' | 'report'
 
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
@@ -20,6 +20,35 @@ const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
 const CANVAS_VIEW_MODE_KEY = 'workflow_canvas_view_mode'
 const WORKSHOP_MODE_BY_PRESET_KEY = 'workflow_workshop_mode_by_preset'
+const WORKSPACE_VIEW_BY_PRESET_KEY = 'workflow_workspace_view_by_preset'
+
+function loadWorkspaceViewByPreset(): Record<string, WorkflowWorkspaceView> {
+  try {
+    const saved = localStorage.getItem(WORKSPACE_VIEW_BY_PRESET_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (parsed && typeof parsed === 'object') return parsed
+    }
+  } catch (error) {
+    console.error('[WorkflowStore] Failed to load workspaceViewByPreset:', error)
+  }
+  return {}
+}
+
+function persistWorkspaceViewForPreset(presetId: string | null, view: WorkflowWorkspaceView) {
+  if (!presetId) return
+  try {
+    const current = loadWorkspaceViewByPreset()
+    if (view === null) {
+      delete current[presetId]
+    } else {
+      current[presetId] = view
+    }
+    localStorage.setItem(WORKSPACE_VIEW_BY_PRESET_KEY, JSON.stringify(current))
+  } catch (error) {
+    console.error('[WorkflowStore] Failed to save workspaceViewByPreset:', error)
+  }
+}
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -429,7 +458,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       canvasViewMode: (() => {
         try {
           const saved = localStorage.getItem(CANVAS_VIEW_MODE_KEY)
-          if (saved === 'flow' || saved === 'plan') {
+          if (saved === 'flow' || saved === 'plan' || saved === 'report') {
             return saved
           }
         } catch {
@@ -1463,6 +1492,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
           workflowWorkspaceView: view,
           workflowWorkspaceSelectionTouched: view !== null
         })
+        // Persist per-preset so the user returns to the same view across reloads.
+        // _presetStates handles in-session preset switches but lives in memory only.
+        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+        persistWorkspaceViewForPreset(presetId ?? null, view)
       },
 
       setLayoutDirection: (direction: LayoutDirection) => {
@@ -1930,7 +1963,22 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const savedState = currentState._presetStates[presetId]
           const restored = savedState ?? createDefaultPresetState()
 
-          // Apply restored per-preset state to flat fields + reset API-loaded context
+          // Apply restored per-preset state to flat fields + reset API-loaded context.
+          // _presetStates only survives in-memory; on a fresh session (page reload)
+          // it's empty, so fall back to the per-preset workspaceView map persisted
+          // in localStorage.
+          const persistedWorkspaceView =
+            restored.workflowWorkspaceView !== null
+              ? restored.workflowWorkspaceView
+              : (loadWorkspaceViewByPreset()[presetId] ?? null)
+          // When the effective workspace view is plan/flow/report, keep canvasViewMode
+          // in lock-step so the canvas renders the same shape the user left on last time.
+          const syncedCanvasMode: CanvasViewMode | undefined =
+            persistedWorkspaceView === 'plan' ||
+            persistedWorkspaceView === 'flow' ||
+            persistedWorkspaceView === 'report'
+              ? persistedWorkspaceView
+              : undefined
           set({
             // Reset workflow context (loaded from API, not per-preset)
             runFolders: [],
@@ -1942,8 +1990,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
             activePhase: restored.activePhase,
             showChatArea: restored.showChatArea,
             chatAreaExpanded: restored.chatAreaExpanded,
-            workflowWorkspaceView: restored.workflowWorkspaceView,
-            workflowWorkspaceSelectionTouched: restored.workflowWorkspaceSelectionTouched,
+            workflowWorkspaceView: persistedWorkspaceView,
+            workflowWorkspaceSelectionTouched:
+              restored.workflowWorkspaceSelectionTouched || persistedWorkspaceView !== null,
+            ...(syncedCanvasMode ? { canvasViewMode: syncedCanvasMode } : {}),
             workflowChatTabs: restored.workflowChatTabs,
             activeWorkflowTabId: restored.activeWorkflowTabId,
             selectedGroupIds: restored.selectedGroupIds,

@@ -21,12 +21,54 @@
 
 import type {
   ParsedReportPlan,
+  ReportChartType,
+  ReportDefaultSort,
   ReportEntry,
+  ReportFormatterName,
   ReportSection,
+  ReportSortDirection,
   ReportWidget,
   ReportWidgetKind,
   ReportWidgetRow,
 } from '../services/api-types'
+
+const KNOWN_FORMATTERS: ReportFormatterName[] = [
+  'currency-inr', 'currency-usd', 'percent', 'percent-1dp',
+  'short-date', 'long-date', 'datetime',
+  'number', 'number-1dp', 'number-2dp', 'bytes', 'boolean-icon',
+]
+const KNOWN_FORMATTER_SET = new Set<string>(KNOWN_FORMATTERS)
+const KNOWN_CHART_TYPES: ReportChartType[] = ['bar', 'line', 'area', 'pie']
+const KNOWN_CHART_TYPE_SET = new Set<string>(KNOWN_CHART_TYPES)
+
+// Parses `formats` value: comma-separated `field=preset` pairs.
+// Example: `balance=currency-inr, eval_score=percent-1dp, updated=datetime`
+// Unknown presets are silently dropped.
+function parseFormatsField(raw: string): Record<string, ReportFormatterName> | undefined {
+  const out: Record<string, ReportFormatterName> = {}
+  for (const part of raw.split(',')) {
+    const eq = part.indexOf('=')
+    if (eq <= 0) continue
+    const field = part.slice(0, eq).trim()
+    const preset = part.slice(eq + 1).trim()
+    if (!field || !preset) continue
+    if (!KNOWN_FORMATTER_SET.has(preset)) continue
+    out[field] = preset as ReportFormatterName
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function parsePositiveInt(raw: string): number | undefined {
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+function parseBool(raw: string): boolean | undefined {
+  const lower = raw.toLowerCase()
+  if (lower === 'true' || lower === 'yes' || lower === '1') return true
+  if (lower === 'false' || lower === 'no' || lower === '0') return false
+  return undefined
+}
 
 export function parseReportPlan(markdown: string): ParsedReportPlan {
   if (!markdown || markdown.trim() === '') {
@@ -100,6 +142,14 @@ function isWidgetKind(kind: string): kind is ReportWidgetKind {
 // Parses `key: value` lines inside a widget block. Unknown keys are ignored. `source` is
 // required; `path` is optional and defaults to empty (→ the whole source, useful when
 // the source file is itself the array/value a widget wants to render).
+//
+// Optional rich-rendering fields:
+//   formats: <field>=<preset>, ...           (table only)
+//   page_size: <int>                          (table only)
+//   enable_search: true|false                 (table only)
+//   chart_type: bar|line|area|pie             (chart only)
+//   x_axis: <field>                           (chart only)
+//   y_axis: <field>                           (chart only)
 function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidget | null {
   const fields: Record<string, string> = {}
   for (const line of body) {
@@ -114,7 +164,79 @@ function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidg
   if (!fields.source) return null
   const widget: ReportWidget = { kind, source: fields.source, path: normalizePath(fields.path) }
   if (fields.filter) widget.filter = fields.filter
+  applyOptionalFields(widget, fields)
   return widget
+}
+
+// Applies optional table/chart/common fields from a parsed key-value bag onto the widget.
+// Silently ignores unknown values (e.g. unknown chart_type) so a typo in the markdown
+// degrades gracefully to default rendering instead of breaking the whole report.
+function applyOptionalFields(widget: ReportWidget, fields: Record<string, string>): void {
+  // Common to every widget kind
+  if (fields.title) widget.title = fields.title
+  if (fields.description) widget.description = fields.description
+  if (fields.height) {
+    const n = parsePositiveInt(fields.height)
+    if (n !== undefined) widget.height = n
+  }
+
+  if (widget.kind === 'table') {
+    if (fields.formats) {
+      const fm = parseFormatsField(fields.formats)
+      if (fm) widget.formats = fm
+    }
+    if (fields.page_size || fields.pagesize) {
+      const n = parsePositiveInt(fields.page_size || fields.pagesize)
+      if (n !== undefined) widget.pageSize = n
+    }
+    if (fields.enable_search || fields.enablesearch) {
+      const b = parseBool(fields.enable_search || fields.enablesearch)
+      if (b !== undefined) widget.enableSearch = b
+    }
+    if (fields.default_sort || fields.defaultsort) {
+      const s = parseDefaultSort(fields.default_sort || fields.defaultsort)
+      if (s) widget.defaultSort = s
+    }
+    if (fields.hide_columns || fields.hidecolumns) {
+      const list = (fields.hide_columns || fields.hidecolumns)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+      if (list.length > 0) widget.hideColumns = list
+    }
+  } else if (widget.kind === 'chart') {
+    if (fields.chart_type || fields.charttype) {
+      const t = (fields.chart_type || fields.charttype).toLowerCase()
+      if (KNOWN_CHART_TYPE_SET.has(t)) widget.chartType = t as ReportChartType
+    }
+    if (fields.x_axis || fields.xaxis) widget.xAxis = (fields.x_axis || fields.xaxis)
+    if (fields.y_axis || fields.yaxis) widget.yAxis = (fields.y_axis || fields.yaxis)
+    if (fields.top_n || fields.topn) {
+      const n = parsePositiveInt(fields.top_n || fields.topn)
+      if (n !== undefined) widget.topN = n
+    }
+    if (fields.sort) {
+      const s = fields.sort.toLowerCase()
+      if (s === 'asc' || s === 'desc' || s === 'none') {
+        widget.sort = s as ReportSortDirection | 'none'
+      }
+    }
+    if (fields.show_values || fields.showvalues) {
+      const b = parseBool(fields.show_values || fields.showvalues)
+      if (b !== undefined) widget.showValues = b
+    }
+  }
+}
+
+// Parses `default_sort: <field>:<direction>` (e.g. `balance:desc`) or just `<field>` (asc).
+function parseDefaultSort(raw: string): ReportDefaultSort | undefined {
+  const parts = raw.split(':').map(s => s.trim())
+  if (parts.length === 0 || !parts[0]) return undefined
+  const direction = parts[1]?.toLowerCase()
+  return {
+    field: parts[0],
+    direction: direction === 'desc' ? 'desc' : 'asc',
+  }
 }
 
 // Treats JSONPath-style root selectors as "whole source" so users can write

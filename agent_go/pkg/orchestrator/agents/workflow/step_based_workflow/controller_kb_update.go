@@ -57,11 +57,51 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📚 Enqueued KB update for step %s (contribution=%d chars)", stepID, len(contribution)))
 
+	// Surface the KB update as a tracked execution so the workshop UI shows it
+	// alongside learning, harden, replan, etc. Mirrors the learning-agent pattern
+	// at controller_learning.go:410-454. Without this the KB agent runs invisibly
+	// and users have no signal that graph.json/notes are about to change.
+	execLabel := fmt.Sprintf("KB Update: %s", stepLabel)
+	execID := fmt.Sprintf("kb-update-%s-%05d", stepID, time.Now().UnixNano()%100000)
+	baseCtx := hcpo.workshopSessionCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	execCtx, cancel := context.WithCancel(baseCtx)
+	agentSessionID := fmt.Sprintf("workshop-kb-update-%s-%d", stepID, time.Now().UnixNano())
+	execCtx = context.WithValue(execCtx, orchestratorevents.AgentSessionIDKey, agentSessionID)
+	execCtx = context.WithValue(execCtx, orchestratorevents.ForceCorrelationIDKey, agentSessionID)
+	execCtx = context.WithValue(execCtx, orchestratorevents.IsSubAgentContextKey, true)
+
+	if hcpo.workshopStepRegistry != nil {
+		exec := &WorkshopStepExecution{
+			ID:             execID,
+			StepID:         execLabel,
+			AgentSessionID: agentSessionID,
+			Status:         WorkshopStepRunning,
+			cancel:         cancel,
+		}
+		hcpo.workshopStepRegistry.Register(exec)
+	}
+	if hcpo.workshopExecutionNotifier != nil {
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
+	}
+
 	enqueueKBUpdateJob(func() {
-		bgCtx := context.Background()
-		if err := hcpo.runKBUpdatePhase(bgCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, err))
+		var execErr error
+		var resultMsg string
+		defer func() {
+			cancel()
+			if hcpo.workshopExecutionNotifier != nil {
+				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
+			}
+		}()
+		execErr = hcpo.runKBUpdatePhase(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution)
+		if execErr != nil {
+			resultMsg = fmt.Sprintf("KB update failed for %s: %v", stepLabel, execErr)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, execErr))
 		} else {
+			resultMsg = fmt.Sprintf("KB update completed for %s", stepLabel)
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ KB update completed for %s", stepLabel))
 		}
 	})
@@ -91,6 +131,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	graphFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBGraphFileName)
 	indexFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBIndexFileName)
+	notesFolderPath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBNotesFolderName)
+	notesIndexPath := filepath.Join(notesFolderPath, KBNotesIndexFileName)
 
 	var runWorkspacePath string
 	if runFolder != "" {
@@ -128,6 +170,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 		"ContributionInstruction": contribution,
 		"GraphFilePath":           graphFilePath,
 		"IndexFilePath":           indexFilePath,
+		"NotesFolderPath":         notesFolderPath,
+		"NotesIndexPath":          notesIndexPath,
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
@@ -158,6 +202,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	graphFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBGraphFileName)
 	indexFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBIndexFileName)
+	notesFolderPath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBNotesFolderName)
+	notesIndexPath := filepath.Join(notesFolderPath, KBNotesIndexFileName)
 
 	agentName := fmt.Sprintf("kb-reorganize-%d", nano)
 	agent, err := hcpo.createKBReorganizeAgent(ctx, "kb_reorganize", agentName, nil)
@@ -166,9 +212,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 	}
 
 	templateVars := map[string]string{
-		"Instruction":   instruction,
-		"GraphFilePath": graphFilePath,
-		"IndexFilePath": indexFilePath,
+		"Instruction":     instruction,
+		"GraphFilePath":   graphFilePath,
+		"IndexFilePath":   indexFilePath,
+		"NotesFolderPath": notesFolderPath,
+		"NotesIndexPath":  notesIndexPath,
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
@@ -185,20 +233,57 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 // RunKBReorganize enqueues a reorganize job through kbUpdateQueue and blocks until the
 // worker finishes. Serializing against kbUpdateQueue prevents races with live post-step
 // updates. Returns early if ctx is cancelled (e.g. workshop session closed).
+//
+// Wraps the job in a tracked WorkshopStepExecution so the workshop UI surfaces it
+// alongside learning, harden, replan, etc. — same pattern as maybeEnqueueKBUpdate.
 func (hcpo *StepBasedWorkflowOrchestrator) RunKBReorganize(ctx context.Context, instruction string) (string, error) {
 	type reorgResult struct {
 		summary string
 		err     error
 	}
+
+	execLabel := "KB Reorganize"
+	execID := fmt.Sprintf("kb-reorganize-%05d", time.Now().UnixNano()%100000)
+	jobCtx, cancel := context.WithCancel(context.Background())
+	if hcpo.workshopStepRegistry != nil {
+		exec := &WorkshopStepExecution{
+			ID:             execID,
+			StepID:         execLabel,
+			AgentSessionID: "",
+			Status:         WorkshopStepRunning,
+			cancel:         cancel,
+		}
+		hcpo.workshopStepRegistry.Register(exec)
+	}
+	if hcpo.workshopExecutionNotifier != nil {
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
+	}
+
 	done := make(chan reorgResult, 1)
 	enqueueKBUpdateJob(func() {
-		summary, err := hcpo.runKBReorganizePhase(context.Background(), instruction)
+		summary, err := hcpo.runKBReorganizePhase(jobCtx, instruction)
 		done <- reorgResult{summary: summary, err: err}
 	})
+
+	finalize := func(summary string, err error) {
+		cancel()
+		if hcpo.workshopExecutionNotifier != nil {
+			resultMsg := summary
+			if err != nil {
+				resultMsg = fmt.Sprintf("KB reorganize failed: %v", err)
+			} else if resultMsg == "" {
+				resultMsg = "KB reorganize completed"
+			}
+			hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, err)
+		}
+	}
+
 	select {
 	case r := <-done:
+		finalize(r.summary, r.err)
 		return r.summary, r.err
 	case <-ctx.Done():
+		finalize("", ctx.Err())
 		return "", ctx.Err()
 	}
 }

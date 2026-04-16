@@ -856,7 +856,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	switch mode {
 	case "builder":
-		// BUILD: design workflow, create/modify steps, test execution, configure, build eval
+		// BUILDER: design everything — workflow plan, step config, evaluation plan, report widgets.
+		// Absorbs the legacy 'eval' and 'output' modes' tool sets.
 		tools = append(tools, execution...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
@@ -869,6 +870,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
 		tools = append(tools, "optimize_eval_step")
+		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_eval_step).
+		// From legacy 'output' mode — report widget editing happens via raw shell write to reports/report_plan.md;
+		// no dedicated tools needed. Query/list/stop are already in readOnly+execution above.
 
 	case "optimizer":
 		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable
@@ -884,28 +888,19 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, eval...)
 		tools = append(tools, "optimize_eval_step")
 
-	case "debugger":
-		// DEBUG: read-only analysis of past runs — no execution, no plan changes
-		// get_step_prompts already included via readOnly (all modes)
-		tools = append(tools, "debug_step", "harden_workflow")
+	case "ask":
+		// ASK: read-only investigate — inspect prior runs, eval reports, KB, learnings.
+		// Renamed from legacy 'debugger'. NO mutating tools — strict read-only.
+		// debug_step is read-only inspection; harden_workflow is intentionally NOT here
+		// because it modifies plan/config (use Optimize for that).
+		tools = append(tools, "debug_step")
 		tools = append(tools, "query_step", "list_executions")
 
-	case "runner":
-		// RUN: execute optimized steps and report — no plan changes, no optimization, no config changes
+	case "run":
+		// RUN: execute the finished workflow and report results.
+		// Renamed from legacy 'runner'. No plan changes, no optimization, no config changes.
 		tools = append(tools, execution...)
 		tools = append(tools, "run_full_workflow")
-
-	case "eval":
-		// EVAL: build and run evaluations — no execution plan changes, but evaluation step configs are allowed
-		tools = append(tools, eval...)
-		tools = append(tools, "update_step_config", "optimize_eval_step")
-		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
-
-	case "output":
-		// OUTPUT/REPORT mode kept for back-compat. The static report agent was removed
-		// with Phase 3 — the dynamic report is a live frontend view edited by writing
-		// reports/report_plan.md directly via shell. No mode-specific tools needed.
-		tools = append(tools, "query_step", "list_executions", "stop_step", "stop_all_executions")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -949,7 +944,8 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 }
 
 // detectWorkshopMode determines the current workshop mode based on step optimization state.
-// Returns the mode ("builder", "optimizer", "runner") and a comma-separated list of unoptimized step IDs.
+// Returns the mode ("builder", "optimizer", "ask", "run") and a comma-separated list of
+// unoptimized step IDs. After the 6→4 mode consolidation only those four values are valid.
 func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) (string, string) {
 	if plan == nil || len(plan.Steps) == 0 {
 		return "builder", ""
@@ -980,7 +976,7 @@ func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) (strin
 	if optimizedCount == 0 {
 		return "builder", unoptimizedList
 	} else if optimizedCount >= totalSteps {
-		return "runner", ""
+		return "run", ""
 	}
 	return "builder", unoptimizedList
 }
@@ -1273,8 +1269,52 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
-## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILD{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else if eq .WorkshopMode "output"}}OUTPUT{{else}}RUN{{end}}
+## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILDER{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "ask"}}ASK{{else}}RUN{{end}}
 {{.SpecialWorkspaceToolsInstructions}}
+
+## Execution policy — run ONE group at a time by default
+
+When you call ` + "`" + `run_full_workflow` + "`" + ` for a multi-group workflow, **default to sequential per-group execution** — pass ` + "`" + `enabled_group_names=[\"<single-group>\"]` + "`" + ` and wait for that group to finish before starting the next. Only run all groups in parallel (no ` + "`" + `enabled_group_names` + "`" + ` filter, or all groups in the same call) when the user explicitly says so ("run all groups", "run in parallel", "all at once", etc.).
+
+**Why per-group by default:**
+- **Cleaner failure signal.** A failure in group A is isolated; you can diagnose it before group B runs and reach a different conclusion than if both failed mixed-together.
+- **Fixes propagate forward.** If you run → eval → harden per group, group A's harden fixes apply BEFORE group B runs — group B benefits from the improvements without re-running A.
+- **Avoids resource contention.** Browsers, MCP server connections, API rate limits, file-system contention all behave better with serialized groups than with N parallel workers fighting over them.
+- **Earlier abort.** If group A reveals a structural problem (wrong selectors, missing variable, broken auth), you can stop the loop before wasting compute on B and C.
+- **Iteration rotation still works correctly.** The first group's run triggers the paired iteration-0 → iteration-N rotation; subsequent partial-group runs in the same session reuse iteration-0 (controller.go isPartialGroupRun check), so all groups end up in the same iteration-0 by the end of the loop.
+
+**The pattern:**
+` + "```" + `
+1. Read variables.json → list of enabled group names.
+2. for each group in groups:
+     run_full_workflow(enabled_group_names=["{group}"])
+     wait for completion (use list_running_executions / query_step to monitor if needed)
+     if user asked for the run+eval+harden cycle: run_full_evaluation + harden_workflow per group too
+3. After all groups: summarize.
+` + "```" + `
+
+**Exceptions where parallel is appropriate** (still requires explicit user signal):
+- User says "run all groups in parallel" / "all at once" / "fan out".
+- Single-group workflow (only one group exists — there's nothing to serialize).
+- The workflow's steps have no shared external resources (no browser, no API rate limits, no shared files) AND speed matters more than per-group debug clarity. Even then, prefer asking the user before defaulting to parallel.
+
+**If the user is ambiguous** ("run the workflow"), default to sequential per-group and tell them: "I'm running groups one at a time so any failures isolate cleanly. Say 'run in parallel' if you'd rather fan out."
+
+## Reporting — the frontend Report tab is already wired
+
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.md`"+` and renders the widget blocks defined there against `+"`db/*.json`"+` and `+"`knowledgebase/`"+` (graph + notes). It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
+
+**When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
+- The answer is almost always: **edit `+"`reports/report_plan.md`"+`** — add or update widget blocks.
+- Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
+- Do NOT write Python that produces a dashboard file. The React frontend already does this from the markdown.
+- If the user wants a NEW kind of visualization the widget grammar can't express, say so explicitly and propose either (a) a new widget type to add to the renderer, or (b) reshaping the underlying `+"`db/`"+` data to fit existing widget types. Don't silently fall back to "I'll write a Python script that makes HTML."
+
+**When the report shows "No report yet":** it means `+"`reports/report_plan.md`"+` is missing or contains zero parseable widgets. Fix by writing/editing that file. (If you're in BUILD mode, see the full `+"`report_plan.md`"+` grammar reference further down.)
+
+**When the report renders but is empty/missing widgets the user expects:** the markdown widgets parsed correctly but their `+"`source`"+` JSON is missing or has no rows yet. Either a step hasn't run, or the widget points at the wrong path. Inspect `+"`reports/report_plan.md`"+` and the actual `+"`db/`"+` files to diagnose.
+
+**Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent edits `+"`report_plan.md`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
 
 ## Three persistent stores — skill vs knowledgebase vs db
 
@@ -1287,13 +1327,22 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Shape: SKILL.md + references/ + scripts/ (Anthropic skill-creator format).
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
-**knowledgebase/graph.json — decisions, facts, strategies built up over time**
-- Accumulated domain knowledge: entities (companies, people, products, events) and relationships between them. This is what the workflow has LEARNED about its subject matter across runs, not per-run state.
-- Written by: the **post-step KB update agent only**. Step code does NOT write graph.json directly — even with knowledgebase_access=write, the guard exists for the KB update agent, not your shell writes.
-- Read as: step agents shell-read graph.json / index.json on demand if knowledgebase_access grants read.
-- Shape: structured graph — entities[], relationships[], with provenance (step + run) on every fact.
-- Opt-in per step: set knowledgebase_contribution (a natural-language extraction instruction) to trigger the KB update agent after the step.
-- Examples: "Company ACME-CORP is a SaaS vendor, 150 employees, CEO Jane Doe", "Company X competes with Company Y", "Category 'SaaS' includes [A, B, C]".
+**knowledgebase/ — decisions, facts, strategies, and narrative analysis built up over time**
+- Two formats co-located in this folder, both written by the **post-step KB update agent only**:
+  - `+"`graph.json`"+` (+ `+"`index.json`"+`) — atomic facts as entities/relationships with provenance. Use for facts you'll query later by id/type.
+  - `+"`notes/`"+` — per-topic narrative markdown. One file per topic (entity-id or `+"`pattern-<slug>`"+`), plus `+"`notes/_index.json`"+` as a registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns — anything too prosaic to fit cleanly as an entity property but durable across runs.
+- Written by: the **post-step KB update agent only**. Step code does NOT write graph.json, index.json, or notes/ directly — even with knowledgebase_access=write, the guard exists for the KB update agent, not your shell writes.
+- Read as: step agents shell-read on demand if knowledgebase_access grants read. For graph: `+"`jq`"+` on graph.json. For notes: ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob notes/*.md.
+- Shape:
+  - graph.json: entities[], relationships[], each with stable id + provenance (step + run).
+  - notes/<topic-id>.md: H1 = topic-id; sections = `+"`## YYYY-MM-DD`"+` or topical subhead; cross-reference graph entities by id inline.
+  - notes/_index.json: `+"`{topics: [{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}]}`"+`.
+- Opt-in per step: set knowledgebase_contribution (a natural-language extraction instruction) to trigger the KB update agent after the step. Mention narrative explicitly in the instruction (e.g. "extract entities X AND write a paragraph in notes/ about Y") if you want the agent to write notes — otherwise it only updates graph.json.
+- Compaction: notes files compact themselves when they exceed 20KB or 30 sections — older sections get condensed into a "Historical context" preamble, recent sections stay verbatim. Bounded growth without losing the long-range narrative.
+- Examples:
+  - graph.json: "Company ACME-CORP is a SaaS vendor, 150 employees, CEO Jane Doe", "Company X competes with Company Y".
+  - notes/company-acme.md: "## 2026-04 quarter — ACME's hiring slowed by 40% relative to peers; pattern matches the pattern-saas-belt-tightening narrative."
+  - notes/pattern-tax-cycle.md: "Three accounts (acme, beta, gamma) all show dip-then-recover during quarter-end weeks. Confidence: high. Covers: company-acme, company-beta, company-gamma."
 
 **db/*.json — workflow state and results**
 - The workflow's actual output data: rows the workflow produces or consumes this run (processed records, cursors, cumulative output, per-group tallies).
@@ -1314,7 +1363,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **Step config knobs for KB (use update_step_config):**
 - knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB facts, 'read-write' (or 'write') on steps that produce KB facts via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
-- knowledgebase_contribution — natural-language instruction for the post-step KB update agent: what entities/relationships to extract from this step's output. If empty, the KB update agent does NOT run for this step even with write access.
+- knowledgebase_contribution — natural-language instruction for the post-step KB update agent: what entities/relationships to extract from this step's output, and (optionally) what narrative to write to notes/. If empty, the KB update agent does NOT run for this step even with write access. Include phrases like "and write a paragraph in notes/" or "summarize the pattern in notes/pattern-X.md" when narrative is wanted; otherwise the agent writes graph.json only.
 {{if eq .UseKnowledgebase "false"}}
 **Note:** Knowledgebase is currently disabled at the preset level. Steps can still write to db/ but knowledgebase/ is unavailable until the preset is re-enabled.
 {{end}}
@@ -1406,12 +1455,108 @@ filter: type=company
 **Widget types:**
 - `+"`widget:text`"+` — string / number / JSON rendered as text
 - `+"`widget:table`"+` — array of objects (columns derived from object keys)
-- `+"`widget:chart`"+` — array shaped like `+"`[{label, value}]`"+` (bar chart)
+- `+"`widget:chart`"+` — array of objects rendered as bar/line/area/pie chart
 - `+"`widget:row`"+` — layout wrapper; each line `+"`- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ]`"+`
 
 **Valid `+"`source`"+` paths:** `+"`db/<file>.json`"+`, `+"`knowledgebase/graph.json`"+`, `+"`knowledgebase/index.json`"+`. Anything else is rejected.
 
+**Required fields on every widget:**
+- `+"`source:`"+` — workspace-relative JSON file path
+- `+"`path:`"+` — dot-notation key into the JSON. For root-level arrays/values use `+"`$`"+`, `+"`$[*]`"+`, `+"`.`"+`, or `+"`*`"+` (all normalize to "the whole source").
+
+**Optional fields — common to all widget kinds:**
+- `+"`title:`"+` — header label rendered above the widget
+- `+"`description:`"+` — small subtitle (one line) below the title
+- `+"`height:`"+` — pixel height (mostly useful for charts; default ~288)
+- `+"`filter:`"+` — `+"`key=value`"+` to filter array sources (e.g. `+"`filter: type=company`"+`)
+
+**Optional fields for `+"`widget:table`"+`:**
+- `+"`formats:`"+` — comma-separated `+"`field=preset`"+` pairs to render cells with proper formatting. Supported presets:
+  - `+"`currency-inr`"+` (₹12,75,166.08), `+"`currency-usd`"+`
+  - `+"`percent`"+` (42%), `+"`percent-1dp`"+` (42.5%) — fractional values ≤1 are scaled (0.42 → 42%); values >1 treated as already-percent
+  - `+"`short-date`"+` (Apr 16, 2026), `+"`long-date`"+`, `+"`datetime`"+` (Apr 16, 2026, 7:30 PM)
+  - `+"`number`"+` (12,345), `+"`number-1dp`"+`, `+"`number-2dp`"+`
+  - `+"`bytes`"+` (4.2 KB), `+"`boolean-icon`"+` (✓ / ✗)
+- `+"`page_size:`"+` — rows per page (default 25). Set higher for short tables, lower for very wide ones.
+- `+"`enable_search:`"+` — `+"`true`"+` (default) / `+"`false`"+` to hide the search box.
+- `+"`default_sort:`"+` — initial sort. Format: `+"`field:asc`"+` or `+"`field:desc`"+` (e.g. `+"`balance:desc`"+`).
+- `+"`hide_columns:`"+` — comma-separated list of columns present in data but suppressed in the rendered table (e.g. `+"`hide_columns: created_at, internal_id`"+`).
+
+**Optional fields for `+"`widget:chart`"+`:**
+- `+"`chart_type:`"+` — `+"`bar`"+` (default), `+"`line`"+`, `+"`area`"+`, `+"`pie`"+`.
+- `+"`x_axis:`"+` / `+"`y_axis:`"+` — field names when data isn't in canonical `+"`{label, value}`"+` shape (e.g. `+"`x_axis: month, y_axis: revenue`"+`).
+- `+"`top_n:`"+` — cap rendered points to top N (use with `+"`sort: desc`"+` for "top 10 by value").
+- `+"`sort:`"+` — `+"`asc`"+` / `+"`desc`"+` / `+"`none`"+` (default). Sorts points by y-value.
+- `+"`show_values:`"+` — `+"`true`"+` to render value labels on bars/lines/pie slices (default false).
+
+**Examples — pick the simplest widget that conveys the idea, then layer options as needed:**
+` + "```" + `markdown
+## Per-Account Status
+
+` + "`" + `` + "`" + `` + "`" + `widget:table
+title: Account snapshot
+description: Latest balance + last eval score per group, sorted by balance.
+source: db/account_status.json
+path: $[*]
+formats: balance=currency-inr, eval_score=percent-1dp, balance_updated_at=datetime
+default_sort: balance:desc
+page_size: 50
+hide_columns: created_at, internal_id
+` + "`" + `` + "`" + `` + "`" + `
+
+## Top Strategies
+
+` + "`" + `` + "`" + `` + "`" + `widget:chart
+title: Top 10 strategies by Sharpe ratio
+chart_type: bar
+source: knowledgebase/graph.json
+path: entities
+filter: type=live-strategy
+x_axis: label
+y_axis: properties.sharpe
+sort: desc
+top_n: 10
+show_values: true
+height: 360
+` + "`" + `` + "`" + `` + "`" + `
+` + "```" + `
+
+**Asking the user before writing widgets** — this is the LLM-driven part. When the user says "add a report widget" or similar, ask clarifying questions before writing the markdown:
+- "Which data should it bind to — `+"`db/<file>`"+` or KB entities of a specific type?"
+- "Table or chart? If chart, bar/line/area/pie?"
+- "Any columns/values to format specially (currency, percent, dates)?"
+- "Sort by what initially?"
+- "Should I cap to top N rows or show everything?"
+- "Want a title above it?"
+Then write the widget block honoring their answers. Don't dump generic widgets — the choice of formatter, sort, and top_n is what makes the report read well.
+
 **Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed. Write `+"`report_plan.md`"+` with shell (`+"`cat > '{{.AbsWorkspacePath}}/reports/report_plan.md' <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`.
+
+### Evaluation plan — evaluation/evaluation_plan.json
+
+Designing the eval plan is also a Builder responsibility (folded in from the legacy 'eval' mode in the 6→4 mode consolidation).
+
+**Evaluation workflow:**
+1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
+2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
+3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
+4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
+5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
+6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. For eval steps this writes to `+"`evaluation/step_config.json`"+`. Each eval step should store: `+"`declared_execution_mode`"+`, `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`. The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
+7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g. `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run.
+9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
+
+   **{{"{{TARGET_RUN_PATH}}"}}**: At runtime, this variable resolves to the absolute path of the original execution folder. Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers.
+10. Use **optimize_eval_step(step_id, target_run_folder?)** for a read-only optimization report on one eval step.
+11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+
+**Evaluation files:**
+- Plan: `+"`evaluation/evaluation_plan.json`"+`
+- Step config: `+"`evaluation/step_config.json`"+`
+- Eval run sandbox + report: `+"`evaluation/runs/iteration-0[/group]/`"+` (paired with workflow's `+"`runs/iteration-0`"+`)
+- Historical eval reports: `+"`evaluation/runs/iteration-N/`"+` — created by paired rotation; `+"`evaluation/runs/iteration-N`"+` corresponds 1:1 to `+"`runs/iteration-N`"+`.
+- Eval-step learnings live under the shared `+"`learnings/{stepID}/`"+` namespace (same as execution steps); step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time.
 
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — Make existing steps reliable across all groups and runs. The plan structure should already be working.
@@ -1451,60 +1596,24 @@ Run one group at a time so each group's failures harden the workflow before the 
 4. If any groups still failing: repeat the loop (max 2 full iterations to prevent infinite loops)
 
 For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_from_results`"+` which rewrites the plan from evidence. Use `+"`harden_workflow`"+` when the structure is right but steps need to be more reliable.
-{{else if eq .WorkshopMode "debugger"}}
-**DEBUG MODE** — Investigate existing runs without re-executing. Analyze what happened and why.
+{{else if eq .WorkshopMode "ask"}}
+**ASK MODE — read-only investigate.** Inspect prior runs, eval reports, KB, learnings, and configs. Answer the user's questions about what happened and why. **Do NOT modify any files, run any steps, or apply any fixes.** If the user wants action, tell them to switch to Builder (for design changes) or Optimize (for harden/fixes).
 
-**What to do in debug mode:**
-- Use **harden_workflow(target_run_folder)** to analyze eval failures across all groups and apply targeted fixes (pre-validation rules, description patches, code fixes).
-- Use **debug_step(step_id)** for deeper analysis of a specific step.
-- Read execution output files directly: cat runs/{run_folder}/execution/{step}/output.json
-- Read learnings: cat learnings/_global/SKILL.md
-- Check validation logs: cat runs/{run_folder}/logs/{step}/*.json
+**What to do here:**
+- Use **debug_step(step_id)** for analysis of a specific step's recent execution (logs, validation, learning status).
+- Use **query_step / list_executions** to look up running or recent agent activity.
+- Read files directly: `+"`cat runs/{run_folder}/execution/{step}/output.json`"+`, `+"`cat learnings/_global/SKILL.md`"+`, `+"`cat evaluation/runs/{run}/evaluation_report.json`"+`, `+"`cat knowledgebase/graph.json | jq ...`"+`.
+- Inspect step_config: `+"`jq '.steps[] | select(.id==\"X\")' planning/step_config.json`"+`.
+- Use the read-only audit slash commands (`+"`/audit-config`"+`, `+"`/audit-skills`"+`, `+"`/kb-review`"+`, `+"`/review-plan`"+`) — they're available in this mode.
 
-**DO NOT run steps in debug mode.** Debug mode is for analysis only. If you need to re-run, ask the user to switch to Optimize or Build mode.
-{{else if eq .WorkshopMode "eval"}}
-**EVAL MODE** — Build and run evaluation plans to measure workflow quality.
-
-**Evaluation workflow:**
-1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
-2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
-3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files (step_1_credentials.json, step_3_login_status.json, etc.). Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
-4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
-6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. In eval mode this writes to `+"`evaluation/step_config.json`"+`, so each eval step should store:
-   - `+"`declared_execution_mode`"+`
-   - `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`
-   The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
-7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g., `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run. The eval agent reads from {{"{{TARGET_RUN_PATH}}"}}, performs its analysis, and writes results to its own folder. Pre-validation then verifies those results were produced.
-9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
-   **IMPORTANT — {{"{{TARGET_RUN_PATH}}"}}**: At runtime, the variable {{"{{TARGET_RUN_PATH}}"}} is injected and resolves to the absolute path of the original execution folder (e.g. `+"`/app/workspace-docs/.../runs/{iteration}/{group}/execution`"+`). Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers. The eval step's own folder is empty — all output files live in the original execution run.
-10. Use **optimize_eval_step(step_id, target_run_folder?)** when you want a read-only optimization report for one evaluation step. It should recommend stronger pre_validation, clearer scoring logic, redundancy cleanup, whether the eval should stay single-step, and the best-fit execution mode for that eval step.
-11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
-12. Iterate by refining `+"`evaluation/evaluation_plan.json`"+`, tightening `+"`evaluation/step_config.json`"+`, or switching to Build/Optimize mode if the execution workflow itself needs changes.
-
-**Evaluation files:**
-- Plan: evaluation/evaluation_plan.json
-- Step config: evaluation/step_config.json
-- Eval run sandbox + report: evaluation/runs/iteration-0[/group]/ (paired with workflow's runs/iteration-0)
-- Historical eval reports: evaluation/runs/iteration-N/ — created by paired rotation when the workflow runs again. evaluation/runs/iteration-N corresponds 1:1 to runs/iteration-N.
-- Learnings: learnings/{stepID}/
-- Learn-code artifact: learnings/{stepID}/main.py
-
-Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design, scoring, and evaluation step configuration under `+"`evaluation/`"+`. Eval-step learnings still live under the shared `+"`learnings/{stepID}/`"+` namespace (same as execution steps); step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time. Switch to Build mode for workflow changes.
-{{else if eq .WorkshopMode "output"}}
-**REPORT MODE** — The workflow report is now a **live frontend view** over `+"`db/`"+` and `+"`knowledgebase/graph.json`"+`, defined by `+"`reports/report_plan.md`"+` widget blocks (see the BUILD-mode `+"`report_plan.md`"+` guidance for full syntax).
-
-There is no static artifact and no generate step — the user opens the Report panel from the toolbar and sees whatever `+"`db/`"+` + `+"`graph.json`"+` currently contain. Edit `+"`reports/report_plan.md`"+` here to shape that view; save via shell (`+"`cat > reports/report_plan.md <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`.
-
-Do NOT modify execution or evaluation steps in this mode — focus on widget definitions only.
+**What's blocked here:** any tool that mutates plan, config, learnings, KB, or runs steps. If you find yourself wanting one of those, prompt the user to switch modes.
 {{else}}
-**RUN MODE** — All steps are optimized. Execute and report results.
-- Run steps with execute_step(step_id) — learnings are already locked, so learning phase is a no-op for locked steps
-- Report results concisely
-- If a step fails or produces incorrect output, reset its optimized flag (update_step_config(step_id, optimized=false)) and investigate
-- Do NOT make structural changes to the plan in this mode
-- If issues require optimization, tell the user you are switching to optimize mode
+**RUN MODE** — All steps are optimized. Execute the workflow and report results.
+- Run with `+"`run_full_workflow`"+` (default per-group sequential; see Execution Policy above).
+- Locked learnings/code mean the learning phase is a no-op for those steps.
+- Report results concisely; surface failures.
+- If a step fails consistently, tell the user you can reset `+"`optimized=false`"+` and switch to Optimize mode for harden — don't do it silently in Run mode.
+- Do NOT make structural plan changes in this mode.
 {{end}}
 
 ## CURRENT STATE
@@ -1517,11 +1626,7 @@ Do NOT modify execution or evaluation steps in this mode — focus on widget def
 {{end}}- **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
-{{if eq .WorkshopMode "output"}}
-### Current Report Plan
-Use `+"`cat reports/report_plan.md`"+` to inspect the current widget definitions.
-{{else}}
-{{if and .StepSummary (ne .WorkshopMode "output")}}### Plan Steps
+{{if .StepSummary}}### Plan Steps
 {{.StepSummary}}
 {{end}}
 {{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`decision_step`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
@@ -1533,7 +1638,6 @@ Use `+"`execute_shell_command`"+` with focused queries like:
 - **Inspect only route structure for a todo/orchestration step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, type, predefined_routes, orchestration_routes}' planning/plan.json`"+`
 
 Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.{{end}}
-{{end}}
 
 {{if eq .WorkshopMode "builder"}}
 ## PLAN DESIGN — From Requirements to Steps
@@ -1941,70 +2045,40 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 **Rule of thumb:** When planning a new workflow, start by identifying the distinct tasks, then group related tasks into todo_task steps with sub-agents. Only use regular steps for truly simple, single-purpose tasks.
 {{end}}
 
-{{if eq .WorkshopMode "eval"}}
-## EVALUATION
-
-Evaluation plans test execution quality. Each eval step checks one execution step's output.
-
-**Workflow:**
-1. Edit `+"`evaluation/evaluation_plan.json`"+` directly with shell/file tools
-2. Default to **one eval step** when a single coherent deterministic check can cover the outcome. Split into multiple eval steps only for genuinely separate concerns.
-3. Choose each eval step's mode by task shape — prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
-4. Use `+"`update_step_config`"+` to record each eval step's declared mode, why the other plausible modes were not chosen, and whether the description is optimized and free of secrets. In eval mode this persists to `+"`evaluation/step_config.json`"+`.
-5. Run **validate_evaluation_plan** after editing
-6. Run **run_full_evaluation(target_run_folder)** to score against an execution run. Eval execution itself uses the internal `+"`iteration-0`"+` sandbox under `+"`evaluation/runs/`"+`.
-7. Run **optimize_eval_step(step_id, target_run_folder?)** when you need focused recommendations for one evaluation step
-8. Review the report — low scores (< 5) need tighter criteria or better step descriptions
-9. Iterate: fix execution steps or refine the eval plan, then re-run
-
-Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode for workflow changes.
-{{end}}
-
 ## TOOLS REFERENCE
 
 {{if eq .IsCodeExecutionMode "true"}}**Code execution mode:** You do NOT have direct tool-call access. Bridge-native tools: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`agent_browser`"+`, `+"`get_api_spec`"+`. All other workflow tools (execute_step, query_step, plan modification, etc.) are available via the workflow API path — use `+"`get_api_spec(server_name=\"workflow\", tool_name=\"...\")`"+` to get their schemas. Do **not** hardcode raw HTTP requests.
 {{end}}
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "run")}}
 ### Step Execution
 - **execute_step(step_id, iteration, group_name?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
-{{if ne .WorkshopMode "runner"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
+{{if ne .WorkshopMode "run"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-{{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths{{end}}
+{{if ne .WorkshopMode "run"}}- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
 - **run_in_background(name, instruction)** — Spawn independent background agent with same tools
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.{{end}}
+- **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.
 {{end}}
 
-{{if eq .WorkshopMode "debugger"}}
+{{if eq .WorkshopMode "ask"}}
 ### Step Query (Read-Only)
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
 - **list_executions(status_filter?)** — List all background executions
-{{end}}
-
-{{if or (eq .WorkshopMode "eval") (eq .WorkshopMode "output")}}
-### Step Query (Read-Only)
-- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-- **list_executions(status_filter?)** — List all background executions
-{{end}}
-
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "eval")}}
-### Step Config & Analysis
-- **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. In eval mode this writes to `+"`evaluation/step_config.json`"+`.
-- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
-- **harden_workflow(target_run_folder, focus?)** — The primary optimization tool. Reads eval reports and execution outputs, then for every failing step: adds pre-validation rules, tightens descriptions, patches main.py, updates config. Replaces analyze_step + optimize_step + optimize_workflow + review_plan as a single tool that analyzes AND acts.
-- **infer_objective(focus?)** — Infer workflow objective from plan structure (only when objective is truly missing from plan.json)
-- **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json
-- **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
+- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
-{{if eq .WorkshopMode "debugger"}}
-### Analysis
-- **harden_workflow(target_run_folder, focus?)** — Analyze eval failures and apply targeted fixes across all failing steps
-- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
+### Step Config & Analysis
+- **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
+- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
+- **harden_workflow(target_run_folder, focus?)** — The primary optimization tool. Reads eval reports and execution outputs, then for every failing step: adds pre-validation rules, tightens descriptions, patches main.py, updates config.
+- **infer_objective(focus?)** — Infer workflow objective from plan structure (only when objective is truly missing from plan.json)
+- **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json
+- **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
@@ -2044,7 +2118,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
 - **How to write messages:**
   - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
-  - **Run mode**: typically one message, e.g. "Run the full workflow using run_full_workflow. Use the latest run folder."
+  - **Run mode** (workshop_mode="run"): typically one message, e.g. "Run the full workflow using run_full_workflow. Use the latest run folder."
   - **Optimize mode**: one message with stop conditions (see optimizer best practices below)
   - Use multiple messages to break work into sequential phases, e.g. ["Run the workflow", "Generate the final report"]
   - Read `+"`variables.json`"+` for available group names and include them explicitly in the message if needed
@@ -2059,8 +2133,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 {{end}}
 
-{{if eq .WorkshopMode "eval"}}
-### Evaluation
+{{if eq .WorkshopMode "builder"}}
+### Evaluation tools (Builder mode owns eval design)
 - **validate_evaluation_plan** — Validate the evaluation plan JSON
 - **run_full_evaluation(target_run_folder)** — Score the eval plan against an execution run; eval steps execute in the internal `+"`evaluation/runs/iteration-0/...`"+` sandbox
 - **optimize_eval_step(step_id, target_run_folder?, focus?, forced?)** — Start a background optimization agent for a single evaluation step
@@ -2083,7 +2157,7 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 
 Use `+"`get_workflow_config`"+` to see the workflow's selected skills. Use `+"`list_skills`"+` to see all installed skills.
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "debugger")}}
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "ask")}}
 ### Human-Assisted Learning
 **human_feedback tool** (runtime interaction) and **learning_mode: human_assisted** (post-execution learning) are unrelated features.
 
@@ -3444,7 +3518,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"knowledgebase_access": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"read", "write", "read-write", "none"},
-					"description": "Access mode for this step against knowledgebase/ (graph.json + index.json). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing facts; 'write' / 'read-write' — may contribute facts via a non-empty knowledgebase_contribution (graph.json writes go through the post-step KB update agent); 'none' — no access. Omit to keep the default.",
+					"description": "Access mode for this step against knowledgebase/ (graph.json + index.json + per-topic notes/). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing facts and narrative (read graph via jq, read notes via index-first then selective cat); 'write' / 'read-write' — may contribute via a non-empty knowledgebase_contribution (all writes go through the post-step KB update agent — never directly); 'none' — no access. Omit to keep the default.",
 				},
 				"knowledgebase_contribution": map[string]interface{}{
 					"type":        "string",
@@ -5896,6 +5970,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Iteration folder. Defaults to 'iteration-0' if omitted.",
 				},
+				"group_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional group name. When provided, harden scopes its analysis and fixes to ONLY this group's eval report and execution data. When omitted, harden discovers all groups under the iteration and analyzes them collectively (cross-group failure patterns).",
+				},
 				"focus": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional focus for the hardening pass, e.g. 'pre-validation', 'parsing failures', 'data integrity'.",
@@ -5907,6 +5985,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iter, ok := args["iteration"]; ok && iter != nil {
 				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
 					targetRunFolder = strings.TrimSpace(s)
+				}
+			}
+			groupName := ""
+			if val, ok := args["group_name"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					groupName = strings.TrimSpace(s)
 				}
 			}
 			focus := ""
@@ -5991,15 +6075,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, execErr = iwm.runHardenWorkflowAgent(execCtx, targetRunFolder, focus)
+				result, execErr = iwm.runHardenWorkflowAgent(execCtx, targetRunFolder, groupName, focus)
 			}()
 
 			focusInfo := ""
 			if focus != "" {
 				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
 			}
-			logger.Info(fmt.Sprintf("🛡️ Workshop: harden_workflow agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
-			return fmt.Sprintf("Workflow hardening agent started in background.\nexecution_id: %q\nTarget run folder: %s%s\nYou will be automatically notified when it completes.", execID, targetRunFolder, focusInfo), nil
+			groupInfo := ""
+			if groupName != "" {
+				groupInfo = fmt.Sprintf("\nGroup scope: %s", groupName)
+			}
+			logger.Info(fmt.Sprintf("🛡️ Workshop: harden_workflow agent started in background, execution_id=%q, target_run_folder=%q, group_name=%q", execID, targetRunFolder, groupName))
+			return fmt.Sprintf("Workflow hardening agent started in background.\nexecution_id: %q\nTarget run folder: %s%s%s\nYou will be automatically notified when it completes.", execID, targetRunFolder, groupInfo, focusInfo), nil
 		},
 		"workflow",
 	); err != nil {
@@ -7209,8 +7297,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Workshop builder mode to use when mode='workshop'. Defaults to 'runner'. Use 'optimizer' to run with optimization (generate learnings, analyze steps).",
-					"enum":        []string{"runner", "optimizer"},
+					"description": "Workshop builder mode to use when mode='workshop'. Defaults to 'run'. Use 'optimizer' to run with optimization (generate learnings, analyze steps).",
+					"enum":        []string{"run", "optimizer"},
 				},
 			},
 			"required": []string{"name", "cron_expression", "group_names"},
@@ -8843,9 +8931,25 @@ For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts 
 - Look for tool calls with tool_name `+"`mcp__api-bridge__execute_shell_command`"+` where `+"`args`"+` contains `+"`python3`"+` and the step's `+"`main.py`"+` path
 - The `+"`result`"+` JSON has `+"`exit_code`"+`, `+"`stdout`"+`, and `+"`stderr`"+`
 
-## PROCEDURE
+{{if .GroupName}}## SCOPE — SINGLE GROUP
 
-1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
+**This run is scoped to a single group: `+"`{{.GroupName}}`"+`.**
+
+Limit ALL analysis and fixes to data under that group's subfolder. Do NOT inspect other groups even if their folders exist on disk. Cross-group failure aggregation does not apply — the failure map is per-step pass/fail for THIS group only. Mark a step "passing" if `+"`{{.GroupName}}`"+` passed; do not require pass-across-all-groups before incrementing successful_runs.
+
+When you finish, name the group explicitly in your summary (e.g. "Hardened step X for group {{.GroupName}}") so the user can tell which group's run produced the changes.
+
+{{end}}## PROCEDURE
+
+{{if .GroupName}}1. **Use the scoped group** — `+"`{{.GroupName}}`"+`. Do NOT discover other groups; ignore them entirely.
+
+2. **Read evaluation reports for {{.GroupName}}** — read:
+   - `+"`evaluation/runs/{{.TargetRunFolder}}/{{.GroupName}}/evaluation_report.json`"+`
+   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/execution/{step-id}/`"+` step output files
+   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/execution/learn_code_fast_path.json`"+` for main.py results
+   - `+"`runs/{{.TargetRunFolder}}/{{.GroupName}}/logs/{step-id}/pre_validation.json`"+` for validation results
+
+3. **Build a failure list for {{.GroupName}}** — per-step pass/fail with failure reasons. No cross-group aggregation.{{else}}1. **Discover all groups** — List the subdirectories under `+"`runs/{{.TargetRunFolder}}/`"+` to find all group folders (e.g., vikas, rohit, atul). Ignore `+"`run_metadata.json`"+`.
 
 2. **Read evaluation reports** — For each group, read:
    - `+"`evaluation/runs/{{.TargetRunFolder}}/{group}/evaluation_report.json`"+`
@@ -8854,11 +8958,11 @@ For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts 
    - `+"`runs/{{.TargetRunFolder}}/{group}/logs/{step-id}/pre_validation.json`"+` for validation results
 
 3. **Build a failure map** — For each step, aggregate failures across all groups:
-   | Step ID | Groups that passed | Groups that failed | Failure reasons |
+   | Step ID | Groups that passed | Groups that failed | Failure reasons |{{end}}
 
 4. **For each failing step** (ordered by failure count, worst first):
    a. Read the current step description, validation_schema, learnings, and main.py (if code_exec)
-   b. Read the actual execution output and logs for 1-2 failing groups
+   b. Read the actual execution output and logs {{if .GroupName}}for `+"`{{.GroupName}}`"+`{{else}}for 1-2 failing groups{{end}}
    c. Categorize the failure:
       - **Output format/structure** → add pre-validation json_checks
       - **Data correctness** (wrong values, missing data) → tighten description + patch code
@@ -8867,10 +8971,11 @@ For `+"`todo_task`"+` steps, the orchestrator may run sub-agent main.py scripts 
    d. Apply fixes using the appropriate tools
    e. Document what you changed and why
 
-5. **For each passing step** (passed ALL groups):
+5. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
    - If successful_runs < 3, increment via update_step_config
    - If successful_runs >= 3, set optimized=true, lock_learnings=true, and (learn_code steps only) lock_code=true — freezes main.py so a single future transient failure won't trigger the fix loop to rewrite a proven script
-   - **Unlock guard**: If the step's current description hash does not match the stored `+"`description_hash`"+` (i.e., description_optimized went stale), do NOT auto-lock. Instead flag the step as "description changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.
+   - **Unlock guard**: If the step's current description hash does not match the stored `+"`description_hash`"+` (i.e., description_optimized went stale), do NOT auto-lock. Instead flag the step as "description changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
+   - **Single-group caution**: Marking optimized after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
 6. **Produce a summary** with:
    - Steps hardened (with specific changes made)
@@ -8891,7 +8996,7 @@ When adding pre-validation rules, follow this priority:
 Always prefer specific checks over generic ones. A check that catches the actual failure is worth more than ten generic existence checks.
 `)
 
-var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}". Read all group eval reports, identify every failing step, and apply targeted fixes (pre-validation rules, description tightening, code patches). Mark passing steps as optimized where appropriate. Summarize all changes made.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var hardenWorkflowAgentUserTemplate = MustRegisterTemplate("hardenWorkflowAgentUser", `Harden the workflow from evaluation results in "{{.TargetRunFolder}}"{{if .GroupName}}, scoped to group "{{.GroupName}}" only{{end}}. {{if .GroupName}}Read this group's eval report{{else}}Read all group eval reports{{end}}, identify every failing step, and apply targeted fixes (pre-validation rules, description tightening, code patches). Mark passing steps as optimized where appropriate. Summarize all changes made.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 // HardenWorkflowAgent applies eval-driven fixes to failing steps
 type HardenWorkflowAgent struct {
@@ -10123,7 +10228,9 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 }
 
 // runHardenWorkflowAgent reads eval reports from a run and applies targeted fixes to failing steps.
-func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
+// When groupName is non-empty, the agent is told to scope its analysis and fixes to ONLY that group.
+// When empty, it discovers all groups under the iteration and analyzes them collectively.
+func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Context, targetRunFolder string, groupName string, focus string) (string, error) {
 	workspacePath := iwm.controller.GetWorkspacePath()
 	logger := iwm.controller.GetLogger()
 
@@ -10229,6 +10336,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	templateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
 		"TargetRunFolder":         targetRunFolder,
+		"GroupName":               groupName,
 		"PlanJSON":                planJSON,
 		"StepConfigSummary":       stepConfigSummary,
 		"WorkflowObjective":       workflowObjective,
@@ -10238,7 +10346,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		"WorkflowID":              iwm.workflowID,
 	}
 
-	logger.Info(fmt.Sprintf("🛡️ Running harden_workflow agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
+	logger.Info(fmt.Sprintf("🛡️ Running harden_workflow agent (target_run_folder: %q, group_name: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, groupName, workflowObjective, workflowSuccessCriteria, focus))
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("harden_workflow agent failed: %w", err)

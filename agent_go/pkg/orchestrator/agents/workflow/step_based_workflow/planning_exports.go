@@ -689,13 +689,13 @@ func RegisterReorganizeKnowledgebaseTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"reorganize_knowledgebase",
-		"Apply a natural-language transformation to knowledgebase/graph.json: dedupe entities, rename types, drop entries from a bad run, merge split records, etc. Takes one argument 'instruction' describing what to do. The agent reads graph.json + index.json, applies the transformation, and resyncs index.json. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
+		"Apply a natural-language transformation to the knowledgebase: graph.json + index.json + per-topic notes/ files. Operations include dedupe entities, rename types, drop entries from a bad run, merge split records, AND notes operations (merge two topic files, drop sections from a bad run, compact a topic file, rename a topic). Takes one argument 'instruction' describing what to do. The agent reads graph.json + index.json + notes/_index.json, scopes to relevant topic files, applies the transformation, and resyncs the indexes. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"instruction": map[string]interface{}{
 					"type":        "string",
-					"description": "What to do to the knowledgebase graph, in natural language. Examples: 'merge company-acme and company-acme-corp into one entity by label', 'rename all type=organization entries to type=company', 'delete all entities and relationships whose source.run starts with iteration-0/abandoned', 'dedupe relationships by (from, type, to)'. Be specific — the agent follows the instruction literally and will not opportunistically clean up other parts of the graph.",
+					"description": "What to do to the knowledgebase, in natural language. Graph examples: 'merge company-acme and company-acme-corp into one entity by label', 'rename all type=organization entries to type=company', 'delete all entities and relationships whose source.run starts with iteration-0/abandoned', 'dedupe relationships by (from, type, to)'. Notes examples: 'merge notes/company-acme.md and notes/company-acme-corp.md', 'compact notes/pattern-tax-cycle.md to under 10KB', 'drop sections in notes/ that mention iteration-0/abandoned', 'rename topic company-acme to company-acme-corp'. Be specific — the agent follows the instruction literally and will not opportunistically clean up other parts of the KB.",
 				},
 			},
 			"required": []string{"instruction"},

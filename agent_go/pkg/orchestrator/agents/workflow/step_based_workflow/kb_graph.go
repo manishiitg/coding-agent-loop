@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	KBGraphFileName = "graph.json"
-	KBIndexFileName = "index.json"
+	KBGraphFileName      = "graph.json"
+	KBIndexFileName      = "index.json"
+	KBNotesFolderName    = "notes"      // sibling of graph.json — per-topic narrative markdown
+	KBNotesIndexFileName = "_index.json" // registry of topic files inside notes/
 )
 
 const (
@@ -32,10 +34,20 @@ const (
   "relationship_types": []
 }
 `
+	// emptyNotesIndexJSON seeds notes/_index.json — a registry of per-topic markdown
+	// files inside knowledgebase/notes/. The KB update agent appends/updates entries
+	// when it writes narrative analysis; consumers (steps with KB read access, builder
+	// review tools) read this first to find relevant topic files without scanning the
+	// whole folder.
+	emptyNotesIndexJSON = `{
+  "topics": []
+}
+`
 )
 
-// InitKBGraphFiles creates empty graph.json and index.json if they don't exist yet.
-// Safe to call repeatedly — existing files are left alone so agent-written content survives.
+// InitKBGraphFiles creates empty graph.json, index.json, and notes/_index.json if
+// they don't exist yet. Safe to call repeatedly — existing files are left alone so
+// agent-written content survives.
 func InitKBGraphFiles(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspaceRoot string) error {
 	graphPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBGraphFileName)
 	if exists, _ := bo.CheckWorkspaceFileExists(ctx, graphPath); !exists {
@@ -47,6 +59,12 @@ func InitKBGraphFiles(ctx context.Context, bo *orchestrator.BaseOrchestrator, wo
 	if exists, _ := bo.CheckWorkspaceFileExists(ctx, indexPath); !exists {
 		if err := bo.WriteWorkspaceFile(ctx, indexPath, emptyIndexJSON); err != nil {
 			return fmt.Errorf("init index.json: %w", err)
+		}
+	}
+	notesIndexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBNotesFolderName, KBNotesIndexFileName)
+	if exists, _ := bo.CheckWorkspaceFileExists(ctx, notesIndexPath); !exists {
+		if err := bo.WriteWorkspaceFile(ctx, notesIndexPath, emptyNotesIndexJSON); err != nil {
+			return fmt.Errorf("init notes/_index.json: %w", err)
 		}
 	}
 	return nil

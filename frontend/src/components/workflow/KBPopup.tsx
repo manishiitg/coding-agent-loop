@@ -1,6 +1,8 @@
-// Knowledgebase popup — viewer + simple management for knowledgebase/graph.json
-// and knowledgebase/index.json. Reads via the existing workspace file API (same path
-// as ReportViewer); writes via agentApi.updatePlannerFile.
+// Knowledgebase popup — read-only viewer for the workspace KB:
+// graph.json + index.json (atomic facts) and notes/{topic}.md + notes/_index.json
+// (per-topic narrative). Reads via the existing workspace file API (same path
+// as ReportViewer). All mutations happen via the workshop builder's
+// reorganize_knowledgebase tool — this popup never writes.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -8,15 +10,14 @@ import {
   Database,
   Loader2,
   AlertCircle,
-  Trash2,
   Download,
   RefreshCw,
   Search,
   ChevronDown,
   ChevronRight,
+  FileText,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import ConfirmationDialog from '../ui/ConfirmationDialog'
 
 interface KBPopupProps {
   isOpen: boolean
@@ -59,20 +60,19 @@ interface KBIndex {
   last_updated_by?: { step?: string; run?: string }
 }
 
-const EMPTY_GRAPH = `{
-  "version": "1",
-  "entities": [],
-  "relationships": []
+interface KBNotesTopic {
+  id: string
+  file: string
+  covers?: string[]
+  last_updated?: string
+  last_updated_by?: { step?: string; run?: string }
+  size_bytes?: number
+  section_count?: number
 }
-`
 
-const EMPTY_INDEX = `{
-  "entity_count": 0,
-  "relationship_count": 0,
-  "entity_types": [],
-  "relationship_types": []
+interface KBNotesIndex {
+  topics?: KBNotesTopic[]
 }
-`
 
 async function readJSON<T>(filepath: string): Promise<T | null> {
   try {
@@ -84,33 +84,60 @@ async function readJSON<T>(filepath: string): Promise<T | null> {
   }
 }
 
+async function readText(filepath: string): Promise<string | null> {
+  try {
+    const resp = await agentApi.getPlannerFileContent(filepath)
+    if (!resp?.success || typeof resp.data?.content !== 'string') return null
+    return resp.data.content
+  } catch {
+    return null
+  }
+}
+
+type Tab = 'graph' | 'notes'
+
 export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [graph, setGraph] = useState<KBGraph | null>(null)
   const [index, setIndex] = useState<KBIndex | null>(null)
+  const [notesIndex, setNotesIndex] = useState<KBNotesIndex | null>(null)
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [confirmClear, setConfirmClear] = useState(false)
+  const [tab, setTab] = useState<Tab>('graph')
+  // Per-topic markdown body cache. undefined = not loaded; null = loaded and missing/empty.
+  const [notesBodies, setNotesBodies] = useState<Record<string, string | null>>({})
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set())
 
   const graphPath = workspacePath ? `${workspacePath}/knowledgebase/graph.json` : null
   const indexPath = workspacePath ? `${workspacePath}/knowledgebase/index.json` : null
+  const notesIndexPath = workspacePath
+    ? `${workspacePath}/knowledgebase/notes/_index.json`
+    : null
 
   const load = useCallback(async () => {
-    if (!graphPath || !indexPath) return
+    if (!graphPath || !indexPath || !notesIndexPath) return
     setLoading(true)
     setError(null)
     try {
-      const [g, i] = await Promise.all([readJSON<KBGraph>(graphPath), readJSON<KBIndex>(indexPath)])
+      const [g, i, ni] = await Promise.all([
+        readJSON<KBGraph>(graphPath),
+        readJSON<KBIndex>(indexPath),
+        readJSON<KBNotesIndex>(notesIndexPath),
+      ])
       setGraph(g)
       setIndex(i)
+      setNotesIndex(ni)
+      // Reset per-topic markdown cache on reload — sizes/content may have changed.
+      setNotesBodies({})
+      setExpandedNotes(new Set())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [graphPath, indexPath])
+  }, [graphPath, indexPath, notesIndexPath])
 
   useEffect(() => {
     if (isOpen) load()
@@ -158,20 +185,25 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
     })
   }
 
-  const handleClear = async () => {
-    if (!graphPath || !indexPath) return
-    setConfirmClear(false)
-    setLoading(true)
-    setError(null)
-    try {
-      await agentApi.updatePlannerFile(graphPath, EMPTY_GRAPH)
-      await agentApi.updatePlannerFile(indexPath, EMPTY_INDEX)
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setLoading(false)
-    }
-  }
+  const toggleNoteExpanded = useCallback(
+    async (topic: KBNotesTopic) => {
+      const next = new Set(expandedNotes)
+      if (next.has(topic.id)) {
+        next.delete(topic.id)
+        setExpandedNotes(next)
+        return
+      }
+      next.add(topic.id)
+      setExpandedNotes(next)
+      // Selective load — only fetch the markdown when the row is expanded.
+      // Matches the index-first read discipline the KB agent enforces.
+      if (notesBodies[topic.id] === undefined && workspacePath) {
+        const body = await readText(`${workspacePath}/knowledgebase/notes/${topic.file}`)
+        setNotesBodies(prev => ({ ...prev, [topic.id]: body }))
+      }
+    },
+    [expandedNotes, notesBodies, workspacePath],
+  )
 
   const handleExport = () => {
     if (!graph) return
@@ -188,8 +220,11 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
 
   if (!isOpen) return null
 
+  const topics = notesIndex?.topics ?? []
   const hasGraphFile = graph !== null
-  const hasAnyContent = (entities.length + relationships.length) > 0
+  const hasAnyContent = (entities.length + relationships.length + topics.length) > 0
+  const hasGraphContent = (entities.length + relationships.length) > 0
+  const hasNotesContent = topics.length > 0
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -200,7 +235,7 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
             <Database className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">Knowledgebase</h2>
             <span className="text-xs text-muted-foreground ml-2">
-              graph.json · entities + relationships
+              graph.json + notes/ · entities, relationships, narrative
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -219,14 +254,6 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
               title="Export graph.json"
             >
               <Download className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setConfirmClear(true)}
-              disabled={!hasAnyContent}
-              className="p-1.5 rounded-md hover:bg-destructive/10 text-destructive transition-colors disabled:opacity-40"
-              title="Clear knowledgebase"
-            >
-              <Trash2 className="w-4 h-4" />
             </button>
             <button
               onClick={onClose}
@@ -248,6 +275,10 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
             <span className="text-muted-foreground">Relationships: </span>
             <span className="font-medium">{relationships.length}</span>
           </div>
+          <div>
+            <span className="text-muted-foreground">Notes topics: </span>
+            <span className="font-medium">{topics.length}</span>
+          </div>
           {index?.last_updated && (
             <div className="text-xs text-muted-foreground ml-auto">
               Last updated: {new Date(index.last_updated).toLocaleString()}
@@ -257,8 +288,32 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
           )}
         </div>
 
-        {/* Filter controls */}
-        {hasAnyContent && (
+        {/* Tabs */}
+        <div className="flex items-center gap-1 px-4 pt-2 border-b border-border flex-shrink-0">
+          <button
+            onClick={() => setTab('graph')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
+              tab === 'graph'
+                ? 'bg-muted text-foreground border border-b-0 border-border'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Graph ({entities.length + relationships.length})
+          </button>
+          <button
+            onClick={() => setTab('notes')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
+              tab === 'notes'
+                ? 'bg-muted text-foreground border border-b-0 border-border'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Notes ({topics.length})
+          </button>
+        </div>
+
+        {/* Filter controls — only relevant in graph tab */}
+        {tab === 'graph' && hasGraphContent && (
           <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
@@ -305,13 +360,14 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
             <div className="text-center py-12 text-muted-foreground">
               <Database className="w-10 h-10 mx-auto opacity-30 mb-3" />
               <div className="text-sm">
-                Knowledgebase is empty. Facts appear here after steps run with a
+                Knowledgebase is empty. Facts and narrative appear here after steps run with a
                 non-empty <code className="px-1 rounded bg-muted">knowledgebase_contribution</code>.
               </div>
             </div>
           )}
 
-          {!loading && !error && hasAnyContent && (
+          {/* GRAPH TAB */}
+          {tab === 'graph' && !loading && !error && hasGraphContent && (
             <div className="space-y-1">
               {filteredEntities.length === 0 ? (
                 <div className="text-sm text-muted-foreground py-6 text-center">
@@ -398,18 +454,104 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
               )}
             </div>
           )}
+
+          {/* GRAPH TAB — empty state inside the tab */}
+          {tab === 'graph' && !loading && !error && !hasGraphContent && hasAnyContent && (
+            <div className="text-sm text-muted-foreground py-8 text-center">
+              No entities or relationships yet. Notes are present — switch to the Notes tab.
+            </div>
+          )}
+
+          {/* NOTES TAB */}
+          {tab === 'notes' && !loading && !error && hasNotesContent && (
+            <div className="space-y-1">
+              {topics.map(t => {
+                const isOpenRow = expandedNotes.has(t.id)
+                const body = notesBodies[t.id]
+                return (
+                  <div key={t.id} className="border border-border rounded-md">
+                    <button
+                      onClick={() => toggleNoteExpanded(t)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                    >
+                      {isOpenRow ? (
+                        <ChevronDown className="w-4 h-4 flex-shrink-0" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                      )}
+                      <FileText className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
+                      <span className="font-medium text-sm">{t.id}</span>
+                      <span className="text-xs text-muted-foreground ml-auto font-mono">
+                        {t.file}
+                      </span>
+                      {typeof t.section_count === 'number' && (
+                        <span className="text-xs text-muted-foreground ml-2">
+                          {t.section_count} section{t.section_count === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      {typeof t.size_bytes === 'number' && (
+                        <span className="text-xs text-muted-foreground ml-2">
+                          {(t.size_bytes / 1024).toFixed(1)}KB
+                        </span>
+                      )}
+                    </button>
+                    {isOpenRow && (
+                      <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/20">
+                        {t.covers && t.covers.length > 0 && (
+                          <div>
+                            <span className="font-medium">Covers: </span>
+                            <span className="font-mono">{t.covers.join(', ')}</span>
+                          </div>
+                        )}
+                        {(t.last_updated_by?.step || t.last_updated_by?.run) && (
+                          <div>
+                            <span className="font-medium">Last updated by: </span>
+                            <span className="font-mono">
+                              {t.last_updated_by?.step ?? '?'} / {t.last_updated_by?.run ?? '?'}
+                            </span>
+                          </div>
+                        )}
+                        {t.last_updated && (
+                          <div className="text-muted-foreground">
+                            updated {new Date(t.last_updated).toLocaleString()}
+                          </div>
+                        )}
+                        <div>
+                          <div className="font-medium mb-1">Content</div>
+                          {body === undefined ? (
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Loading {t.file}…
+                            </div>
+                          ) : body === null ? (
+                            <div className="text-muted-foreground italic">
+                              Topic file missing or empty.
+                            </div>
+                          ) : (
+                            <pre className="whitespace-pre-wrap break-words text-foreground bg-background border border-border/60 rounded p-2 max-h-96 overflow-y-auto">
+                              {body}
+                            </pre>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* NOTES TAB — empty state inside the tab */}
+          {tab === 'notes' && !loading && !error && !hasNotesContent && hasAnyContent && (
+            <div className="text-sm text-muted-foreground py-8 text-center">
+              No narrative notes yet. Notes appear here when a step's{' '}
+              <code className="px-1 rounded bg-muted">knowledgebase_contribution</code> asks
+              the KB update agent to write narrative analysis.
+            </div>
+          )}
         </div>
       </div>
 
-      <ConfirmationDialog
-        isOpen={confirmClear}
-        onClose={() => setConfirmClear(false)}
-        onConfirm={handleClear}
-        title="Clear knowledgebase?"
-        message={`This deletes all ${entities.length} entities and ${relationships.length} relationships. graph.json and index.json will be reset to empty. This cannot be undone.`}
-        confirmText="Clear"
-        type="danger"
-      />
     </div>
   )
 }

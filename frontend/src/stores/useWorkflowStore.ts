@@ -1,6 +1,38 @@
 import { create } from 'zustand'
 import type { WorkflowPhase, StepProgress, ExecutionOptions, VariablesManifest, EvaluationPlan } from '../services/api-types'
+import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
+
+// Migrate any persisted legacy workshop mode values from the 6-mode era to the
+// new 4-mode set: 'eval' / 'output' fold into 'builder', 'debugger' → 'ask',
+// 'runner' → 'run'. Returns the input unchanged if it's already a valid 4-mode value.
+function migrateWorkshopMode(raw: unknown): WorkshopMode {
+  switch (raw) {
+    case 'builder':
+    case 'optimizer':
+    case 'ask':
+    case 'run':
+      return raw
+    case 'eval':
+    case 'output':
+      return 'builder'
+    case 'debugger':
+      return 'ask'
+    case 'runner':
+      return 'run'
+    default:
+      return 'builder'
+  }
+}
+
+function migrateWorkshopModeMap(raw: unknown): Record<string, WorkshopMode> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, WorkshopMode> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    out[k] = migrateWorkshopMode(v)
+  }
+  return out
+}
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
@@ -225,9 +257,9 @@ interface WorkflowStore {
 
   // === WORKFLOW MODE STATE ===
   workflowMode: 'plan' | 'eval' | 'output'
-  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
-  workshopModeByPreset: Record<string, 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'>
-  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => void
+  workshopMode: WorkshopMode
+  workshopModeByPreset: Record<string, WorkshopMode>
+  setWorkshopMode: (mode: WorkshopMode) => void
   evaluationPlan: EvaluationPlan | null
   evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
@@ -478,15 +510,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
         try {
           const saved = localStorage.getItem(WORKSHOP_MODE_BY_PRESET_KEY)
           if (saved) {
-            const parsed = JSON.parse(saved)
-            if (parsed && typeof parsed === 'object') return parsed
+            // Migrate any persisted legacy mode values from the 6-mode era to the new 4-mode set.
+            return migrateWorkshopModeMap(JSON.parse(saved))
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to load workshopModeByPreset:', error)
         }
         return {}
       })(),
-      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => {
+      setWorkshopMode: (mode: WorkshopMode) => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set((state) => {
           const updated = presetId
@@ -499,9 +531,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
               console.error('[WorkflowStore] Failed to save workshopModeByPreset:', error)
             }
           }
+          // After 6→4 consolidation, workflowMode is always 'plan' for any workshop mode.
+          // Eval/output editing happens inside Builder mode now.
           return {
             workshopMode: mode,
-            workflowMode: mode === 'eval' ? 'eval' : mode === 'output' ? 'output' : 'plan',
+            workflowMode: 'plan' as const,
             workshopModeByPreset: updated,
           }
         })
@@ -1741,22 +1775,24 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Workflow Mode Actions
+      // After 6→4 mode consolidation, workflowMode='plan' is the only meaningful value
+      // (eval and output sub-modes folded into Builder workshop mode). The 'eval' / 'output'
+      // workflowMode values are retained in the type signature for API compatibility but the
+      // setter coerces them to 'plan' and migrates the workshop mode to 'builder'.
       setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set(state => {
-          // When switching to plan, prefer the preset's remembered sub-mode over the global one
+          // Legacy callers passing 'eval' / 'output' get folded into 'plan' + 'builder'.
+          const normalizedMode: 'plan' = 'plan'
           const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
-          const resolvedWorkshopMode = mode === 'eval'
-            ? 'eval' as const
-            : mode === 'output'
-              ? 'output' as const
-              : (rememberedForPreset && rememberedForPreset !== 'eval' && rememberedForPreset !== 'output'
-                  ? rememberedForPreset
-                  : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' as const : state.workshopMode))
+          const resolvedWorkshopMode: WorkshopMode =
+            (mode === 'eval' || mode === 'output')
+              ? 'builder'
+              : (rememberedForPreset ?? state.workshopMode)
           const updated = presetId
             ? {
                 ...state.workshopModeByPreset,
-                [presetId]: resolvedWorkshopMode
+                [presetId]: resolvedWorkshopMode,
               }
             : state.workshopModeByPreset
           if (presetId) {
@@ -1767,7 +1803,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             }
           }
           return {
-            workflowMode: mode,
+            workflowMode: normalizedMode,
             workshopMode: resolvedWorkshopMode,
             workshopModeByPreset: updated,
           }

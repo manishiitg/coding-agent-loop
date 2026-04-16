@@ -930,8 +930,8 @@ export interface ExecutionOptions {
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
-  // Workshop mode override (builder/optimizer/debugger/runner/eval/output)
-  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output';
+  // Workshop mode override — four consolidated modes after the 6→4 refactor.
+  workshop_mode?: 'builder' | 'optimizer' | 'ask' | 'run';
 }
 
 // Execution strategy constants (matching backend)
@@ -1299,14 +1299,60 @@ export interface EvaluationAggregate {
 // Widget types supported by report_plan.md. See section 2 of the design doc.
 export type ReportWidgetKind = 'text' | 'chart' | 'table';
 
+// Named formatter presets for table cells. Maps to functions in reportFormatters.ts.
+// Used in `formats:` block of widget:table definitions.
+export type ReportFormatterName =
+  | 'currency-inr'
+  | 'currency-usd'
+  | 'percent'
+  | 'percent-1dp'
+  | 'short-date'
+  | 'long-date'
+  | 'datetime'
+  | 'number'
+  | 'number-1dp'
+  | 'number-2dp'
+  | 'bytes'
+  | 'boolean-icon';
+
+export type ReportChartType = 'bar' | 'line' | 'area' | 'pie';
+
+export type ReportSortDirection = 'asc' | 'desc';
+
+export interface ReportDefaultSort {
+  field: string;
+  direction: ReportSortDirection;
+}
+
 // A single widget. `source` is a workspace-relative path (db/x.json or
 // knowledgebase/graph.json / index.json). `path` is a dot-notation key into
 // the JSON. `filter` is an optional `key=value` string for filtering arrays.
+//
+// All fields beyond source/path/kind are optional. The renderer applies
+// sensible defaults so a minimal widget (just source + path) still renders.
+// See workshop builder prompt for the full markdown grammar.
 export interface ReportWidget {
   kind: ReportWidgetKind;
   source: string;
   path: string;
   filter?: string;
+  // Common to every widget kind
+  title?: string;            // Header label rendered above the widget body
+  description?: string;       // Small subtitle below the title (one line)
+  height?: number;            // Pixel height; defaults vary by kind
+  // Table-specific options (ignored for non-table widgets)
+  formats?: Record<string, ReportFormatterName>;  // field → named formatter preset
+  pageSize?: number;          // Rows per page (default 25)
+  enableSearch?: boolean;     // Show inline search box (default true)
+  defaultSort?: ReportDefaultSort;  // Initial sort column + direction
+  hideColumns?: string[];     // Columns present in data but suppressed in render
+  // Chart-specific options (ignored for non-chart widgets)
+  chartType?: ReportChartType;       // bar | line | area | pie (default bar)
+  xAxis?: string;             // Field name for x-axis when not the canonical {label} key
+  yAxis?: string;             // Field name for y-axis when not the canonical {value} key
+  topN?: number;              // Cap rendered points to top N by value
+  sort?: ReportSortDirection | 'none';  // Sort points by y-axis value; default 'none' (source order)
+  showValues?: boolean;       // Show value labels on bars/lines (default false)
 }
 
 // `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`
@@ -1728,7 +1774,7 @@ export interface WorkflowExecutionDefaults {
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number
   enabled_custom_tools?: string[]
-  workshop_mode?: string // Workshop builder mode: "builder", "optimizer", "runner", "debugger", "eval", "output"
+  workshop_mode?: string // Workshop builder mode: "builder", "optimizer", "ask", or "run"
 }
 
 export interface WorkflowOwnership {

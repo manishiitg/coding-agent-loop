@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench, Play, GitBranch, CheckCircle, Search } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Shield, Wrench, Play, GitBranch, CheckCircle, Search, Lock, Database, Network } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -87,7 +87,7 @@ Summary:
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -95,6 +95,183 @@ Summary:
       ctx.onSubmit(`Run review_plan() to critically analyze the current workflow plan.${focusText}
 
 Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.`)
+    }
+  },
+  {
+    command: 'audit-config',
+    description: 'Audit per-step KB / db / lock_learnings / lock_code recommendations',
+    icon: <Lock className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? `\nFocus areas: ${focus}.` : ''
+      ctx.onSubmit(`Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.${focusText}
+
+PROCEDURE
+1. Read planning/plan.json and planning/step_config.json. For each step capture: id, title, description, declared_execution_mode, and current AgentConfigs (knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash).
+2. For each step, inspect learnings/{step-id}/:
+   - SKILL.md exists? size? recent edit signal (read first/last lines for context).
+   - main.py exists? Read learnings/{step-id}/script_metadata.json for successful_runs counts (code_exec/learn_code) and recent failure history.
+3. Sample run evidence from runs/iteration-0/{first-group}/logs/{step-id}/ when available:
+   - learn_code_fast_path.json — recent main.py outcomes.
+   - pre_validation.json — validation pass/fail.
+   - Any signs of recent fix-loop rewrites or transient failures.
+
+DECISION RULES (apply per step)
+
+KB_ACCESS (none | read | write | read-write):
+- Step CONSUMES durable subject-matter facts (entities, relationships, prior strategies)? → "read"
+- Step PRODUCES durable facts (extracts companies, identifies recurring patterns, captures decisions)? → "write" + must set knowledgebase_contribution to a non-empty extraction instruction
+- Both? → "read-write"
+- Pure I/O / orchestration / data movement? → "none" (default; KB is opt-in per step)
+- FLAG: knowledgebase_contribution is non-empty but knowledgebase_access lacks write — the post-step KB update agent is silently skipped (controller_kb_update.go gates on kbAccessAllowsWrite). Recommend either set access to "write"/"read-write" OR clear the contribution.
+
+DB ACCESS:
+- Every step already has db/ read+write via folder guard (unconditional, no opt-in). The audit question is INTENT: should this step write to db/?
+- Recommend writing to db/{file}.json when: the step produces cross-run state, per-key data that subsequent runs upsert into, or data the report widgets need to bind to.
+- Suggest the file name + primary_key convention (e.g. db/account_status.json, primary_key=group_name).
+- FLAG: step description claims to "save state" / "update results" / "track" something but doesn't explicitly name a db/ file — likely a portability bug; the step is probably writing into runs/{iter}/ instead of the workspace-level db/.
+
+LOCK_LEARNINGS (true | false):
+- Lock when ALL: successful_runs >= 3 AND SKILL.md is stable across recent runs (learning agent producing near-duplicate edits) AND description_hash matches stored value.
+- DO NOT lock when ANY: description recently changed (hash mismatch), recent failures triggered learning rewrites, fewer than 3 successful runs, step is still mid-iteration.
+- If currently locked but description_hash drifted → recommend UNLOCK (learnings are stale relative to intent).
+
+LOCK_CODE (true | false; learn_code steps only):
+- Lock when ALL: main.py exists AND script_metadata.json shows >= 3 successful runs across all active groups AND no recent fix-loop rewrites AND description hash matches.
+- DO NOT lock when ANY: main.py rewritten in last 2 runs, transient failures present, description being iterated, fewer than 3 successful runs.
+- When recommending lock_code=true, also recommend lock_learnings=true and optimized=true together — they should move as a set per the workshop convention. Include optimized_reason citing the evidence (groups passed, eval scores, no fix-loop rewrites).
+- If currently locked but description_hash drifted → recommend UNLOCK (main.py may be stale).
+
+OUTPUT FORMAT
+
+Single table, one row per step:
+
+| Step ID | KB Access (cur → rec) | KB Contribution | DB Output | Lock Learnings (cur → rec) | Lock Code (cur → rec) | Reason |
+|---|---|---|---|---|---|---|
+
+Then summary sections:
+- **To lock this round** — steps recommended for lock_learnings + lock_code (+ optimized).
+- **KB misconfigs** — knowledgebase_contribution set but access blocks writes (silent skip).
+- **Should write to db/ but doesn't** — steps producing cross-run state outside db/.
+- **Stale locks (unlock + re-review)** — currently locked but description_hash drifted.
+
+END WITH READY-TO-PASTE COMMANDS
+List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.`)
+    }
+  },
+  {
+    command: 'audit-skills',
+    description: 'Audit per-step SKILL.md and references/ against best practices (read-only)',
+    icon: <Lightbulb className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? `\nFocus areas: ${focus}.` : ''
+      ctx.onSubmit(`Audit every step's learnings against the Anthropic skill-creator best practices and the workflow's own consistency rules. Read-only — produce a per-step findings table; do NOT apply fixes via diff_patch_workspace_file or update_step_config.${focusText}
+
+PROCEDURE
+1. Read planning/plan.json and planning/step_config.json to enumerate all step IDs.
+2. Read the skill-creator guide at skills/skill-creator/SKILL.md so you know the canonical format (frontmatter, progressive disclosure, references/ split, scripts/ usage).
+3. For each step, read learnings/{step-id}/:
+   - SKILL.md (if it exists) — frontmatter, headings, prose
+   - references/*.md — supporting topic files
+   - scripts/*.py and main.py (presence only — content review is review_step_code's job)
+   - script_metadata.json (for lock-staleness signal)
+4. Read learnings/_global/SKILL.md for the global skill — same checks, plus the global vs per-step split.
+
+CHECK CATEGORIES (per step + global)
+
+A. **Skill-creator format compliance**
+   - SKILL.md has required frontmatter (name, description) and a clear summary at the top.
+   - Progressive disclosure: summary → workflows → details, not a wall of prose.
+   - Every reference/file linked from SKILL.md actually exists (no dead links).
+   - references/ files have a corresponding link from SKILL.md (no orphans).
+   - scripts/ contains only step scripts; domain knowledge isn't leaking into code comments.
+
+B. **Specificity**
+   - Flag generic advice ("be careful with selectors") that gives the agent nothing actionable.
+   - Demand concrete attestable claims ("OTP field appears ~3s after PAN submit; poll, don't sleep").
+
+C. **Hardcoded values**
+   - Account IDs, sheet IDs, URLs, paths, emails embedded in prose that should be parameterized via {VAR_*} or referenced as variables.
+   - Same spirit as /audit-config but applied to markdown.
+
+D. **Cross-step coherence**
+   - Contradictions between two steps' SKILL.md.
+   - Step A references a tool/server that step B's SKILL.md says doesn't exist.
+
+E. **Staleness**
+   - References to MCP servers or tools no longer in workflow.json (cross-check).
+   - References to step IDs no longer in plan.json (cross-check).
+   - description_hash drift: SKILL.md hasn't been refreshed since the step description changed (compare AgentConfigs.description_hash with current step description hash).
+
+F. **Bloat / split discipline**
+   - SKILL.md > 200 lines without splitting into references/ — flag for split (skill-creator says detailed knowledge belongs in references/).
+   - references/ files > 400 lines — flag for further sub-split.
+   - SKILL.md that's mostly TOC pointing at references/ — fine; SKILL.md that duplicates references/ content — flag.
+
+G. **Global vs per-step split**
+   - Domain-wide knowledge living in learnings/{step-id}/SKILL.md that should move to learnings/_global/SKILL.md (e.g. "the bank's login page uses CAPTCHA on weekends" — applies to all bank-* steps, not just one).
+   - Step-specific knowledge in _global/ that should move to per-step (e.g. "for step download-statement, click .download-btn" — too narrow for global).
+
+H. **Lock consistency**
+   - lock_learnings=true but description_hash drifted — recommend unlock + re-review.
+   - SKILL.md edited recently (file mtime) but no successful_runs increment in metadata — flag possible stale write.
+
+OUTPUT FORMAT
+
+Single table, one row per step (+ one for _global):
+
+| Step ID | Format (A) | Specificity (B) | Hardcoded (C) | Coherence (D) | Stale (E) | Bloat (F) | Split (G) | Lock (H) | Top Finding |
+|---|---|---|---|---|---|---|---|---|---|
+
+Cell values: ✓ (pass) / ⚠ (warning) / ✗ (fail) / — (n/a). "Top Finding" is the single most impactful issue for that step in one short sentence.
+
+Then summary sections:
+- **Critical issues** — failures (✗) that meaningfully degrade execution quality, ranked by impact.
+- **Cross-cutting** — patterns appearing across multiple steps (e.g. 5 steps share the same hardcoded sheet ID, or 3 steps duplicate the same auth-flow prose).
+- **Quick wins** — small edits with high payoff (split a too-large SKILL.md, fix dead links, drop stale tool references).
+
+END WITH READY-TO-PASTE FIXES
+List the diff_patch_workspace_file or update_step_config calls the user can copy/paste, grouped by category (format fixes, hardcoded value extractions, lock unlocks, etc.). Do NOT call them yourself.`)
+    }
+  },
+  {
+    command: 'kb-review',
+    description: 'Review knowledgebase contents per step (read-only)',
+    icon: <Network className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus: ${focus}.` : ''
+      ctx.onSubmit(`Review knowledgebase/graph.json and index.json. Group entities and relationships by source.step so I can see what each step has contributed. Flag duplicates, type drift (e.g. both "company" and "organization"), orphaned relationships, and missing required fields. Suggest concrete reorganize_knowledgebase("...") calls for each cleanup. Read-only — do NOT run the reorganize tool yourself.${focusText}`)
+    }
+  },
+  {
+    command: 'kb-reorganize',
+    description: 'Apply a natural-language transformation to the knowledgebase graph',
+    icon: <Database className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const instruction = ctx.beforeSlash.trim()
+      if (instruction) {
+        ctx.onSubmit(`Run reorganize_knowledgebase(instruction="${instruction.replace(/"/g, '\\"')}").`)
+      } else {
+        ctx.onSubmit(`I want to reorganize knowledgebase/graph.json. First read it and tell me what's in there (entity types, counts, any obvious cleanup candidates), then ask me what transformation to apply. Once I confirm, call reorganize_knowledgebase(instruction="...").`)
+      }
     }
   },
   {
@@ -111,28 +288,32 @@ Challenge every decision: step boundaries, step types, execution modes, context 
       const focusLine = focus ? `\nFocus areas for harden: **${focus}**.` : ''
       ctx.onSubmit(`Run a full execute → evaluate → harden cycle on this workflow. Do all phases autonomously without pausing for confirmation.${focusLine}
 
-PHASE 1 — EXECUTE (one group at a time)
+SETUP
 1. Read variables.json to get the list of enabled group names.
-2. For each group, sequentially: call run_full_workflow(enabled_group_names=["{group}"]) and wait for that group to complete before starting the next. Running one group at a time keeps signal clean (per-group failures are isolated), avoids resource contention (browsers, API rate limits), and lets you abort early if a group is failing badly.
-   - The first group's run triggers paired iteration rotation (iteration-0 → iteration-N for both runs/ and evaluation/runs/). Subsequent partial-group runs in this same cycle reuse iteration-0 without rotating, so all groups end up sharing the same iteration-0 by the time PHASE 2 starts.
-3. If a group fails outright (no usable outputs), note it but continue with remaining groups — partial coverage is still useful for harden. If ALL groups fail, stop and report what went wrong.
 
-PHASE 2 — EVALUATE (one group at a time)
-1. For each group that produced outputs in PHASE 1, sequentially: call run_full_evaluation(target_run_folder="iteration-0/{group}") and wait for it to complete before starting the next.
-2. Eval always targets the current iteration-0; the per-group suffix narrows scoring to that group's artifacts.
-3. Confirm evaluation/runs/iteration-0/{group}/evaluation_report.json exists for each evaluated group before continuing.
+PER-GROUP CYCLE — repeat the following for each group, sequentially. Do NOT start the next group until the previous group's full cycle (run + eval + harden) is complete.
 
-PHASE 3 — HARDEN (iteration-scoped, all groups together)
-1. Call harden_workflow(iteration="iteration-0"${focusArg ? ', ' + focusArg : ''}). Note: harden does NOT take a group parameter — it discovers all groups under the iteration, builds a cross-group failure map (e.g. "step X passed for A,B but failed for C"), and fixes failure CLASSES, not per-group instances. That's intentional: cross-group patterns are where harden's value is.
-2. Wait for the harden agent to finish — it runs in the background and notifies on completion.
+For group {group}:
+  a. **EXECUTE** — call run_full_workflow(enabled_group_names=["{group}"]) and wait for completion.
+     - The first group's run triggers paired iteration rotation (iteration-0 → iteration-N for both runs/ and evaluation/runs/). Subsequent partial-group runs in this same cycle reuse iteration-0 without rotating.
+     - If this group's run fails outright (no usable outputs), skip eval+harden for this group and move to the next. If ALL groups fail, stop and report.
+  b. **EVALUATE** — call run_full_evaluation(target_run_folder="iteration-0/{group}") and wait for completion.
+     - Confirm evaluation/runs/iteration-0/{group}/evaluation_report.json exists before continuing.
+  c. **HARDEN** — call harden_workflow(iteration="iteration-0", group_name="{group}"${focusArg ? ', ' + focusArg : ''}). Wait for the background harden agent to finish.
+     - Per-group harden scopes ALL analysis and fixes to this group's data only. Failure aggregation, optimized-marking, and successful_runs increments are based on this group alone (more conservative than cross-group hardening — the agent is told to prefer incrementing successful_runs over locking outright).
+     - Per-group harden fixes apply BEFORE the next group runs, so subsequent groups benefit from improvements (e.g. tighter pre-validation, patched main.py).
 
-PHASE 4 — REPORT
-Summarize the cycle:
-- Workflow run outcome (groups that succeeded/failed)
-- Evaluation scores per group (highlight any < 8)
-- Harden agent's changes (list each step touched and what was changed)
-- Steps newly marked optimized vs steps still failing
-- What still needs human attention, if anything`)
+WHY PER-GROUP (not iteration-wide):
+- Each group gets dedicated attention; smaller context per harden invocation.
+- Fixes from group A apply before group B runs — so B benefits without re-running A.
+- Faster failure isolation: if group A's harden reveals a structural issue, you can stop the loop before wasting compute on B and C.
+- Trade-off accepted: cross-group failure patterns aren't aggregated. If you want cross-group analysis, run /harden once per iteration without the loop instead.
+
+FINAL REPORT (after all groups)
+Summarize:
+- Per-group: run outcome (succeeded/failed), eval score, harden changes (steps touched + what changed), steps newly marked optimized.
+- Across-group: any step touched by multiple group's harden — flag if the fixes diverged or conflicted.
+- What still needs human attention, if anything.`)
     }
   },
   {
@@ -229,7 +410,7 @@ Then ask the user: "Would you like me to set up a recurring schedule to keep imp
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -283,7 +464,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -301,7 +482,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

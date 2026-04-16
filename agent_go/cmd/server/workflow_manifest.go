@@ -55,7 +55,7 @@ type WorkflowExecutionDefaults struct {
 	DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution,omitempty"`
 	ExecutionMaxTurns            *int     `json:"execution_max_turns,omitempty"`
 	EnabledCustomTools           []string `json:"enabled_custom_tools,omitempty"`
-	WorkshopMode                 string   `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner", "debugger", "eval", "output"
+	WorkshopMode                 string   `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "ask", "run" (legacy values "debugger"/"runner"/"eval"/"output" auto-migrated by server)
 }
 
 // WorkflowOwnership tracks workflow assignment.
@@ -75,7 +75,7 @@ type WorkflowSchedule struct {
 	GroupNames     []string        `json:"group_names,omitempty"`
 	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator), "workshop" (LLM-driven), or "multi-agent"
 	Messages       []string        `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
-	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner" (default), "debugger"
+	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode for scheduled runs: "run" (default) or "optimizer" (legacy "runner" auto-migrated)
 	Query          string          `json:"query,omitempty"`         // Message to execute (multi-agent mode)
 }
 

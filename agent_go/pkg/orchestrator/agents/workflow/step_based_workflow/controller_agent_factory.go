@@ -455,10 +455,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
-	// This allows evaluation agents to read the artifacts of the run they are evaluating
+	// This allows evaluation agents to read the artifacts of the run they are evaluating.
+	// Also grant the parent run folder so evals can reach sibling logs (e.g. logs/<step>/execution/
+	// learn_code_fast_path.json) — under sandbox-exec, stat() on a denied path raises EPERM, which
+	// Python surfaces as PermissionError and breaks callers that only guard against FileNotFoundError.
 	if targetRunPath, ok := hcpo.variableValues["TARGET_RUN_PATH"]; ok && targetRunPath != "" {
 		readPaths = append(readPaths, targetRunPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
+		targetRunParent := filepath.Dir(targetRunPath)
+		if targetRunParent != "" && targetRunParent != "." && targetRunParent != "/" {
+			readPaths = append(readPaths, targetRunParent)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH (+parent for sibling logs) to read paths for evaluation: %s, %s", targetRunPath, targetRunParent))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
+		}
 	}
 
 	return readPaths, writePaths

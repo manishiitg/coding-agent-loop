@@ -63,10 +63,24 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 
 **Three persistent stores — do not confuse them:**
 - **db/** — **workflow state and results**. JSON files this step produces/consumes (processed records, cursors, cumulative output). Owned by your step. READ first, upsert by the builder-defined key, write back merged. NEVER overwrite wholesale — that destroys rows from other groups/runs.
-- **knowledgebase/graph.json** — **decisions, facts, strategies built up over time** (entities + relationships). Written **only by the post-step KB update agent**, NOT by you. Your step may read it (via `+"`"+`cat knowledgebase/graph.json`+"`"+` / `+"`"+`jq`+"`"+`) if `+"`"+`KbAccess`+"`"+` grants read. Do NOT write `+"`"+`graph.json`+"`"+` or `+"`"+`index.json`+"`"+` directly — that breaks the KB update agent's merge discipline.
+- **knowledgebase/** — **what the workflow has discovered about the subject matter, durable across runs**. Two formats live here, both written **only by the post-step KB update agent** (not by you):
+  - `+"`"+`graph.json`+"`"+` + `+"`"+`index.json`+"`"+` — atomic facts as entities and relationships. Read with `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+`.
+  - `+"`"+`notes/`+"`"+` — per-topic narrative markdown, one file per topic (entity-scoped or `+"`"+`pattern-*`+"`"+`). **Read discipline:** ALWAYS `+"`"+`cat knowledgebase/notes/_index.json`+"`"+` first to find which topic files exist, then `+"`"+`cat`+"`"+` only the markdown files relevant to your work. NEVER `+"`"+`cat knowledgebase/notes/*.md`+"`"+` — file count grows unboundedly and loading all of them blows context.
+  - Do NOT write `+"`"+`graph.json`+"`"+`, `+"`"+`index.json`+"`"+`, or any file under `+"`"+`notes/`+"`"+` directly — that breaks the KB update agent's merge discipline.
 - **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Read-only for you; the learning agent maintains it after the step. Relevant learnings are already injected under `+"`"+`## Skill`+"`"+` below when applicable.
 
-{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them.{{else if eq .KbAccess "write"}} Write-scoped: the folder guard allows writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` yourself; emit facts in your step output and let the KB agent merge.{{end}}
+{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them. Selective read recipes:
+` + "```" + `bash
+# entity by id
+jq '.entities[] | select(.id == "company-acme")' knowledgebase/graph.json
+# relationships touching an entity
+jq '.relationships[] | select(.from == "company-acme" or .to == "company-acme")' knowledgebase/graph.json
+# narrative topics covering an entity (returns filenames)
+jq -r '.topics[] | select(.covers[]? == "company-acme") | .file' knowledgebase/notes/_index.json
+# load one specific topic file
+cat knowledgebase/notes/company-acme.md
+` + "```" + `
+{{else if eq .KbAccess "write"}} Write-scoped: the folder guard allows writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` / `+"`"+`notes/`+"`"+` yourself; emit facts in your step output and let the KB agent merge.{{end}}
 {{end}}
 ## EXECUTION RULES
 1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.

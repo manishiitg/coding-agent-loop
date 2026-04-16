@@ -2,7 +2,10 @@ import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
 import type { ExecutionOptions } from '../services/api-types'
 
-export type WorkshopMode = 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+// Four consolidated workshop modes (was 6: builder/optimizer/debugger/runner/eval/output).
+// 'eval' and 'output' folded into 'builder' (designing eval plans + report widgets is design).
+// 'debugger' renamed to 'ask' (read-only investigate). 'runner' renamed to 'run'.
+export type WorkshopMode = 'builder' | 'optimizer' | 'ask' | 'run'
 
 export interface CommandContext {
   beforeSlash: string
@@ -22,7 +25,7 @@ export interface CommandContext {
   getWorkspaceStore: () => any
   getWorkflowStore: () => any
   workflowMode?: 'plan' | 'eval' | 'output'
-  workshopMode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+  workshopMode?: WorkshopMode
   workflowPhaseId?: string
 }
 

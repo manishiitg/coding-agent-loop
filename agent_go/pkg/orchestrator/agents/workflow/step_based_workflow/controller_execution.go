@@ -2130,80 +2130,89 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						shouldSkipLearningDueToLock = true
 					}
 				}
+				// Pre-validation result drives validationResponse (set above).
+				// Safety guard: if somehow nil, default to success so learning + KB can proceed.
+				if validationResponse == nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation result missing for step %d - defaulting to success for post-step phases", stepIndex+1))
+					validationResponse = &ValidationResponse{
+						IsSuccessCriteriaMet: true,
+						ExecutionStatus:      "COMPLETED",
+						Reasoning:            "LLM validation disabled - step auto-approved for post-step phases",
+					}
+				}
+
+				// Populate runtime fields once — shared by both learning AND KB update.
+				// Done outside the learning skip-block so KB still runs when learning is
+				// disabled or locked (KB and learning are orthogonal persistent stores).
+				var populatedTodoStep PlanStepInterface
+				if validationResponse.IsSuccessCriteriaMet {
+					stepConfigs, cfgErr := hcpo.ReadStepConfigs(ctx)
+					if cfgErr != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", cfgErr))
+						stepConfigs = []StepConfig{}
+					}
+					ts, popErr := populateStepRuntimeFields(step, stepConfigs)
+					if popErr != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for post-step phases: %v", popErr))
+					} else {
+						populatedTodoStep = ts
+					}
+				}
+
+				// Learning agents — gated on learning-enabled + not-locked (existing behavior).
 				if isLearningDisabled || shouldSkipLearningDueToLock {
 					if isLearningDisabled {
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for step %d", stepIndex+1))
 					} else if shouldSkipLearningDueToLock {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for step %d (using existing learnings)", stepIndex+1))
 					}
-				} else {
-					// Pre-validation result drives validationResponse (set above).
-					// Safety guard: if somehow nil, default to success so learning can run.
-					if validationResponse == nil {
-						hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation result missing for step %d - defaulting to success for learning", stepIndex+1))
-						validationResponse = &ValidationResponse{
-							IsSuccessCriteriaMet: true,
-							ExecutionStatus:      "COMPLETED",
-							Reasoning:            "LLM validation disabled - step auto-approved for learning",
-						}
-					}
-
-					// Run appropriate learning phase based on pre-validation result.
-					// Pre-validation failure sets IsSuccessCriteriaMet=false, triggering failure learning.
-					if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
-						// Success Learning Agent - analyze what worked well and update plan.json
-						learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
-						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
-						// Populate runtime fields for runSuccessLearningPhase
-						stepConfigs, err := hcpo.ReadStepConfigs(ctx)
-						if err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", err))
-							stepConfigs = []StepConfig{}
-						}
-						todoStep, err := populateStepRuntimeFields(step, stepConfigs)
-						if err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
-						} else {
-							triggerReason := "Validation passed (success criteria met)"
-							// Run success learning in background so next step can start immediately.
-							// In workshop mode, register it as a tracked execution so the UI can show it
-							// and stop_step/stop_all_executions can cancel it.
-							if !hcpo.startTrackedSuccessLearningPhase(
-								stepIndex,
-								stepPath,
-								learningPathIdentifier,
-								totalSteps,
-								todoStep,
-								executionConversationHistory,
-								validationResponse,
-								isCodeExecutionMode,
-								turnCount,
-								executionLLM,
-								triggerReason,
-							) {
-								// Fallback (non-workshop) path: serialize through the shared learningQueue.
-								// This mirrors the tracked path in startTrackedSuccessLearningPhase — both
-								// flow into the same single-writer worker so concurrent step completions
-								// never race on learnings/_global/ files.
-								enqueueLearningJob(func() {
-									bgCtx := context.Background()
-									bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
-									if bgErr != nil {
-										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
-									} else {
-										hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
-									}
-								})
+				} else if validationResponse.IsSuccessCriteriaMet && populatedTodoStep != nil {
+					// Success Learning Agent - analyze what worked well and update plan.json
+					learningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, getAgentConfigs(step))
+					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
+					triggerReason := "Validation passed (success criteria met)"
+					// Run success learning in background so next step can start immediately.
+					// In workshop mode, register it as a tracked execution so the UI can show it
+					// and stop_step/stop_all_executions can cancel it.
+					if !hcpo.startTrackedSuccessLearningPhase(
+						stepIndex,
+						stepPath,
+						learningPathIdentifier,
+						totalSteps,
+						populatedTodoStep,
+						executionConversationHistory,
+						validationResponse,
+						isCodeExecutionMode,
+						turnCount,
+						executionLLM,
+						triggerReason,
+					) {
+						// Fallback (non-workshop) path: serialize through the shared learningQueue.
+						// This mirrors the tracked path in startTrackedSuccessLearningPhase — both
+						// flow into the same single-writer worker so concurrent step completions
+						// never race on learnings/_global/ files.
+						enqueueLearningJob(func() {
+							bgCtx := context.Background()
+							bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, populatedTodoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, turnCount, executionLLM, triggerReason)
+							if bgErr != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
+							} else {
+								hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
 							}
-
-							// Post-step knowledgebase update — independent of learning. Gated by three
-							// conditions inside maybeEnqueueKBUpdate (KB enabled + write access + non-empty
-							// contribution). Silent no-op when any condition fails. Serialized through
-							// kbUpdateQueue so concurrent step completions don't race on graph.json writes.
-							// See docs/workflow/persistent_stores_design.md section 5.
-							hcpo.maybeEnqueueKBUpdate(stepIndex, stepPath, todoStep)
-						}
+						})
 					}
+				}
+
+				// Post-step knowledgebase update — INDEPENDENT of learning lock/disable.
+				// KB and learnings are orthogonal stores: a frozen SKILL.md does NOT mean
+				// we should stop accumulating durable domain facts. Gated only on:
+				//   - validation success (don't extract from a failed run's output)
+				//   - the three conditions inside maybeEnqueueKBUpdate (KB enabled +
+				//     not workflow-locked + per-step write access + non-empty contribution)
+				// Serialized through kbUpdateQueue so concurrent step completions don't
+				// race on graph.json writes. See docs/workflow/persistent_stores_design.md.
+				if validationResponse.IsSuccessCriteriaMet && populatedTodoStep != nil {
+					hcpo.maybeEnqueueKBUpdate(stepIndex, stepPath, populatedTodoStep)
 				}
 
 				// Check if success criteria was met

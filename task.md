@@ -35,3 +35,5 @@
 73. look at if we can use agent-browser instead of playwrite mcp itself as it has lot of new releases
 
 74. if eval scoring can also be learn code? builder should be allowed to set that 
+
+75. i think we should make human inputs steps in workflow more tighly integrated with workflow builder and maybe not have in direct execute at all

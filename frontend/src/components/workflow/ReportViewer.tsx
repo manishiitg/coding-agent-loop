@@ -2,17 +2,37 @@
 // source, renders widgets. See docs/workflow/persistent_stores_design.md.
 
 import { useEffect, useMemo, useState } from 'react'
+import {
+  Bar, BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line, LineChart,
+  Area, AreaChart,
+  Pie, PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis, YAxis,
+} from 'recharts'
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Search } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import {
   applyWidgetFilter,
   parseReportPlan,
   resolveJSONPath,
 } from '../../lib/reportPlanParser'
+import { compareValues, formatAuto, formatNamed, rowsToCSV } from '../../lib/reportFormatters'
 import type {
   ParsedReportPlan,
   ReportEntry,
+  ReportFormatterName,
   ReportWidget,
 } from '../../services/api-types'
+
+// Default rows-per-page for tables; overridable per-widget via `page_size:`.
+const DEFAULT_TABLE_PAGE_SIZE = 25
+// Recharts categorical palette; cycles for pie slices and multi-series bars.
+const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
 async function readWorkspaceText(filepath: string): Promise<string | null> {
   try {
@@ -232,28 +252,64 @@ function WidgetRenderer({
   sources: SourceCache
 }) {
   const raw = sources[widget.source]
-  if (raw === undefined || raw === null) return null
+  if (raw === undefined) {
+    // Source still loading — show a small placeholder so empty widgets aren't silent.
+    return (
+      <div className="text-xs italic text-muted-foreground py-2">
+        Loading {widget.source}…
+      </div>
+    )
+  }
+  if (raw === null) {
+    return (
+      <div className="text-xs italic text-muted-foreground py-2">
+        Source not available: <code className="px-1 rounded bg-muted">{widget.source}</code>
+      </div>
+    )
+  }
   const resolved = applyWidgetFilter(resolveJSONPath(raw, widget.path), widget.filter)
   if (resolved == null) return null
   if (Array.isArray(resolved) && resolved.length === 0) return null
 
-  if (widget.kind === 'text') return <TextWidget value={resolved} />
-  if (widget.kind === 'table') return <TableWidget value={resolved} />
-  if (widget.kind === 'chart') return <ChartWidget value={resolved} />
+  if (widget.kind === 'text') return <TextWidget value={resolved} widget={widget} />
+  if (widget.kind === 'table') return <TableWidget value={resolved} widget={widget} />
+  if (widget.kind === 'chart') return <ChartWidget value={resolved} widget={widget} />
   return null
 }
 
-function TextWidget({ value }: { value: unknown }) {
+function TextWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
   const text =
     typeof value === 'string'
       ? value
       : typeof value === 'number' || typeof value === 'boolean'
         ? String(value)
         : JSON.stringify(value, null, 2)
-  return <div className="whitespace-pre-wrap leading-6 text-foreground">{text}</div>
+  return (
+    <div className="flex flex-col gap-1">
+      {(widget.title || widget.description) && (
+        <div className="flex flex-col gap-0.5">
+          {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
+          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
+        </div>
+      )}
+      <div className="whitespace-pre-wrap leading-6 text-foreground">{text}</div>
+    </div>
+  )
 }
 
-function TableWidget({ value }: { value: unknown }) {
+type SortDirection = 'asc' | 'desc'
+
+function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
+  const formats = widget.formats ?? {}
+  const enableSearch = widget.enableSearch !== false // default true
+  const pageSize = widget.pageSize ?? DEFAULT_TABLE_PAGE_SIZE
+  const hidden = useMemo(() => new Set(widget.hideColumns ?? []), [widget.hideColumns])
+
+  const [sortField, setSortField] = useState<string | null>(widget.defaultSort?.field ?? null)
+  const [sortDir, setSortDir] = useState<SortDirection>(widget.defaultSort?.direction ?? 'asc')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+
   const columns = useMemo(() => {
     if (!Array.isArray(value) || value.length === 0) return []
     const rows = value as Record<string, unknown>[]
@@ -262,62 +318,235 @@ function TableWidget({ value }: { value: unknown }) {
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue
       for (const k of Object.keys(row)) {
-        if (!seen.has(k)) {
+        if (!seen.has(k) && !hidden.has(k)) {
           seen.add(k)
           cols.push(k)
         }
       }
     }
     return cols
-  }, [value])
+  }, [value, hidden])
+
+  // Auto-detect numeric columns (used for right-alignment when no formatter declared).
+  const numericColumns = useMemo(() => {
+    const out = new Set<string>()
+    if (!Array.isArray(value)) return out
+    const rows = value as Record<string, unknown>[]
+    for (const col of columns) {
+      // Treat a column as numeric when at least one non-null value parses as a finite number
+      // AND no value parses as a non-empty non-numeric string.
+      let sawNumeric = false
+      let sawNonNumeric = false
+      for (const row of rows) {
+        const v = row?.[col]
+        if (v == null || v === '') continue
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          sawNumeric = true
+        } else if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) {
+          sawNumeric = true
+        } else {
+          sawNonNumeric = true
+          break
+        }
+      }
+      if (sawNumeric && !sawNonNumeric) out.add(col)
+    }
+    return out
+  }, [value, columns])
+
+  const filtered = useMemo(() => {
+    if (!Array.isArray(value)) return []
+    const rows = value as Record<string, unknown>[]
+    const needle = search.trim().toLowerCase()
+    if (!needle) return rows
+    return rows.filter(row => {
+      if (!row) return false
+      for (const col of columns) {
+        const v = row[col]
+        if (v == null) continue
+        const s = typeof v === 'object' ? JSON.stringify(v) : String(v)
+        if (s.toLowerCase().includes(needle)) return true
+      }
+      return false
+    })
+  }, [value, columns, search])
+
+  const sorted = useMemo(() => {
+    if (!sortField) return filtered
+    const copy = [...filtered]
+    copy.sort((a, b) => {
+      const cmp = compareValues(a?.[sortField], b?.[sortField])
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return copy
+  }, [filtered, sortField, sortDir])
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const safePage = Math.min(page, totalPages - 1)
+  const pageRows = useMemo(
+    () => sorted.slice(safePage * pageSize, (safePage + 1) * pageSize),
+    [sorted, safePage, pageSize],
+  )
 
   if (!Array.isArray(value) || value.length === 0 || columns.length === 0) return null
-  const rows = value as Record<string, unknown>[]
+  const rowCountText =
+    sorted.length === (value as unknown[]).length
+      ? `${sorted.length} row${sorted.length === 1 ? '' : 's'}`
+      : `${sorted.length} of ${(value as unknown[]).length}`
+
+  const onSortClick = (col: string) => {
+    if (sortField === col) {
+      setSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(col)
+      setSortDir('asc')
+    }
+    setPage(0)
+  }
+
+  const handleExport = () => {
+    const csv = rowsToCSV(sorted as Record<string, unknown>[], columns)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `report-table-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr>
-            {columns.map(c => (
-              <th
-                key={c}
-                className="text-left px-2.5 py-1.5 border-b-2 border-border font-semibold text-foreground"
-              >
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              {columns.map(c => (
-                <td
-                  key={c}
-                  className="px-2.5 py-1.5 border-b border-border/60 align-top text-foreground"
-                >
-                  {formatCell(row[c])}
-                </td>
-              ))}
+    <div className="flex flex-col gap-2">
+      {(widget.title || widget.description) && (
+        <div className="flex flex-col gap-0.5">
+          {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
+          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
+        </div>
+      )}
+      <div className="flex items-center gap-2 text-xs">
+        {enableSearch && (
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search…"
+              value={search}
+              onChange={e => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+              className="w-full pl-7 pr-2 py-1 text-xs bg-muted/30 border border-input rounded focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+        )}
+        <div className="text-muted-foreground">{rowCountText}</div>
+        <button
+          onClick={handleExport}
+          className="ml-auto p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          title="Export CSV"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="overflow-auto max-h-[60vh] border border-border/60 rounded-md">
+        <table className="w-full border-collapse text-sm">
+          <thead className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_var(--border)]">
+            <tr>
+              {columns.map(c => {
+                const isSorted = sortField === c
+                const align = numericColumns.has(c) || c in formats ? 'text-right' : 'text-left'
+                return (
+                  <th
+                    key={c}
+                    className={`px-2.5 py-1.5 border-b-2 border-border font-semibold text-foreground select-none cursor-pointer hover:bg-muted/40 transition-colors ${align}`}
+                    onClick={() => onSortClick(c)}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <span>{c}</span>
+                      {isSorted ? (
+                        sortDir === 'asc' ? (
+                          <ArrowUp className="w-3 h-3" />
+                        ) : (
+                          <ArrowDown className="w-3 h-3" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </span>
+                  </th>
+                )
+              })}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {pageRows.map((row, i) => (
+              <tr
+                key={safePage * pageSize + i}
+                className="even:bg-muted/20 hover:bg-muted/40 transition-colors"
+              >
+                {columns.map(c => {
+                  const preset = formats[c] as ReportFormatterName | undefined
+                  const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
+                  const align = formatted.isNumeric ? 'text-right tabular-nums' : 'text-left'
+                  return (
+                    <td
+                      key={c}
+                      className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground ${align}`}
+                    >
+                      {formatted.text}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+          <button
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={safePage === 0}
+            className="px-2 py-0.5 rounded border border-border disabled:opacity-30 hover:bg-muted transition-colors"
+          >
+            Prev
+          </button>
+          <span>
+            Page {safePage + 1} of {totalPages}
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={safePage >= totalPages - 1}
+            className="px-2 py-0.5 rounded border border-border disabled:opacity-30 hover:bg-muted transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-function ChartWidget({ value }: { value: unknown }) {
-  // Expected shape per the design doc: [{ label: string, value: number }]. We tolerate
-  // arrays of other object shapes by falling back to (keys[0], keys[1]) as (label, value).
-  if (!Array.isArray(value) || value.length === 0) return null
-  const points: { label: string; value: number }[] = []
+// Normalises chart data to {label, value, ...rest} pairs. When `xAxis`/`yAxis` are
+// declared in the widget, those field names take precedence; otherwise we accept
+// either the canonical {label,value} shape or fall back to the first two object keys.
+function normaliseChartPoints(value: unknown, widget: ReportWidget): Array<Record<string, unknown> & { _label: string; _value: number }> {
+  if (!Array.isArray(value) || value.length === 0) return []
+  const xField = widget.xAxis
+  const yField = widget.yAxis
+  const out: Array<Record<string, unknown> & { _label: string; _value: number }> = []
   for (const item of value as Record<string, unknown>[]) {
     if (!item || typeof item !== 'object') continue
     let label: string | undefined
     let num: number | undefined
-    if ('label' in item && 'value' in item) {
+    if (xField && yField) {
+      label = item[xField] != null ? String(item[xField]) : undefined
+      num = Number(item[yField])
+    } else if ('label' in item && 'value' in item) {
       label = String(item.label ?? '')
       num = Number(item.value)
     } else {
@@ -327,39 +556,87 @@ function ChartWidget({ value }: { value: unknown }) {
       num = Number(item[keys[1]])
     }
     if (label === undefined || !Number.isFinite(num)) continue
-    points.push({ label, value: num as number })
+    out.push({ ...item, _label: label, _value: num as number })
   }
-  if (points.length === 0) return null
-
-  const max = Math.max(...points.map(p => p.value), 1)
-  return (
-    <div className="flex flex-col gap-1.5">
-      {points.map((p, i) => (
-        <div key={i} className="flex items-center gap-2 text-xs text-foreground">
-          <div className="w-36 whitespace-nowrap overflow-hidden text-ellipsis" title={p.label}>
-            {p.label}
-          </div>
-          <div className="flex-1 h-3.5 rounded-sm overflow-hidden bg-muted">
-            <div
-              className="h-full bg-primary"
-              style={{ width: `${(p.value / max) * 100}%` }}
-            />
-          </div>
-          <div className="min-w-[40px] text-right tabular-nums">{p.value}</div>
-        </div>
-      ))}
-    </div>
-  )
+  return out
 }
 
-function formatCell(v: unknown): string {
-  if (v == null) return ''
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v)
-  try {
-    return JSON.stringify(v)
-  } catch {
-    return String(v)
+function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
+  const points = useMemo(() => {
+    let pts = normaliseChartPoints(value, widget)
+    // Sort first (so topN takes the right slice), then truncate.
+    if (widget.sort === 'asc') pts = [...pts].sort((a, b) => a._value - b._value)
+    else if (widget.sort === 'desc') pts = [...pts].sort((a, b) => b._value - a._value)
+    if (widget.topN && widget.topN > 0) pts = pts.slice(0, widget.topN)
+    return pts
+  }, [value, widget])
+
+  if (points.length === 0) return null
+
+  const chartType = widget.chartType ?? 'bar'
+  const showValues = widget.showValues === true
+  const heightPx = widget.height ?? 288 // h-72 default
+
+  const header = (widget.title || widget.description) ? (
+    <div className="flex flex-col gap-0.5 mb-2">
+      {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
+      {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
+    </div>
+  ) : null
+
+  // Pie chart — special layout.
+  if (chartType === 'pie') {
+    return (
+      <div className="flex flex-col">
+        {header}
+        <div style={{ width: '100%', height: heightPx }}>
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie
+                data={points}
+                dataKey="_value"
+                nameKey="_label"
+                outerRadius={Math.min(120, heightPx * 0.4)}
+                label={showValues ? (entry: { _label: string; _value: number }) => `${entry._label}: ${entry._value}` : undefined}
+              >
+                {points.map((_, i) => (
+                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    )
   }
+
+  // Bar / line / area share the same XY layout.
+  const ChartContainer =
+    chartType === 'line' ? LineChart : chartType === 'area' ? AreaChart : BarChart
+  const ValueLabel = showValues
+    ? { dataKey: '_value', position: chartType === 'bar' ? 'top' as const : 'top' as const, fontSize: 10 }
+    : undefined
+
+  return (
+    <div className="flex flex-col">
+      {header}
+      <div style={{ width: '100%', height: heightPx }}>
+        <ResponsiveContainer>
+          <ChartContainer data={points} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+            <XAxis dataKey="_label" tick={{ fontSize: 11 }} interval={0} angle={points.length > 8 ? -30 : 0} textAnchor={points.length > 8 ? 'end' : 'middle'} height={points.length > 8 ? 60 : 30} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            {chartType === 'bar' && <Bar dataKey="_value" fill={CHART_COLORS[0]} radius={[3, 3, 0, 0]} label={ValueLabel} />}
+            {chartType === 'line' && <Line type="monotone" dataKey="_value" stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} label={ValueLabel} />}
+            {chartType === 'area' && <Area type="monotone" dataKey="_value" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.25} label={ValueLabel} />}
+          </ChartContainer>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
 }
 
 const overlayStyle: React.CSSProperties = {

@@ -20,10 +20,12 @@ import (
 var kbUpdateSystemPromptTemplate = MustRegisterTemplate("kbUpdateSystemPrompt", `# Knowledgebase Update Agent
 
 ## Role
-Extract structured knowledge from a just-completed step and merge it into the workspace knowledge graph. You are the **only writer** of `+"`"+`knowledgebase/graph.json`+"`"+` and `+"`"+`knowledgebase/index.json`+"`"+`. Regular step agents may read these files but never write them.
+Extract structured knowledge from a just-completed step and merge it into the workspace knowledge graph. You are the **only writer** of `+"`"+`knowledgebase/graph.json`+"`"+`, `+"`"+`knowledgebase/index.json`+"`"+`, and the `+"`"+`knowledgebase/notes/`+"`"+` folder. Regular step agents may read these files but never write them.
 
 ## What you capture vs what you don't
-- **Capture WHAT the workflow discovered** — entities (companies, people, products, events, ...) and relationships between them. Durable facts that survive across runs.
+- **Capture WHAT the workflow discovered.** Two output formats live in this folder, each for a different shape of knowledge:
+  - **Atomic facts** — entities (companies, people, products, events, ...) and relationships between them → `+"`"+`graph.json`+"`"+`. Use when the discovery is a discrete fact you'll query later by id/type.
+  - **Narrative analysis** — paragraphs of context, hypotheses, evolution-over-time observations, cross-cutting patterns → per-topic markdown files under `+"`"+`notes/`+"`"+`. Use when the discovery is too prosaic to fit cleanly as an entity property but is durable knowledge about the subject.
 - **Do NOT capture HOW the step ran** (selectors, auth flows, timing, tool call patterns) — that belongs in `+"`"+`learnings/`+"`"+`, written by the learning agent.
 - **Do NOT capture ephemeral run details** (timestamps of specific actions, tool call traces, validation output).
 - **Skip secrets, credentials, PII** (passwords, tokens, emails/phones unless explicitly required by the contribution). Substitute placeholder text or omit.
@@ -73,21 +75,71 @@ Extract structured knowledge from a just-completed step and merge it into the wo
 }
 ` + "```" + `
 
+**`+"`"+`knowledgebase/notes/`+"`"+`** — per-topic narrative markdown files plus a registry. Layout:
+` + "```" + `
+knowledgebase/notes/
+├── _index.json                  # registry — gatekeeper, read first
+├── <topic-id>.md                # one markdown file per topic
+├── <topic-id>.md
+└── pattern-<slug>.md            # cross-cutting patterns use the pattern- prefix
+` + "```" + `
+
+`+"`"+`_index.json`+"`"+` schema:
+` + "```" + `json
+{
+  "topics": [
+    {
+      "id": "<topic-id>",                       // e.g. "company-acme" or "pattern-tax-cycle"
+      "file": "<topic-id>.md",                  // filename inside notes/
+      "covers": ["<entity-id>", ...],           // entity/relationship ids this topic discusses
+      "last_updated": "<RFC3339>",
+      "last_updated_by": { "step": "<step-id>", "run": "<run-folder>" },
+      "size_bytes": <int>,
+      "section_count": <int>                    // count of "## " headings inside the markdown
+    }
+  ]
+}
+` + "```" + `
+
+Per-topic markdown shape (loose convention, not enforced):
+` + "```" + `markdown
+# <topic-id>
+
+<topic-level introduction — 1-2 sentences>
+
+## <YYYY-MM-DD or section subhead>
+<paragraph(s) of narrative analysis. Cross-reference graph entities by id where helpful:
+"... see entity company-acme and relationship rel-company-acme-paid_to-treasury".>
+
+## <next section>
+...
+` + "```" + `
+
+Topic ID conventions:
+- **Entity-scoped narrative** → topic id = entity id (`+"`"+`company-acme.md`+"`"+`, `+"`"+`person-jane-doe.md`+"`"+`). The `+"`"+`covers`+"`"+` array contains just that entity id.
+- **Cross-cutting pattern** → topic id = `+"`"+`pattern-<slug>`+"`"+` (`+"`"+`pattern-tax-cycle.md`+"`"+`, `+"`"+`pattern-balance-anomaly.md`+"`"+`). The `+"`"+`covers`+"`"+` array lists every entity id the pattern touches.
+
 ## Merge rules (MANDATORY)
 
-1. **Read first.** Always start with:
-   - `+"`"+`cat '{{.GraphFilePath}}'`+"`"+`
-   - `+"`"+`cat '{{.IndexFilePath}}'`+"`"+`
-   - `+"`"+`ls '{{.StepOutputPath}}'`+"`"+` then read relevant output files
-2. **Match by id, merge in place.** If an entity with the same `+"`"+`id`+"`"+` already exists, UPDATE its properties rather than creating a duplicate with a different id. Same rule for relationships.
-3. **Use stable deterministic ids** derived from the entity/relationship content, NOT from run metadata:
+### A. Always read first
+
+Before writing anything, run:
+- `+"`"+`cat '{{.GraphFilePath}}'`+"`"+` — current entities/relationships
+- `+"`"+`cat '{{.IndexFilePath}}'`+"`"+` — current graph summary
+- `+"`"+`cat '{{.NotesIndexPath}}'`+"`"+` — current notes/ topic registry (gatekeeper)
+- `+"`"+`ls '{{.StepOutputPath}}'`+"`"+` then read relevant output files
+
+### B. Atomic facts → graph.json + index.json
+
+1. **Match by id, merge in place.** If an entity with the same `+"`"+`id`+"`"+` already exists, UPDATE its properties rather than creating a duplicate with a different id. Same rule for relationships.
+2. **Use stable deterministic ids** derived from the entity/relationship content, NOT from run metadata:
    - Entities: `+"`"+`company-<slug>`+"`"+`, `+"`"+`person-<slug>`+"`"+`, `+"`"+`product-<slug>`+"`"+`. Slug = lowercase, dashes, no punctuation.
    - Relationships: `+"`"+`rel-<from-id>-<type>-<to-id>`+"`"+`. Same input → same id → natural deduplication across runs.
-4. **Stamp provenance on everything you add or update.** Every entity and relationship MUST carry:
+3. **Stamp provenance on everything you add or update.** Every entity and relationship MUST carry:
    ` + "`" + `"source": { "step": "{{.StepID}}", "run": "{{.RunFolder}}" }` + "`" + `
-5. **Preserve prior runs' data.** NEVER delete entities or relationships written by earlier steps/runs. You only add new facts or refine existing ones.
-6. **Timestamps:** set `+"`"+`created_at`+"`"+` on new records and `+"`"+`updated_at`+"`"+` on modified ones. Use current UTC in RFC3339 (`+"`"+`date -u +%Y-%m-%dT%H:%M:%SZ`+"`"+`).
-7. **Sync `+"`"+`index.json`+"`"+`** after every graph change. Recompute:
+4. **Preserve prior runs' data.** NEVER delete entities or relationships written by earlier steps/runs. You only add new facts or refine existing ones.
+5. **Timestamps:** set `+"`"+`created_at`+"`"+` on new records and `+"`"+`updated_at`+"`"+` on modified ones. Use current UTC in RFC3339 (`+"`"+`date -u +%Y-%m-%dT%H:%M:%SZ`+"`"+`).
+6. **Sync `+"`"+`index.json`+"`"+`** after every graph change. Recompute:
    - `+"`"+`entity_count`+"`"+` = length of `+"`"+`entities`+"`"+`
    - `+"`"+`relationship_count`+"`"+` = length of `+"`"+`relationships`+"`"+`
    - `+"`"+`entity_types`+"`"+` = sorted unique set of `+"`"+`entities[].type`+"`"+`
@@ -95,18 +147,39 @@ Extract structured knowledge from a just-completed step and merge it into the wo
    - `+"`"+`last_updated`+"`"+` = now
    - `+"`"+`last_updated_by`+"`"+` = `+"`"+`{step: "{{.StepID}}", run: "{{.RunFolder}}"}`+"`"+`
 
-## Tools
-- **execute_shell_command** — for reads (`+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`ls`+"`"+`) and for rewriting files via `+"`"+`cat > file <<EOF ... EOF`+"`"+` heredoc.
-- **diff_patch_workspace_file** — for targeted edits to `+"`"+`graph.json`+"`"+` or `+"`"+`index.json`+"`"+` when you don't need a full rewrite.
+### C. Narrative analysis → notes/{topic}.md (only when contribution asks for it)
 
-Prefer `+"`"+`diff_patch_workspace_file`+"`"+` for small appends/updates. Use heredoc rewrite only when restructuring large portions.
+7. **Decide if narrative belongs.** Only write to `+"`"+`notes/`+"`"+` when the contribution instruction explicitly asks for narrative analysis (e.g. "summarize patterns", "explain why X", "track evolution of Y"). If the instruction is purely about extracting atomic facts, do NOT write notes — that's bloat. Default is: write graph entries, skip notes.
+8. **Pick the topic id from the registry first.** Read `+"`"+`{{.NotesIndexPath}}'`+"`"+` to see what topic files already exist:
+   - **Per-entity narrative** → topic id = entity id. If a file exists, append/update it. Otherwise create `+"`"+`notes/<entity-id>.md`+"`"+`.
+   - **Cross-cutting pattern** → topic id = `+"`"+`pattern-<slug>`+"`"+`. Reuse an existing pattern file if the new observation reinforces it; create a new one if the pattern is genuinely new.
+9. **Selective load.** Only `+"`"+`cat`+"`"+` the topic files you intend to update. NEVER `+"`"+`cat notes/*.md`+"`"+` — file count grows unboundedly and loading all of them blows context. The `+"`"+`_index.json`+"`"+` exists so you don't have to.
+10. **Append a dated section, don't rewrite the whole file.** New observations go in a new `+"`"+`## YYYY-MM-DD`+"`"+` section (or a topical subhead like `+"`"+`## Tax cycle observation`+"`"+`). The cumulative file is the topic's history; older sections stay intact unless the contribution explicitly says to revise them.
+11. **Cross-reference graph entities by id.** When notes mention an entity or relationship, name it by id (`+"`"+`company-acme`+"`"+`, `+"`"+`rel-company-acme-paid_to-treasury`+"`"+`) so reorganize and harden tooling can resolve the link.
+12. **Compaction trigger.** Before appending to a topic file, check its size in the registry (`+"`"+`size_bytes`+"`"+`). If it exceeds **20480 bytes (20 KB)** OR `+"`"+`section_count`+"`"+` >= 30:
+    - First condense older sections into a single `+"`"+`## Historical context`+"`"+` block at the top of the file (preserve the most recent 5 sections verbatim).
+    - Then append your new section.
+    - Update `+"`"+`size_bytes`+"`"+` and `+"`"+`section_count`+"`"+` accordingly. This keeps per-file growth bounded without losing the long-range narrative.
+13. **Sync `+"`"+`notes/_index.json`+"`"+`** after every notes write. For each touched topic, update or insert:
+    - `+"`"+`id`+"`"+`, `+"`"+`file`+"`"+` — match the markdown file
+    - `+"`"+`covers`+"`"+` — entity/relationship ids the topic now discusses (merge with existing list, dedupe)
+    - `+"`"+`last_updated`+"`"+` = now, `+"`"+`last_updated_by`+"`"+` = `+"`"+`{step: "{{.StepID}}", run: "{{.RunFolder}}"}`+"`"+`
+    - `+"`"+`size_bytes`+"`"+` = new file size, `+"`"+`section_count`+"`"+` = `+"`"+`grep -c '^## ' <file>`+"`"+`
+
+## Tools
+- **execute_shell_command** — for reads (`+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`ls`+"`"+`, `+"`"+`wc -c`+"`"+`, `+"`"+`grep -c`+"`"+`) and for rewriting files via `+"`"+`cat > file <<EOF ... EOF`+"`"+` heredoc.
+- **diff_patch_workspace_file** — for targeted edits to `+"`"+`graph.json`+"`"+`, `+"`"+`index.json`+"`"+`, individual notes files, or `+"`"+`notes/_index.json`+"`"+` when you don't need a full rewrite.
+
+Prefer `+"`"+`diff_patch_workspace_file`+"`"+` for small appends/updates (one section into a notes file, one entity into graph.json). Use heredoc rewrite only when restructuring large portions or compacting a notes file.
 
 ## Failure behavior
-If the contribution instruction says to extract something you cannot find in the step output, skip it — do NOT invent entities. Partial output is fine; hallucinated output is not.
+If the contribution instruction says to extract something you cannot find in the step output, skip it — do NOT invent entities or fabricate narrative. Partial output is fine; hallucinated output is not.
 
 ## Final action
 After your writes, print exactly one summary line in this form:
-` + "`" + `KB updated: +<N> entities, +<M> relationships; total now <E>/<R>; types: [<entity_types>] / [<relationship_types>]` + "`" + `
+` + "`" + `KB updated: +<N> entities, +<M> relationships; total now <E>/<R>; types: [<entity_types>] / [<relationship_types>]; notes touched: [<topic-id>, ...]` + "`" + `
+
+If no notes were written, end the summary at `+"`"+`relationship_types`+"`"+` and omit the `+"`"+`notes touched`+"`"+` clause.
 `)
 
 var kbUpdateUserMessageTemplate = MustRegisterTemplate("kbUpdateUserMessage", `# Knowledgebase update request
@@ -123,10 +196,10 @@ var kbUpdateUserMessageTemplate = MustRegisterTemplate("kbUpdateUserMessage", `#
 
 ## Your task
 Apply the merge rules from the system prompt:
-1. Read `+"`"+`{{.GraphFilePath}}`+"`"+` and `+"`"+`{{.IndexFilePath}}`+"`"+`, plus the step output files under `+"`"+`{{.StepOutputPath}}`+"`"+`.
-2. Extract entities/relationships per the contribution instruction above.
-3. Merge into `+"`"+`{{.GraphFilePath}}`+"`"+` (match by id, preserve prior data, stamp source).
-4. Sync `+"`"+`{{.IndexFilePath}}`+"`"+`.
+1. Read `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and `+"`"+`{{.NotesIndexPath}}`+"`"+`, plus the step output files under `+"`"+`{{.StepOutputPath}}`+"`"+`.
+2. Extract atomic facts (entities/relationships) per the contribution instruction above and merge into `+"`"+`{{.GraphFilePath}}`+"`"+` (match by id, preserve prior data, stamp source).
+3. **If the instruction asks for narrative analysis**, also write per-topic markdown to `+"`"+`{{.NotesFolderPath}}/<topic-id>.md`+"`"+`. Decide topic ids using the registry; append a dated section; compact if the file is over 20KB or has 30+ sections. If the instruction is purely fact-extraction, skip notes entirely.
+4. Sync `+"`"+`{{.IndexFilePath}}`+"`"+` for any graph change. Sync `+"`"+`{{.NotesIndexPath}}`+"`"+` for any notes change.
 5. Print the final summary line.
 `)
 
@@ -164,11 +237,13 @@ func (agent *KBUpdateAgent) Execute(ctx context.Context, templateVars map[string
 func renderKBUpdateSystemPrompt(templateVars map[string]string) string {
 	var result strings.Builder
 	err := kbUpdateSystemPromptTemplate.Execute(&result, map[string]interface{}{
-		"StepID":         templateVars["StepID"],
-		"RunFolder":      templateVars["RunFolder"],
-		"GraphFilePath":  templateVars["GraphFilePath"],
-		"IndexFilePath":  templateVars["IndexFilePath"],
-		"StepOutputPath": templateVars["StepOutputPath"],
+		"StepID":          templateVars["StepID"],
+		"RunFolder":       templateVars["RunFolder"],
+		"GraphFilePath":   templateVars["GraphFilePath"],
+		"IndexFilePath":   templateVars["IndexFilePath"],
+		"StepOutputPath":  templateVars["StepOutputPath"],
+		"NotesFolderPath": templateVars["NotesFolderPath"],
+		"NotesIndexPath":  templateVars["NotesIndexPath"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update system prompt template execution failed: %v", err))
@@ -183,11 +258,12 @@ var kbReorganizeSystemPromptTemplate = MustRegisterTemplate("kbReorganizeSystemP
 
 ## Role
 Apply a user-provided transformation to the workspace knowledge graph. You own reads and
-writes to `+"`"+`{{.GraphFilePath}}`+"`"+` and `+"`"+`{{.IndexFilePath}}`+"`"+` for this one operation.
+writes to `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and the per-topic narrative files
+under `+"`"+`{{.NotesFolderPath}}/`+"`"+` for this one operation.
 
 Unlike the post-step KB update agent (which only adds facts), you MAY delete, rename,
-merge, or restructure existing entities and relationships — that is the whole point.
-But only when the user's instruction explicitly calls for it.
+merge, or restructure existing entities, relationships, and notes — that is the whole
+point. But only when the user's instruction explicitly calls for it.
 
 ## Files
 
@@ -223,6 +299,38 @@ But only when the user's instruction explicitly calls for it.
 }
 ` + "```" + `
 
+**`+"`"+`{{.NotesFolderPath}}/`+"`"+`** — per-topic narrative markdown files plus a registry. Layout:
+` + "```" + `
+notes/
+├── _index.json                  # registry — `+"`"+`{{.NotesIndexPath}}`+"`"+`
+├── <topic-id>.md                # one markdown file per topic (entity-id or pattern-<slug>)
+└── ...
+` + "```" + `
+
+`+"`"+`_index.json`+"`"+` schema:
+` + "```" + `json
+{
+  "topics": [
+    {
+      "id": "<topic-id>",
+      "file": "<topic-id>.md",
+      "covers": ["<entity-id>", ...],
+      "last_updated": "<RFC3339>",
+      "last_updated_by": { "step": "<step-id>", "run": "<run-folder>" },
+      "size_bytes": <int>,
+      "section_count": <int>
+    }
+  ]
+}
+` + "```" + `
+
+Notes operations the user may ask for:
+- **Merge two topics** (`+"`"+`merge notes/company-acme.md and notes/company-acme-corp.md`+"`"+`) — concatenate sections, dedupe near-duplicates, update `+"`"+`covers`+"`"+` to the union, drop the obsolete file from `+"`"+`_index.json`+"`"+`.
+- **Drop a topic** — delete the file via shell, remove its entry from `+"`"+`_index.json`+"`"+`.
+- **Drop sections from a bad run** — for each topic file, delete `+"`"+`## ...`+"`"+` sections whose body references the bad run id; recompute `+"`"+`size_bytes`+"`"+`/`+"`"+`section_count`+"`"+`.
+- **Compact a topic file** — rewrite as a `+"`"+`## Historical context`+"`"+` summary (preserving the last 5 sections verbatim), update `+"`"+`size_bytes`+"`"+`/`+"`"+`section_count`+"`"+`.
+- **Rename a topic** — move the file (`+"`"+`mv old.md new.md`+"`"+`), rewrite the H1 inside, update id/file in `+"`"+`_index.json`+"`"+`. If the rename mirrors an entity rename in graph.json, also rewrite cross-references inside the markdown body.
+
 ## Transformation rules
 
 1. **Read first, plan, then write.** Before any edit:
@@ -237,16 +345,26 @@ But only when the user's instruction explicitly calls for it.
 4. **Relationships follow entities.** If you merge `+"`"+`company-acme`+"`"+` into `+"`"+`company-acme-corp`+"`"+`,
    update any relationships with `+"`"+`from`+"`"+`/`+"`"+`to`+"`"+` pointing at `+"`"+`company-acme`+"`"+` to point at the new id,
    and dedupe relationships that become identical after the rewrite.
-5. **Preserve schema shape.** `+"`"+`graph.json`+"`"+` must remain valid JSON matching the schema above.
-   Do not add extra top-level fields; do not rename the standard fields.
+5. **Preserve schema shape.** `+"`"+`graph.json`+"`"+` and `+"`"+`notes/_index.json`+"`"+` must remain valid JSON
+   matching the schemas above. Do not add extra top-level fields; do not rename standard fields.
 6. **Sync `+"`"+`index.json`+"`"+` at the end.** Recompute:
    - `+"`"+`entity_count`+"`"+`, `+"`"+`relationship_count`+"`"+`
    - `+"`"+`entity_types`+"`"+`, `+"`"+`relationship_types`+"`"+` (sorted unique)
    - `+"`"+`last_updated`+"`"+` = now
    - `+"`"+`last_updated_by`+"`"+` = `+"`"+`{step: "builder-reorganize", run: "manual"}`+"`"+`
-7. **Idempotency.** If the transformation was already applied in a prior run (e.g. you
-   were asked to dedupe and everything is already deduped), explain in the summary and
-   make no changes.
+7. **Sync `+"`"+`notes/_index.json`+"`"+` if you touched any notes file.** For every topic you mutated,
+   updated `+"`"+`size_bytes`+"`"+`, `+"`"+`section_count`+"`"+`, `+"`"+`last_updated`+"`"+`. For deleted topics, remove the entry.
+   For renamed topics, update both `+"`"+`id`+"`"+` and `+"`"+`file`+"`"+`.
+8. **Notes scope discipline.** Read `+"`"+`{{.NotesIndexPath}}`+"`"+` first, then `+"`"+`cat`+"`"+` only the topic
+   files the instruction names or implies. NEVER `+"`"+`cat notes/*.md`+"`"+` — file count grows
+   unboundedly and loading all of them blows context.
+9. **Cross-store consistency.** If the instruction renames or deletes a graph entity that has
+   a notes topic with the same id (entity-scoped narrative), also rename/delete the topic
+   file and rewrite cross-references inside other topics' markdown bodies. If the instruction
+   only touches notes (e.g. "compact notes/X.md"), graph.json/index.json stay unchanged.
+10. **Idempotency.** If the transformation was already applied in a prior run (e.g. you
+    were asked to dedupe and everything is already deduped), explain in the summary and
+    make no changes.
 
 ## What NOT to do
 - Do not invent entities or relationships the graph did not already contain.
@@ -260,7 +378,9 @@ But only when the user's instruction explicitly calls for it.
 
 ## Final action
 Print exactly one summary line:
-` + "`" + `KB reorganized: <short description of what changed>; entities <before>→<after>, relationships <before>→<after>` + "`" + `
+` + "`" + `KB reorganized: <short description of what changed>; entities <before>→<after>, relationships <before>→<after>; notes touched: [<topic-id>, ...]` + "`" + `
+
+If no notes were touched, omit the `+"`"+`notes touched`+"`"+` clause entirely.
 `)
 
 var kbReorganizeUserMessageTemplate = MustRegisterTemplate("kbReorganizeUserMessage", `# Knowledgebase reorganization request
@@ -269,10 +389,10 @@ var kbReorganizeUserMessageTemplate = MustRegisterTemplate("kbReorganizeUserMess
 {{.Instruction}}
 
 ## Your task
-1. Read `+"`"+`{{.GraphFilePath}}`+"`"+` and `+"`"+`{{.IndexFilePath}}`+"`"+`.
-2. Decide what changes the instruction implies. State the plan briefly.
+1. Read `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and `+"`"+`{{.NotesIndexPath}}`+"`"+`. If the instruction touches notes (e.g. "merge", "compact", "drop sections from"), `+"`"+`cat`+"`"+` only the topic files the instruction names — never glob `+"`"+`notes/*.md`+"`"+`.
+2. Decide what changes the instruction implies — across graph, index, and notes if applicable. State the plan briefly.
 3. Apply the transformation. Follow every rule in the system prompt.
-4. Resync `+"`"+`{{.IndexFilePath}}`+"`"+`.
+4. Resync `+"`"+`{{.IndexFilePath}}`+"`"+` if you touched the graph. Resync `+"`"+`{{.NotesIndexPath}}`+"`"+` if you touched any notes file.
 5. Print the final summary line.
 `)
 
@@ -301,8 +421,10 @@ func (agent *KBReorganizeAgent) Execute(ctx context.Context, templateVars map[st
 func renderKBReorganizeSystemPrompt(templateVars map[string]string) string {
 	var result strings.Builder
 	err := kbReorganizeSystemPromptTemplate.Execute(&result, map[string]interface{}{
-		"GraphFilePath": templateVars["GraphFilePath"],
-		"IndexFilePath": templateVars["IndexFilePath"],
+		"GraphFilePath":   templateVars["GraphFilePath"],
+		"IndexFilePath":   templateVars["IndexFilePath"],
+		"NotesFolderPath": templateVars["NotesFolderPath"],
+		"NotesIndexPath":  templateVars["NotesIndexPath"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb reorganize system prompt template execution failed: %v", err))
@@ -313,9 +435,11 @@ func renderKBReorganizeSystemPrompt(templateVars map[string]string) string {
 func renderKBReorganizeUserMessage(templateVars map[string]string) string {
 	var result strings.Builder
 	err := kbReorganizeUserMessageTemplate.Execute(&result, map[string]interface{}{
-		"Instruction":   templateVars["Instruction"],
-		"GraphFilePath": templateVars["GraphFilePath"],
-		"IndexFilePath": templateVars["IndexFilePath"],
+		"Instruction":     templateVars["Instruction"],
+		"GraphFilePath":   templateVars["GraphFilePath"],
+		"IndexFilePath":   templateVars["IndexFilePath"],
+		"NotesFolderPath": templateVars["NotesFolderPath"],
+		"NotesIndexPath":  templateVars["NotesIndexPath"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb reorganize user message template execution failed: %v", err))
@@ -334,6 +458,8 @@ func renderKBUpdateUserMessage(templateVars map[string]string) string {
 		"ContributionInstruction": templateVars["ContributionInstruction"],
 		"GraphFilePath":           templateVars["GraphFilePath"],
 		"IndexFilePath":           templateVars["IndexFilePath"],
+		"NotesFolderPath":         templateVars["NotesFolderPath"],
+		"NotesIndexPath":          templateVars["NotesIndexPath"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update user message template execution failed: %v", err))

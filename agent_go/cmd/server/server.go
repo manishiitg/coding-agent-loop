@@ -4067,10 +4067,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"IsCodeExecutionMode": fmt.Sprintf("%v", phaseIsCodeExec),
 				}
 
-				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below)
+				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below).
+				// Migrate any legacy 6-mode values (debugger/runner/eval/output) to the 4-mode scheme
+				// (ask/run/builder/builder respectively) so old saved sessions and stale schedule entries
+				// keep working without ambient breakage.
 				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
-					phaseTemplateVars["WorkshopMode"] = req.ExecutionOptions.WorkshopMode
-					log.Printf("[WORKSHOP_MODE] Using frontend override: %s", req.ExecutionOptions.WorkshopMode)
+					mode := req.ExecutionOptions.WorkshopMode
+					switch mode {
+					case "debugger":
+						mode = "ask"
+					case "runner":
+						mode = "run"
+					case "eval", "output":
+						mode = "builder"
+					}
+					phaseTemplateVars["WorkshopMode"] = mode
+					log.Printf("[WORKSHOP_MODE] Using frontend override: %s (raw=%s)", mode, req.ExecutionOptions.WorkshopMode)
 				}
 
 				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
@@ -4156,7 +4168,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						if optimizedCount == 0 {
 							phaseTemplateVars["WorkshopMode"] = "builder"
 						} else if optimizedCount >= totalSteps {
-							phaseTemplateVars["WorkshopMode"] = "runner"
+							phaseTemplateVars["WorkshopMode"] = "run"
 						} else {
 							phaseTemplateVars["WorkshopMode"] = "optimizer"
 						}

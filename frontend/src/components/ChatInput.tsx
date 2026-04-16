@@ -42,38 +42,32 @@ function WorkshopModeToggle() {
     })
   }
 
+  // Four consolidated modes (was 6: builder/optimizer/debugger/runner/eval/output).
+  // Designing eval plans + report widgets folded into Builder; debugger renamed to Ask;
+  // runner renamed to Run.
   const builderModes = [
-    { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design, build, and test the workflow — get a working plan with correct output.' },
+    { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design everything — workflow plan, step config, evaluation plan, and report widgets. The single design surface.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
-    { id: 'debugger' as const, label: 'Ask', title: 'Ask', description: 'Inspect prior runs and failures without re-executing the workflow.' },
-    { id: 'runner' as const, label: 'Run', title: 'Run', description: 'Use the finished workflow and focus on execution results.' },
-  ]
-
-  const topLevelModes = [
-    { id: 'plan' as const, label: 'Builder', title: 'Builder', description: 'Author the main workflow and choose a builder sub-mode.' },
-    { id: 'eval' as const, label: 'Eval', title: 'Eval', description: 'Create and maintain evaluation plans for completed workflow runs.' },
-    { id: 'output' as const, label: 'Report', title: 'Report', description: 'Define the final markdown report generated after workflow completion.' }
+    { id: 'ask' as const, label: 'Ask', title: 'Ask', description: 'Read-only investigate — inspect prior runs, eval reports, KB, and learnings without modifying anything.' },
+    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Execute the finished workflow and report results.' },
   ]
 
   return (
     <TooltipProvider delayDuration={120}>
       <div className="flex items-center gap-2">
         <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
-          {topLevelModes.map(({ id, label, title, description }) => (
+          {builderModes.map(({ id, label, title, description }) => (
             <Tooltip key={id}>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={() => {
-                    setWorkflowMode(id)
-                    // Persist eval/output as the workshop mode so Slack can read it
-                    if (id === 'eval' || id === 'output') {
-                      persistWorkshopMode(id)
-                    }
-                    // 'plan' restores the sub-mode — no extra persist needed
+                    setWorkflowMode('plan')
+                    setWorkshopMode(id)
+                    persistWorkshopMode(id)
                   }}
                   className={`px-2.5 py-1 transition-colors ${
-                    workflowMode === id
+                    workshopMode === id
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
                   }`}
@@ -88,35 +82,6 @@ function WorkshopModeToggle() {
             </Tooltip>
           ))}
         </div>
-
-        {workflowMode === 'plan' && (
-          <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
-            {builderModes.map(({ id, label, title, description }) => (
-              <Tooltip key={id}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkshopMode(id)
-                      persistWorkshopMode(id)
-                    }}
-                    className={`px-2 py-1 transition-colors ${
-                      workshopMode === id
-                        ? 'bg-muted-foreground text-background'
-                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-                    }`}
-                    aria-label={title}
-                  >
-                    {label}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{description}</p>
-                </TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
-        )}
       </div>
     </TooltipProvider>
   )
@@ -1979,16 +1944,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const workshopModeMatches = requiredWorkshopModes.length === 0 || requiredWorkshopModes.includes(currentWorkshopMode as any)
     // When we need to switch, pick the first allowed mode
     const targetWorkshopMode = workshopModeMatches ? undefined : requiredWorkshopModes[0]
+    // After the 6→4 mode consolidation, all workshop modes live under workflowMode='plan'.
+    // The legacy 'eval' / 'output' workflow-mode values are gone; eval-plan and report-widget
+    // editing both happen in Builder mode.
     const targetWorkflowMode = cmd.requiredWorkflowMode
-      ?? (targetWorkshopMode === 'eval'
-        ? 'eval'
-        : targetWorkshopMode === 'output'
-          ? 'output'
-          : targetWorkshopMode
-            ? 'plan'
-            : requiredWorkshopModes.length > 0 && !workshopModeMatches
-              ? 'plan'
-              : undefined)
+      ?? (targetWorkshopMode || (requiredWorkshopModes.length > 0 && !workshopModeMatches) ? 'plan' : undefined)
 
     let switched = false
 

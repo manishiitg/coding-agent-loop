@@ -4,7 +4,7 @@
 // as ReportViewer). All mutations happen via the workshop builder's
 // reorganize_knowledgebase tool — this popup never writes.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   X,
   Database,
@@ -16,8 +16,12 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Network,
+  GitBranch,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { useAppStore } from '../../stores/useAppStore'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 interface KBPopupProps {
   isOpen: boolean
@@ -97,6 +101,8 @@ async function readText(filepath: string): Promise<string | null> {
 type Tab = 'graph' | 'notes'
 
 export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps) {
+  const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
+  const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [graph, setGraph] = useState<KBGraph | null>(null)
@@ -109,6 +115,8 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   // Per-topic markdown body cache. undefined = not loaded; null = loaded and missing/empty.
   const [notesBodies, setNotesBodies] = useState<Record<string, string | null>>({})
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set())
+  const wasOpenRef = useRef(false)
+  const restoreWorkspaceOnCloseRef = useRef(false)
 
   const graphPath = workspacePath ? `${workspacePath}/knowledgebase/graph.json` : null
   const indexPath = workspacePath ? `${workspacePath}/knowledgebase/index.json` : null
@@ -144,6 +152,32 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   }, [isOpen, load])
 
   useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      const shouldRestoreWorkspace = !workspaceMinimized
+      restoreWorkspaceOnCloseRef.current = shouldRestoreWorkspace
+      if (shouldRestoreWorkspace) {
+        setWorkspaceMinimized(true)
+      }
+    } else if (!isOpen && wasOpenRef.current) {
+      if (restoreWorkspaceOnCloseRef.current) {
+        setWorkspaceMinimized(false)
+        restoreWorkspaceOnCloseRef.current = false
+      }
+    }
+
+    wasOpenRef.current = isOpen
+  }, [isOpen, workspaceMinimized, setWorkspaceMinimized])
+
+  useEffect(() => {
+    return () => {
+      if (restoreWorkspaceOnCloseRef.current) {
+        setWorkspaceMinimized(false)
+        restoreWorkspaceOnCloseRef.current = false
+      }
+    }
+  }, [setWorkspaceMinimized])
+
+  useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && isOpen) onClose()
     }
@@ -175,6 +209,43 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
       return false
     })
   }, [entities, typeFilter, search])
+
+  const entityTypeCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const entity of entities) {
+      const key = entity.type || 'untyped'
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return Array.from(counts.entries()).sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1]
+      return a[0].localeCompare(b[0])
+    })
+  }, [entities])
+
+  const relationshipsByEntity = useMemo(() => {
+    const map = new Map<string, KBRelationship[]>()
+    for (const relationship of relationships) {
+      map.set(relationship.from, [...(map.get(relationship.from) ?? []), relationship])
+      if (relationship.to !== relationship.from) {
+        map.set(relationship.to, [...(map.get(relationship.to) ?? []), relationship])
+      }
+    }
+    return map
+  }, [relationships])
+
+  const filteredEntityIds = useMemo(
+    () => new Set(filteredEntities.map(entity => entity.id)),
+    [filteredEntities],
+  )
+
+  const visibleRelationshipCount = useMemo(
+    () =>
+      relationships.filter(
+        relationship =>
+          filteredEntityIds.has(relationship.from) || filteredEntityIds.has(relationship.to),
+      ).length,
+    [relationships, filteredEntityIds],
+  )
 
   const toggleExpanded = (id: string) => {
     setExpanded(prev => {
@@ -368,89 +439,214 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
 
           {/* GRAPH TAB */}
           {tab === 'graph' && !loading && !error && hasGraphContent && (
-            <div className="space-y-1">
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Database className="w-3.5 h-3.5" />
+                    Entities
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{filteredEntities.length}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Showing {filteredEntities.length} of {entities.length}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Network className="w-3.5 h-3.5" />
+                    Relationships
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{visibleRelationshipCount}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {typeFilter === 'all'
+                      ? 'All visible graph links'
+                      : `Filtered by type: ${typeFilter}`}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <GitBranch className="w-3.5 h-3.5" />
+                    Entity Types
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{entityTypes.length}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Distinct categories in graph.json
+                  </div>
+                </div>
+              </div>
+
+              {entityTypeCounts.length > 0 && (
+                <div className="rounded-xl border border-border/70 bg-background p-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Type Distribution
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {entityTypeCounts.map(([type, count]) => (
+                      <button
+                        key={type}
+                        onClick={() => setTypeFilter(prev => (prev === type ? 'all' : type))}
+                        className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                          typeFilter === type
+                            ? 'border-primary/50 bg-primary/10 text-primary'
+                            : 'border-border bg-muted/40 text-foreground hover:bg-muted'
+                        }`}
+                      >
+                        <span className="font-mono">{type}</span>
+                        <span className="ml-2 text-muted-foreground">{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {filteredEntities.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-6 text-center">
-                  No entities match the current filter.
+                <div className="rounded-xl border border-dashed border-border bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
+                  No entities match the current search or type filter.
                 </div>
               ) : (
-                filteredEntities.map(e => {
-                  const isOpenRow = expanded.has(e.id)
-                  const relatedRels = relationships.filter(
-                    r => r.from === e.id || r.to === e.id,
-                  )
-                  return (
-                    <div key={e.id} className="border border-border rounded-md">
-                      <button
-                        onClick={() => toggleExpanded(e.id)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                <div className="space-y-3">
+                  {filteredEntities.map(e => {
+                    const isOpenRow = expanded.has(e.id)
+                    const relatedRels = relationshipsByEntity.get(e.id) ?? []
+                    return (
+                      <div
+                        key={e.id}
+                        className="overflow-hidden rounded-xl border border-border/70 bg-gradient-to-br from-background to-muted/20 shadow-sm"
                       >
-                        {isOpenRow ? (
-                          <ChevronDown className="w-4 h-4 flex-shrink-0" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 flex-shrink-0" />
-                        )}
-                        {e.type && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-muted font-mono">
-                            {e.type}
-                          </span>
-                        )}
-                        <span className="font-medium text-sm">{e.label || e.id}</span>
-                        <span className="text-xs text-muted-foreground ml-auto font-mono">
-                          {e.id}
-                        </span>
-                        {relatedRels.length > 0 && (
-                          <span className="text-xs text-muted-foreground ml-2">
-                            {relatedRels.length} rel{relatedRels.length === 1 ? '' : 's'}
-                          </span>
-                        )}
-                      </button>
-                      {isOpenRow && (
-                        <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/20">
-                          {e.properties && Object.keys(e.properties).length > 0 && (
-                            <div>
-                              <div className="font-medium mb-1">Properties</div>
-                              <pre className="whitespace-pre-wrap break-all">
-                                {JSON.stringify(e.properties, null, 2)}
-                              </pre>
+                        <button
+                          onClick={() => toggleExpanded(e.id)}
+                          className="w-full px-4 py-3 text-left transition-colors hover:bg-muted/30"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                              <Database className="w-4 h-4" />
                             </div>
-                          )}
-                          {(e.source?.step || e.source?.run) && (
-                            <div>
-                              <span className="font-medium">Source: </span>
-                              <span className="font-mono">
-                                {e.source?.step ?? '?'} / {e.source?.run ?? '?'}
-                              </span>
-                            </div>
-                          )}
-                          {(e.created_at || e.updated_at) && (
-                            <div className="text-muted-foreground">
-                              {e.created_at && <>created {new Date(e.created_at).toLocaleString()}</>}
-                              {e.updated_at && <> · updated {new Date(e.updated_at).toLocaleString()}</>}
-                            </div>
-                          )}
-                          {relatedRels.length > 0 && (
-                            <div>
-                              <div className="font-medium mb-1">
-                                Relationships ({relatedRels.length})
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
+                                  {e.type || 'untyped'}
+                                </span>
+                                <span className="text-sm font-semibold text-foreground">
+                                  {e.label || e.id}
+                                </span>
+                                <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+                                  {relatedRels.length} link{relatedRels.length === 1 ? '' : 's'}
+                                </span>
                               </div>
-                              <ul className="space-y-1">
-                                {relatedRels.map(r => (
-                                  <li key={r.id} className="font-mono">
-                                    {r.from === e.id ? '→ ' : '← '}
-                                    <span className="px-1 rounded bg-muted">{r.type ?? '?'}</span>
-                                    {' '}
-                                    <span>{r.from === e.id ? r.to : r.from}</span>
-                                  </li>
-                                ))}
-                              </ul>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                <span className="font-mono break-all">{e.id}</span>
+                                {e.source?.step && <span>step {e.source.step}</span>}
+                                {e.updated_at && (
+                                  <span>updated {new Date(e.updated_at).toLocaleString()}</span>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })
+                            {isOpenRow ? (
+                              <ChevronDown className="mt-1 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="mt-1 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            )}
+                          </div>
+                        </button>
+                        {isOpenRow && (
+                          <div className="border-t border-border/70 bg-muted/10 p-4">
+                            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
+                              <div className="space-y-4">
+                                <section className="rounded-lg border border-border/70 bg-background p-3">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Properties
+                                  </div>
+                                  {e.properties && Object.keys(e.properties).length > 0 ? (
+                                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted/30 p-3 text-[11px] text-foreground">
+                                      {JSON.stringify(e.properties, null, 2)}
+                                    </pre>
+                                  ) : (
+                                    <div className="mt-2 text-xs text-muted-foreground">
+                                      No structured properties on this entity.
+                                    </div>
+                                  )}
+                                </section>
+                              </div>
+                              <div className="space-y-4">
+                                <section className="rounded-lg border border-border/70 bg-background p-3">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Metadata
+                                  </div>
+                                  <div className="mt-2 space-y-2 text-xs">
+                                    {(e.source?.step || e.source?.run) && (
+                                      <div className="flex flex-wrap gap-2">
+                                        <span className="rounded bg-muted px-2 py-1 font-medium text-foreground">
+                                          Source
+                                        </span>
+                                        <span className="font-mono text-muted-foreground">
+                                          {e.source?.step ?? '?'} / {e.source?.run ?? '?'}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {e.created_at && (
+                                      <div className="text-muted-foreground">
+                                        Created {new Date(e.created_at).toLocaleString()}
+                                      </div>
+                                    )}
+                                    {e.updated_at && (
+                                      <div className="text-muted-foreground">
+                                        Updated {new Date(e.updated_at).toLocaleString()}
+                                      </div>
+                                    )}
+                                    {!e.source?.step &&
+                                      !e.source?.run &&
+                                      !e.created_at &&
+                                      !e.updated_at && (
+                                        <div className="text-muted-foreground">
+                                          No source or timestamp metadata.
+                                        </div>
+                                      )}
+                                  </div>
+                                </section>
+
+                                <section className="rounded-lg border border-border/70 bg-background p-3">
+                                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Relationships
+                                  </div>
+                                  {relatedRels.length > 0 ? (
+                                    <div className="mt-2 space-y-2">
+                                      {relatedRels.map(r => {
+                                        const isOutgoing = r.from === e.id
+                                        const counterpart = isOutgoing ? r.to : r.from
+                                        return (
+                                          <div
+                                            key={r.id}
+                                            className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="font-mono text-muted-foreground">
+                                                {isOutgoing ? 'outgoing' : 'incoming'}
+                                              </span>
+                                              <span className="rounded bg-background px-2 py-0.5 font-mono text-foreground">
+                                                {r.type ?? '?'}
+                                              </span>
+                                            </div>
+                                            <div className="mt-1 break-all font-mono text-muted-foreground">
+                                              {isOutgoing ? `${e.id} -> ${counterpart}` : `${counterpart} -> ${e.id}`}
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="mt-2 text-xs text-muted-foreground">
+                                      No relationships connected to this entity.
+                                    </div>
+                                  )}
+                                </section>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
           )}
@@ -468,6 +664,7 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
               {topics.map(t => {
                 const isOpenRow = expandedNotes.has(t.id)
                 const body = notesBodies[t.id]
+                const isMarkdownFile = t.file.toLowerCase().endsWith('.md')
                 return (
                   <div key={t.id} className="border border-border rounded-md">
                     <button
@@ -526,6 +723,13 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
                           ) : body === null ? (
                             <div className="text-muted-foreground italic">
                               Topic file missing or empty.
+                            </div>
+                          ) : isMarkdownFile ? (
+                            <div className="text-sm text-foreground bg-background border border-border/60 rounded p-3 max-h-96 overflow-y-auto">
+                              <MarkdownRenderer
+                                content={body}
+                                className="max-w-none !text-sm [&_p]:!text-sm [&_li]:!text-sm [&_code]:!text-[12px]"
+                              />
                             </div>
                           ) : (
                             <pre className="whitespace-pre-wrap break-words text-foreground bg-background border border-border/60 rounded p-2 max-h-96 overflow-y-auto">

@@ -651,15 +651,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           set({ runFolders: sorted, isLoadingRunFolders: false })
 
-          // Auto-select latest iteration if no selection exists
+          const defaultRunFolder = sorted.find(folder => folder.name === 'iteration-0')?.name
+            ?? sorted[0]?.name
+            ?? null
+
+          // Auto-select iteration-0 by default if no selection exists
           const currentSelection = get().selectedRunFolder
-          if (!currentSelection && sorted.length > 0) {
-            const latest = sorted[0].name
-            set({ selectedRunFolder: latest })
+          if (!currentSelection && defaultRunFolder) {
+            set({ selectedRunFolder: defaultRunFolder })
             try {
-              localStorage.setItem(SELECTED_RUN_FOLDER_KEY, latest)
+              localStorage.setItem(SELECTED_RUN_FOLDER_KEY, defaultRunFolder)
             } catch { /* ignore */ }
-            get().loadProgress(workspacePath, latest)
+            get().loadProgress(workspacePath, defaultRunFolder)
           }
 
           // Validate current selection
@@ -672,8 +675,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
               // Preserve the selection even if not in list yet (it was likely just created)
               // The folder should appear in the next refresh
             } else {
-              // Saved folder no longer exists and doesn't match iteration pattern, default to newest or null
-              const newSelection = sorted.length > 0 ? sorted[0].name : null
+              // Saved folder no longer exists and doesn't match iteration pattern, default to
+              // iteration-0 when present so the builder/workspace consistently anchors there.
+              const newSelection = defaultRunFolder
               set({ selectedRunFolder: newSelection })
 
               // Persist to localStorage

@@ -65,8 +65,8 @@ Show me:
     execute: (ctx) => {
       ctx.onSubmit(`Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
 
-1. **Objective set?** — Read planning/plan.json root "objective" field. FAIL if empty/missing.
-2. **Success criteria set?** — Read planning/plan.json root "success_criteria" field. FAIL if empty/missing.
+1. **Objective set?** — Read soul/soul.md and check the "## Objective" section. FAIL if the file is missing, the section is absent, or its body is empty / still a "<TODO: ...>" placeholder.
+2. **Success criteria set?** — Read soul/soul.md and check the "## Success Criteria" section. Same FAIL conditions as objective.
 3. **All steps have descriptions?** — Check every step in plan.json has a non-empty description. FAIL if any are empty.
 4. **Context flow valid?** — Check every context_dependency references an existing context_output from an earlier step. FAIL if broken links.
 5. **Variables configured?** — Read variables/variables.json, check at least one group exists with values. FAIL if empty.
@@ -272,6 +272,36 @@ List the diff_patch_workspace_file or update_step_config calls the user can copy
       } else {
         ctx.onSubmit(`I want to reorganize knowledgebase/graph.json. First read it and tell me what's in there (entity types, counts, any obvious cleanup candidates), then ask me what transformation to apply. Once I confirm, call reorganize_knowledgebase(instruction="...").`)
       }
+    }
+  },
+  {
+    command: 'report-improve',
+    description: 'Validate reports/report_plan.md and suggest layout/color improvements',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'builder',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusLine = focus ? `\n\nFocus on: ${focus}.` : ''
+      ctx.onSubmit(`Review and improve reports/report_plan.md in two passes.${focusLine}
+
+PASS 1 — VALIDATION
+Call validate_report_plan.
+- For each error: explain what's wrong in plain language, show the section + widget it refers to, and propose the exact fix (which line to change, to what).
+- For warnings: group by severity. Flag ones that would visibly degrade the report (unknown chart_type, missing axis fields, invalid colors) separately from cosmetic ones (empty arrays that will fill in after a run).
+
+PASS 2 — IMPROVEMENT SUGGESTIONS
+Read reports/report_plan.md yourself and also sample the underlying db/*.json and knowledgebase/*.json sources. Then propose improvements in these categories:
+
+1. **Layout**: are the most important widgets at the top? Are there too many widgets in a row cramming the view? Is the H2 structure grouping related content?
+2. **Chart-type fit**: for each chart, is bar/line/area/pie the right choice for that data? (bar=categorical, line=time series, pie=composition ≤6 slices)
+3. **Color**: does the report use semantic coloring where meaningful (status fields, pass/fail, severity)? Suggest adding color_by + color_map for any status-like fields you see in the data. Propose palettes (colors + colors_dark) for brand consistency if multiple charts share a theme.
+4. **Formatting**: any number/date/currency fields that should have a format preset? Any tables with too many columns that could benefit from hide_columns?
+5. **Density**: any charts with >10 points that need top_n? Any tables without default_sort that would be hard to scan?
+
+Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.md until I confirm.`)
     }
   },
   {

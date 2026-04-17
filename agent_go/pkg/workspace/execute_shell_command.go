@@ -28,6 +28,14 @@ func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 }
 
+// SetSessionFolderGuardBlockedPaths delegates to common.SetSessionFolderGuardBlockedPaths.
+// BlockedPaths are the authoritative deny list — they flow through to the isolator's
+// FolderGuardConfig and are enforced at the kernel sandbox level (sandbox-exec /
+// bind-mount), which is the source of truth for "can this path be written."
+func SetSessionFolderGuardBlockedPaths(sessionID string, blockedPaths []string) {
+	common.SetSessionFolderGuardBlockedPaths(sessionID, blockedPaths)
+}
+
 // SetSessionGeminiProjectDirID delegates to common.SetSessionGeminiProjectDirID.
 func SetSessionGeminiProjectDirID(sessionID, dirID string) {
 	common.SetSessionGeminiProjectDirID(sessionID, dirID)
@@ -146,16 +154,19 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
 		// Session config: set by SetSessionFolderGuard() — highest priority.
 		// Covers CLI/Gemini providers that bypass the Go folder guard context wrappers.
+		// BlockedPaths flow through as the authoritative deny list enforced by the
+		// isolator at kernel-sandbox level, independent of WritePaths overlap.
 		readPaths := sessionCfg.WritePaths
 		if len(sessionCfg.ReadPaths) > 0 {
 			readPaths = deduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
 		}
 		params.FolderGuard = &FolderGuardConfig{
-			Enabled:    true,
-			WritePaths: sessionCfg.WritePaths,
-			ReadPaths:  readPaths,
+			Enabled:      true,
+			WritePaths:   sessionCfg.WritePaths,
+			ReadPaths:    readPaths,
+			BlockedPaths: sessionCfg.BlockedPaths,
 		}
-		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, params.Command)
+		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v BlockedPaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, sessionCfg.BlockedPaths, params.Command)
 	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 		// Context System 1: chat/plan/prototype mode
 		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)

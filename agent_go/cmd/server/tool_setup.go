@@ -321,13 +321,30 @@ func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription, chat
 // The default writable folder is Downloads/ only — the per-user Chats folder is supplied by callers
 // via additionalWriteFolders so each session writes only to its own _users/<id>/Chats/ subtree.
 // Pass additionalWriteFolders to allow extra folders (e.g. "_users/<id>/Chats/", "skills/custom/").
+// Pass blockedWriteFolders to deny writes to specific paths within otherwise-allowed prefixes —
+// used by the chat-agent #workflow path to grant `Workflow/<name>/` as a broad write prefix
+// while still denying `Workflow/<name>/planning/` (planning files must go through typed
+// plan-mod tools, never raw writes). Reads remain allowed on blockedWriteFolders — agents
+// still need to inspect plan.json / step_config.json.
 // This creates a wrapper that:
 // 1. ALLOWS read access to all folders (skills/, Workflow/, Downloads/, etc.)
 // 2. ONLY ALLOWS write access to Downloads/ + any additionalWriteFolders the caller passed
-// 3. Restricts shell writes to allowed folders
-func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), readOnlyFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+// 3. DENIES writes to any blockedWriteFolders prefix even when it's under an allowed write prefix
+// 4. Restricts shell writes to allowed folders
+func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), readOnlyFolders []string, blockedWriteFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// No protected folders — all users share the same filesystem
 	protectedFolders := []string{}
+
+	// blockedWritePrefixes denies writes (tool path params + shell write patterns) even when
+	// the path is under an allowed write prefix. Used by chat-agent #workflow to block raw
+	// writes to Workflow/<name>/planning/ while keeping the rest of the workflow writable.
+	blockedWritePrefixes := make([]string, 0, len(blockedWriteFolders))
+	for _, f := range blockedWriteFolders {
+		cleaned := filepath.Clean(f)
+		if cleaned != "" && cleaned != "." {
+			blockedWritePrefixes = append(blockedWritePrefixes, cleaned)
+		}
+	}
 
 	// Default writable: Downloads/ only. The per-user Chats folder must come from the caller
 	// via additionalWriteFolders — this prevents accidental writes to the legacy global Chats/.
@@ -384,6 +401,20 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 			if cleanedPath == folderClean ||
 				strings.HasPrefix(cleanedPath, folderClean+"/") ||
 				strings.HasPrefix(cleanedPath, folderClean+"\\") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Helper: check if a cleaned path is under any blocked-write prefix. Reads remain
+	// allowed; this is the exception-list that pairs with broad write prefixes like
+	// Workflow/<name>/ so planning/ stays non-writable even inside the workflow folder.
+	isPathBlockedWrite := func(cleanedPath string) bool {
+		for _, prefix := range blockedWritePrefixes {
+			if cleanedPath == prefix ||
+				strings.HasPrefix(cleanedPath, prefix+"/") ||
+				strings.HasPrefix(cleanedPath, prefix+"\\") {
 				return true
 			}
 		}
@@ -457,12 +488,20 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v ReadPaths=%v for %s\n", shellAllowedFolders, chatReadFolders, toolNameCopy)
 			}
 
-			// For WRITE tools, ONLY allow writes to allowed folders
+			// For WRITE tools (diff_patch_workspace_file primarily), check blocked-write
+			// prefixes first and then allowed-write prefixes. Shell commands are handled
+			// via the isolator's BlockedPaths (kernel-level enforcement, set up at
+			// SetSessionFolderGuard call site) — no string-scanning needed here.
 			if writeTools[toolNameCopy] {
 				for _, paramName := range writePathParams {
 					if paramValue, exists := args[paramName]; exists {
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
 							cleanedPath := filepath.Clean(pathStr)
+
+							if isPathBlockedWrite(cleanedPath) {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s — path is under a blocked-write prefix (%v)", pathStr, cleanedPath, toolNameCopy, blockedWritePrefixes)
+								return "", fmt.Errorf("access denied: '%s' is under a blocked-write prefix (%v) — this folder is read-only even though its parent is writable", pathStr, blockedWritePrefixes)
+							}
 
 							if !isPathAllowed(cleanedPath) {
 								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s - allowed folders: %v", pathStr, cleanedPath, toolNameCopy, allowedWriteFolders)

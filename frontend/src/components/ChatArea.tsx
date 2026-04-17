@@ -1079,8 +1079,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Check if this tab belongs to the currently active workflow preset.
     // Background preset tabs still store events but skip UI side effects
     // (workspace refresh, canvas updates, step progress) to avoid polluting the visible workflow.
-    const isActivePresetTab = !tab?.metadata?.presetQueryId ||
-      tab.metadata.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
+    const isActivePresetTab =
+      tab?.metadata?.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
 
     // --- Session status handling ---
     const sessionStatus = response.session_status
@@ -1959,7 +1959,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // the other workflow. Idle/completed background workflows disconnect to save resources.
       if (tab.metadata?.mode === 'workflow') {
         const activeWfPreset = useGlobalPresetStore.getState().activePresetIds.workflow
-        const isActivePreset = !tab.metadata?.presetQueryId || tab.metadata.presetQueryId === activeWfPreset
+        const isActivePreset = tab.metadata?.presetQueryId === activeWfPreset
         if (isActivePreset) return true
         // Background preset: keep SSE alive only while actively running
         const bgTab = chatStore.getTab(tab.tabId)

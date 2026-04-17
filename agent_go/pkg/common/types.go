@@ -59,6 +59,7 @@ type SessionShellConfig struct {
 	WorkingDir         string   // Default working directory (relative to workspace-docs)
 	ReadPaths          []string // Folder guard read paths for Isolator
 	WritePaths         []string // Folder guard write paths for Isolator
+	BlockedPaths       []string // Folder guard blocked path prefixes (deny even when under a WritePath)
 	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
 	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", "stealth", ""
 	BrowserSessionID   string   // Shared browser identity for browser tools when "default" session is used
@@ -83,6 +84,9 @@ func SetSessionWorkingDir(sessionID, dir string) {
 }
 
 // SetSessionFolderGuard sets the folder guard read/write paths for a session.
+// Does not touch BlockedPaths — use SetSessionFolderGuardBlockedPaths to set those
+// independently, so existing callers don't need updating when a session adds a
+// deny prefix later.
 func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	sessionShellConfigsMu.Lock()
 	defer sessionShellConfigsMu.Unlock()
@@ -94,6 +98,24 @@ func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	cfg.ReadPaths = readPaths
 	cfg.WritePaths = writePaths
 	log.Printf("[SHELL] Set folder guard for session %s: read=%v write=%v", sessionID, readPaths, writePaths)
+}
+
+// SetSessionFolderGuardBlockedPaths sets the denied prefix list for a session.
+// BlockedPaths flow through to the isolator's FolderGuardConfig.BlockedPaths so
+// kernel-level enforcement (sandbox-exec / bind-mount) denies writes even when
+// the path is under a WritePath prefix. Used by the chat-agent #workflow setup
+// to grant `Workflow/<name>/` as a broad write prefix while denying
+// `Workflow/<name>/planning/`.
+func SetSessionFolderGuardBlockedPaths(sessionID string, blockedPaths []string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.BlockedPaths = blockedPaths
+	log.Printf("[SHELL] Set folder guard blocked paths for session %s: %v", sessionID, blockedPaths)
 }
 
 // SetSessionGeminiProjectDirID stores the active Gemini CLI project dir ID for a session.
@@ -140,11 +162,11 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
-// CopySessionFolderGuard copies the folder guard (ReadPaths + WritePaths) from
-// one session to another. Used to propagate restrictions from a parent HTTP
+// CopySessionFolderGuard copies the folder guard (ReadPaths + WritePaths + BlockedPaths)
+// from one session to another. Used to propagate restrictions from a parent HTTP
 // session to child group sessions (batch execution, workshop groups) so that
-// sub-agents running under the new session ID inherit the same write restrictions.
-// Returns true if a guard was copied.
+// sub-agents running under the new session ID inherit the same write restrictions
+// AND the same blocked-write exceptions. Returns true if a guard was copied.
 func CopySessionFolderGuard(fromSessionID, toSessionID string) bool {
 	sessionShellConfigsMu.RLock()
 	src := sessionShellConfigs[fromSessionID]
@@ -153,7 +175,10 @@ func CopySessionFolderGuard(fromSessionID, toSessionID string) bool {
 		return false
 	}
 	SetSessionFolderGuard(toSessionID, src.ReadPaths, src.WritePaths)
-	log.Printf("[FOLDER_GUARD] Copied folder guard from session %s to %s: read=%v write=%v", fromSessionID, toSessionID, src.ReadPaths, src.WritePaths)
+	if len(src.BlockedPaths) > 0 {
+		SetSessionFolderGuardBlockedPaths(toSessionID, src.BlockedPaths)
+	}
+	log.Printf("[FOLDER_GUARD] Copied folder guard from session %s to %s: read=%v write=%v blocked=%v", fromSessionID, toSessionID, src.ReadPaths, src.WritePaths, src.BlockedPaths)
 	return true
 }
 

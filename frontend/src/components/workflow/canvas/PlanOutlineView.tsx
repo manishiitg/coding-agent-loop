@@ -6,7 +6,6 @@ import {
   FolderOpen,
   FileText,
   FileCode2,
-  BookOpen,
   GitBranch,
   User,
   Route,
@@ -146,18 +145,6 @@ function buildFiles(step: PlanStep): VirtualFile[] {
     }
   }
 
-  // Learnings as a lazy-loaded folder
-  if (step.id && !ac?.disable_learning) {
-    files.push({
-      name: 'learnings',
-      icon: BookOpen,
-      iconClass: 'text-amber-500',
-      content: '',
-      isLazyFolder: true,
-      workspaceFolder: `learnings/${step.id}`,
-    })
-  }
-
   // Type-specific
   if (step.type === 'conditional' && step.condition_question) {
     files.push({ name: 'condition.md', icon: GitBranch, iconClass: 'text-purple-500', content: step.condition_question })
@@ -294,172 +281,6 @@ function LazyFolder({
           })}
         </>
       )}
-    </>
-  )
-}
-
-// ── Reports folder — loads from workspace, auto-selects latest ──
-function ReportsFolder({
-  workspacePath,
-  depth,
-  onSelectWorkspaceFile,
-  activeFileKey,
-  refreshKey = 0,
-}: {
-  workspacePath: string
-  depth: number
-  onSelectWorkspaceFile: (key: string, name: string, wsPath: string) => void
-  activeFileKey: string | null
-  refreshKey?: number
-}) {
-  const [open, setOpen] = useState(true) // open by default
-  const [groups, setGroups] = useState<{ name: string; files: { name: string; path: string }[] }[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  // Use module-level flag so it survives unmount/remount
-
-  // Fetch reports on mount and on refresh
-  useEffect(() => {
-    let cancelled = false
-    const fetchReports = async () => {
-      setLoading(true)
-      try {
-        const folder = `${workspacePath}/reports`
-        const resp = await agentApi.getPlannerFiles(folder, -1, 3)
-        const allItems: PlannerFile[] = resp?.data || []
-
-        // Parse: top-level folders are groups, files inside are reports
-        const groupMap = new Map<string, { name: string; path: string }[]>()
-        for (const item of allItems) {
-          if (item.type === 'folder' && item.filepath !== folder) {
-            // It's a group folder
-            const groupName = item.filepath.split('/').pop() || item.filepath
-            if (!groupMap.has(groupName)) groupMap.set(groupName, [])
-            // Check for children
-            if (item.children && Array.isArray(item.children)) {
-              for (const child of item.children) {
-                if (child.type !== 'folder') {
-                  groupMap.get(groupName)!.push({
-                    name: child.filepath.split('/').pop() || child.filepath,
-                    path: child.filepath,
-                  })
-                }
-              }
-            }
-          } else if (item.type !== 'folder' && item.filepath !== folder) {
-            // File directly in reports/ (no group)
-            const parts = item.filepath.replace(folder + '/', '').split('/')
-            if (parts.length >= 2) {
-              // e.g. reports/group/file.md
-              const groupName = parts[0]
-              if (!groupMap.has(groupName)) groupMap.set(groupName, [])
-              groupMap.get(groupName)!.push({
-                name: parts.slice(1).join('/'),
-                path: item.filepath,
-              })
-            } else {
-              // File directly under reports/
-              const groupName = '_root'
-              if (!groupMap.has(groupName)) groupMap.set(groupName, [])
-              groupMap.get(groupName)!.push({
-                name: parts[0],
-                path: item.filepath,
-              })
-            }
-          }
-        }
-
-        if (cancelled) return
-
-        // Sort files within each group by name descending (latest timestamp first)
-        const result = Array.from(groupMap.entries()).map(([name, files]) => ({
-          name,
-          files: files.sort((a, b) => b.name.localeCompare(a.name)),
-        }))
-        setGroups(result)
-      } catch {
-        if (!cancelled) setGroups([])
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    fetchReports()
-    return () => { cancelled = true }
-  }, [workspacePath, refreshKey])
-
-  // Auto-select latest report — only on first load when nothing is selected
-  useEffect(() => {
-    console.log('[POV ReportsFolder] auto-select effect:', { done: _reportAutoSelectDone, groupsLength: groups?.length, activeFileKey })
-    if (_reportAutoSelectDone || !groups || groups.length === 0) return
-    // Find the latest file across all groups
-    let latest: { name: string; path: string; group: string } | null = null
-    for (const g of groups) {
-      if (g.files.length > 0) {
-        const f = g.files[0] // already sorted desc
-        if (!latest || f.name > latest.name) {
-          latest = { ...f, group: g.name }
-        }
-      }
-    }
-    if (latest) {
-      _reportAutoSelectDone = true
-      onSelectWorkspaceFile(`ws:${latest.path}`, latest.name, latest.path)
-    }
-  }, [groups, activeFileKey, onSelectWorkspaceFile])
-
-  if (groups !== null && groups.length === 0 && !loading) return null // no reports folder
-
-  return (
-    <>
-      <div
-        className="flex items-center gap-1 py-[2px] cursor-pointer hover:bg-muted/50 transition-colors"
-        style={{ paddingLeft: depth * 14 + 4 }}
-        onClick={() => setOpen(v => !v)}
-      >
-        {open
-          ? <ChevronDown className="w-3 h-3 text-muted-foreground/50 flex-shrink-0" />
-          : <ChevronRight className="w-3 h-3 text-muted-foreground/50 flex-shrink-0" />
-        }
-        {open
-          ? <FolderOpen className="w-3.5 h-3.5 flex-shrink-0 text-green-500/80" />
-          : <Folder className="w-3.5 h-3.5 flex-shrink-0 text-green-500/80" />
-        }
-        <span className="text-[12px] truncate select-none text-foreground/80 font-semibold">reports</span>
-        {loading && <Loader2 className="w-3 h-3 text-muted-foreground animate-spin flex-shrink-0" />}
-      </div>
-      {open && groups && groups.map(group => (
-        <React.Fragment key={group.name}>
-          {/* Group subfolder — skip if only one group */}
-          {groups.length > 1 && (
-            <div
-              className="flex items-center gap-1 py-[2px] text-foreground/60"
-              style={{ paddingLeft: (depth + 1) * 14 + 4 }}
-            >
-              <span className="w-3" />
-              <Folder className="w-3 h-3 flex-shrink-0 text-green-500/60" />
-              <span className="text-[11px] truncate select-none">{group.name === '_root' ? '.' : group.name}</span>
-            </div>
-          )}
-          {group.files.map(file => {
-            const fi = fileIcon(file.name)
-            const key = `ws:${file.path}`
-            const itemDepth = groups.length > 1 ? depth + 2 : depth + 1
-            return (
-              <div
-                key={file.path}
-                className={`flex items-center gap-1 py-[2px] cursor-pointer transition-colors ${
-                  activeFileKey === key ? 'bg-primary/10 text-primary' : 'hover:bg-muted/50 text-foreground/70'
-                }`}
-                style={{ paddingLeft: itemDepth * 14 + 4 }}
-                onClick={() => onSelectWorkspaceFile(key, file.name, file.path)}
-              >
-                <span className="w-3" />
-                <fi.icon className={`w-3.5 h-3.5 ${fi.iconClass} flex-shrink-0`} />
-                <span className="text-[12px] truncate select-none">{file.name}</span>
-              </div>
-            )
-          })}
-        </React.Fragment>
-      ))}
     </>
   )
 }
@@ -682,10 +503,6 @@ function ContentPanel({
   )
 }
 
-// Module-level flag: once a report has been auto-selected, don't do it again
-// (survives component unmount/remount caused by parent re-renders)
-let _reportAutoSelectDone = false
-
 // ── Main component ───────────────────────────────────────────
 export function PlanOutlineView({
   plan,
@@ -707,7 +524,6 @@ export function PlanOutlineView({
   }, [])
 
   const [activeFile, _setActiveFile] = useState<SelectedFile | null>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
 
   // Wrap setActiveFile with logging
   const setActiveFile = useCallback((file: SelectedFile | null | ((prev: SelectedFile | null) => SelectedFile | null)) => {
@@ -767,24 +583,13 @@ export function PlanOutlineView({
         {/* Refresh button */}
         <div className="flex items-center justify-end px-2 pt-1.5 pb-1">
           <button
-            onClick={() => { setRefreshKey(k => k + 1); onRefresh?.() }}
+            onClick={() => { onRefresh?.() }}
             className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             title="Refresh"
           >
             <RefreshCw className="w-3 h-3" />
           </button>
         </div>
-
-        {/* Reports folder — shown at top, auto-opens latest */}
-        {workspacePath && (
-          <ReportsFolder
-            workspacePath={workspacePath}
-            depth={0}
-            onSelectWorkspaceFile={handleSelectWorkspaceFile}
-            activeFileKey={activeFile?.key ?? null}
-            refreshKey={refreshKey}
-          />
-        )}
 
         {steps.map((step, i) => {
           const status = stepStatusMap.get(step.id) ||

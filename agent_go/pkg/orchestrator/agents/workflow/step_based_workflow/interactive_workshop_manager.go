@@ -768,7 +768,7 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 // Tools are grouped into categories:
 //   - System tools: always included (shell, workspace, human feedback, virtual tools)
 //   - Workshop execution tools: execute_step, query_step, stop, list, run_in_background
-//   - Step config tools: update_step_config, generate_learnings, harden_workflow
+//   - Step config tools: update_step_config, harden_workflow, organize_global_learnings
 //   - Plan modification tools: add/update/delete steps, branches, routes
 //   - Variable/config tools: update_variable, groups, workflow config
 //   - Schedule tools: list/create/update/delete schedules
@@ -813,7 +813,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Step config & analysis tools
 	stepConfig := []string{
 		"update_step_config", "organize_global_learnings",
-		"infer_objective", "set_workflow_objective",
 		"replan_workflow_from_results", "harden_workflow", "review_step_code",
 	}
 
@@ -850,6 +849,12 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"validate_evaluation_plan", "run_full_evaluation",
 	}
 
+	// Report tools — validate reports/report_plan.md against real db/ + KB sources.
+	// Builder-only; the other modes never edit the report plan.
+	report := []string{
+		"validate_report_plan",
+	}
+
 	var tools []string
 	tools = append(tools, system...)
 	tools = append(tools, readOnly...)
@@ -865,14 +870,14 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "update_step_config")
-		tools = append(tools, "infer_objective", "set_workflow_objective")
 		tools = append(tools, "review_step_code")
 		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
-		tools = append(tools, "optimize_eval_step")
-		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_eval_step).
+		tools = append(tools, report...)
+		tools = append(tools, "optimize_step")
+		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_step).
 		// From legacy 'output' mode — report widget editing happens via raw shell write to reports/report_plan.md;
-		// no dedicated tools needed. Query/list/stop are already in readOnly+execution above.
+		// validate_report_plan closes the feedback loop so the builder doesn't ship broken widgets silently.
 
 	case "optimizer":
 		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable
@@ -886,7 +891,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
-		tools = append(tools, "optimize_eval_step")
+		tools = append(tools, "optimize_step")
 
 	case "ask":
 		// ASK: read-only investigate — inspect prior runs, eval reports, KB, learnings.
@@ -911,6 +916,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
 		tools = append(tools, eval...)
+		tools = append(tools, report...)
 		tools = append(tools, "debug_step")
 	}
 
@@ -1075,29 +1081,10 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	if iwm.controller.UseKnowledgebase() {
 		useKB = "true"
 	}
-	workflowObjective := ""
-	workflowSuccessCriteria := ""
-	if iwm.controller.approvedPlan != nil {
-		workflowObjective = iwm.controller.approvedPlan.Objective
-		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
-	}
-	// Read objective and success_criteria from workflow.json.
-	// Objective/success_criteria from workflow.json are used as fallback when plan.json hasn't set them yet.
+	// Objective and success_criteria are resolved from soul/soul.md (canonical)
+	// with workflow.json as legacy fallback — see ResolveWorkflowObjective.
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
 	availableGroups := ""
-	if manifest, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
-		var wf struct {
-			Objective       string `json:"objective"`
-			SuccessCriteria string `json:"success_criteria"`
-		}
-		if json.Unmarshal([]byte(manifest), &wf) == nil {
-			if workflowObjective == "" {
-				workflowObjective = wf.Objective
-			}
-			if workflowSuccessCriteria == "" {
-				workflowSuccessCriteria = wf.SuccessCriteria
-			}
-		}
-	}
 	if iwm.controller.variablesManifest != nil && len(iwm.controller.variablesManifest.Groups) > 0 {
 		var groupNames []string
 		for _, g := range iwm.controller.variablesManifest.Groups {
@@ -1328,10 +1315,11 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
 **knowledgebase/ — decisions, facts, strategies, and narrative analysis built up over time**
-- Two formats co-located in this folder, both written by the **post-step KB update agent only**:
+- Two formats co-located in this folder, both written at runtime by the **post-step KB update agent only**:
   - `+"`graph.json`"+` (+ `+"`index.json`"+`) — atomic facts as entities/relationships with provenance. Use for facts you'll query later by id/type.
   - `+"`notes/`"+` — per-topic narrative markdown. One file per topic (entity-id or `+"`pattern-<slug>`"+`), plus `+"`notes/_index.json`"+` as a registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns — anything too prosaic to fit cleanly as an entity property but durable across runs.
-- Written by: the **post-step KB update agent only**. Step code does NOT write graph.json, index.json, or notes/ directly — even with knowledgebase_access=write, the guard exists for the KB update agent, not your shell writes.
+- **Written by (runtime):** the **post-step KB update agent only**. Step code (main.py, step agent shell) does NOT write graph.json, index.json, or notes/ directly — even with knowledgebase_access=write, that guard exists for the KB update agent, not for step shell writes.
+- **Written by (design time — you):** YOU (the builder) MAY shell-write these files directly for bootstrap/repair work — seeding initial entities before first run, fixing a corrupt graph.json, hand-curating a topic note. Your FolderGuard allows it. Use with care: keep the schema valid (entities[], relationships[], ids unique, provenance present) so the KB update agent's merge logic still works. Prefer `+"`knowledgebase_contribution`"+` instructions on steps when the data comes from step output — that's what keeps growth automatic and consistent.
 - Read as: step agents shell-read on demand if knowledgebase_access grants read. For graph: `+"`jq`"+` on graph.json. For notes: ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob notes/*.md.
 - Shape:
   - graph.json: entities[], relationships[], each with stable id + provenance (step + run).
@@ -1346,7 +1334,8 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **db/*.json — workflow state and results**
 - The workflow's actual output data: rows the workflow produces or consumes this run (processed records, cursors, cumulative output, per-group tallies).
-- Written by: step code directly (shell / Python). Step-owned.
+- **Written by (runtime):** step code directly (shell / Python). Step-owned during runs — upsert-by-key, never overwrite wholesale (that destroys rows from other groups/runs).
+- **Written by (design time — you):** YOU (the builder) MAY shell-write `+"`db/*.json`"+` directly to scaffold empty schemas, seed initial state, fix corrupt rows, or stage test data for development. Your FolderGuard allows it. Prefer letting steps populate `+"`db/`"+` during actual runs — your writes are for setup and repair, not ongoing state.
 - Read as: step agents read directly, widgets in reports/report_plan.md bind to it.
 - Shape: JSON with per-file schema (primary key + merge rule) decided by the builder at design time.
 - Examples: "db/processed_companies.json with rows keyed by company_id", "db/monthly_totals.json aggregated across all months", "db/cursors.json tracking last-processed dates".
@@ -1409,12 +1398,12 @@ Once steps are producing output, set up evaluation so the optimizer has somethin
 1. Switch to the **Eval** tab (top-level mode) to edit `+"`evaluation/evaluation_plan.json`"+`
 2. Or build eval inline: use `+"`validate_evaluation_plan`"+` to check the JSON, `+"`run_full_evaluation(target_run_folder)`"+` to test it against a completed run
 3. Focus eval steps on **outcomes** (final results, data in target systems) not intermediate files
-4. Use `+"`optimize_eval_step(step_id)`"+` for read-only feedback on eval step quality
+4. Use `+"`optimize_step(step_id)`"+` for read-only feedback on eval step quality (auto-detects plan vs eval step)
 
 ### Validate the Design
 Before moving to optimization, ensure the foundation is solid:
-1. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective not set** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, run `+"`infer_objective`"+`, confirm with user before saving.{{end}}
-2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria not set** — ask the user: "What does success look like for this workflow?" Then save via `+"`set_workflow_objective(success_criteria=...)`"+`.{{end}}
+1. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective not set** — read `+"`soul/soul.md`"+` and fill in the `+"`## Objective`"+` section via shell write (e.g. `+"`diff_patch_workspace_file`"+` or a `+"`cat > soul/soul.md <<EOF ... EOF`"+` heredoc). Confirm with the user before writing.{{end}}
+2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria not set** — ask the user: "What does success look like for this workflow?" Then fill in the `+"`## Success Criteria`"+` section of `+"`soul/soul.md`"+` with their answer.{{end}}
 3. Verify context dependencies are wired correctly — each step's context_dependencies should reference context_output from an earlier step.
 4. Test at least one end-to-end run with a single group to confirm the plan works.
 5. Evaluation plan exists with at least one eval step.
@@ -1489,6 +1478,13 @@ filter: type=company
 - `+"`sort:`"+` — `+"`asc`"+` / `+"`desc`"+` / `+"`none`"+` (default). Sorts points by y-value.
 - `+"`show_values:`"+` — `+"`true`"+` to render value labels on bars/lines/pie slices (default false).
 
+**Color controls (optional, chart + table):** hex (`+"`#rrggbb`"+`, `+"`#rgb`"+`) or CSS color names.
+- `+"`colors:`"+` — comma-separated palette. Chart: cycled across bars/pie slices. Table: only used alongside `+"`color_by`"+`.
+- `+"`colors_dark:`"+` — theme override; used when the app is in dark mode (falls back to `+"`colors`"+` when unset). Use brighter tones for dark bg.
+- `+"`color_by:`"+` — field name in each row. With `+"`color_map`"+`: look up per-row color; without: cycle `+"`colors`"+` across distinct values.
+- `+"`color_map:`"+` — `+"`value=color`"+` pairs (e.g. `+"`ok=#10b981, failed=#ef4444`"+`). Used with `+"`color_by`"+` for semantic coloring — the canonical pattern for status/severity visuals.
+Invalid colors are silently skipped by the renderer; `+"`validate_report_plan`"+` surfaces them as warnings.
+
 **Examples — pick the simplest widget that conveys the idea, then layer options as needed:**
 ` + "```" + `markdown
 ## Per-Account Status
@@ -1530,7 +1526,22 @@ height: 360
 - "Want a title above it?"
 Then write the widget block honoring their answers. Don't dump generic widgets — the choice of formatter, sort, and top_n is what makes the report read well.
 
-**Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed. Write `+"`report_plan.md`"+` with shell (`+"`cat > '{{.AbsWorkspacePath}}/reports/report_plan.md' <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`.
+**Choosing a chart type:**
+- `+"`bar`"+` — categorical comparisons (top-N strategies, counts per group, revenue by channel). Default — use this when unsure.
+- `+"`line`"+` — time series and trends (daily/weekly/monthly metrics). Requires an ordered x-axis.
+- `+"`area`"+` — time series where the magnitude matters more than precise values; good for cumulative totals.
+- `+"`pie`"+` — composition of a whole, ≤6 slices only. Skip pie when the number of categories is large or values are close — a bar chart reads faster.
+
+**Section & layout guidance:**
+- **Order sections top-to-bottom by importance.** First section = the headline the user would screenshot (summary counts, top KPIs). Detail tables go lower.
+- **One H2 per logical grouping**, not per widget. A section can hold several widgets.
+- **Use `+"`widget:row`"+` sparingly** — only when 2-3 widgets are genuinely paired (e.g. a KPI text widget + a sparkline chart, or two small charts that compare). Full-width is the default; stacking is easier to read than cramming.
+- **Keep charts to ≤10 visible points.** Use `+"`top_n:`"+` + `+"`sort: desc`"+` for "top N" views rather than plotting hundreds.
+- **Titles are the subheader.** If the H2 already says "Top Strategies", don't repeat "Top strategies by Sharpe" as the title — use the title line for the extra qualifier ("Last 30 days") or drop it entirely.
+
+**After every edit, call `+"`validate_report_plan`"+`.** The renderer silently drops bad widgets, so without validation the user sees a blank Report tab and cannot tell you why. The validator checks: source path allowed, source file exists and is valid JSON, dot-path resolves, shape matches widget kind (array-of-objects for table/chart), options are known values. Fix errors; warnings are advisory. Run it again until it reports `+"`valid=true`"+` with 0 errors.
+
+**Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed. Write `+"`report_plan.md`"+` with shell (`+"`cat > '{{.AbsWorkspacePath}}/reports/report_plan.md' <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`, then validate.
 
 ### Evaluation plan — evaluation/evaluation_plan.json
 
@@ -1548,7 +1559,7 @@ Designing the eval plan is also a Builder responsibility (folded in from the leg
 9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
 
    **{{"{{TARGET_RUN_PATH}}"}}**: At runtime, this variable resolves to the absolute path of the original execution folder. Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers.
-10. Use **optimize_eval_step(step_id, target_run_folder?)** for a read-only optimization report on one eval step.
+10. Use **optimize_step(step_id, iteration?, group_name?)** for a read-only optimization report on one eval step. The tool auto-detects that the step lives in evaluation_plan.json and focuses on scoring quality, determinism, pre_validation, redundancy, and mode choice.
 11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
 
 **Evaluation files:**
@@ -1564,8 +1575,8 @@ Designing the eval plan is also a Builder responsibility (folded in from the leg
 
 **Ensure the foundation is set:**
 1. Verify the current foundation directly in `+"`planning/plan.json`"+`. Use targeted `+"`jq`"+` or `+"`cat`"+` to check the root `+"`objective`"+` and `+"`success_criteria`"+` fields.
-2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, ask the user: "What does success look like for this workflow?" Then save via `+"`set_workflow_objective(success_criteria=...)`"+`.{{end}}
-3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — confirm by checking `+"`planning/plan.json`"+`. If truly missing, run `+"`infer_objective`"+`, confirm with user before saving.{{end}}
+2. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria appears missing** — check `+"`soul/soul.md`"+` for a `+"`## Success Criteria`"+` section. If missing, ask the user what success looks like, then write the section via shell.{{end}}
+3. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective appears missing** — check `+"`soul/soul.md`"+` for a `+"`## Objective`"+` section. If missing, ask the user what the workflow is for, then write the section via shell.{{end}}
 
 **Read previous builder conversations** from `+"`builder/`"+` folder (`+"`ls -t builder/*.json | head -3`"+`) to avoid repeating failed approaches and build on previous progress.
 
@@ -1620,8 +1631,8 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 
 - **Workspace**: {{.WorkspacePath}} (`+"`{{.AbsWorkspacePath}}/`"+`)
 - **Run Folder**: {{.RunFolder}}
-- **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — verify the root `+"`objective`"+` in `+"`planning/plan.json`"+` first; only use `+"`infer_objective`"+` if it is truly missing{{end}}
-- **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else}}⚠️ Not defined — verify the root `+"`success_criteria`"+` in `+"`planning/plan.json`"+` first; if missing, ask the user what success looks like for this workflow, then save via `+"`set_workflow_objective`"+`{{end}}
+- **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — check `+"`soul/soul.md`"+` for a `+"`## Objective`"+` section and fill it in via shell. soul.md is the canonical source (plan.json no longer holds this field).{{end}}
+- **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else}}⚠️ Not defined — check `+"`soul/soul.md`"+` for a `+"`## Success Criteria`"+` section. If missing, ask the user what success looks like, then write the section via shell.{{end}}
 {{if .AvailableGroups}}- **Available Groups**: {{.AvailableGroups}}
 {{end}}- **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
@@ -1763,7 +1774,7 @@ When running a step or the full workflow:
 6. **ALWAYS follow up** after execution. Never fire-and-forget.
 
 ### Auto-Notification System
-All background agents (execute_step, harden_workflow, generate_learnings) **automatically notify you** when they complete:
+All background agents (execute_step, harden_workflow, optimize_step, organize_global_learnings) **automatically notify you** when they complete:
 - Notifications arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated, NOT from the user**. Do not treat them as user requests.
 - **Do NOT poll** with query_step in a loop or ask the user when something finishes — the system handles this.
 - **Notifications may be delayed** — they can arrive after you've moved on or the user has changed the plan. Always check whether a notification is still relevant to the **current** context before acting on it.
@@ -1999,7 +2010,7 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 **Optimize each step only once per iteration.** A step should only be marked optimized when ALL of these are in place:
 
 **Checklist before marking optimized=true:**
-1. **Learnings exist** — generate_learnings has been run and produced learning files with correct tool names and sequences. Without learnings, future runs start from scratch.
+1. **Learnings exist** — the step has been executed with learning enabled (`+"`execute_step(step_id, skip_learning=false)`"+`) and produced learning files with correct tool names and sequences. Without learnings, future runs start from scratch.
 2. **Pre-validation schema** — A validation_schema is defined with file checks and/or JSON path rules. This catches structural errors without an LLM validation pass.
 3. **Successful execution** — The step has passed at least once with the current config, learnings, and validation.
 4. **No wasted tool calls** — Review the execution: the agent should not have wasted turns on failed tool searches, wrong server names, retried API calls, or unnecessary exploration. If the agent spent turns searching for tools that don't exist, reading files that aren't there, or trying approaches that the learnings should have prevented — the step is NOT optimized yet. Fix the learnings or description first, re-run to confirm clean execution, then mark optimized.
@@ -2074,10 +2085,8 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag. For eval steps this writes to `+"`evaluation/step_config.json`"+`.
-- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
 - **harden_workflow(target_run_folder, focus?)** — The primary optimization tool. Reads eval reports and execution outputs, then for every failing step: adds pre-validation rules, tightens descriptions, patches main.py, updates config.
-- **infer_objective(focus?)** — Infer workflow objective from plan structure (only when objective is truly missing from plan.json)
-- **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json
+- **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
 - **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
@@ -2137,7 +2146,7 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 ### Evaluation tools (Builder mode owns eval design)
 - **validate_evaluation_plan** — Validate the evaluation plan JSON
 - **run_full_evaluation(target_run_folder)** — Score the eval plan against an execution run; eval steps execute in the internal `+"`evaluation/runs/iteration-0/...`"+` sandbox
-- **optimize_eval_step(step_id, target_run_folder?, focus?, forced?)** — Start a background optimization agent for a single evaluation step
+- **optimize_step(step_id, iteration?, group_name?, focus?, forced?)** — Unified background optimization agent. Auto-detects plan vs eval step. For eval steps, pass iteration + group_name to target a specific eval run.
 {{end}}
 
 ### Shell & Discovery
@@ -2867,7 +2876,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if groupName != "" {
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
-			learningInfo := "Learning: skipped (default for faster iteration). To generate learnings after execution, use generate_learnings(step_id). To run with learning enabled, use execute_step(step_id, skip_learning=false)."
+			learningInfo := "Learning: skipped (default for faster iteration). To run with learning enabled, use execute_step(step_id, skip_learning=false) — success learnings run in the background."
 			if !skipLearning {
 				if isLearnCodeStep {
 					learningInfo = "Code exec scripted mode: this step does not use separate SKILL learnings. The saved Python script is the learning, and the run may create/update that script directly."
@@ -3289,7 +3298,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 2b: list_executions — list all tracked background executions
 	if err := mcpAgent.RegisterCustomTool(
 		"list_executions",
-		"List all background executions (execute_step, generate_learnings, harden_workflow). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
+		"List all background executions (execute_step, harden_workflow, optimize_step, organize_global_learnings). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3572,7 +3581,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"learning_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []interface{}{"auto", "human_assisted"},
-					"description": "Learning mode: 'human_assisted' (default) = skip automatic learning; use generate_learnings(step_id, guidance) to trigger learning manually. 'auto' = learning runs automatically after execution.",
+					"description": "Learning mode: 'human_assisted' (default) = skip automatic learning on every run (manually re-run with execute_step(step_id, skip_learning=false) when you want fresh learnings). 'auto' = learning runs automatically after every successful execution.",
 				},
 				"execution_llm": map[string]interface{}{
 					"type":        "object",
@@ -3810,7 +3819,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 								} else {
 									learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
 									if len(learningFiles) == 0 {
-										missing = append(missing, "learnings (no learning files found — run generate_learnings first)")
+										missing = append(missing, "learnings (no learning files found — run execute_step(step_id, skip_learning=false) to generate them)")
 									}
 								}
 							}
@@ -4880,24 +4889,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register organize_global_learnings tool: %v", err))
 	}
 
-	// Tool 7b: optimize_step — background optimization agent
+	// Tool 7b: optimize_step — unified background optimization agent (plan + eval steps)
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_step",
-		"Start a background optimization agent that analyzes observed runs, logs, output, learnings, and config for a step. It decides whether the step is fundamentally best served by code_exec or learn_code mode based on real evidence. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
+		"Start a background optimization agent for one step. Auto-detects whether the step lives in plan.json or evaluation_plan.json and branches accordingly. For plan steps it analyzes runs/logs/learnings/config and recommends execution-mode fit (code_exec vs learn_code), hardcoded-value fixes, tool/LLM scoping, and lock recommendations. For eval steps it focuses on scoring quality, determinism, pre_validation opportunities, redundancy, and mode choice. Returns execution_id immediately — you are notified when it completes. Steps already marked optimized are skipped by default; pass forced=true to re-run.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
+					"description": "The step ID from plan.json or evaluation_plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1'). The tool auto-detects which plan the step belongs to.",
 				},
 				"focus": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional focus guidance for the optimization agent. E.g., 'learnings quality', 'tool usage', 'output correctness', 'validation schema coverage'.",
+					"description": "Optional focus guidance. For plan steps: 'learnings quality', 'tool usage', 'output correctness', 'validation schema coverage'. For eval steps: 'pre_validation', 'scoring strictness', 'redundancy', 'mode choice'.",
+				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional (eval steps only). Iteration folder (e.g., 'iteration-3'). When set with group_name, the optimizer reads the published evaluation report and execution artifacts for that run. Ignored for plan steps.",
+				},
+				"group_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional (eval steps only). Group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows. Ignored for plan steps.",
 				},
 				"forced": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Optional. Default false. If true, run optimize_step even when step_config already marks the step as optimized.",
+					"description": "Optional. Default false. If true, run even when the step is already marked optimized in its step_config.json.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -4927,17 +4944,49 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			// Resolve step ID
+			// Eval-only hints (iteration + group_name → targetRunFolder)
+			targetRunFolder := ""
+			if iter, ok := args["iteration"]; ok && iter != nil {
+				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
+					targetRunFolder = strings.TrimSpace(s)
+					if gid, ok := args["group_name"]; ok && gid != nil {
+						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
+							targetRunFolder += "/" + strings.TrimSpace(g)
+						}
+					}
+				}
+			}
+
+			// Auto-detect: try plan.json first; fall back to evaluation_plan.json.
+			// Save+restore isEvaluationMode so we don't leak mutations past resolution.
+			originalEvalMode := iwm.controller.isEvaluationMode
+			isEvalStep := false
+
+			iwm.controller.isEvaluationMode = false
 			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				iwm.controller.isEvaluationMode = originalEvalMode
 				return fmt.Sprintf("Failed to load plan: %v. Cannot resolve step ID.", err), nil
 			}
 			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
 			if resolveErr != nil {
-				return resolveErr.Error(), nil
+				// Not found in plan.json — try evaluation_plan.json
+				iwm.controller.isEvaluationMode = true
+				if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+					iwm.controller.isEvaluationMode = originalEvalMode
+					return fmt.Sprintf("Step %q not found in plan.json, and failed to load evaluation_plan.json: %v.", stepID, err), nil
+				}
+				evalResolved, evalErr := resolveWorkshopStepID(iwm.controller, stepID)
+				if evalErr != nil {
+					iwm.controller.isEvaluationMode = originalEvalMode
+					return fmt.Sprintf("Step %q not found in plan.json or evaluation_plan.json. %v", stepID, evalErr), nil
+				}
+				resolvedID = evalResolved
+				isEvalStep = true
 			}
 			stepID = resolvedID
 
 			// Default guard: if the step is already optimized, skip re-optimization unless explicitly forced.
+			// Eval steps read evaluation/step_config.json (gated by isEvaluationMode), plan steps read planning/step_config.json.
 			if !forced {
 				stepConfigs, cfgErr := iwm.controller.ReadStepConfigs(ctx)
 				if cfgErr != nil {
@@ -4947,22 +4996,46 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						if sc.ID != stepID || sc.AgentConfigs == nil || sc.AgentConfigs.Optimized == nil || !*sc.AgentConfigs.Optimized {
 							continue
 						}
+						configPath := "planning/step_config.json"
+						if isEvalStep {
+							configPath = "evaluation/step_config.json"
+						}
+						iwm.controller.isEvaluationMode = originalEvalMode
 						return fmt.Sprintf(
-							"Step %q is already optimized (optimized=true in planning/step_config.json). Skipping optimize_step by default. To run optimization analysis again, call optimize_step with forced=true.",
-							stepID,
+							"Step %q is already optimized (optimized=true in %s). Skipping optimize_step by default. To run optimization analysis again, call optimize_step with forced=true.",
+							stepID, configPath,
 						), nil
 					}
 				}
 			}
 
-			execID := fmt.Sprintf("debug-%s-%05d", stepID, time.Now().UnixNano()%100000)
+			// If this is a plan step, restore original mode before dispatching to runOptimizeStepAgent
+			// (which reads isEvaluationMode-dependent paths). The eval runner manages its own mode toggle.
+			if !isEvalStep {
+				iwm.controller.isEvaluationMode = originalEvalMode
+			}
+
+			// Dispatch differs between plan and eval: exec_id prefix, display name, session ID prefix,
+			// agent_type for events, and optional run_folder/iteration/group_name metadata (eval only).
+			execIDPrefix := "debug"
+			sessionIDPrefix := "workshop-debug"
+			agentType := "workshop-step-debug"
+			displayPrefix := "Optimize"
+			if isEvalStep {
+				execIDPrefix = "eval-optimize"
+				sessionIDPrefix = "workshop-eval-optimize"
+				agentType = "workshop-eval-step-debug"
+				displayPrefix = "Optimize Eval"
+			}
+
+			execID := fmt.Sprintf("%s-%s-%05d", execIDPrefix, stepID, time.Now().UnixNano()%100000)
 			execCtx, cancel, ctxErr := iwm.newExecContext()
 			if ctxErr != nil {
 				return "Session was stopped — execution skipped", nil
 			}
 
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
-			agentSessionID := fmt.Sprintf("workshop-debug-%s-%d", stepID, time.Now().UnixNano())
+			agentSessionID := fmt.Sprintf("%s-%s-%d", sessionIDPrefix, stepID, time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
@@ -4976,9 +5049,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			startDisplayName := fmt.Sprintf("%s: %s", displayPrefix, stepID)
+			iterationName, groupName := "", ""
+			if isEvalStep {
+				startDisplayName = formatWorkshopExecutionName(startDisplayName, targetRunFolder)
+				iterationName, groupName = splitWorkshopRunFolderParts(targetRunFolder)
+			}
+
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: fmt.Sprintf("Optimize: %s", stepID), Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: startDisplayName, Cancel: cancel})
 			}
 
 			go func() {
@@ -4996,13 +5076,29 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				defer func() {
 					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					endDisplayName := fmt.Sprintf("%s: %s", displayPrefix, debugDisplayName)
+					if isEvalStep {
+						endDisplayName = formatWorkshopExecutionName(endDisplayName, targetRunFolder)
+					}
 					if eventBridge != nil {
 						isCancelled := skipNotify || execCtx.Err() != nil
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-step-debug",
-							AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
+							AgentType:     agentType,
+							AgentName:     endDisplayName,
 							Success:       execErr == nil,
+						}
+						if isEvalStep {
+							endEvent.InputData = map[string]string{}
+							if targetRunFolder != "" {
+								endEvent.InputData["run_folder"] = targetRunFolder
+							}
+							if iterationName != "" {
+								endEvent.InputData["iteration"] = iterationName
+							}
+							if groupName != "" {
+								endEvent.InputData["group_name"] = groupName
+							}
 						}
 						if execErr != nil {
 							if isCancelled {
@@ -5021,16 +5117,45 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						})
 					}
 					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, nil, execErr)
+						var execMeta map[string]string
+						if isEvalStep {
+							execMeta = map[string]string{"workshop_mode": "eval"}
+							if targetRunFolder != "" {
+								execMeta["run_folder"] = targetRunFolder
+							}
+							if iterationName != "" {
+								execMeta["iteration"] = iterationName
+							}
+							if groupName != "" {
+								execMeta["group_name"] = groupName
+							}
+						}
+						iwm.executionNotifier.OnExecutionComplete(execID, endDisplayName, result, execMeta, execErr)
 					}
 				}()
 
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				if eventBridge != nil {
+					startAgentName := fmt.Sprintf("%s: %s", displayPrefix, debugDisplayName)
+					if isEvalStep {
+						startAgentName = formatWorkshopExecutionName(startAgentName, targetRunFolder)
+					}
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
+						AgentType:     agentType,
+						AgentName:     startAgentName,
+					}
+					if isEvalStep {
+						startEvent.InputData = map[string]string{}
+						if targetRunFolder != "" {
+							startEvent.InputData["run_folder"] = targetRunFolder
+						}
+						if iterationName != "" {
+							startEvent.InputData["iteration"] = iterationName
+						}
+						if groupName != "" {
+							startEvent.InputData["group_name"] = groupName
+						}
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -5040,235 +5165,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, execErr = iwm.runOptimizeStepAgent(execCtx, stepID, focus)
-			}()
-
-			focusInfo := ""
-			if focus != "" {
-				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
-			}
-			logger.Info(fmt.Sprintf("🔍 Workshop: optimization agent for step %q started in background, execution_id=%q, forced=%v", stepID, execID, forced))
-			return fmt.Sprintf("Optimization agent for step %q started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", stepID, execID, focusInfo), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
-	}
-
-	// Tool 7b2: optimize_eval_step — background optimization agent for a single evaluation step
-	if err := mcpAgent.RegisterCustomTool(
-		"optimize_eval_step",
-		"Start a background optimization agent that analyzes one evaluation step from evaluation/evaluation_plan.json. It focuses on scoring quality, determinism, pre_validation opportunities, redundancy, and the best-fit execution mode for that eval step based on the actual kind of work it does. Returns execution_id immediately — you will be automatically notified when it completes.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"step_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The evaluation step ID from evaluation/evaluation_plan.json.",
-				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional iteration folder (e.g., 'iteration-3'). If provided with group_name, the optimizer reads the published evaluation report and execution artifacts for that run.",
-				},
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
-				},
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional focus guidance for the optimization agent. E.g., 'pre_validation', 'scoring strictness', 'redundancy', 'mode choice'.",
-				},
-				"forced": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Optional. Default false. If true, run optimize_eval_step even when the eval step is already marked optimized in evaluation/step_config.json.",
-				},
-			},
-			"required": []string{"step_id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepIDRaw, ok := args["step_id"]
-			if !ok || stepIDRaw == nil {
-				return "step_id is required", nil
-			}
-			stepID, ok := stepIDRaw.(string)
-			if !ok || stepID == "" {
-				return "step_id must be a non-empty string", nil
-			}
-
-			targetRunFolder := ""
-			if iter, ok := args["iteration"]; ok && iter != nil {
-				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
-					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_name"]; ok && gid != nil {
-						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
-							targetRunFolder += "/" + strings.TrimSpace(g)
-						}
-					}
-				}
-			}
-
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = s
-				}
-			}
-
-			forced := false
-			if val, ok := args["forced"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					forced = b
+				if isEvalStep {
+					result, execErr = iwm.runOptimizeEvalStepAgent(execCtx, stepID, targetRunFolder, focus)
 				} else {
-					return "forced must be a boolean", nil
+					result, execErr = iwm.runOptimizeStepAgent(execCtx, stepID, focus)
 				}
-			}
-
-			// Ensure eval plan is loaded
-			originalEvalMode := iwm.controller.isEvaluationMode
-			iwm.controller.isEvaluationMode = true
-			defer func() { iwm.controller.isEvaluationMode = originalEvalMode }()
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load evaluation plan: %v. Cannot resolve step ID.", err), nil
-			}
-			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
-			if resolveErr != nil {
-				return resolveErr.Error(), nil
-			}
-			stepID = resolvedID
-
-			if !forced {
-				stepConfigs, cfgErr := iwm.controller.ReadStepConfigs(ctx)
-				if cfgErr != nil {
-					logger.Warn(fmt.Sprintf("⚠️ optimize_eval_step: failed to read eval step configs for optimized check: %v (continuing)", cfgErr))
-				} else {
-					for _, sc := range stepConfigs {
-						if sc.ID != stepID || sc.AgentConfigs == nil || sc.AgentConfigs.Optimized == nil || !*sc.AgentConfigs.Optimized {
-							continue
-						}
-						return fmt.Sprintf(
-							"Evaluation step %q is already optimized (optimized=true in evaluation/step_config.json). Skipping optimize_eval_step by default. To run optimization analysis again, call optimize_eval_step with forced=true.",
-							stepID,
-						), nil
-					}
-				}
-			}
-
-			execID := fmt.Sprintf("eval-optimize-%s-%05d", stepID, time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-eval-optimize-%s-%d", stepID, time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         stepID,
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-			startDisplayName := formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", stepID), targetRunFolder)
-			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: startDisplayName, Cancel: cancel})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-
-				debugDisplayName := stepID
-				if iwm.controller.approvedPlan != nil {
-					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
-						debugDisplayName = stepInfo.Step.GetTitle()
-					}
-				}
-
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-eval-step-debug",
-							AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder),
-							Success:       execErr == nil,
-							InputData:     map[string]string{},
-						}
-						if targetRunFolder != "" {
-							endEvent.InputData["run_folder"] = targetRunFolder
-						}
-						if iterationName != "" {
-							endEvent.InputData["iteration"] = iterationName
-						}
-						if groupName != "" {
-							endEvent.InputData["group_name"] = groupName
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type:          orchestrator_events.OrchestratorAgentEnd,
-							Timestamp:     time.Now(),
-							Data:          endEvent,
-							CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						execMeta := map[string]string{
-							"workshop_mode": "eval",
-						}
-						if targetRunFolder != "" {
-							execMeta["run_folder"] = targetRunFolder
-						}
-						if iterationName != "" {
-							execMeta["iteration"] = iterationName
-						}
-						if groupName != "" {
-							execMeta["group_name"] = groupName
-						}
-						iwm.executionNotifier.OnExecutionComplete(execID, formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder), result, execMeta, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-eval-step-debug",
-						AgentName:     formatWorkshopExecutionName(fmt.Sprintf("Optimize Eval: %s", debugDisplayName), targetRunFolder),
-						InputData:     map[string]string{},
-					}
-					if targetRunFolder != "" {
-						startEvent.InputData["run_folder"] = targetRunFolder
-					}
-					if iterationName != "" {
-						startEvent.InputData["iteration"] = iterationName
-					}
-					if groupName != "" {
-						startEvent.InputData["group_name"] = groupName
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.runOptimizeEvalStepAgent(execCtx, stepID, targetRunFolder, focus)
 			}()
 
 			focusInfo := ""
@@ -5276,201 +5177,31 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
 			}
 			runInfo := ""
-			if targetRunFolder != "" {
+			if isEvalStep && targetRunFolder != "" {
 				runInfo = fmt.Sprintf("\nTarget run: %s", targetRunFolder)
 			}
-			logger.Info(fmt.Sprintf("🔍 Workshop: eval optimization agent for step %q started in background, execution_id=%q, forced=%v", stepID, execID, forced))
-			return fmt.Sprintf("Evaluation optimization agent for step %q started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", stepID, execID, runInfo, focusInfo), nil
+			kindLabel := "plan"
+			if isEvalStep {
+				kindLabel = "eval"
+			}
+			logger.Info(fmt.Sprintf("🔍 Workshop: optimization agent (%s step) for %q started in background, execution_id=%q, forced=%v", kindLabel, stepID, execID, forced))
+			return fmt.Sprintf("Optimization agent for %s step %q started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", kindLabel, stepID, execID, runInfo, focusInfo), nil
 		},
 		"workflow",
 	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_eval_step tool: %v", err))
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
 	}
 
-	// Tool 7c: infer_objective — background agent that infers workflow objective from plan structure
-	if err := mcpAgent.RegisterCustomTool(
-		"infer_objective",
-		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Use this only when the root objective is truly missing from planning/plan.json. It also produces a draft success criteria based on step outputs and validation schemas. Returns execution_id immediately. You will be notified when done. After reviewing the result, present both the proposed objective and draft success criteria to the user for confirmation/refinement before calling set_workflow_objective.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional focus guidance, e.g., 'end-to-end business outcome', 'data processing goal', 'automation target'.",
-				},
-			},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = s
-				}
-			}
+	// NOTE: `optimize_eval_step` was merged into `optimize_step`. The unified tool auto-detects
+	// whether the step_id belongs to plan.json or evaluation_plan.json and dispatches to the
+	// correct runner (`runOptimizeStepAgent` or `runOptimizeEvalStepAgent`). For eval steps,
+	// pass the optional `iteration` and `group_name` args to target a specific eval run.
 
-			// Hard guard: do not re-infer when the workflow objective already exists.
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil && iwm.controller.approvedPlan != nil {
-				existingObjective := strings.TrimSpace(iwm.controller.approvedPlan.Objective)
-				if existingObjective != "" {
-					return fmt.Sprintf("planning/plan.json already has objective=%q. infer_objective is blocked when the objective exists. If you want to revise it, update it explicitly with set_workflow_objective(objective=...).", existingObjective), nil
-				}
-			}
-
-			execID := fmt.Sprintf("infer-obj-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext()
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-infer-obj-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "infer-objective",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Infer Objective", Cancel: cancel})
-			}
-
-			go func() {
-				var result string
-				var execErr error
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if eventBridge != nil {
-						isCancelled := skipNotify || execCtx.Err() != nil
-						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-							AgentType:     "workshop-infer-objective",
-							AgentName:     "Infer Objective",
-							Success:       execErr == nil,
-						}
-						if execErr != nil {
-							if isCancelled {
-								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-							} else {
-								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-							}
-						} else {
-							endEvent.Result = result
-						}
-						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
-							Data: endEvent, CorrelationID: agentSessionID,
-						})
-					}
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Infer Objective", result, nil, execErr)
-					}
-				}()
-
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-infer-objective",
-						AgentName:     "Infer Objective",
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
-						Data: startEvent, CorrelationID: agentSessionID,
-					})
-				}
-
-				result, execErr = iwm.runInferObjectiveAgent(execCtx, focus)
-			}()
-
-			logger.Info(fmt.Sprintf("🔍 Workshop: infer_objective agent started in background, execution_id=%q", execID))
-			return fmt.Sprintf("Infer objective agent started in background.\nexecution_id: %q\nYou will be automatically notified when it completes. After reviewing the result: (1) present the proposed objective to the user and ask for confirmation before calling set_workflow_objective(objective=...); (2) also present the draft success criteria and ask the user to confirm or refine it, then save via set_workflow_objective(success_criteria=...).", execID), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register infer_objective tool: %v", err))
-	}
-
-	// Tool 7d: set_workflow_objective — save confirmed objective and/or success criteria to plan.json
-	if err := mcpAgent.RegisterCustomTool(
-		"set_workflow_objective",
-		"Save the confirmed workflow objective and/or success criteria to planning/plan.json. At least one of 'objective' or 'success_criteria' must be provided. Call objective ONLY after user has confirmed the proposed objective from infer_objective. Ask the user directly for success_criteria.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"objective": map[string]interface{}{
-					"type":        "string",
-					"description": "The confirmed objective string to store in plan.json. Omit if only updating success_criteria.",
-				},
-				"success_criteria": map[string]interface{}{
-					"type":        "string",
-					"description": "What success looks like for the full workflow — the north star for all optimization. Store in plan.json.",
-				},
-			},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			objective := ""
-			successCriteria := ""
-
-			if v, ok := args["objective"]; ok && v != nil {
-				if s, ok := v.(string); ok {
-					objective = strings.TrimSpace(s)
-				}
-			}
-			if v, ok := args["success_criteria"]; ok && v != nil {
-				if s, ok := v.(string); ok {
-					successCriteria = strings.TrimSpace(s)
-				}
-			}
-
-			if objective == "" && successCriteria == "" {
-				return "at least one of 'objective' or 'success_criteria' must be a non-empty string", nil
-			}
-
-			// Reload plan to get current content
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan.json: %v", err), nil
-			}
-			plan := iwm.controller.approvedPlan
-			if plan == nil {
-				return "No plan loaded. Create a plan first.", nil
-			}
-
-			// Set fields and marshal back to JSON
-			if objective != "" {
-				plan.Objective = objective
-			}
-			if successCriteria != "" {
-				plan.SuccessCriteria = successCriteria
-			}
-			planBytes, err := json.MarshalIndent(plan, "", "  ")
-			if err != nil {
-				return fmt.Sprintf("Failed to marshal plan.json: %v", err), nil
-			}
-			if err := iwm.controller.WriteWorkspaceFile(ctx, "planning/plan.json", string(planBytes)); err != nil {
-				return fmt.Sprintf("Failed to write plan.json: %v", err), nil
-			}
-
-			var parts []string
-			if objective != "" {
-				logger.Info(fmt.Sprintf("✅ Workshop: workflow objective set: %q", objective))
-				parts = append(parts, fmt.Sprintf("objective: %q", objective))
-			}
-			if successCriteria != "" {
-				logger.Info(fmt.Sprintf("✅ Workshop: workflow success_criteria set: %q", successCriteria))
-				parts = append(parts, fmt.Sprintf("success_criteria: %q", successCriteria))
-			}
-			return fmt.Sprintf("Saved to planning/plan.json:\n%s\n\nYou can now run the workflow to test it, then use harden_workflow after evaluation to optimize.", strings.Join(parts, "\n")), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register set_workflow_objective tool: %v", err))
-	}
+	// NOTE: `infer_objective` and `set_workflow_objective` tools were retired when
+	// soul/soul.md became the authoritative source for workflow objective + success
+	// criteria. The builder now writes those sections directly to soul.md via shell,
+	// and runtime consumers resolve them through ResolveWorkflowObjective. No
+	// structured-JSON edit tool is needed.
 
 	// Tool 7e: optimize_workflow — background agent that analyzes the full plan against the objective
 	if err := mcpAgent.RegisterCustomTool(
@@ -8745,7 +8476,7 @@ This tool is **evidence-driven and mutating**:
 
 ## RULES
 1. **Use real evidence first**: Base every structural change on what actually happened in the target run. Do not make speculative edits when the artifacts do not support them.
-2. **Do not re-infer the objective**: Treat the existing root `+"`objective`"+` and `+"`success_criteria`"+` in `+"`planning/plan.json`"+` as the north star. Do NOT call `+"`infer_objective`"+` in this tool. If the objective is missing, leave it unchanged and continue using the visible success criteria/plan context.
+2. **Do not rewrite the objective**: Treat the existing `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections in `+"`soul/soul.md`"+` as the north star. If they're missing, leave them unchanged and continue using the visible plan context — do NOT edit soul.md from the harden tool.
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
@@ -9790,12 +9521,7 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ optimize_workflow: failed to reload plan for objective: %v (using cached value)", err))
 	}
-	workflowObjective := ""
-	workflowSuccessCriteria := ""
-	if iwm.controller.approvedPlan != nil {
-		workflowObjective = iwm.controller.approvedPlan.Objective
-		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
-	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
 
 	// Read-only folder guard
 	readPaths := []string{
@@ -9911,12 +9637,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ review_plan: failed to reload plan for objective: %v (using cached value)", err))
 	}
-	workflowObjective := ""
-	workflowSuccessCriteria := ""
-	if iwm.controller.approvedPlan != nil {
-		workflowObjective = iwm.controller.approvedPlan.Objective
-		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
-	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
 
 	readPaths := []string{
 		workspacePath,
@@ -9987,7 +9708,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		return "", fmt.Errorf("no approved plan found")
 	}
 
-	workflowObjective := iwm.controller.approvedPlan.Objective
+	workflowObjective, _ := iwm.controller.ResolveWorkflowObjective(ctx)
 
 	// Collect steps to review — either a specific step or all learn_code steps
 	allSteps := collectAllSteps(iwm.controller.approvedPlan.Steps)
@@ -10148,12 +9869,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ replan_workflow_from_results: failed to reload plan for objective: %v (using cached value)", err))
 	}
-	workflowObjective := ""
-	workflowSuccessCriteria := ""
-	if iwm.controller.approvedPlan != nil {
-		workflowObjective = iwm.controller.approvedPlan.Objective
-		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
-	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
 
 	readPaths := []string{
 		workspacePath,
@@ -10277,12 +9993,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ harden_workflow: failed to reload plan for objective: %v (using cached value)", err))
 	}
-	workflowObjective := ""
-	workflowSuccessCriteria := ""
-	if iwm.controller.approvedPlan != nil {
-		workflowObjective = iwm.controller.approvedPlan.Objective
-		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
-	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
 
 	readPaths := []string{
 		workspacePath,

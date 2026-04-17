@@ -122,7 +122,19 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         try {
           // Refresh workflow manifests and rebuild workflow presets
           await useWorkflowManifestStore.getState().refreshWorkflows().catch(() => {})
-          set({ workflowPresets: buildWorkflowPresetsFromManifests(), loading: false })
+          const workflowPresets = buildWorkflowPresetsFromManifests()
+          const workflowPresetIds = new Set(workflowPresets.map(p => p.id))
+          set(state => ({
+            workflowPresets,
+            loading: false,
+            activePresetIds: {
+              ...state.activePresetIds,
+              workflow: state.activePresetIds.workflow && workflowPresetIds.has(state.activePresetIds.workflow)
+                ? state.activePresetIds.workflow
+                : null,
+            },
+            recentPresetOrder: state.recentPresetOrder.filter(id => workflowPresetIds.has(id)),
+          }))
         } catch (error) {
           console.error('[PRESET] Error refreshing presets:', error)
           set({

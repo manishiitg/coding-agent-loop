@@ -465,6 +465,7 @@ export default function Workspace({
   // Gets selectedRunFolder from workflow store early (also used at line ~569 via hook)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
+  const runFolders = useWorkflowStore(state => state.runFolders)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const [workspaceDisplayedIteration, setWorkspaceDisplayedIteration] = useState<string | null>(null)
   const [showIterationDropdown, setShowIterationDropdown] = useState(false)
@@ -492,69 +493,51 @@ export default function Workspace({
   // Compute available iterations from the raw file tree (populated even from shallow fetch)
   const availableIterations = useMemo(() => {
     if (selectedModeCategory !== 'workflow' || !effectiveWorkflowFolderPath) return []
+    const discovered = new Set<string>()
     const workflowItem = files.find(f => f.filepath.replace(/\/$/, '') === effectiveWorkflowFolderPath)
-    if (!workflowItem?.children) return []
-    const runsFolder = workflowItem.children.find(c =>
-      c.filepath === effectiveWorkflowFolderPath + '/runs' || c.filepath === effectiveWorkflowFolderPath + '/runs/'
-    )
-    if (!runsFolder?.children) return []
-    return runsFolder.children
-      .filter(c => /iteration-\d+/.test(c.filepath))
-      .map(c => c.filepath.split('/').pop() ?? '')
-      .filter(Boolean)
-      .sort((a, b) => {
-        const numA = parseInt(a.match(/iteration-(\d+)/)?.[1] ?? '0')
-        const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
-        return numA - numB
-      })
-  }, [files, selectedModeCategory, effectiveWorkflowFolderPath])
+    if (workflowItem?.children) {
+      const runsFolder = workflowItem.children.find(c =>
+        c.filepath === effectiveWorkflowFolderPath + '/runs' || c.filepath === effectiveWorkflowFolderPath + '/runs/'
+      )
+      runsFolder?.children
+        ?.filter(c => /iteration-\d+/.test(c.filepath))
+        .map(c => c.filepath.split('/').pop() ?? '')
+        .filter(Boolean)
+        .forEach(iter => discovered.add(iter))
+    }
+
+    runFolders
+      .map(folder => folder.name)
+      .filter(name => /^iteration-\d+$/.test(name))
+      .forEach(iter => discovered.add(iter))
+
+    return Array.from(discovered).sort((a, b) => {
+      const numA = parseInt(a.match(/iteration-(\d+)/)?.[1] ?? '0')
+      const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
+      return numA - numB
+    })
+  }, [files, selectedModeCategory, effectiveWorkflowFolderPath, runFolders])
 
   const latestIteration = availableIterations[availableIterations.length - 1] ?? null
+  const defaultWorkflowIteration = useMemo(() => {
+    if (selectedModeCategory !== 'workflow') return null
+    return availableIterations.includes('iteration-0') ? 'iteration-0' : latestIteration
+  }, [selectedModeCategory, availableIterations, latestIteration])
 
-  const builderPinnedIteration = useMemo(() => {
-    if (selectedModeCategory !== 'workflow' || workflowWorkspaceView !== 'builder') {
-      return null
-    }
-
-    return availableIterations.includes('iteration-0') ? 'iteration-0' : null
-  }, [selectedModeCategory, workflowWorkspaceView, availableIterations])
-
-  // Effective iteration to display: user override → selectedRunFolder (top-level only) → latest
+  // Effective iteration to display: explicit workspace choice → workflow default.
+  // Keep this independent from selectedRunFolder so the right workspace bar does not
+  // jump away from iteration-0 just because execution selected a different run folder.
   const effectiveDisplayedIteration = useMemo(() => {
-    if (builderPinnedIteration) return builderPinnedIteration
     if (workspaceDisplayedIteration) return workspaceDisplayedIteration
-    if (selectedRunFolder && selectedRunFolder !== 'new') {
-      // selectedRunFolder can be "iteration-N" or "iteration-N/group-X" — take top-level only
-      return selectedRunFolder.split('/')[0]
-    }
-    return latestIteration
-  }, [builderPinnedIteration, workspaceDisplayedIteration, selectedRunFolder, latestIteration])
+    return defaultWorkflowIteration
+  }, [workspaceDisplayedIteration, defaultWorkflowIteration])
 
   useEffect(() => {
-    if (selectedModeCategory !== 'workflow' || workflowWorkspaceView !== 'builder' || availableIterations.length === 0) {
-      return
+    if (!workspaceDisplayedIteration || availableIterations.length === 0) return
+    if (!availableIterations.includes(workspaceDisplayedIteration)) {
+      setWorkspaceDisplayedIteration(null)
     }
-
-    const builderIteration = availableIterations.includes('iteration-0')
-      ? 'iteration-0'
-      : (selectedRunFolder && selectedRunFolder !== 'new'
-          ? selectedRunFolder.split('/')[0]
-          : availableIterations[0] ?? null)
-
-    if (!builderIteration || !availableIterations.includes(builderIteration)) {
-      return
-    }
-
-    if (workspaceDisplayedIteration !== builderIteration) {
-      setWorkspaceDisplayedIteration(builderIteration)
-    }
-  }, [
-    selectedModeCategory,
-    workflowWorkspaceView,
-    selectedRunFolder,
-    availableIterations,
-    workspaceDisplayedIteration
-  ])
+  }, [workspaceDisplayedIteration, availableIterations])
 
   const prevWorkflowWorkspaceViewRef = useRef<typeof workflowWorkspaceView>(workflowWorkspaceView)
   useEffect(() => {
@@ -564,39 +547,10 @@ export default function Workspace({
   }, [workflowWorkspaceView])
 
   useEffect(() => {
-    const previousView = prevWorkflowWorkspaceViewRef.current
     prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
+  }, [workflowWorkspaceView])
 
-    if (
-      selectedModeCategory !== 'workflow' ||
-      workflowWorkspaceView !== 'execution' ||
-      previousView === 'execution' ||
-      availableIterations.length === 0
-    ) {
-      return
-    }
-
-    const executionIteration = selectedRunFolder && selectedRunFolder !== 'new'
-      ? selectedRunFolder.split('/')[0]
-      : latestIteration
-
-    if (!executionIteration || !availableIterations.includes(executionIteration)) {
-      return
-    }
-
-    if (workspaceDisplayedIteration !== executionIteration) {
-      setWorkspaceDisplayedIteration(executionIteration)
-    }
-  }, [
-    selectedModeCategory,
-    workflowWorkspaceView,
-    selectedRunFolder,
-    availableIterations,
-    latestIteration,
-    workspaceDisplayedIteration
-  ])
-
-  const canSelectIterationInWorkspace = selectedModeCategory === 'workflow' && workflowWorkspaceView === 'execution'
+  const canSelectIterationInWorkspace = selectedModeCategory === 'workflow'
 
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {

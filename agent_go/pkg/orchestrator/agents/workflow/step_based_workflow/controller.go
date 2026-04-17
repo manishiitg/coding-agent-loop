@@ -612,6 +612,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// The workspace API will handle internal resolution to ../workspace-docs/ when needed
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+	// If no objective was threaded in from the caller, resolve from soul/soul.md
+	// (canonical source) with workflow.json fallback. Downstream consumers like the
+	// learning agent pull `CurrentObjective` from hcpo.GetObjective() — without this
+	// fallback, the template var would be empty when the builder hadn't set an
+	// explicit objective via the old set_workflow_objective tool.
+	if strings.TrimSpace(hcpo.GetObjective()) == "" {
+		if resolved, _ := hcpo.ResolveWorkflowObjective(ctx); resolved != "" {
+			hcpo.SetObjective(resolved)
+		}
+	}
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set to %s", workspacePath))
 
 	// PHASE 0: Check both variables and plan at start (before any prompts)

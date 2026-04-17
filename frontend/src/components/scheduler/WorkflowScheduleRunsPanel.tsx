@@ -690,15 +690,29 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     finally { setTriggering(null) }
   }
 
-  const openScheduledRunInChat = useCallback(async (sessionId: string, jobName: string, presetQueryId: string) => {
-    if (!sessionId || !presetQueryId) return
-
-    useGlobalPresetStore.getState().setActivePreset('workflow', presetQueryId)
-    useWorkflowStore.getState().setShowChatArea(true)
+  const openScheduledRunInChat = useCallback(async (sessionId: string, jobName: string, presetQueryId?: string) => {
+    if (!sessionId) return
 
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(t => t.sessionId === sessionId)
-    const desiredName = `Schedule: ${jobName}`
+
+    let effectivePresetQueryId = presetQueryId || existingTab?.metadata?.presetQueryId
+    if (!effectivePresetQueryId) {
+      try {
+        const running = await agentApi.getRunningWorkflow(sessionId)
+        effectivePresetQueryId = running.preset_query_id || undefined
+      } catch {
+        // Leave undefined rather than rebinding the scheduled run to whichever
+        // workflow is currently open.
+      }
+    }
+
+    if (effectivePresetQueryId) {
+      useGlobalPresetStore.getState().setActivePreset('workflow', effectivePresetQueryId)
+    }
+    useWorkflowStore.getState().setShowChatArea(true)
+
+    const desiredName = 'Schedule'
 
     if (existingTab) {
       // Rebind the tab to this preset and tag it as a read-only scheduled-run view.
@@ -707,7 +721,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       // under the correct workflow and surfaces the schedule banner/badge.
       chatStore.setTabMetadata(existingTab.tabId, {
         mode: 'workflow',
-        presetQueryId,
+        ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
         isViewOnly: true,
         isScheduledRun: true,
         scheduledJobName: jobName,
@@ -728,7 +742,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       desiredName,
       {
         mode: 'workflow',
-        presetQueryId,
+        ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
         isViewOnly: true,
         isScheduledRun: true,
         scheduledJobName: jobName,
@@ -1450,12 +1464,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipContent side="left">Live execution view</TooltipContent>
                                       </Tooltip>
                                     )}
-                                    {/* Open in chat (read-only) — only for live running jobs */}
-                                    {run.status === 'running' && run.session_id && job.preset_query_id && (
+                                    {/* Open in chat (read-only) — available for any live running job */}
+                                    {run.status === 'running' && run.session_id && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
-                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.preset_query_id!)}
+                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.preset_query_id)}
                                             className="p-1 text-blue-500 hover:text-blue-400 transition-colors"
                                           >
                                             <MessageSquare className="w-3 h-3" />
@@ -1566,13 +1580,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           sessionId={popupState.sessionId}
           jobName={popupState.jobName}
           onClose={() => setPopupState(null)}
-          onOpenInChat={popupState.presetQueryId ? () => {
+          onOpenInChat={() => {
             const sid = popupState.sessionId!
             const name = popupState.jobName
-            const pid = popupState.presetQueryId!
+            const pid = popupState.presetQueryId
             setPopupState(null)
             openScheduledRunInChat(sid, name, pid)
-          } : undefined}
+          }}
         />
       )}
 

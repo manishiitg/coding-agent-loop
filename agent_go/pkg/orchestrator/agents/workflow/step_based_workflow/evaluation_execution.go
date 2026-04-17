@@ -18,6 +18,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Set objective and workspace path
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+	// Fallback: resolve objective from soul/soul.md if caller passed empty. See
+	// CreateTodoList for the same pattern — keeps learning-agent CurrentObjective populated.
+	if strings.TrimSpace(hcpo.GetObjective()) == "" {
+		if resolved, _ := hcpo.ResolveWorkflowObjective(ctx); resolved != "" {
+			hcpo.SetObjective(resolved)
+		}
+	}
 
 	// Check if evaluation_plan.json exists
 	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation

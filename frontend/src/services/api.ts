@@ -1333,6 +1333,13 @@ export const agentApi = {
     return response.data
   },
 
+  deleteWorkflowFolder: async (workspacePath: string) => {
+    const response = await api.delete('/api/workflows/folder', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
   duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
     const response = await api.post('/api/workflows/manifest/duplicate', request)
     return response.data
@@ -1455,6 +1462,13 @@ export const workflowManifestApi = {
 
   deleteWorkflowManifest: async (workspacePath: string) => {
     const response = await api.delete('/api/workflows/manifest', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  deleteWorkflowFolder: async (workspacePath: string) => {
+    const response = await api.delete('/api/workflows/folder', {
       params: { workspace_path: workspacePath }
     })
     return response.data

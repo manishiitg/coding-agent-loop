@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -250,6 +251,71 @@ func (api *StreamingAPI) handleDeleteWorkflowManifest(w http.ResponseWriter, r *
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Deleted workflow manifest for %s", workspacePath),
+	})
+}
+
+// --- Delete workflow folder ---
+
+type DeleteWorkflowFolderRequest struct {
+	WorkspacePath string `json:"workspace_path"`
+}
+
+func (api *StreamingAPI) handleDeleteWorkflowFolder(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+	if workspacePath == "" {
+		var req DeleteWorkflowFolderRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			workspacePath = strings.TrimSpace(req.WorkspacePath)
+		}
+	}
+	if workspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+
+	manifest, exists, err := ReadWorkflowManifest(r.Context(), workspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read manifest: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "No workflow.json found at this workspace path", http.StatusNotFound)
+		return
+	}
+
+	if err := deleteWorkspaceFolder(r.Context(), workspacePath); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete workflow folder: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	deleteWorkflowRuntime(manifest.ID)
+
+	api.workflowOrchestratorContextMux.Lock()
+	if cancelFunc, ok := api.workflowOrchestratorContexts[manifest.ID]; ok {
+		cancelFunc()
+		delete(api.workflowOrchestratorContexts, manifest.ID)
+	}
+	api.workflowOrchestratorContextMux.Unlock()
+
+	api.workflowStepIDMux.Lock()
+	delete(api.workflowStepIDs, manifest.ID)
+	api.workflowStepIDMux.Unlock()
+
+	api.workflowObjectiveMux.Lock()
+	delete(api.workflowObjectives, manifest.ID)
+	api.workflowObjectiveMux.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":        true,
+		"workspace_path": workspacePath,
+		"message":        fmt.Sprintf("Deleted workflow folder %s", workspacePath),
 	})
 }
 

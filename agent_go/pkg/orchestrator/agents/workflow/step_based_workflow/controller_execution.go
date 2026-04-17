@@ -55,6 +55,43 @@ func getDBPath(workspaceRoot string) string {
 // See docs/workflow/persistent_stores_design.md section 8.
 const SoulFolderName = "soul"
 
+// Standard workflow subfolder names. Kept as constants so every site that needs to
+// reference them (folder-guard allow-lists, prompt paths, pre-creation scaffolds)
+// goes through a single source. When adding a new workflow subfolder, update the
+// constant AND WorkflowWritableSubfolders below — skipping either half is what
+// produced the reports/ + db/ + soul/ drift bug previously.
+const (
+	ReportsFolderName   = "reports"
+	PlanningFolderName  = "planning"
+	ExecutionFolderName = "execution"
+	LearningsFolderName = "learnings"
+	ScriptsFolderName   = "scripts"
+	RunsFolderName      = "runs"
+)
+
+// WorkflowWritableSubfolders is the canonical list of subfolders under a workflow's
+// root directory that any workflow-scoped agent session should be able to write.
+// Trailing slashes are included so the list can drop directly into folder-guard
+// allow-list construction (prefix-match behavior is slash-sensitive in several
+// callers). Consumed by server.go's chat-agent / phase-chat / delegation setup
+// paths — DO NOT duplicate this list in those callers.
+//
+// `planning/` is deliberately EXCLUDED. plan.json / step_config.json /
+// workflow_layout.json are managed through typed plan-mod tools that serialize
+// the full struct to JSON; raw writes would corrupt them. isProtectedPlanningPath
+// (base_orchestrator_folder_guard.go) is the runtime backstop for custom tools,
+// but the cleanest enforcement is keeping planning/ off this list entirely.
+var WorkflowWritableSubfolders = []string{
+	KnowledgebaseFolderName + "/",
+	DBFolderName + "/",
+	SoulFolderName + "/",
+	ReportsFolderName + "/",
+	ExecutionFolderName + "/",
+	LearningsFolderName + "/",
+	ScriptsFolderName + "/",
+	RunsFolderName + "/",
+}
+
 // SoulFileName is the fixed markdown filename inside soul/.
 const SoulFileName = "soul.md"
 
@@ -102,7 +139,10 @@ func kbAccessAllowsRead(mode string) bool {
 	return mode == KBAccessRead || mode == KBAccessReadWrite
 }
 
-// kbAccessAllowsWrite reports whether the given access mode grants write access.
+// kbAccessAllowsWrite reports whether the mode is eligible for post-step KB contribution.
+// This gates whether the post-step KB update agent runs (controller_kb_update.go) — it
+// does NOT grant the step agent itself direct write access to knowledgebase/ (step
+// writePaths are set in setupExecutionFolderGuard and deliberately exclude KB).
 func kbAccessAllowsWrite(mode string) bool {
 	return mode == KBAccessWrite || mode == KBAccessReadWrite
 }
@@ -2105,9 +2145,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if isLearnCodeMode {
 					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Keeping learning enabled for step %d — main.py remains executable truth and SKILL.md can capture edge cases", stepIndex+1))
 				}
-				// HUMAN-ASSISTED LEARNING MODE: Skip all automatic learning — human triggers manually via generate_learnings
+				// HUMAN-ASSISTED LEARNING MODE: Skip automatic learning. To generate fresh learnings, the
+				// human re-runs the step with execute_step(step_id, skip_learning=false).
 				if agentConfigs != nil && agentConfigs.LearningMode != "auto" {
-					hcpo.GetLogger().Info(fmt.Sprintf("🧑‍🏫 Human-assisted learning mode: Skipping automatic learning for step %d (use generate_learnings to learn manually)", stepIndex+1))
+					hcpo.GetLogger().Info(fmt.Sprintf("🧑‍🏫 Human-assisted learning mode: Skipping automatic learning for step %d (re-run with skip_learning=false to learn)", stepIndex+1))
 					isLearningDisabled = true
 				}
 				// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)

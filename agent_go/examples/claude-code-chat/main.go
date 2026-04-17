@@ -291,7 +291,7 @@ func createExecutors(log loggerv2.Logger) (
 		log.Info("Folder guard DISABLED (--no-guard)")
 		wrappedMap = shellOnlyMap
 	} else {
-		wrappedMap = server.ApplyChatModeFolderGuard(shellOnlyMap, nil)
+		wrappedMap = server.ApplyChatModeFolderGuard(shellOnlyMap, nil, nil)
 		log.Info("Folder guard applied to shell executor")
 	}
 

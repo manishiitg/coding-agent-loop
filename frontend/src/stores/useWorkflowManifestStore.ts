@@ -100,7 +100,7 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   deleteWorkflow: async (workspacePath) => {
-    await workflowManifestApi.deleteWorkflowManifest(workspacePath)
+    await workflowManifestApi.deleteWorkflowFolder(workspacePath)
     // Refresh to remove from list
     const { activeWorkflowId, workflows } = get()
     const deleted = workflows.find(w => w.workspace_path === workspacePath)

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
 
@@ -140,6 +142,37 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 	if err := writeRawFileToWorkspace(ctx, planJSONPath, string(planBytes)); err != nil {
 		_ = deleteWorkspaceFolder(ctx, workflowFolder)
 		return "", fmt.Errorf("failed to write plan.json: %w", err)
+	}
+
+	// Scaffold soul/soul.md with a TODO-marked template. soul.md is the canonical
+	// source for workflow objective + success criteria (plan.json no longer holds
+	// these fields), so seeding the structure at creation time gives the builder
+	// an obvious place to fill in and prevents "dir not found" on first edit.
+	soulLabel, _ := workflowMap["label"].(string)
+	soulPath := pathpkg.Join(workflowFolder, "soul", "soul.md")
+	if err := writeRawFileToWorkspace(ctx, soulPath, todo_creation_human.SoulScaffold(soulLabel)); err != nil {
+		// Non-fatal: log and continue. Builder can create it manually if the API
+		// happens to reject, and ResolveWorkflowObjective falls back to workflow.json.
+		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold soul/soul.md for Workflow/%s: %v", folderName, err)
+	}
+
+	// Scaffold reports/report_plan.md and db/.gitkeep so the builder can write
+	// into both folders on day one without hitting "no such file or directory"
+	// from the workspace write API (which doesn't auto-create parent dirs for
+	// heredocs). reports/ is never otherwise created; db/ is created lazily on
+	// first run by createRunFolderStructure — eager-creation just unblocks pre-run
+	// edits. knowledgebase/ is intentionally NOT scaffolded here — that folder
+	// needs seeded graph.json/index.json/notes/_index.json (InitKBGraphFiles)
+	// which createRunFolderStructure handles on first run.
+	reportScaffold := "# Report plan\n\n" +
+		"<!-- Define widgets here. See builder prompt for widget:text, widget:table, widget:chart, widget:row syntax. -->\n"
+	reportsPath := pathpkg.Join(workflowFolder, "reports", "report_plan.md")
+	if err := writeRawFileToWorkspace(ctx, reportsPath, reportScaffold); err != nil {
+		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold reports/report_plan.md for Workflow/%s: %v", folderName, err)
+	}
+	dbKeepPath := pathpkg.Join(workflowFolder, "db", ".gitkeep")
+	if err := writeRawFileToWorkspace(ctx, dbKeepPath, ""); err != nil {
+		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold db/ for Workflow/%s: %v", folderName, err)
 	}
 
 	log.Printf("[WORKFLOW CREATOR] Created new workflow: Workflow/%s (workflow.json=%d bytes, plan.json=%d bytes)", folderName, len(workflowBytes), len(planBytes))

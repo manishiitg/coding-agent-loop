@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
-import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
+import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
@@ -20,6 +20,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useRunningWorkflows } from '../stores/useRunningWorkflowsStore'
 import { useChatStore } from '../stores/useChatStore'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -95,7 +96,8 @@ export const ModePresetBar: React.FC = () => {
     applyPreset,
     getActivePreset,
     isPresetActive,
-    getPresetsForMode
+    getPresetsForMode,
+    clearActivePreset,
   } = usePresetApplication()
 
   // Get active preset for current mode (for schedule popup, supports all modes)
@@ -128,6 +130,8 @@ export const ModePresetBar: React.FC = () => {
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
+  const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
+  const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
   const isOrganizationView = showWorkflowsOverview
   const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
@@ -403,6 +407,36 @@ export const ModePresetBar: React.FC = () => {
       console.error('[ModePresetBar] Failed to save preset:', error)
     }
   }, [editingPreset, savePreset, handlePresetClick])
+
+  const handleDeleteWorkflow = useCallback(async (preset: CustomPreset) => {
+    const workspacePath = preset.selectedFolder?.filepath
+    if (!workspacePath) {
+      throw new Error('Workflow folder is missing')
+    }
+
+    try {
+      await agentApi.deleteWorkflowFolder(workspacePath)
+      await refreshPresets()
+
+      if (activePreset?.id === preset.id) {
+        clearActivePreset('workflow')
+        useGlobalPresetStore.getState().setSelectedPresetFolder(null)
+        useGlobalPresetStore.getState().setCurrentPresetServers([])
+        useGlobalPresetStore.getState().setCurrentPresetTools([])
+        useGlobalPresetStore.getState().setCurrentQuery('')
+        setSelectedFile(null)
+        setShowFileContent(false)
+      }
+
+      setShowPresetModal(false)
+      setEditingPreset(null)
+      setShowPresetDropdown(false)
+    } catch (error) {
+      console.error('[ModePresetBar] Failed to delete workflow:', error)
+      alert('Failed to delete workflow. Please try again.')
+      throw error
+    }
+  }, [activePreset?.id, clearActivePreset, refreshPresets, setSelectedFile, setShowFileContent])
 
   const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -912,6 +946,7 @@ export const ModePresetBar: React.FC = () => {
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
         agentMode={agentMode}
+        onDeleteWorkflow={handleDeleteWorkflow}
       />
 
       <DelegationTierConfigModal

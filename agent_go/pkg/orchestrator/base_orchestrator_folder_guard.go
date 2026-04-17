@@ -345,7 +345,7 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 			if isWriteCopy {
 				for _, paramName := range paramsToValidateCopy {
 					if pathStr, ok := args[paramName].(string); ok && isProtectedPlanningPath(pathStr) {
-						return "", fmt.Errorf("ACCESS DENIED: %q is a system-managed planning file. Use the dedicated plan/step update tools (update_regular_step, update_decision_step, update_step_config, set_workflow_objective, etc.) instead of %s", pathStr, toolNameCopy)
+						return "", fmt.Errorf("ACCESS DENIED: %q is a system-managed planning file. Use the dedicated plan/step update tools (update_regular_step, update_decision_step, update_step_config, etc.) instead of %s. For workflow objective + success criteria, write to soul/soul.md directly — it is the canonical source, not plan.json", pathStr, toolNameCopy)
 					}
 				}
 			}

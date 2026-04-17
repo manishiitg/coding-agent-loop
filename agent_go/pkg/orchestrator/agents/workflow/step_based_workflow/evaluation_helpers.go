@@ -30,8 +30,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingEvaluationPlan(ctx conte
 }
 
 // readEvaluationPlanFromFile reads evaluation_plan.json from the workspace.
+// The workspace read API expects paths relative to the workspace-docs root, so
+// workflow-relative paths must be normalized via normalizePathForWorkspaceAPI
+// (the same pattern used by readPlanFromFile).
 func readEvaluationPlanFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*EvaluationPlan, error) {
-	planPath := filepath.Join("evaluation", "evaluation_plan.json")
+	planPath := normalizePathForWorkspaceAPI(filepath.Join("evaluation", "evaluation_plan.json"), workspacePath)
 	content, err := readFile(ctx, planPath)
 	if err != nil {
 		return nil, err

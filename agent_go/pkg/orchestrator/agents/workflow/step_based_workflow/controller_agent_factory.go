@@ -415,7 +415,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + global learnings + knowledgebase folder (if mode grants read)
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder (if mode grants write) + execution/Downloads folder to prevent writing to other steps
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
+	// NOTE: knowledgebase/ is deliberately NOT added to step writePaths even when kb_access=write.
+	// Step code must never write graph.json/index.json/notes/ directly — that's the post-step
+	// KB update agent's job (setupKBUpdateFolderGuard). `kb_access=write` + a non-empty
+	// `knowledgebase_contribution` is what triggers that agent (see controller_kb_update.go).
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
@@ -441,17 +445,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	readPaths = append(readPaths, dbPath)
 	writePaths = append(writePaths, dbPath)
 
-	// Add knowledgebase folder paths based on access mode. Callers resolve kbAccess via
-	// resolveKnowledgebaseAccess before invoking, so one of the four valid modes is
-	// always set here.
-	if kbAccess != KBAccessNone {
+	// Add knowledgebase folder to READ paths when the mode grants read. Write access is
+	// intentionally NOT granted to step agents here — kb_access=write gates whether the
+	// post-step KB update agent runs (controller_kb_update.go), not whether the step itself
+	// can modify knowledgebase/. The KB update agent gets its own writePaths via
+	// setupKBUpdateFolderGuard and bypasses this function entirely.
+	if kbAccess != KBAccessNone && kbAccessAllowsRead(kbAccess) {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-		if kbAccessAllowsRead(kbAccess) {
-			readPaths = append(readPaths, knowledgebasePath)
-		}
-		if kbAccessAllowsWrite(kbAccess) {
-			writePaths = append(writePaths, knowledgebasePath)
-		}
+		readPaths = append(readPaths, knowledgebasePath)
 	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths

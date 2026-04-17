@@ -58,6 +58,42 @@ function parseFormatsField(raw: string): Record<string, ReportFormatterName> | u
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+// Parses `colors` / `colors_dark` — comma-separated list of hex or CSS color names.
+// Invalid entries are dropped but don't invalidate the whole list.
+function parseColorsField(raw: string): string[] | undefined {
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const c = part.trim()
+    if (c && isPlausibleColor(c)) out.push(c)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+// Parses `color_map` — comma-separated `value=color` pairs.
+// Example: `ok=#10b981, warning=#f59e0b, failed=#ef4444`
+function parseColorMapField(raw: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const part of raw.split(',')) {
+    const eq = part.indexOf('=')
+    if (eq <= 0) continue
+    const value = part.slice(0, eq).trim()
+    const color = part.slice(eq + 1).trim()
+    if (!value || !color) continue
+    if (!isPlausibleColor(color)) continue
+    out[value] = color
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+// Accepts #rgb, #rrggbb, #rrggbbaa, or CSS named colors. Named-color validation
+// is loose — anything that looks like a word is passed through and the browser
+// decides. Prevents obvious junk like multi-word strings.
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+const CSS_NAMED_RE = /^[a-zA-Z]+$/
+function isPlausibleColor(value: string): boolean {
+  return HEX_COLOR_RE.test(value) || CSS_NAMED_RE.test(value)
+}
+
 function parsePositiveInt(raw: string): number | undefined {
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n > 0 ? n : undefined
@@ -224,6 +260,25 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
     if (fields.show_values || fields.showvalues) {
       const b = parseBool(fields.show_values || fields.showvalues)
       if (b !== undefined) widget.showValues = b
+    }
+  }
+
+  // Color options — apply to chart and table; ignored for text widgets.
+  if (widget.kind === 'chart' || widget.kind === 'table') {
+    if (fields.colors) {
+      const c = parseColorsField(fields.colors)
+      if (c) widget.colors = c
+    }
+    if (fields.colors_dark || fields.colorsdark) {
+      const c = parseColorsField(fields.colors_dark || fields.colorsdark)
+      if (c) widget.colorsDark = c
+    }
+    if (fields.color_by || fields.colorby) {
+      widget.colorBy = fields.color_by || fields.colorby
+    }
+    if (fields.color_map || fields.colormap) {
+      const m = parseColorMapField(fields.color_map || fields.colormap)
+      if (m) widget.colorMap = m
     }
   }
 }

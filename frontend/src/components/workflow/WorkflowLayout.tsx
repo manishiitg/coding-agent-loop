@@ -27,15 +27,16 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (tab?.metadata?.mode !== 'workflow') return undefined
-    // Only show tab if it belongs to the active preset (prevents cross-preset bleed on Ctrl+K switch)
-    if (tab.metadata?.presetQueryId && tab.metadata.presetQueryId !== currentPresetId) return undefined
+    // Strict match only. Untagged tabs are treated as orphans so they cannot bleed
+    // into whichever workflow happens to be active.
+    if (tab.metadata?.presetQueryId !== currentPresetId) return undefined
     return tabId
   })
   const activePhaseId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     if (tab?.metadata?.mode !== 'workflow') return undefined
-    if (tab.metadata?.presetQueryId && tab.metadata.presetQueryId !== currentPresetId) return undefined
+    if (tab.metadata?.presetQueryId !== currentPresetId) return undefined
     return tab?.metadata?.phaseId
   })
 
@@ -301,6 +302,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
@@ -339,9 +341,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
+  const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
   // Auto-expand chat when workspace is open (needs more space alongside workspace)
   const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
   const lastWorkspaceRunExpansionKeyRef = useRef<string | null>(null)
+  const reportAutoMinimizedWorkspaceRef = useRef(false)
 
   // Get active workflow preset (file-backed manifests, not DB presets)
   const { getActivePreset } = useGlobalPresetStore()
@@ -529,6 +533,32 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       lastProcessedStepProgressIndexRef.current.set(sid, evts.length - 1)
     }
   }, [activeTab?.sessionId])
+
+  // Keep the workspace sidebar hidden while Report is active. Reopen it on exit
+  // only if Report was the reason it got hidden.
+  useEffect(() => {
+    if (canvasViewMode === 'report') {
+      if (!workspaceMinimized) {
+        reportAutoMinimizedWorkspaceRef.current = true
+        setWorkspaceMinimized(true)
+      }
+      return
+    }
+
+    if (reportAutoMinimizedWorkspaceRef.current) {
+      reportAutoMinimizedWorkspaceRef.current = false
+      setWorkspaceMinimized(false)
+    }
+  }, [canvasViewMode, workspaceMinimized, setWorkspaceMinimized])
+
+  useEffect(() => {
+    return () => {
+      if (reportAutoMinimizedWorkspaceRef.current) {
+        reportAutoMinimizedWorkspaceRef.current = false
+        useAppStore.getState().setWorkspaceMinimized(false)
+      }
+    }
+  }, [])
 
   // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
@@ -734,7 +764,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             if (running.preset_query_id) {
               belongsToPreset = running.preset_query_id === activePresetId
             }
-          } catch { /* unregistered session — treat as builder chat for current preset */ }
+          } catch {
+            // Scheduled runs should always resolve through the running-workflow registry.
+            // If lookup fails, do not guess and attach them to the currently open workflow.
+            if (s.session_id.startsWith('sched_')) {
+              belongsToPreset = false
+            }
+            /* otherwise treat as builder chat for current preset */
+          }
           if (!belongsToPreset) continue
           sessionsToRestore.push({
             sessionId: s.session_id,

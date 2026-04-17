@@ -3,12 +3,13 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download, Trash2 } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
 import { SecretSelectionSection } from './secrets/SecretSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
+import ConfirmationDialog from './ui/ConfirmationDialog';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
@@ -28,6 +29,7 @@ interface PresetModalProps {
   hideAgentModeSelection?: boolean;
   fixedAgentMode?: 'simple' | 'workflow';
   agentMode: string;
+  onDeleteWorkflow?: (preset: CustomPreset) => Promise<void>;
 }
 
 const PresetModal: React.FC<PresetModalProps> = React.memo(({
@@ -39,6 +41,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   hideAgentModeSelection = false,
   fixedAgentMode,
   agentMode: propAgentMode,
+  onDeleteWorkflow,
 }) => {
   const [label, setLabel] = useState('');
   const [query, setQuery] = useState('');
@@ -71,6 +74,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [gwsSyncResult, setGwsSyncResult] = useState<{
     synced?: number; failed?: { name: string; error: string }[]; error?: string;
   } | null>(null);
+  const [showDeleteWorkflowConfirm, setShowDeleteWorkflowConfirm] = useState(false);
+  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false);
   const toolList = useMCPStore(state => state.toolList);
 
@@ -429,6 +434,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, [onClose]);
 
+  const handleDeleteWorkflowConfirm = useCallback(async () => {
+    if (!editingPreset || !onDeleteWorkflow) return;
+    setDeletingWorkflow(true);
+    try {
+      await onDeleteWorkflow(editingPreset);
+      setShowDeleteWorkflowConfirm(false);
+    } finally {
+      setDeletingWorkflow(false);
+    }
+  }, [editingPreset, onDeleteWorkflow]);
+
   if (!isOpen) return null;
 
   return (
@@ -447,6 +463,18 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               : (editingPreset ? 'Edit Preset' : 'Add New Preset')}
           </h2>
           <div className="flex items-center gap-2">
+            {editingPreset && effectiveAgentMode === 'workflow' && onDeleteWorkflow && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteWorkflowConfirm(true)}
+                className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                Delete Workflow
+              </Button>
+            )}
             <Button
               type="submit"
               form="preset-form"
@@ -1281,6 +1309,20 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           searchQuery=""
           position={folderDialogPosition}
           agentMode={effectiveAgentMode as 'simple' | 'workflow'}
+        />
+        <ConfirmationDialog
+          isOpen={showDeleteWorkflowConfirm}
+          onClose={() => !deletingWorkflow && setShowDeleteWorkflowConfirm(false)}
+          onConfirm={handleDeleteWorkflowConfirm}
+          title="Delete Workflow"
+          message={
+            editingPreset?.selectedFolder?.filepath
+              ? `Delete workflow "${editingPreset.label}" and permanently remove the folder \`${editingPreset.selectedFolder.filepath}\`? This cannot be undone.`
+              : `Delete workflow "${editingPreset?.label || ''}"? This cannot be undone.`
+          }
+          confirmText="Delete Workflow"
+          type="danger"
+          isLoading={deletingWorkflow}
         />
       </Card>
     </div>

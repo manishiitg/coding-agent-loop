@@ -1259,6 +1259,18 @@ func RegisterEvaluationValidationTools(
 	return registerEvaluationValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
+// RegisterReportPlanValidationTools is the exported wrapper for registering the
+// validate_report_plan tool on an MCP agent. Used by server.go for workflow-builder
+// chat sessions. Validates reports/report_plan.md widget blocks against their JSON sources.
+func RegisterReportPlanValidationTools(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+) error {
+	return registerReportPlanValidationTools(mcpAgent, workspacePath, logger, readFile)
+}
+
 // RegisterPlanModificationTools is the exported wrapper for registering plan modification tools
 // on an MCP agent. Used by server.go for workflow phase chat sessions.
 func RegisterPlanModificationTools(

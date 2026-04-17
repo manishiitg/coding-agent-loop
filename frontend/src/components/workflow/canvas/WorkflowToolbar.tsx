@@ -16,7 +16,6 @@ import {
   Trash2,
   Settings,
   SlidersHorizontal,
-  MessageSquare,
   Circle,
   CheckSquare,
   Save,
@@ -179,8 +178,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onStartPhase,
   onStop,
   onCreatePlan,
-  showChatArea = false,
-  onToggleChatArea,
   onBulkUpdateSteps,
   onRefresh,
   onSaveLayout,
@@ -219,6 +216,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     restoreSelectionFromLocalStorage,
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
+    canvasViewMode,
+    setCanvasViewMode,
     setWorkflowWorkspaceView,
     layoutDirection,
     setLayoutDirection
@@ -242,6 +241,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
+    canvasViewMode: state.canvasViewMode,
+    setCanvasViewMode: state.setCanvasViewMode,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
     layoutDirection: state.layoutDirection,
     setLayoutDirection: state.setLayoutDirection
@@ -895,9 +896,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
       currentPhase === 'workflow-builder')
-  const isReportWorkspace = workflowWorkspaceView === 'report'
-  const isPlanWorkspace = workflowWorkspaceView === 'plan'
-  const isFlowWorkspace = workflowWorkspaceView === 'flow'
+  // View selection should follow the actual canvas/report renderer, not the
+  // higher-level workspace mode. That lets Builder/Execution keep whatever
+  // view (Flow/Plan/Report) the user last selected.
+  const isReportWorkspace = canvasViewMode === 'report'
+  const isPlanWorkspace = canvasViewMode === 'plan'
+  const isFlowWorkspace = canvasViewMode === 'flow'
 
   // Handle selecting start point from dropdown
   const handleSelectStartPoint = useCallback((option: StartPointOption) => {
@@ -1153,98 +1157,111 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       ${className}
     `}>
       {/* Left side - workflow context */}
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1 bg-muted rounded-md p-1 border border-border">
-            <button
-              onClick={() => {
-                setWorkflowWorkspaceView('builder')
-                // Reset canvas to flow in case user is coming from Report view.
-                if (useWorkflowStore.getState().canvasViewMode === 'report') {
-                  useWorkflowStore.getState().setCanvasViewMode('flow')
-                }
-                onStartPhase('workflow-builder')
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                isBuilderWorkspace
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Builder
-            </button>
-            <button
-              onClick={() => {
-                setWorkflowWorkspaceView('execution')
-                if (useWorkflowStore.getState().canvasViewMode === 'report') {
-                  useWorkflowStore.getState().setCanvasViewMode('flow')
-                }
-                if (latestExecutionSelection?.runFolder) {
-                  setSelectedRunFolder(latestExecutionSelection.runFolder)
-                  if (latestExecutionSelection.groupIds.length > 0) {
-                    setSelectedGroupIds(latestExecutionSelection.groupIds)
-                  } else {
-                    clearSelectedGroupIds()
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Mode
+          </span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  store.setWorkflowWorkspaceView('builder')
+                  // Builder owns the chat/workshop experience, so selecting it should
+                  // also surface the chat panel rather than requiring a second control.
+                  store.setShowChatArea(true)
+                  onStartPhase('workflow-builder')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isBuilderWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Builder
+              </button>
+              <button
+                onClick={() => {
+                  setWorkflowWorkspaceView('execution')
+                  if (latestExecutionSelection?.runFolder) {
+                    setSelectedRunFolder(latestExecutionSelection.runFolder)
+                    if (latestExecutionSelection.groupIds.length > 0) {
+                      setSelectedGroupIds(latestExecutionSelection.groupIds)
+                    } else {
+                      clearSelectedGroupIds()
+                    }
                   }
-                }
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                isExecutionWorkspace
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Execution
-            </button>
-            <button
-              onClick={() => {
-                const store = useWorkflowStore.getState()
-                store.setWorkflowWorkspaceView('flow')
-                // Hide chat entirely so the canvas becomes visible. Just collapsing
-                // chatAreaExpanded is not enough — WorkflowLayout derives effective
-                // expansion as `chatAreaExpandedManual || !workspaceMinimized`, which
-                // re-expands chat whenever the workspace panel isn't minimized.
-                store.setShowChatArea(false)
-                store.setCanvasViewMode('flow')
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                isFlowWorkspace
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Flow
-            </button>
-            <button
-              onClick={() => {
-                const store = useWorkflowStore.getState()
-                store.setWorkflowWorkspaceView('plan')
-                store.setShowChatArea(false)
-                store.setCanvasViewMode('plan')
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                isPlanWorkspace
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Plan
-            </button>
-            <button
-              onClick={() => {
-                const store = useWorkflowStore.getState()
-                store.setWorkflowWorkspaceView('report')
-                store.setShowChatArea(false)
-                store.setCanvasViewMode('report')
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                isReportWorkspace
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Report
-            </button>
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isExecutionWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Execution
+              </button>
+          </div>
         </div>
+
+        <div className="h-5 w-px bg-border" />
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            View
+          </span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  store.setWorkflowWorkspaceView('flow')
+                  // Hide chat entirely so the canvas becomes visible. Just collapsing
+                  // chatAreaExpanded is not enough — WorkflowLayout derives effective
+                  // expansion as `chatAreaExpandedManual || !workspaceMinimized`, which
+                  // re-expands chat whenever the workspace panel isn't minimized.
+                  store.setShowChatArea(false)
+                  store.setCanvasViewMode('flow')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isFlowWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Flow
+              </button>
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  store.setWorkflowWorkspaceView('plan')
+                  store.setShowChatArea(false)
+                  store.setCanvasViewMode('plan')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isPlanWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Plan
+              </button>
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  store.setWorkflowWorkspaceView('report')
+                  store.setShowChatArea(false)
+                  store.setCanvasViewMode('report')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isReportWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Report
+              </button>
+          </div>
+        </div>
+
         <>
             {/* Global Overrides Button */}
             <TooltipProvider delayDuration={150}>
@@ -1568,21 +1585,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom"><p>Versions</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Toggle ChatArea Button */}
-        {onToggleChatArea && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleChatArea}
-                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>{showChatArea ? 'Hide chat' : 'Show chat'}</p></TooltipContent>
           </Tooltip>
         )}
 

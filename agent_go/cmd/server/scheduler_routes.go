@@ -85,6 +85,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		WorkspacePath:       workspacePath,
 		WorkflowID:          manifest.ID,
 		WorkflowLabel:       manifest.Label,
+		PresetQueryID:       manifest.ID,
 		TriggerPayload:      sched.TriggerPayload,
 		GroupNames:          sched.GroupNames,
 		Mode:                sched.Mode,

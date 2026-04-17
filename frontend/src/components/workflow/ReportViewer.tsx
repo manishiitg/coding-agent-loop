@@ -22,6 +22,7 @@ import {
   resolveJSONPath,
 } from '../../lib/reportPlanParser'
 import { compareValues, formatAuto, formatNamed, rowsToCSV } from '../../lib/reportFormatters'
+import { useTheme } from '../../hooks/useTheme'
 import type {
   ParsedReportPlan,
   ReportEntry,
@@ -31,8 +32,50 @@ import type {
 
 // Default rows-per-page for tables; overridable per-widget via `page_size:`.
 const DEFAULT_TABLE_PAGE_SIZE = 25
-// Recharts categorical palette; cycles for pie slices and multi-series bars.
+// Default categorical palette. Widgets override via `colors:` / `colors_dark:`.
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
+
+// Resolves the effective color palette for a widget given the current theme.
+// Precedence: colorsDark (when dark) > colors > CHART_COLORS.
+function resolvePalette(widget: ReportWidget, theme: 'light' | 'dark'): string[] {
+  if (theme === 'dark' && widget.colorsDark && widget.colorsDark.length > 0) return widget.colorsDark
+  if (widget.colors && widget.colors.length > 0) return widget.colors
+  return CHART_COLORS
+}
+
+// Resolves a per-row color from widget semantic coloring. Returns undefined when
+// no match exists (caller falls back to cycled palette / default).
+function resolveSemanticColor(
+  widget: ReportWidget,
+  row: Record<string, unknown> | null | undefined,
+  palette: string[],
+  index: number,
+): string | undefined {
+  if (!widget.colorBy || !row) return undefined
+  const rawValue = row[widget.colorBy]
+  if (rawValue === undefined || rawValue === null) return undefined
+  const key = String(rawValue)
+  if (widget.colorMap && widget.colorMap[key]) return widget.colorMap[key]
+  // No map entry — cycle palette deterministically by the distinct-value index.
+  if (palette.length > 0) return palette[index % palette.length]
+  return undefined
+}
+
+// Shifts a hex/named color toward a subtle tint — used for table row backgrounds
+// so semantic coloring stays legible against the app theme. Hex shortcuts only;
+// named colors pass through at low opacity via rgba-ish CSS.
+function toRowTint(color: string): string {
+  // #rgb / #rrggbb → 14% alpha; named colors → rely on color-mix-ish fallback.
+  if (color.startsWith('#')) {
+    if (color.length === 4) {
+      const r = color[1], g = color[2], b = color[3]
+      return `#${r}${r}${g}${g}${b}${b}24` // ~14% alpha
+    }
+    if (color.length === 7) return `${color}24`
+    if (color.length === 9) return color // already has alpha
+  }
+  return color
+}
 
 async function readWorkspaceText(filepath: string): Promise<string | null> {
   try {
@@ -267,14 +310,61 @@ function WidgetRenderer({
       </div>
     )
   }
-  const resolved = applyWidgetFilter(resolveJSONPath(raw, widget.path), widget.filter)
+  const resolvedRaw = resolveJSONPath(raw, widget.path)
+  if (resolvedRaw === undefined) {
+    return (
+      <WidgetError
+        widget={widget}
+        message={`Path "${widget.path || '(root)'}" doesn't resolve in ${widget.source}.`}
+        hint="Check the source JSON for a matching key. Run validate_report_plan in builder chat for specifics."
+      />
+    )
+  }
+  const resolved = applyWidgetFilter(resolvedRaw, widget.filter)
   if (resolved == null) return null
-  if (Array.isArray(resolved) && resolved.length === 0) return null
+  if (Array.isArray(resolved) && resolved.length === 0) {
+    return (
+      <WidgetError
+        widget={widget}
+        message={`No rows in ${widget.source}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
+        hint="The source is valid but empty for this widget; this usually clears after the workflow runs."
+        severity="info"
+      />
+    )
+  }
 
   if (widget.kind === 'text') return <TextWidget value={resolved} widget={widget} />
   if (widget.kind === 'table') return <TableWidget value={resolved} widget={widget} />
   if (widget.kind === 'chart') return <ChartWidget value={resolved} widget={widget} />
   return null
+}
+
+// Inline per-widget diagnostic — surfaces silent-failure cases (unresolved path,
+// empty filter result) so the builder doesn't see a mystery blank space.
+function WidgetError({
+  widget,
+  message,
+  hint,
+  severity = 'error',
+}: {
+  widget: ReportWidget
+  message: string
+  hint?: string
+  severity?: 'error' | 'info'
+}) {
+  const tone = severity === 'error'
+    ? 'border-destructive/30 bg-destructive/5 text-destructive'
+    : 'border-muted bg-muted/30 text-muted-foreground'
+  return (
+    <div className={`text-xs rounded border px-2 py-1.5 my-1 ${tone}`}>
+      <div className="flex items-center gap-2">
+        {widget.title && <span className="font-semibold">{widget.title}</span>}
+        <span className="opacity-70">({widget.kind})</span>
+      </div>
+      <div className="mt-0.5">{message}</div>
+      {hint && <div className="mt-0.5 opacity-75">{hint}</div>}
+    </div>
+  )
 }
 
 function TextWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
@@ -300,10 +390,25 @@ function TextWidget({ value, widget }: { value: unknown; widget: ReportWidget })
 type SortDirection = 'asc' | 'desc'
 
 function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
+  const { theme } = useTheme()
   const formats = widget.formats ?? {}
   const enableSearch = widget.enableSearch !== false // default true
   const pageSize = widget.pageSize ?? DEFAULT_TABLE_PAGE_SIZE
   const hidden = useMemo(() => new Set(widget.hideColumns ?? []), [widget.hideColumns])
+  const palette = useMemo(() => resolvePalette(widget, theme), [widget, theme])
+  // Distinct-value → palette-index map so unmapped colorBy values get stable colors.
+  const distinctIndex = useMemo(() => {
+    if (!widget.colorBy || !Array.isArray(value)) return {}
+    const out: Record<string, number> = {}
+    let next = 0
+    for (const row of value as Record<string, unknown>[]) {
+      const raw = row?.[widget.colorBy]
+      if (raw === undefined || raw === null) continue
+      const key = String(raw)
+      if (!(key in out)) out[key] = next++
+    }
+    return out
+  }, [value, widget.colorBy])
 
   const [sortField, setSortField] = useState<string | null>(widget.defaultSort?.field ?? null)
   const [sortDir, setSortDir] = useState<SortDirection>(widget.defaultSort?.direction ?? 'asc')
@@ -482,10 +587,14 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((row, i) => (
+            {pageRows.map((row, i) => {
+              const rowColor = resolveSemanticColor(widget, row, palette, distinctIndex[String(row?.[widget.colorBy ?? ''] ?? '')] ?? i)
+              const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined
+              return (
               <tr
                 key={safePage * pageSize + i}
-                className="even:bg-muted/20 hover:bg-muted/40 transition-colors"
+                className={rowColor ? 'hover:bg-muted/40 transition-colors' : 'even:bg-muted/20 hover:bg-muted/40 transition-colors'}
+                style={rowStyle}
               >
                 {columns.map(c => {
                   const preset = formats[c] as ReportFormatterName | undefined
@@ -501,7 +610,8 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                   )
                 })}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -562,6 +672,7 @@ function normaliseChartPoints(value: unknown, widget: ReportWidget): Array<Recor
 }
 
 function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
+  const { theme } = useTheme()
   const points = useMemo(() => {
     let pts = normaliseChartPoints(value, widget)
     // Sort first (so topN takes the right slice), then truncate.
@@ -577,6 +688,31 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   const showValues = widget.showValues === true
   const heightPx = widget.height ?? 288 // h-72 default
 
+  const palette = resolvePalette(widget, theme)
+  // For semantic coloring, assign each distinct colorBy value a stable index into
+  // the palette so unmapped values still get consistent (not random) colors.
+  const distinctIndex = useMemo(() => {
+    if (!widget.colorBy) return {}
+    const out: Record<string, number> = {}
+    let next = 0
+    for (const p of points) {
+      const raw = (p as unknown as Record<string, unknown>)[widget.colorBy]
+      if (raw === undefined || raw === null) continue
+      const key = String(raw)
+      if (!(key in out)) out[key] = next++
+    }
+    return out
+  }, [points, widget.colorBy])
+  const colorForPoint = (p: (typeof points)[number], fallbackIndex: number): string => {
+    if (widget.colorBy) {
+      const raw = (p as unknown as Record<string, unknown>)[widget.colorBy]
+      const key = raw === undefined || raw === null ? '' : String(raw)
+      if (widget.colorMap && widget.colorMap[key]) return widget.colorMap[key]
+      if (key in distinctIndex) return palette[distinctIndex[key] % palette.length]
+    }
+    return palette[fallbackIndex % palette.length]
+  }
+
   const header = (widget.title || widget.description) ? (
     <div className="flex flex-col gap-0.5 mb-2">
       {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
@@ -584,7 +720,7 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
     </div>
   ) : null
 
-  // Pie chart — special layout.
+  // Pie chart — always colors per slice.
   if (chartType === 'pie') {
     return (
       <div className="flex flex-col">
@@ -599,8 +735,8 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                 outerRadius={Math.min(120, heightPx * 0.4)}
                 label={showValues ? (entry: { _label: string; _value: number }) => `${entry._label}: ${entry._value}` : undefined}
               >
-                {points.map((_, i) => (
-                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                {points.map((p, i) => (
+                  <Cell key={i} fill={colorForPoint(p, i)} />
                 ))}
               </Pie>
               <Tooltip />
@@ -619,6 +755,11 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
     ? { dataKey: '_value', position: chartType === 'bar' ? 'top' as const : 'top' as const, fontSize: 10 }
     : undefined
 
+  // Bar supports per-point Cell coloring. Line/Area use a single stroke/fill —
+  // when semantic coloring is set, we fall back to palette[0] for the series
+  // (time-series with per-point color would need segmented rendering; out of scope).
+  const seriesColor = palette[0]
+
   return (
     <div className="flex flex-col">
       {header}
@@ -629,9 +770,15 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
             <XAxis dataKey="_label" tick={{ fontSize: 11 }} interval={0} angle={points.length > 8 ? -30 : 0} textAnchor={points.length > 8 ? 'end' : 'middle'} height={points.length > 8 ? 60 : 30} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
-            {chartType === 'bar' && <Bar dataKey="_value" fill={CHART_COLORS[0]} radius={[3, 3, 0, 0]} label={ValueLabel} />}
-            {chartType === 'line' && <Line type="monotone" dataKey="_value" stroke={CHART_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} label={ValueLabel} />}
-            {chartType === 'area' && <Area type="monotone" dataKey="_value" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.25} label={ValueLabel} />}
+            {chartType === 'bar' && (
+              <Bar dataKey="_value" radius={[3, 3, 0, 0]} label={ValueLabel}>
+                {points.map((p, i) => (
+                  <Cell key={i} fill={colorForPoint(p, widget.colorBy ? i : 0)} />
+                ))}
+              </Bar>
+            )}
+            {chartType === 'line' && <Line type="monotone" dataKey="_value" stroke={seriesColor} strokeWidth={2} dot={{ r: 3 }} label={ValueLabel} />}
+            {chartType === 'area' && <Area type="monotone" dataKey="_value" stroke={seriesColor} fill={seriesColor} fillOpacity={0.25} label={ValueLabel} />}
           </ChartContainer>
         </ResponsiveContainer>
       </div>

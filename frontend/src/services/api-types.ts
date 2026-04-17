@@ -1353,6 +1353,16 @@ export interface ReportWidget {
   topN?: number;              // Cap rendered points to top N by value
   sort?: ReportSortDirection | 'none';  // Sort points by y-axis value; default 'none' (source order)
   showValues?: boolean;       // Show value labels on bars/lines (default false)
+  // Color overrides — chart: cycled across slices/bars; table: only used with colorBy.
+  // Accepts hex (#rrggbb or #rgb) and CSS named colors.
+  colors?: string[];
+  colorsDark?: string[];      // Theme override — used in dark mode; falls back to `colors` when unset.
+  // Semantic coloring — `colorBy` is a field name in each row; `colorMap` maps
+  // the value at that field to a color. Chart: colors per bar/slice. Table:
+  // tints the row background subtly. If `colorBy` is set but `colorMap` is not,
+  // the renderer cycles `colors` (or default palette) across distinct values.
+  colorBy?: string;
+  colorMap?: Record<string, string>;
 }
 
 // `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`

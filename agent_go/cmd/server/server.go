@@ -1122,6 +1122,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflows/manifest", api.handleCreateWorkflowManifest).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleUpdateWorkflowManifest).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleDeleteWorkflowManifest).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/folder", api.handleDeleteWorkflowFolder).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest/duplicate", api.handleDuplicateWorkflowManifest).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
@@ -3305,15 +3306,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[FILE CONTEXT] Extracted read-only folder-guard paths from #workflow: %v", workflowReadOnlyFolders)
 			}
 
-			// Workflow phase: grant write access only to specific subfolders within the workflow folder.
-			// planning/ is intentionally excluded (read-only for the workflow builder).
-			// Full read access to the workflow folder is unrestricted by the guard.
+			// Workflow phase: grant write access to the whole workflow folder (prefix match)
+			// and block writes to planning/ via the separate blocked-write list. This is
+			// "allow everything except planning/" expressed as one prefix + one exception,
+			// which is immune to the drift class of bugs that came from enumerating
+			// individual writable subfolders (reports/, db/, soul/ previously fell out of
+			// sync). planning/ stays read-only because plan.json / step_config.json /
+			// workflow_layout.json must go through typed plan-mod tools that serialize
+			// full structs, not raw writes.
+			var fileContextBlockedWriteFolders []string
 			if isWorkflowPhase && workflowPhaseFolder != "" {
-				workflowWriteSubfolders := []string{"knowledgebase/", "execution/", "learnings/", "scripts/", "runs/"}
-				for _, sub := range workflowWriteSubfolders {
-					fileContextWriteFolders = append(fileContextWriteFolders, workflowPhaseFolder+"/"+sub)
-				}
-				log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access restricted to subfolders of %s: %v", workflowPhaseFolder, workflowWriteSubfolders)
+				fileContextWriteFolders = append(fileContextWriteFolders, workflowPhaseFolder+"/")
+				blockedPlanning := workflowPhaseFolder + "/" + todo_creation_human.PlanningFolderName + "/"
+				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, blockedPlanning)
+				log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access: %s/ (whole workflow) with blocked-write prefix: %s", workflowPhaseFolder, blockedPlanning)
 			}
 
 			// Apply folder guard to restrict writes based on mode
@@ -3347,7 +3353,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				extraFolders = append(extraFolders, perUserMemWrite)
 				extraFolders = append(extraFolders, perUserChatsWrite)
 				extraFolders = append(extraFolders, perUserChatHistory)
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "")
 				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", perUserMemWrite}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
@@ -3355,7 +3361,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					readPaths,
 					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
 				)
-				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders)
+				// Blocked paths flow through to the isolator's FolderGuardConfig and are
+				// enforced at kernel-sandbox level — source of truth for what the shell
+				// can actually write. Matches the blocked-write list applied to the
+				// typed-tool wrapper above so both surfaces deny the same prefixes.
+				if len(fileContextBlockedWriteFolders) > 0 {
+					workspace.SetSessionFolderGuardBlockedPaths(sessionID, fileContextBlockedWriteFolders)
+				}
+				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v, blocked-write: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
 
 			// Apply skill folder guard if skills are selected (read-only access to selected skills only)
@@ -3443,7 +3456,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserExtraFolders := append([]string{}, resolvedGrants.WriteFolders...)
 					browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
 					browserExtraFolders = append(browserExtraFolders, perUserChatsFolder+"/")
-					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
+					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, fileContextBlockedWriteFolders, browserExtraFolders...)
 				}
 				log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
 
@@ -4114,19 +4127,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Extract workflow objective and success_criteria from plan.json for the system prompt
-				if existingPlanJSON != "" && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
-					var planMeta struct {
-						Objective       string `json:"objective"`
-						SuccessCriteria string `json:"success_criteria"`
+				// Extract workflow objective and success_criteria from soul/soul.md (the
+				// canonical source; plan.json no longer holds these fields). Falls back
+				// to workflow.json — see ResolveWorkflowObjective in soul_helpers.go for
+				// the same resolution order the runtime uses.
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+					objective, successCriteria, _ := todo_creation_human.ReadWorkflowObjectiveFromSoul(setupCtx, phaseWorkspacePath, phaseReadFile)
+					if strings.TrimSpace(objective) == "" || strings.TrimSpace(successCriteria) == "" {
+						// Legacy fallback to workflow.json root fields.
+						if manifest, err := phaseReadFile(setupCtx, phaseWorkspacePath+"/workflow.json"); err == nil {
+							var wf struct {
+								Objective       string `json:"objective"`
+								SuccessCriteria string `json:"success_criteria"`
+							}
+							if json.Unmarshal([]byte(manifest), &wf) == nil {
+								if objective == "" {
+									objective = wf.Objective
+								}
+								if successCriteria == "" {
+									successCriteria = wf.SuccessCriteria
+								}
+							}
+						}
 					}
-					if err := json.Unmarshal([]byte(existingPlanJSON), &planMeta); err == nil {
-						if planMeta.Objective != "" {
-							phaseTemplateVars["WorkflowObjective"] = planMeta.Objective
-						}
-						if planMeta.SuccessCriteria != "" {
-							phaseTemplateVars["WorkflowSuccessCriteria"] = planMeta.SuccessCriteria
-						}
+					if objective != "" {
+						phaseTemplateVars["WorkflowObjective"] = objective
+					}
+					if successCriteria != "" {
+						phaseTemplateVars["WorkflowSuccessCriteria"] = successCriteria
 					}
 				}
 
@@ -4486,7 +4514,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// AUTO-NOTIFICATIONs: one for each todo sub-agent AND one for the exec-* completion.
 						// The workshopExecutionBgNotifier below is the single source of auto-notifications.
 						//
-						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/generate_learnings
+						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/harden_workflow
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
 						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
 						workshopSession.SetExecutionStateChecks(
@@ -4526,9 +4554,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					// Output-modification tools (validate_report_plan, etc.) removed with the
-					// static report agent. The dynamic report (design doc §2) is edited by writing
-					// reports/report_plan.md directly via shell; no registration needed.
+					// Report-plan validator: lets the builder check its reports/report_plan.md edits
+					// against real db/*.json and knowledgebase/*.json sources. The renderer silently
+					// drops bad widgets, so without this tool the user sees a blank Report tab
+					// with no diagnostic — see docs/workflow/persistent_stores_design.md §2.
+					if err := todo_creation_human.RegisterReportPlanValidationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan validation tool in %s: %v", workflowPhaseID, err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered report plan validation tool in %s", workflowPhaseID)
+					}
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
 					evalSessionKey := "eval-" + sessionID
@@ -5869,7 +5908,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			extraFolders = append(extraFolders, fileContextWriteFolders...)
 			extraFolders = append(extraFolders, subPerUserMemWrite)
 			extraFolders = append(extraFolders, subPerUserChatHistory)
-			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, extraFolders...)
+			// Delegation path has no #workflow-derived blocked-write prefix (the parent
+			// session's blocked paths aren't inherited here; this call path is for sub-agents
+			// spawned with their own folder scope). Pass nil.
+			workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, workflowReadOnlyFolders, nil, extraFolders...)
 			workspace.SetSessionWorkingDir(sessionID, "")
 			readPaths := append([]string{subPerUserChatsWrite, subPerUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/", "config/", subPerUserMemWrite}, extraFolders...)
 			readPaths = append(readPaths, subResolvedGrants.ReadOnlyExtra...)
@@ -5933,7 +5975,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 			browserExtraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 			browserExtraFolders = append(browserExtraFolders, fileContextWriteFolders...)
-			browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, browserExtraFolders...)
+			browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, workflowReadOnlyFolders, nil, browserExtraFolders...)
 
 			for _, tool := range browserTools {
 				if tool.Function == nil {

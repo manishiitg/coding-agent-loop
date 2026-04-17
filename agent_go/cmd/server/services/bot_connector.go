@@ -258,15 +258,39 @@ func (m *BotConversationManager) LoadAvailableCapabilities() (servers []string, 
 	return
 }
 
+// emailToUserID slugifies an email into a filesystem-safe userID segment
+// that matches the chathistory sanitizeUserID regex (^[a-zA-Z0-9_-]+$).
+// Example: "Alice.Jones+work@Company.com" → "alice-jones-work-company-com"
+func emailToUserID(email string) string {
+	s := strings.ToLower(strings.TrimSpace(email))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	out := b.String()
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	return strings.Trim(out, "-")
+}
+
 // resolveWorkspaceUserID maps a bot message to a workspace user ID for
-// per-user secrets loading. The web simulator pre-resolves this from HTTP auth;
-// Slack and other async platforms fall through to "default" since we no
-// longer maintain an email→userID lookup table.
+// per-user chat history, memory, and schedules. The web simulator pre-resolves
+// this from HTTP auth; async platforms (Slack, Discord, etc.) derive it from
+// the user's email. Returns "" when neither source is available — the caller
+// must reject the message rather than falling through to a shared folder.
 func (m *BotConversationManager) resolveWorkspaceUserID(msg BotIncomingMessage) string {
 	if msg.WorkspaceUserID != "" {
 		return msg.WorkspaceUserID
 	}
-	return "default"
+	if msg.UserEmail != "" {
+		return emailToUserID(msg.UserEmail)
+	}
+	return ""
 }
 
 // HandleIncomingMessage processes a message from any platform (async path)
@@ -286,6 +310,24 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 			// No active session and not a mention — silently ignore
 			return
 		}
+	}
+
+	// Reject if we can't link the user to a workspace identity. Without an email
+	// or a pre-resolved WorkspaceUserID, we cannot isolate per-user chats, memory,
+	// or schedules — so refuse the message rather than merging into a shared folder.
+	if msg.UserEmail == "" && msg.WorkspaceUserID == "" {
+		log.Printf("[BOT_MANAGER] Rejected message from %s — no email available to link account", msg.UserID)
+		if msg.IsMention {
+			if connector := m.GetConnector(msg.Platform); connector != nil {
+				threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
+				if threadID.ThreadTS == "" {
+					threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
+				}
+				connector.SendThreadMessage(context.Background(), threadID,
+					"Can't link your account — no email available from this platform. Please contact your administrator.")
+			}
+		}
+		return
 	}
 
 	// Check allowed_emails filter — merge DB config with BOT_ALLOWED_EMAILS env var

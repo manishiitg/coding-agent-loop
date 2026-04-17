@@ -126,10 +126,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	stepConfig := getAgentConfigs(todoTaskStep)
 
-	// Learning config
-	isLearningDisabledStep := stepConfig != nil && stepConfig.DisableLearning != nil && *stepConfig.DisableLearning
-	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
-	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+	// Learning config — opt-in via non-empty learning_objective (matches KB pattern).
+	isLearningDisabled := stepConfig == nil || strings.TrimSpace(stepConfig.LearningObjective) == ""
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
@@ -429,7 +427,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 // selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator.
 //
 // Priority:
-//  1. step config OrchestratorLLM — explicit override always wins
+//  1. step config ExecutionLLM — explicit override always wins (same knob used for
+//     regular step execution; sub-agents spawned by this orchestrator inherit it too)
 //  2. step config TodoTaskOrchestratorTier — explicit tier override in tiered mode
 //  3. Tier 1 (High) — default for orchestrator (returns nil if tier resolver is unavailable)
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
@@ -438,15 +437,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	stepID string,
 	stepPath string,
 ) *orchestrator.LLMConfig {
-	// 1. Step config OrchestratorLLM always takes highest precedence.
-	if stepConfig != nil && stepConfig.OrchestratorLLM != nil &&
-		stepConfig.OrchestratorLLM.Provider != "" && stepConfig.OrchestratorLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config OrchestratorLLM: %s/%s",
-			stepConfig.OrchestratorLLM.Provider, stepConfig.OrchestratorLLM.ModelID))
+	// 1. Step config ExecutionLLM always takes highest precedence — one LLM knob
+	// covers regular step execution, todo-task orchestrator role, and sub-agents.
+	if stepConfig != nil && stepConfig.ExecutionLLM != nil &&
+		stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config ExecutionLLM: %s/%s",
+			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.OrchestratorLLM.Provider,
-				ModelID:  stepConfig.OrchestratorLLM.ModelID,
+				Provider: stepConfig.ExecutionLLM.Provider,
+				ModelID:  stepConfig.ExecutionLLM.ModelID,
 			},
 			APIKeys: hcpo.GetAPIKeys(),
 		}
@@ -640,7 +640,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 				disableParallelToolExec = parentConfig.DisableParallelToolExecution
 			}
 			return &AgentConfigs{
-				DisableLearning:              boolPtr(true), // No learning for generic agent
+				// Learning is off by default (LearningObjective empty) — generic agents
+				// don't generate persistent learnings by design.
 				UseCodeExecutionMode:         useCodeExecutionMode,
 				DisableParallelToolExecution: disableParallelToolExec, // inherit from parent
 			}

@@ -3,7 +3,6 @@ package step_based_workflow
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,12 +133,6 @@ func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 		}
 	}
 	return result
-}
-
-func computeDescriptionHash(description string) string {
-	normalized := strings.TrimSpace(strings.ReplaceAll(description, "\r\n", "\n"))
-	hash := sha256.Sum256([]byte(normalized))
-	return fmt.Sprintf("%x", hash[:])
 }
 
 func canonicalDeclaredExecutionMode(mode string) string {
@@ -1378,6 +1371,25 @@ Every non-trivial step has a ` + "`" + `context_output` + "`" + ` file (e.g. ` +
 
 **Upsert-by-key discipline:** when writing to ` + "`" + `db/` + "`" + `, the step MUST read the existing file first, merge by the builder-defined primary key, then write back. Wholesale overwrites destroy rows written by other groups / prior runs. Declare the primary key and merge rule in the step's db schema note so the builder and the step agent agree.
 
+### Deciding which steps opt in to learning and KB — your call, per step
+
+Both learning and knowledgebase are **off by default** for every step. Running them is YOUR deliberate decision, not a passive default — and you are expected to justify both the opt-in and the opt-out. The runtime will flatly refuse writes to SKILL.md or knowledgebase/graph.json when the opt-in field is empty, so these aren't advisory flags; they're the on/off switch.
+
+**For each step, ask yourself two questions:**
+
+1. **Should this step build up SKILL.md?** — Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set ` + "`" + `learning_objective` + "`" + ` to a concrete instruction naming exactly what SKILL.md should capture (e.g. *"Selectors for the ICICI login form, OTP field timing, and the 'clearing fingerprint' banner that indicates session expiry"*). Leave empty for plumbing steps (send email, generate PDF, upload to S3) whose "how" is boring and generic.
+2. **Should this step contribute to knowledgebase/graph.json?** — Only if the step produces durable facts about the subject matter of the workflow: entities discovered, relationships, decisions, cross-run strategies. If yes, set ` + "`" + `knowledgebase_access` + "`" + ` to ` + "`" + `write` + "`" + ` or ` + "`" + `read-write` + "`" + ` AND set ` + "`" + `knowledgebase_contribution` + "`" + ` to a concrete extraction instruction (e.g. *"Extract each company mentioned as an entity with type=company + size/industry properties; link to its parent group via parent-of relationships"*). Access without a contribution is a validation error.
+
+**Record your reasoning.** When you set ` + "`" + `learning_objective` + "`" + ` or ` + "`" + `knowledgebase_contribution` + "`" + ` on a step, also update ` + "`" + `review_notes` + "`" + ` with one sentence explaining WHY this step is worth learning from or extracting from — future hardening passes and other LLM reviewers will read it. Example: *"Opted into learning: ICICI login selectors change quarterly so auth-flow drift must be captured. Opted into KB: account nicknames surface here and nowhere else."*
+
+**Symmetric rules for opt-OUT:** if most steps in a workflow shouldn't learn or contribute, that's fine — just leave the fields empty. Don't set either field "because the others have it" — that accumulates noise. If you unset a step (via ` + "`" + `clear_fields` + "`" + `), explain in ` + "`" + `review_notes` + "`" + ` why the step no longer deserves the overhead.
+
+**Cheap heuristics to use while deciding:**
+- **Step writes a brand-new ` + "`" + `db/` + "`" + ` file or consumes a db file**: likely worth KB too (the domain facts often live alongside the persistent rows). Likely NOT worth learning (db schema is stable; selectors aren't).
+- **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT).
+- **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
+- **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
+
 {{if eq .WorkshopMode "builder"}}
 **BUILD MODE** — Design, build, and test the workflow. Focus on getting a working plan with steps that produce correct output.
 
@@ -1553,7 +1565,7 @@ Designing the eval plan is also a Builder responsibility (folded in from the leg
 3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
 4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
 5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
-6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. For eval steps this writes to `+"`evaluation/step_config.json`"+`. Each eval step should store: `+"`declared_execution_mode`"+`, `+"`description_optimized`"+`, `+"`description_optimization_reason`"+`. The system auto-saves `+"`description_hash`"+`; if the description changes, the review is stale and must be redone.
+6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. For eval steps this writes to `+"`evaluation/step_config.json`"+`. Each eval step should store: `+"`declared_execution_mode`"+`, `+"`description_reviewed`"+`, and `+"`review_notes`"+`. Re-review (clear `+"`description_reviewed`"+`) whenever you meaningfully change the description — there is no automatic staleness signal.
 7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
 8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g. `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run.
 9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
@@ -1830,14 +1842,14 @@ If a step needs **semantic/LLM-based validation** (e.g., "verify the summary is 
 After a step runs successfully, always check: could a stale/fake output file pass this schema? If yes, tighten it.
 
 ### 2. Learning Configuration
-- **Simple steps** (short description, straightforward task): suggest **disable_learning: true** — learning overhead isn't worth it
+- **Simple steps** (short description, straightforward task): leave `+"`learning_objective`"+` unset — learning is off by default and the overhead isn't worth it
 - **Complex steps** that have run successfully a few times: suggest **lock_learnings: true** — freezes existing learnings, skips the learning agent, but still uses accumulated knowledge
 - Only keep learning enabled + unlocked for steps that are actively being iterated on
 - **Wait for maturity**: Don't suggest locking learnings or disabling learning until the step has had several successful runs. Premature optimization can hurt quality.
 - **Global Learning**: All steps contribute to and read from a single shared skill at 'learnings/_global/' instead of per-step skills. The skill structure follows the Anthropic skill-creator guide (SKILL.md + references/ + scripts/).
   - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): Always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
   - **Locking learnings**: Use `+"`lock_learnings: true`"+` in step config to freeze learnings for a step. Review the global skill first with `+"`cat learnings/_global/SKILL.md`"+` before deciding to lock.
-  - **Disable learning for irrelevant steps**: Review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should have learning disabled via `+"`update_step_config(step_id, disable_learning=true)`"+`. This saves tokens and prevents noise in the global skill. Only steps that interact with the target system (the subject of the skill objective) should contribute.
+  - **Keep learning off for irrelevant steps**: Review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should leave `+"`learning_objective`"+` empty (the default). Learning is opt-in — only set `+"`learning_objective`"+` on steps that interact with the target system (the subject of the skill objective). If a step currently has `+"`learning_objective`"+` set but shouldn't, clear it via `+"`update_step_config(step_id, clear_fields=[\"learning_objective\"])`"+`.
 
 #### The Three Locks — What They Freeze and When To Use
 
@@ -1855,7 +1867,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 
 - Treat any **semantic** change (different goal, different inputs/outputs, different tool set, different validation schema) as a signal to unlock: `+"`update_step_config(step_id, lock_learnings=false, lock_code=false, optimized=false)`"+`, then re-run so fresh learnings and a fresh main.py are generated.
 - Pure **rewording** (clarifying existing instructions without changing intent) does not require unlocking. If unsure, re-read the old vs new description and ask: "Could the same main.py and the same learnings still produce a correct result?" If no, unlock.
-- The system already tracks a `+"`description_hash`"+` and marks `+"`description_optimized`"+` stale when the hash changes — treat that staleness as your cue to also revisit lock flags.
+- When you meaningfully change a step's description, clear `+"`description_reviewed`"+` and revisit the lock flags — no automatic staleness signal fires for you.
 
 **Workflow-level KB lock**: Separate from the per-step locks, the workflow as a whole can be frozen against KB drift with `+"`update_workflow_config(lock_knowledgebase=true)`"+`. This is the right move once the domain is well-understood and the post-step update agent mostly produces no-op confirmations. While locked, you can still curate `+"`knowledgebase/graph.json`"+` intentionally via the `+"`reorganize_knowledgebase`"+` tool or direct edits; only the automatic per-step updater is suppressed.
 
@@ -1944,8 +1956,8 @@ The step **description** in plan.json is the primary instruction the execution a
 **How to update**: Edit plan.json directly using **diff_patch_workspace_file** to update a step's description field. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `+"`update_step_config`"+` to record:
-- `+"`description_optimized`"+` + `+"`description_optimization_reason`"+`
-The system auto-saves a `+"`description_hash`"+`. If the description changes later, that review becomes stale and must be re-done.
+- `+"`description_reviewed`"+` + `+"`review_notes`"+`
+If the step description changes later, clear `+"`description_reviewed`"+` yourself — the system does not auto-invalidate the review.
 
 ### 6. Post-Execution Step Review
 After running a step, review it for optimization — but follow this priority order. Fix fundamentals first before worrying about efficiency.
@@ -1962,7 +1974,7 @@ After running a step, review it for optimization — but follow this priority or
   - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply (e.g., learning says "use server gws" but the step now uses "google_sheets", or learning references a tool that's been removed). Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
   - Are they **repetitive**? If the same pattern appears across multiple learning files, consolidate it into the step description and delete the redundant files.
 - **Learning lifecycle by step complexity:**
-  - **Simple steps** (single tool call, straightforward output): **disable_learning** after first success — learning overhead isn't worth it. Use update_step_config(step_id, disable_learning=true).
+  - **Simple steps** (single tool call, straightforward output): leave `+"`learning_objective`"+` empty (the default). Learning is opt-in; simple steps don't earn their keep with the learning-agent overhead.
   - **Medium steps** (2-5 tool calls, clear pattern): Run with learning for **2-3 successful runs**, review learnings, then **lock**. Use update_step_config(step_id, lock_learnings=true).
   - **Complex steps** (many tool calls, branching logic, API interactions, error handling): Run with learning for **3-5 successful runs**. Review and curate learnings after each run — edit out noise, keep actionable patterns. Lock once learnings stabilize (same patterns appearing across runs).
   - **Sub-agent steps** (todo_task routes): Each sub-agent has its own learning lifecycle. Lock sub-agents independently as they mature.
@@ -2244,7 +2256,7 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 
 ## CONSTRAINTS
 1. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report"), not positional numbers.
-2. **Boolean config fields**: Only pass lock_learnings/disable_learning when explicitly changing them. Do NOT include them with false when updating other fields — this resets previously set values.
+2. **Boolean config fields**: Only pass lock_learnings when explicitly changing it. Do NOT include it with false when updating other fields — this resets previously set values.
 3. **Never hardcode variables or secrets**: Use variable placeholders (e.g., {USER_ID}) in descriptions and learnings. Actual values belong in variables.json / variable groups.
 4. **Never read application source code**: Do NOT search or read *.go, *.ts, or *.json files outside the workspace. You operate on workspace files only.
 `)
@@ -3222,7 +3234,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if sc.AgentConfigs.LockLearnings != nil && *sc.AgentConfigs.LockLearnings {
 						lockStatus = "locked"
 					}
-					if sc.AgentConfigs.DisableLearning != nil && *sc.AgentConfigs.DisableLearning {
+					if strings.TrimSpace(sc.AgentConfigs.LearningObjective) == "" {
+						// No learning_objective = learning is off for this step.
 						lockStatus = "disabled"
 					}
 					break
@@ -3480,13 +3493,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 4: update_step_config — update step_config.json for a specific step
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config",
-		"Update step_config.json for a specific step. Changes take effect on the next execute_step call for that step.",
+		"Update step_config.json for a specific step. Changes take effect on the next execute_step call for that step. To REMOVE a field (so the step falls back to preset/default behavior), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
 					"description": "The step ID from plan.json",
+				},
+				"clear_fields": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, learning_mode, knowledgebase_access, knowledgebase_contribution, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3498,9 +3516,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Tool names to enable for this step (format: 'server:tool' or 'server:*')",
 				},
-				"disable_learning": map[string]interface{}{
-					"type":        "boolean",
-					"description": "If true, skip the learning phase for this step entirely (no learning agent runs)",
+				"learning_objective": map[string]interface{}{
+					"type":        "string",
+					"description": "Opt-in instruction for the learning agent. Learning is OFF BY DEFAULT for every step — the learning agent runs ONLY when this field is non-empty (mirrors knowledgebase_contribution for the KB agent). Describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Leave empty to skip learning entirely. Cannot be set in combination with lock_learnings=true (locking a step with no objective means learning never ran).",
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
@@ -3509,10 +3527,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"lock_code": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to code_exec mode). Use this when the saved script is stable and should not be overwritten. Only applies to learn_code steps.",
-				},
-				"learning_detail_level": map[string]interface{}{
-					"type":        "string",
-					"description": "Learning detail level: 'exact' or 'none'",
 				},
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
@@ -3548,35 +3562,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"declared_execution_mode_reason": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional explanation for why the chosen execution mode is the best fit for this step.",
+					"description": "Audit trail: why the chosen execution mode is the best fit for this step. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading step_config.json see the original rationale.",
 				},
-				"description_optimized": map[string]interface{}{
+				"description_reviewed": map[string]interface{}{
 					"type":        "boolean",
-					"description": "True when the current step description has been reviewed and is considered optimized for execution quality.",
-				},
-				"description_optimization_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Why the current description is considered optimized.",
-				},
-				"description_learnings_alignment_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: how the current description reflects the learnings gathered for this step.",
-				},
-				"description_no_secrets": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Optional: true when the current description has been reviewed and confirmed to contain no secrets, hardcoded credentials, or user/run-specific values.",
-				},
-				"description_secrets_review_reason": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional: why the current description is considered free of secrets and hardcoded values.",
+					"description": "True when the step description has been reviewed — covers BOTH clarity/optimization for execution AND confirmation that the description contains no secrets, hardcoded credentials, or user/run-specific values. Clear this (via clear_fields) if the description meaningfully changes.",
 				},
 				"optimized": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true, mark this step as optimized — completion notifications will be simpler (no 'debug and optimize' prompt). Set this when a step is producing consistent, good results.",
+					"description": "If true, mark this step as optimized — completion notifications will be simpler (no 'debug and optimize' prompt). Also triggers tier downgrade to lower-cost LLMs at runtime when combined with mature learnings. Set this when a step is producing consistent, good results.",
 				},
-				"optimized_reason": map[string]interface{}{
+				"review_notes": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: why this step is being marked optimized. Cite the concrete evidence — e.g., 'passed 3 groups with eval ≥ 9; learnings stable; pre-validation catches format regressions; no wasted tool calls'. Persisted so later passes (harden, replan) see why the step was locked.",
+					"description": "Free-form rationale covering both why the step is optimized AND why the description is considered reviewed. Cite concrete evidence — e.g., 'description is clear and secret-free; passed 3 groups with eval ≥ 9; learnings stable; pre-validation catches format regressions'. Persisted so later passes (harden, replan, optimize_step) see the context. Replaces the previous optimized_reason + description_optimization_reason string fields.",
 				},
 				"learning_mode": map[string]interface{}{
 					"type":        "string",
@@ -3602,22 +3600,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"learning_llm": map[string]interface{}{
 					"type":        "object",
 					"description": "Override the learning LLM for this step.",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string"},
-						"model_id": map[string]interface{}{"type": "string"},
-					},
-				},
-				"orchestrator_llm": map[string]interface{}{
-					"type":        "object",
-					"description": "Override the orchestrator LLM for todo_task/routing steps.",
-					"properties": map[string]interface{}{
-						"provider": map[string]interface{}{"type": "string"},
-						"model_id": map[string]interface{}{"type": "string"},
-					},
-				},
-				"sub_agent_llm": map[string]interface{}{
-					"type":        "object",
-					"description": "Override the LLM for ALL sub-agents spawned by this step (todo_task routes, orchestration routes).",
 					"properties": map[string]interface{}{
 						"provider": map[string]interface{}{"type": "string"},
 						"model_id": map[string]interface{}{"type": "string"},
@@ -3698,14 +3680,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.SelectedTools = tools
 				}
 			}
-			if val, ok := args["disable_learning"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					// Protect existing true value from accidental reset: LLMs often
-					// include boolean fields as false even when only changing other fields.
-					// Only overwrite if setting to true or existing is not already true.
-					if b || targetConfig.AgentConfigs.DisableLearning == nil || !*targetConfig.AgentConfigs.DisableLearning {
-						targetConfig.AgentConfigs.DisableLearning = &b
-					}
+			if val, ok := args["learning_objective"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.LearningObjective = strings.TrimSpace(s)
 				}
 			}
 			if val, ok := args["lock_learnings"]; ok && val != nil {
@@ -3723,11 +3700,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if b || targetConfig.AgentConfigs.LockCode == nil || !*targetConfig.AgentConfigs.LockCode {
 						targetConfig.AgentConfigs.LockCode = &b
 					}
-				}
-			}
-			if val, ok := args["learning_detail_level"]; ok && val != nil {
-				if s, ok := val.(string); ok && s != "" {
-					targetConfig.AgentConfigs.LearningDetailLevel = s
 				}
 			}
 			if val, ok := args["learning_mode"]; ok && val != nil {
@@ -3784,12 +3756,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							// Validate optimization prerequisites before marking as optimized
 							var missing []string
 
-							// 1. Check learnings exist — skipped when learning is intentionally
-							//    disabled for this step (DisableLearning=true), since there
-							//    will be no learning files by design.
-							learningDisabled := targetConfig.AgentConfigs != nil &&
-								targetConfig.AgentConfigs.DisableLearning != nil &&
-								*targetConfig.AgentConfigs.DisableLearning
+							// 1. Check learnings exist — skipped when learning is off for this
+							//    step (learning_objective empty = opt-out = no learning files
+							//    by design).
+							learningDisabled := targetConfig.AgentConfigs == nil ||
+								strings.TrimSpace(targetConfig.AgentConfigs.LearningObjective) == ""
 							learningsPath := getLearningFolderPathByStepID("", stepID, "", iwm.controller.isEvaluationMode)
 							isLearnCodeStep := isScriptedExecutionModeConfig(targetConfig.AgentConfigs)
 							if !learningDisabled {
@@ -3860,17 +3831,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.Optimized = &b
 					// Sync: optimized and lock_learnings move together
 					targetConfig.AgentConfigs.LockLearnings = &b
-					// Capture/clear the optimized_reason alongside the flag so the reason
-					// stays in lock-step with the state.
-					if b {
-						if reasonVal, ok := args["optimized_reason"]; ok && reasonVal != nil {
-							if s, ok := reasonVal.(string); ok {
-								targetConfig.AgentConfigs.OptimizedReason = strings.TrimSpace(s)
-							}
-						}
-					} else {
-						targetConfig.AgentConfigs.OptimizedReason = ""
-					}
 				}
 			}
 			if val, ok := args["use_code_execution_mode"]; ok && val != nil {
@@ -3888,54 +3848,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.DeclaredExecutionModeReason = strings.TrimSpace(s)
 				}
 			}
-			if val, ok := args["description_optimized"]; ok && val != nil {
+			if val, ok := args["description_reviewed"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
-					targetConfig.AgentConfigs.DescriptionOptimized = &b
+					targetConfig.AgentConfigs.DescriptionReviewed = &b
 				}
 			}
-			if val, ok := args["description_optimization_reason"]; ok && val != nil {
+			if val, ok := args["review_notes"]; ok && val != nil {
 				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.DescriptionOptimizationReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["description_learnings_alignment_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.DescriptionLearningsAlignmentReason = strings.TrimSpace(s)
-				}
-			}
-			if val, ok := args["description_no_secrets"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					targetConfig.AgentConfigs.DescriptionNoSecrets = &b
-				}
-			}
-			if val, ok := args["description_secrets_review_reason"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.DescriptionSecretsReviewReason = strings.TrimSpace(s)
+					targetConfig.AgentConfigs.ReviewNotes = strings.TrimSpace(s)
 				}
 			}
 
 			// If the caller declared a mode, sync the low-level mode flags to match it.
 			syncDeclaredExecutionModeConfig(targetConfig.AgentConfigs)
-
-			// Keep description hash in sync whenever description review or mode review is updated.
-			descriptionReviewTouched := false
-			for _, key := range []string{
-				"declared_execution_mode",
-				"description_optimized",
-				"description_optimization_reason",
-			} {
-				if _, ok := args[key]; ok {
-					descriptionReviewTouched = true
-					break
-				}
-			}
-			if descriptionReviewTouched {
-				if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil && iwm.controller.approvedPlan != nil {
-					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
-						targetConfig.AgentConfigs.DescriptionHash = computeDescriptionHash(stepInfo.Step.GetDescription())
-					}
-				}
-			}
 
 			// Parse LLM override fields
 			llmFields := []struct {
@@ -3944,8 +3869,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}{
 				{"execution_llm", &targetConfig.AgentConfigs.ExecutionLLM},
 				{"learning_llm", &targetConfig.AgentConfigs.LearningLLM},
-				{"orchestrator_llm", &targetConfig.AgentConfigs.OrchestratorLLM},
-				{"sub_agent_llm", &targetConfig.AgentConfigs.SubAgentLLM},
 			}
 			for _, f := range llmFields {
 				if val, ok := args[f.key]; ok && val != nil {
@@ -3972,6 +3895,30 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						logger.Warn(fmt.Sprintf("⚠️ Failed to parse validation_schema for step %q: %v", stepID, jsonErr))
 					}
 				}
+			}
+
+			// Apply clear_fields LAST so explicit clears override any sets in the same call.
+			// Writing null to a setter field is a no-op by design (LLMs send false/nil for
+			// unrelated booleans); clear_fields is the explicit opt-in for removal.
+			var clearedFields []string
+			var unknownClearFields []string
+			if rawClear, ok := args["clear_fields"]; ok && rawClear != nil {
+				if arr, ok := rawClear.([]interface{}); ok {
+					for _, v := range arr {
+						name, ok := v.(string)
+						if !ok || name == "" {
+							continue
+						}
+						if clearStepConfigField(targetConfig, name) {
+							clearedFields = append(clearedFields, name)
+						} else {
+							unknownClearFields = append(unknownClearFields, name)
+						}
+					}
+				}
+			}
+			if len(unknownClearFields) > 0 {
+				return fmt.Sprintf("unknown clear_fields entries %v — no changes applied. Valid names are listed in the tool's clear_fields description.", unknownClearFields), nil
 			}
 
 			// --- Code-level validations ---
@@ -4071,27 +4018,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			// 6. Validate learning config consistency
-			isDisabled := targetConfig.AgentConfigs.DisableLearning != nil && *targetConfig.AgentConfigs.DisableLearning
+			// 6. Validate learning config consistency.
+			// Learning is opt-in via non-empty learning_objective. If the agent tries to
+			// lock learnings or override learning_llm without setting an objective, the
+			// step will never produce learnings — surface that mismatch as an error.
+			hasObjective := strings.TrimSpace(targetConfig.AgentConfigs.LearningObjective) != ""
 			isLocked := targetConfig.AgentConfigs.LockLearnings != nil && *targetConfig.AgentConfigs.LockLearnings
-			if isDisabled && isLocked {
-				warnings = append(warnings, "Both disable_learning and lock_learnings are true. disable_learning takes precedence — learning agent won't run and existing learnings won't be used. If you want to keep using existing learnings without updating them, set disable_learning=false and lock_learnings=true instead.")
-			}
-
-			// 7. Validate learning_detail_level
-			if targetConfig.AgentConfigs.LearningDetailLevel != "" {
-				validLevels := map[string]bool{"exact": true, "none": true}
-				if !validLevels[targetConfig.AgentConfigs.LearningDetailLevel] {
-					errors = append(errors, fmt.Sprintf("learning_detail_level %q is not recognized. Valid values: 'exact', 'none'.", targetConfig.AgentConfigs.LearningDetailLevel))
+			if !hasObjective {
+				if isLocked {
+					errors = append(errors, "lock_learnings=true requires a non-empty learning_objective. Locking a step with no objective means learning never ran; set learning_objective first or unlock.")
+				}
+				if targetConfig.AgentConfigs.LearningLLM != nil {
+					errors = append(errors, "learning_llm override requires a non-empty learning_objective. Learning is off by default; set learning_objective to opt in.")
 				}
 			}
 
-			// 8. Validate learning_mode
+			// 7. Validate learning_mode
 			if targetConfig.AgentConfigs.LearningMode != "" {
 				validModes := map[string]bool{"auto": true, "human_assisted": true}
 				if !validModes[targetConfig.AgentConfigs.LearningMode] {
 					errors = append(errors, fmt.Sprintf("learning_mode %q is not recognized. Valid values: 'auto', 'human_assisted'.", targetConfig.AgentConfigs.LearningMode))
 				}
+			}
+
+			// 8. Validate KB access ↔ contribution consistency.
+			// When knowledgebase_access grants write, knowledgebase_contribution MUST be
+			// non-empty — otherwise the post-step KB update agent is silently skipped
+			// (controller_kb_update.go:33 gates on a non-empty contribution). Mirror of
+			// the learning rule: opting in to the write-capable access is meaningless
+			// without an extraction instruction for the KB agent to act on.
+			if kbAccessAllowsWrite(targetConfig.AgentConfigs.KnowledgebaseAccess) &&
+				strings.TrimSpace(targetConfig.AgentConfigs.KnowledgebaseContribution) == "" {
+				errors = append(errors, fmt.Sprintf("knowledgebase_access=%q requires a non-empty knowledgebase_contribution. Write access without an extraction instruction means the post-step KB update agent never runs; set knowledgebase_contribution or drop access to \"read\"/\"none\".", targetConfig.AgentConfigs.KnowledgebaseAccess))
 			}
 
 			// If there are errors, reject the update and return feedback
@@ -4424,28 +4382,28 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			descLen := len(targetStep.GetDescription())
 			isSimpleStep := descLen < 200 && targetStep.StepType() == StepTypeRegular
 
-			disableLearning := false
+			learningOptedIn := false
 			lockLearnings := false
 			if stepCfg != nil {
-				if stepCfg.DisableLearning != nil && *stepCfg.DisableLearning {
-					disableLearning = true
+				if strings.TrimSpace(stepCfg.LearningObjective) != "" {
+					learningOptedIn = true
 				}
 				if stepCfg.LockLearnings != nil && *stepCfg.LockLearnings {
 					lockLearnings = true
 				}
 			}
 
-			if disableLearning {
-				result.WriteString("✅ Learning is disabled for this step.\n\n")
+			if !learningOptedIn {
+				result.WriteString("✅ Learning is off (learning_objective empty — the default).\n\n")
 			} else if lockLearnings {
 				result.WriteString("✅ Learnings are locked (using existing, not generating new).\n\n")
 			} else if isSimpleStep {
 				suggestions++
 				result.WriteString("⚠️ **Step looks simple** (short description, regular type). Consider:\n")
-				result.WriteString("   → `disable_learning: true` if this step doesn't benefit from accumulated knowledge\n")
+				result.WriteString("   → Clear `learning_objective` if this step doesn't benefit from accumulated knowledge\n")
 				result.WriteString("   → `lock_learnings: true` after a few successful runs to freeze learnings and skip the learning agent\n\n")
 			} else {
-				result.WriteString("ℹ️ Learning is enabled. After successful runs, consider `lock_learnings: true` to freeze learnings and save execution time.\n\n")
+				result.WriteString("ℹ️ Learning is enabled (learning_objective set). After successful runs, consider `lock_learnings: true` to freeze learnings and save execution time.\n\n")
 			}
 
 			// === 3. Tool/Server Usage Analysis ===
@@ -4746,7 +4704,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"ExecutionHistory":         "",
 				"ValidationResult":         "N/A — this is a reorganization task, not an execution result.",
 				"CurrentObjective":         iwm.controller.GetObjective(),
-				"LearningDetailLevel":      "exact",
 				"LearningTrigger":          "success",
 				"IsScriptedCodeMode":       "false",
 				"AllowedTools":             "",
@@ -6008,7 +5965,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						continue
 					}
 					ac := sc.AgentConfigs
-					if ac.ExecutionLLM == nil && ac.LearningLLM == nil && ac.OrchestratorLLM == nil && ac.SubAgentLLM == nil {
+					if ac.ExecutionLLM == nil && ac.LearningLLM == nil {
 						continue
 					}
 					if !hasOverrides {
@@ -6021,12 +5978,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					if ac.LearningLLM != nil {
 						sb.WriteString(fmt.Sprintf("  - learning: %s/%s\n", ac.LearningLLM.Provider, ac.LearningLLM.ModelID))
-					}
-					if ac.OrchestratorLLM != nil {
-						sb.WriteString(fmt.Sprintf("  - orchestrator: %s/%s\n", ac.OrchestratorLLM.Provider, ac.OrchestratorLLM.ModelID))
-					}
-					if ac.SubAgentLLM != nil {
-						sb.WriteString(fmt.Sprintf("  - sub_agent: %s/%s\n", ac.SubAgentLLM.Provider, ac.SubAgentLLM.ModelID))
 					}
 				}
 				if !hasOverrides {
@@ -8249,7 +8200,7 @@ This is a **read-only review**:
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
 9. **Check persistent-store discipline**: Three stores survive across runs — ` + "`" + `learnings/` + "`" + ` (HOW to run), ` + "`" + `knowledgebase/graph.json` + "`" + ` (durable facts + relationships; written only by the post-step KB update agent), ` + "`" + `db/*.json` + "`" + ` (per-run state/results). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, or failing to declare ` + "`" + `knowledgebase_contribution` + "`" + ` on steps that produce domain facts. Per-step KB config: ` + "`" + `knowledgebase_access` + "`" + ` (read/write/read-write/none; defaults to "none") and ` + "`" + `knowledgebase_contribution` + "`" + ` (extraction instruction; empty = KB update agent skipped for that step).
-10. **Check lock consistency**: Three locks freeze workflow state — ` + "`" + `lock_learnings` + "`" + ` (per-step: freezes SKILL.md + skips learning agent), ` + "`" + `lock_code` + "`" + ` (per-step, learn_code only: freezes ` + "`" + `learnings/{step-id}/main.py` + "`" + ` against fix-loop rewrites), ` + "`" + `lock_knowledgebase` + "`" + ` (workflow-level: freezes post-step KB update agent). Flag stale locks: a locked step whose current description hash differs from its stored ` + "`" + `description_hash` + "`" + ` (description changed since review) has frozen learnings/code that no longer match the intent — recommend unlocking and re-running. Also flag inconsistency like ` + "`" + `optimized=true` + "`" + ` with ` + "`" + `lock_learnings=false` + "`" + ` or learn_code steps that are optimized but ` + "`" + `lock_code=false` + "`" + ` (fix loop can still overwrite a "done" script).
+10. **Check lock consistency**: Three locks freeze workflow state — ` + "`" + `lock_learnings` + "`" + ` (per-step: freezes SKILL.md + skips learning agent), ` + "`" + `lock_code` + "`" + ` (per-step, learn_code only: freezes ` + "`" + `learnings/{step-id}/main.py` + "`" + ` against fix-loop rewrites), ` + "`" + `lock_knowledgebase` + "`" + ` (workflow-level: freezes post-step KB update agent). Flag inconsistency like ` + "`" + `optimized=true` + "`" + ` with ` + "`" + `lock_learnings=false` + "`" + ` or learn_code steps that are optimized but ` + "`" + `lock_code=false` + "`" + ` (fix loop can still overwrite a "done" script). If a step description has meaningfully changed since the last review, recommend clearing ` + "`" + `description_reviewed` + "`" + ` and re-reviewing before keeping the locks.
 
 ## CONTEXT
 
@@ -8594,7 +8545,7 @@ Per-step KB config:
 {{.MainPyAuthoringRules}}
 4. **Do not change step structure** — Do not add, remove, or reorder steps. Use replan_workflow_from_results for structural changes.
 5. **Preserve what works** — Do not modify steps that passed evaluation. Do not weaken existing pre-validation rules.
-6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true, lock_learnings=true, and (for learn_code steps) lock_code=true to freeze `+"`learnings/{step-id}/main.py`"+` against future fix-loop rewrites. Always pass ` + "`" + `optimized_reason` + "`" + ` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
+6. **Mark reliable steps** — If a step passed across ALL groups with scores >= 8, increment successful_runs via update_step_config. If successful_runs >= 3, set optimized=true, lock_learnings=true, and (for learn_code steps) lock_code=true to freeze `+"`learnings/{step-id}/main.py`"+` against future fix-loop rewrites. Always pass ` + "`" + `review_notes` + "`" + ` with a one-sentence justification citing the concrete evidence (groups passed, eval scores, pre-validation presence, clean tool usage) — future passes read this to decide whether to unlock.
 7. **Portability check** — When touching a step, scan for hardcoded user-specific values (account IDs, sheet URLs, paths) in descriptions and learnings. Replace with variable placeholders.
 8. **Store discipline** — If the failure evidence shows a step writing cross-run state into learnings/ or plan.json, recommend moving that content to ` + "`" + `db/` + "`" + ` or to the KB (via ` + "`" + `knowledgebase_contribution` + "`" + `) as appropriate.
 
@@ -8705,7 +8656,7 @@ When you finish, name the group explicitly in your summary (e.g. "Hardened step 
 5. **For each passing step** ({{if .GroupName}}passed for `+"`{{.GroupName}}`"+`{{else}}passed ALL groups{{end}}):
    - If successful_runs < 3, increment via update_step_config
    - If successful_runs >= 3, set optimized=true, lock_learnings=true, and (learn_code steps only) lock_code=true — freezes main.py so a single future transient failure won't trigger the fix loop to rewrite a proven script
-   - **Unlock guard**: If the step's current description hash does not match the stored `+"`description_hash`"+` (i.e., description_optimized went stale), do NOT auto-lock. Instead flag the step as "description changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
+   - **Unlock guard**: If you suspect the step description changed since the last review (description_reviewed may no longer reflect the current description), do NOT auto-lock. Instead flag the step as "description may have changed since last review — re-review before locking" and leave lock_learnings / lock_code at their previous values.{{if .GroupName}}
    - **Single-group caution**: Marking optimized after only one group passing is weaker evidence than after all-groups passing. Be more conservative — prefer incrementing successful_runs to locking outright unless the count is already at 3+.{{end}}
 
 6. **Produce a summary** with:
@@ -9484,9 +9435,8 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 			mode := "code_exec"
 			declaredMode := ""
 			lockLearnings := false
-			disableLearning := false
+			learningOptedIn := false
 			descriptionReviewed := false
-			descriptionNoSecrets := false
 			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
 				optimized = *sc.AgentConfigs.Optimized
 			}
@@ -9497,22 +9447,17 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
-				if sc.AgentConfigs.DisableLearning != nil {
-					disableLearning = *sc.AgentConfigs.DisableLearning
-				}
+				learningOptedIn = strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
-				if sc.AgentConfigs.DescriptionOptimized != nil {
-					descriptionReviewed = *sc.AgentConfigs.DescriptionOptimized
-				}
-				if sc.AgentConfigs.DescriptionNoSecrets != nil {
-					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
+				if sc.AgentConfigs.DescriptionReviewed != nil {
+					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
 				}
 			}
 			lockCode := false
 			if sc.AgentConfigs != nil && sc.AgentConfigs.LockCode != nil {
 				lockCode = *sc.AgentConfigs.LockCode
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, disableLearning, descriptionReviewed, descriptionNoSecrets))
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, learning_opted_in=%v, description_reviewed=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, learningOptedIn, descriptionReviewed))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -9601,9 +9546,8 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 			mode := "code_exec"
 			declaredMode := ""
 			lockLearnings := false
-			disableLearning := false
+			learningOptedIn := false
 			descriptionReviewed := false
-			descriptionNoSecrets := false
 			if sc.AgentConfigs != nil {
 				if sc.AgentConfigs.Optimized != nil {
 					optimized = *sc.AgentConfigs.Optimized
@@ -9615,21 +9559,16 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
-				if sc.AgentConfigs.DisableLearning != nil {
-					disableLearning = *sc.AgentConfigs.DisableLearning
-				}
-				if sc.AgentConfigs.DescriptionOptimized != nil {
-					descriptionReviewed = *sc.AgentConfigs.DescriptionOptimized
-				}
-				if sc.AgentConfigs.DescriptionNoSecrets != nil {
-					descriptionNoSecrets = *sc.AgentConfigs.DescriptionNoSecrets
+				learningOptedIn = strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
+				if sc.AgentConfigs.DescriptionReviewed != nil {
+					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
 				}
 			}
 			lockCode := false
 			if sc.AgentConfigs != nil && sc.AgentConfigs.LockCode != nil {
 				lockCode = *sc.AgentConfigs.LockCode
 			}
-			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, disable_learning=%v, description_reviewed=%v, description_no_secrets=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, disableLearning, descriptionReviewed, descriptionNoSecrets))
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, lock_learnings=%v, lock_code=%v, learning_opted_in=%v, description_reviewed=%v\n", sc.ID, optimized, mode, declaredMode, lockLearnings, lockCode, learningOptedIn, descriptionReviewed))
 		}
 		stepConfigSummary = sb.String()
 	}
@@ -9964,7 +9903,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 			declaredMode := ""
 			successfulRuns := 0
 			locked := false
-			optimizedReason := ""
+			reviewNotes := ""
 			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
 				optimized = *sc.AgentConfigs.Optimized
 			}
@@ -9979,11 +9918,11 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 				if sc.AgentConfigs.LockLearnings != nil {
 					locked = *sc.AgentConfigs.LockLearnings
 				}
-				optimizedReason = sc.AgentConfigs.OptimizedReason
+				reviewNotes = sc.AgentConfigs.ReviewNotes
 			}
 			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, locked=%v", sc.ID, optimized, mode, declaredMode, successfulRuns, locked))
-			if optimized && optimizedReason != "" {
-				sb.WriteString(fmt.Sprintf(", optimized_reason=%q", optimizedReason))
+			if optimized && reviewNotes != "" {
+				sb.WriteString(fmt.Sprintf(", review_notes=%q", reviewNotes))
 			}
 			sb.WriteString("\n")
 		}

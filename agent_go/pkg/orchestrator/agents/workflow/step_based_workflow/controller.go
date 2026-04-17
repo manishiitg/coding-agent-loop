@@ -90,9 +90,6 @@ type StepBasedWorkflowOrchestrator struct {
 	// Evaluation mode tracking
 	isEvaluationMode bool // Whether we're running evaluation steps
 
-	// Learning detail level preference (set once before execution, used for all learning phases)
-	learningDetailLevel string // always "exact"
-
 	// Approved plan storage
 	approvedPlan *PlanningResponse // Store approved plan
 
@@ -526,9 +523,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 	return hcpo.browserMode
 }
 
-// getConditionalAgentForStep returns the conditional agent to use for a specific step
-// Priority: step config conditional_llm > default conditionalAgent
-// Uses the standard factory pattern for proper event bridge connection and context setup
+// getConditionalAgentForStep returns the conditional agent to use for a specific step.
+// The LLM is selected by the tier resolver based on step learning maturity and the
+// Optimized flag; there is no step-level LLM override for the conditional evaluator.
+// Uses the standard factory pattern for proper event bridge connection and context setup.
 // agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
 // phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
 func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx context.Context, step PlanStepInterface, stepIndex int, agentName, phase string) *WorkflowConditionalAgent {
@@ -1224,19 +1222,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetRunSingleStepMode(enabled bool, st
 // SetApprovedPlan sets the approved plan for the orchestrator
 func (hcpo *StepBasedWorkflowOrchestrator) SetApprovedPlan(plan *PlanningResponse) {
 	hcpo.approvedPlan = plan
-}
-
-// GetLearningDetailLevel returns the stored learning detail level preference
-func (hcpo *StepBasedWorkflowOrchestrator) GetLearningDetailLevel() string {
-	if hcpo.learningDetailLevel == "" {
-		return "exact" // Default
-	}
-	return hcpo.learningDetailLevel
-}
-
-// SetLearningDetailLevel sets the learning detail level preference
-func (hcpo *StepBasedWorkflowOrchestrator) SetLearningDetailLevel(level string) {
-	hcpo.learningDetailLevel = level
 }
 
 // SetSkipHumanInput sets the skip human input mode (runs learning but skips human feedback)

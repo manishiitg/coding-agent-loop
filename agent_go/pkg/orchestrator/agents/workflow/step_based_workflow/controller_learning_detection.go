@@ -261,14 +261,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 		}
 	}
 
-	// Set LockLearnings = true AND Optimized = true together
+	// Set LockLearnings = true AND Optimized = true together.
 	// When the skill is built (3+ successful runs), the step is optimized.
 	// Optimized triggers tier downgrade to lower-cost LLMs at runtime.
 	lockValue := true
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
 	stepConfig.AgentConfigs.Optimized = &lockValue
-	if strings.TrimSpace(stepConfig.AgentConfigs.OptimizedReason) == "" {
-		stepConfig.AgentConfigs.OptimizedReason = "Auto-locked after 3+ successful runs with learnings present and pre-validation schema defined."
+	if strings.TrimSpace(stepConfig.AgentConfigs.ReviewNotes) == "" {
+		stepConfig.AgentConfigs.ReviewNotes = "Auto-locked after 3+ successful runs with learnings present and pre-validation schema defined."
 	}
 
 	// Update the config in the slice

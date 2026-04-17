@@ -156,12 +156,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 	executionHistory := templateVars["ExecutionHistory"]
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
-	learningDetailLevel := templateVars["LearningDetailLevel"]
 	existingLearningsContent := templateVars["ExistingLearningsContent"] // Existing learnings to build upon
-	// Default to "exact" if not provided
-	if learningDetailLevel == "" {
-		learningDetailLevel = "exact"
-	}
 
 	// Prepare template variables
 	learningTemplateVars := map[string]string{
@@ -174,7 +169,6 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 		"ExecutionHistory":         executionHistory,
 		"ValidationResult":         validationResult,
 		"VariableNames":            variableNames,
-		"LearningDetailLevel":      learningDetailLevel,
 		"ExistingLearningsContent": existingLearningsContent, // Pass existing learnings to build upon
 		"LearningTrigger":          templateVars["LearningTrigger"],
 	}

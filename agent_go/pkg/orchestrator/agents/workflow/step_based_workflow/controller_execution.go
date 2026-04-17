@@ -1544,15 +1544,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
-			// Check if learning is disabled - if so, skip reading learnings entirely
-			// Learning is disabled if explicitly set via step config, if this is a routing step,
-			// or if running in evaluation mode (eval/report steps don't produce learnable outcomes).
-			isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step) || hcpo.isEvaluationMode
-			isLearningDetailLevelNone := false
-			if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
-				isLearningDetailLevelNone = true
-			}
-			isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+			// Check if learning is disabled - if so, skip reading learnings entirely.
+			// Learning is OPT-IN per step: the learning agent only runs when the step's
+			// learning_objective is non-empty (mirrors knowledgebase_contribution for KB).
+			// Also disabled for routing steps and evaluation-mode runs regardless.
+			isLearningDisabled := (agentConfigs == nil || strings.TrimSpace(agentConfigs.LearningObjective) == "") || isRoutingStep(step) || hcpo.isEvaluationMode
 
 			if isLearningDisabled {
 				// Learning is disabled - skip reading learnings and set empty strings
@@ -2126,16 +2122,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Validation being disabled does NOT prevent learning from running
 				// Learning will run if: not disabled, not locked, and not skipped due to temp LLM override
 				// LEARNING DISABLED: Skip learning agents entirely
-				// Check step-specific learning detail level
+				// Learning is OPT-IN per step via non-empty learning_objective. Also disabled
+				// for routing steps and evaluation-mode runs (eval/report steps don't produce
+				// learnable outcomes).
 				agentConfigs = getAgentConfigs(step)
-				// Learning is disabled if explicitly set via step config, if this is a routing step,
-				// or if running in evaluation mode (eval/report steps don't produce learnable outcomes).
-				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step) || hcpo.isEvaluationMode
-				isLearningDetailLevelNone := false
-				if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
-					isLearningDetailLevelNone = true
-				}
-				isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+				isLearningDisabled := (agentConfigs == nil || strings.TrimSpace(agentConfigs.LearningObjective) == "") || isRoutingStep(step) || hcpo.isEvaluationMode
 				// CODE EXECUTION MODE: Force learning enabled regardless of step config (but not in eval mode)
 				if isCodeExecutionMode && isLearningDisabled && !hcpo.isEvaluationMode {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1))

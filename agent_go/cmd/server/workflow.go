@@ -1772,7 +1772,7 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Read step configs to get agent configs (use_code_execution_mode, learning_detail_level)
+	// Read step configs to get agent configs (use_code_execution_mode, lock_learnings, etc.)
 	stepConfigs, err := readStepConfigFromWorkspace(r.Context(), workspacePath)
 	if err != nil {
 		// Log warning but continue - step configs may not exist
@@ -1805,9 +1805,6 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 			}
 			if agentConfigs.UseCodeExecutionMode != nil {
 				metadata["use_code_execution_mode"] = *agentConfigs.UseCodeExecutionMode
-			}
-			if agentConfigs.LearningDetailLevel != "" {
-				metadata["learning_detail_level"] = agentConfigs.LearningDetailLevel
 			}
 			if agentConfigs.LockLearnings != nil {
 				metadata["lock_learnings"] = *agentConfigs.LockLearnings

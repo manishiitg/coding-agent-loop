@@ -207,14 +207,10 @@ type ConsistencyRule struct {
 type AgentConfigs struct {
 	ExecutionLLM                        *AgentLLMConfig `json:"execution_llm,omitempty"`
 	LearningLLM                         *AgentLLMConfig `json:"learning_llm,omitempty"`
-	ConditionalLLM                      *AgentLLMConfig `json:"conditional_llm,omitempty"`                        // Step-specific conditional LLM for conditional step evaluation
 	ExecutionMaxTurns                   *int            `json:"execution_max_turns,omitempty"`                    // default: 100
-	LearningMaxTurns                    *int            `json:"learning_max_turns,omitempty"`                     // default: 100
-	OrchestrationMaxIterations          *int            `json:"orchestration_max_iterations,omitempty"`           // default: orchestrator max turns (typically 100)
-	DisableLearning                     *bool           `json:"disable_learning,omitempty"`                       // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LearningObjective                   string          `json:"learning_objective,omitempty"`                     // User-authored instruction for the learning agent: what patterns/selectors/recipes should SKILL.md capture from successful runs of this step. Learning is OFF BY DEFAULT for every step — the learning agent runs ONLY when this field is non-empty (mirrors knowledgebase_contribution for the KB agent). Leave empty to skip learning entirely.
 	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LockCode                            *bool           `json:"lock_code,omitempty"`                              // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningDetailLevel                 string          `json:"learning_detail_level,omitempty"`                  // "exact" or "none" (default: "exact")
 	LearningMode                        string          `json:"learning_mode,omitempty"`                          // "human_assisted" (default) or "auto". human_assisted = skip automatic learning; re-run the step with execute_step(skip_learning=false) when fresh learnings are needed. auto = learning runs automatically after every successful execution.
 	SelectedServers                     []string        `json:"selected_servers,omitempty"`                       // step-level MCP server selection (subset of preset servers)
 	SelectedTools                       []string        `json:"selected_tools,omitempty"`                         // step-level tool selection (format: "server:tool" or "server:*" for all tools)
@@ -222,27 +218,19 @@ type AgentConfigs struct {
 	EnableContextOffloading             *bool           `json:"enable_context_offloading,omitempty"`              // Enable/disable context offloading (default: true if nil)
 	UseCodeExecutionMode                *bool           `json:"use_code_execution_mode,omitempty"`                // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnabledSkills                       []string        `json:"enabled_skills,omitempty"`                         // Step-level skill selection (skill folder names, overrides preset if specified)
-	KeepLearningFull                    *bool           `json:"keep_learning_full,omitempty"`                     // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
 	KnowledgebaseAccess                 string          `json:"knowledgebase_access,omitempty"`                   // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none").
 	KnowledgebaseContribution           string          `json:"knowledgebase_contribution,omitempty"`             // User-authored instruction for the KB update agent — what to extract from this step's output. Required trigger for KB update agent; if empty, KB update is skipped for this step even with write access.
 	TodoTaskOrchestratorTier            *int            `json:"todo_task_orchestrator_tier,omitempty"`            // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	EnableDynamicTierSelection          *bool           `json:"enable_dynamic_tier_selection,omitempty"`          // Allow todo task orchestrator to choose tier for sub-agents
-	OrchestratorLLM                     *AgentLLMConfig `json:"orchestrator_llm,omitempty"`                       // Direct LLM override for orchestrator (works in both tiered and manual modes)
-	SubAgentLLM                         *AgentLLMConfig `json:"sub_agent_llm,omitempty"`                          // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
 	DisableParallelToolExecution        *bool           `json:"disable_parallel_tool_execution,omitempty"`        // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	DisableTierOptimization             *bool           `json:"disable_tier_optimization,omitempty"`              // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
 	Optimized                           *bool           `json:"optimized,omitempty"`                              // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
-	OptimizedReason                     string          `json:"optimized_reason,omitempty"`                       // Why this step was marked optimized — persisted so future LLM passes (harden, replan, optimize_step) have context for what was verified and why
-	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
+	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
 	LearnCodeMaxFixIter                 *int            `json:"learn_code_max_fix_iterations,omitempty"`          // Max LLM fix iterations when main.py execution fails (default: 5)
 	DeclaredExecutionMode               string          `json:"declared_execution_mode,omitempty"`                // Required mode decision for the step: "learn_code" or "code_exec"
-	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Why this mode is the best fit for the step
-	DescriptionHash                     string          `json:"description_hash,omitempty"`                       // SHA256 of the current step description. If it changes, optimization review is stale.
-	DescriptionOptimized                *bool           `json:"description_optimized,omitempty"`                  // True when the description has been reviewed and judged optimized for execution.
-	DescriptionOptimizationReason       string          `json:"description_optimization_reason,omitempty"`        // Why the current description is considered optimized.
-	DescriptionLearningsAlignmentReason string          `json:"description_learnings_alignment_reason,omitempty"` // How the description reflects the learnings gathered so far.
-	DescriptionNoSecrets                *bool           `json:"description_no_secrets,omitempty"`                 // True when the description has been reviewed for secrets/hardcoded values and cleared.
-	DescriptionSecretsReviewReason      string          `json:"description_secrets_review_reason,omitempty"`      // Why the description is considered free of secrets/hardcoded values.
+	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
+	DescriptionReviewed                 *bool           `json:"description_reviewed,omitempty"`                   // True when the step description has been reviewed — clarity AND secrets/hardcoded values. Single flag consolidating the previous description_optimized + description_no_secrets booleans.
+	ReviewNotes                         string          `json:"review_notes,omitempty"`                           // Free-form rationale covering why the step is optimized and/or why the description is considered reviewed. Replaces the previous optimized_reason + description_optimization_reason string fields.
 	GlobalSkillObjective                string          `json:"global_skill_objective,omitempty"`                 // Objective for the global skill — what domain knowledge should it capture and why
 }
 

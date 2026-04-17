@@ -171,7 +171,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 
 	var manifest struct {
 		ExecutionDefaults struct {
-			DisableLearning              *bool    `json:"disable_learning"`
 			DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution"`
 			ExecutionMaxTurns            *int     `json:"execution_max_turns"`
 			EnabledCustomTools           []string `json:"enabled_custom_tools"`
@@ -183,13 +182,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 	}
 
 	ed := manifest.ExecutionDefaults
-	if ed.DisableLearning == nil && ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 && ed.GlobalSkillObjective == "" {
+	if ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 && ed.GlobalSkillObjective == "" {
 		return nil, nil
 	}
 
 	hcpo.GetLogger().Info("📁 Using step overrides from workflow.json execution_defaults")
 	return &AgentConfigs{
-		DisableLearning:              ed.DisableLearning,
 		DisableParallelToolExecution: ed.DisableParallelToolExecution,
 		ExecutionMaxTurns:            ed.ExecutionMaxTurns,
 		EnabledCustomTools:           ed.EnabledCustomTools,
@@ -288,8 +286,8 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.LockLearnings != nil {
 		target.LockLearnings = source.LockLearnings
 	}
-	if source.DisableLearning != nil {
-		target.DisableLearning = source.DisableLearning
+	if source.LearningObjective != "" {
+		target.LearningObjective = source.LearningObjective
 	}
 	if source.ExecutionLLM != nil {
 		target.ExecutionLLM = source.ExecutionLLM
@@ -310,9 +308,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.EnabledSkills != nil {
 		target.EnabledSkills = source.EnabledSkills
 	}
-	if source.KeepLearningFull != nil {
-		target.KeepLearningFull = source.KeepLearningFull
-	}
 	if source.DisableParallelToolExecution != nil {
 		target.DisableParallelToolExecution = source.DisableParallelToolExecution
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_parallel_tool_execution: %v", stepID, *source.DisableParallelToolExecution))
@@ -327,23 +322,11 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.DeclaredExecutionModeReason != "" {
 		target.DeclaredExecutionModeReason = source.DeclaredExecutionModeReason
 	}
-	if source.DescriptionHash != "" {
-		target.DescriptionHash = source.DescriptionHash
+	if source.DescriptionReviewed != nil {
+		target.DescriptionReviewed = source.DescriptionReviewed
 	}
-	if source.DescriptionOptimized != nil {
-		target.DescriptionOptimized = source.DescriptionOptimized
-	}
-	if source.DescriptionOptimizationReason != "" {
-		target.DescriptionOptimizationReason = source.DescriptionOptimizationReason
-	}
-	if source.DescriptionLearningsAlignmentReason != "" {
-		target.DescriptionLearningsAlignmentReason = source.DescriptionLearningsAlignmentReason
-	}
-	if source.DescriptionNoSecrets != nil {
-		target.DescriptionNoSecrets = source.DescriptionNoSecrets
-	}
-	if source.DescriptionSecretsReviewReason != "" {
-		target.DescriptionSecretsReviewReason = source.DescriptionSecretsReviewReason
+	if source.ReviewNotes != "" {
+		target.ReviewNotes = source.ReviewNotes
 	}
 	if source.GlobalSkillObjective != "" {
 		target.GlobalSkillObjective = source.GlobalSkillObjective

@@ -52,12 +52,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Get agent configs once at the start
 	agentConfigs := getAgentConfigs(step)
 
-	// Use step-specific learning detail level, default to "exact" if not set
-	learningDetailLevel := "exact" // default
-	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
-		learningDetailLevel = agentConfigs.LearningDetailLevel
-	}
-
 	// LOCK LEARNINGS: If learnings are locked, skip the entire learning phase (both success and failure)
 	// Locked means the learnings are considered final — no further learning needed
 	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
@@ -106,20 +100,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// No auto-limit on learning — human decides when to lock via lock_learnings
 
-	// Skip learning if "none" is selected or learning is disabled
-	// CODE EXECUTION MODE: Force learning enabled regardless of step config
-	// Use the provided step-specific code execution mode (already computed with step-level priority)
-	shouldSkipLearning := (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) && !isCodeExecutionMode
-	if shouldSkipLearning {
-		// Learning is disabled - skip learning but record turnCount
-		_ = updateMetadataWhenSkipped("learning disabled")
+	// Skip learning if the step hasn't opted in — i.e. learning_objective is empty.
+	// CODE EXECUTION MODE is a special case: code-exec steps need fresh learnings to
+	// maintain the main.py loop, so learning runs even without an explicit objective.
+	learningOptedIn := agentConfigs != nil && strings.TrimSpace(agentConfigs.LearningObjective) != ""
+	if !learningOptedIn && !isCodeExecutionMode {
+		_ = updateMetadataWhenSkipped("learning not opted in (learning_objective empty)")
 		return nil
-	}
-	if isCodeExecutionMode && (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) {
-		// Override learning detail level to "exact" if it was "none"
-		if learningDetailLevel == "none" {
-			learningDetailLevel = "exact"
-		}
 	}
 
 	// Success learning agent ALWAYS runs - it writes learnings (creates folder if needed)
@@ -195,7 +182,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"ExecutionHistory":    formattedHistory,
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
-		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
 		"LearningTrigger":     "success",
 		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
@@ -296,7 +282,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		return fmt.Errorf("success learning extraction failed: %w", err)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s", learningPathIdentifier))
 
 	// Determine log file path for conversation
 	var validationWorkspacePath string
@@ -317,7 +303,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"type":              "learning_completed",
 		"step_path":         stepPath,
 		"learning_type":     "success",
-		"detail_level":      learningDetailLevel,
 		"result":            learningResult,
 		"conversation_path": convPath,
 		"trigger_reason":    triggerReason,

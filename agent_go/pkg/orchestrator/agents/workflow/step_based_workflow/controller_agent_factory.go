@@ -516,7 +516,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 //
 // Priority for main step execution:
 //  1. step config ExecutionLLM   — explicit per-step override; always wins when set
-//  2. sub_agent_llm from context — skipped if enable_dynamic_tier_selection=true
+//  2. parent ExecutionLLM via context — propagated when spawned by a todo-task
+//     orchestrator whose parent step had an ExecutionLLM set; skipped if
+//     enable_dynamic_tier_selection=true
 //  3. tiered mode                — maturity-based tier resolution (preferred_tier ctx > maturity)
 //  4. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
@@ -1407,8 +1409,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	maxTurns := hcpo.GetMaxTurns()
 	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
 
-	// Use the LLM config passed from caller (which handles ConditionalLLM > ExecutionLLM > tiered priority)
-	// Note: conditionalLLMConfig is selected by the caller with proper priority including ConditionalLLM
+	// Use the LLM config passed from caller. The caller resolves it from the tier
+	// resolver (see getConditionalAgentForStep); there is no step-level LLM
+	// override for conditional evaluators.
 	llmConfig := conditionalLLMConfig
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: conditional override, step execution override, and tiered workflow config are unavailable")
@@ -1881,9 +1884,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			ctx = context.WithValue(ctx, virtualtools.RouteDescriptionsKey, routeDescriptions)
 		}
 
-		// Inject sub_agent_llm override if configured (works in both tiered and manual modes)
-		if execCtx.StepConfig != nil && execCtx.StepConfig.SubAgentLLM != nil {
-			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
+		// Inject the parent step's ExecutionLLM as the sub-agent LLM override so every
+		// sub-agent spawned by this todo-task orchestrator uses the same LLM as the
+		// orchestrator itself. Works in both tiered and manual modes; skipped for
+		// dynamic tier selection at the consumer side.
+		if execCtx.StepConfig != nil && execCtx.StepConfig.ExecutionLLM != nil {
+			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.ExecutionLLM)
 		}
 
 		// Inject get_sub_agent_conversation function

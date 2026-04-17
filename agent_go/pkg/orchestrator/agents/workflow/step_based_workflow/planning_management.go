@@ -362,22 +362,17 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		return nil
 
 	case *HumanInputPlanStep:
-		// Human input step: no execution, validation, or learning - just asks question and blocks
-
-		// Human input steps should never have learning or execution agents
+		// Human input step: no execution, validation, or learning - just asks question and blocks.
+		// With learning now opt-in via non-empty LearningObjective, no explicit disable
+		// is needed — empty objective (the default) means learning never runs. We still
+		// clear any accidentally-set objective so the opt-in rule is enforced for this
+		// step type regardless of what the builder configured.
 		if agentConfigs == nil {
-			val := true
-			agentConfigs = &AgentConfigs{
-				DisableLearning: &val,
-			}
-		} else {
-			// Ensure learning is disabled
-			val := true
-			if agentConfigs.DisableLearning == nil || !*agentConfigs.DisableLearning {
-				disabledConfigs := *agentConfigs
-				disabledConfigs.DisableLearning = &val
-				agentConfigs = &disabledConfigs
-			}
+			agentConfigs = &AgentConfigs{}
+		} else if strings.TrimSpace(agentConfigs.LearningObjective) != "" {
+			cleared := *agentConfigs
+			cleared.LearningObjective = ""
+			agentConfigs = &cleared
 		}
 
 		// Populate runtime field directly on plan step

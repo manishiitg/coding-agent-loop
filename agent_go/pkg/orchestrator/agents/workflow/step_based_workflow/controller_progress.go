@@ -174,10 +174,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 
 	// Add tier info when in tiered mode (for "start" events with a step ID)
 	if hcpo.tierResolver != nil && currentStepId != "" && status == "start" {
-		// Determine step path from step ID for maturity check
-		stepPath := currentStepId // Use step ID as path fallback
-		maturity := hcpo.getLearningMaturity(ctx, currentStepId, stepPath, "")
-		_, tier := hcpo.tierResolver.ResolveForExecution(maturity)
+		_, tier := hcpo.tierResolver.ResolveForExecution()
 		eventData.UsedTier = int(tier)
 		eventData.UsedTierLabel = TierLevelLabel(tier)
 	}

@@ -29,11 +29,10 @@ export interface AgentConfigs {
   pre_discovered_tools?: string[];            // Legacy field still cleaned up by older editor flows
   keep_learning_full?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
-  enable_dynamic_tier_selection?: boolean;    // allow orchestrator to choose tier for sub-agents
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
-  disable_tier_optimization?: boolean;        // If true, always use Tier 1 (high reasoning) regardless of learning maturity
+  disable_tier_optimization?: boolean;        // If true, execution/conditional agents always use Tier 1 (high reasoning)
   global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
 }
 

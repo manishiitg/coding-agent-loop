@@ -87,12 +87,12 @@ Do NOT use call_generic_agent to patch or normalize the declared output file of 
 **CRITICAL**: Before calling any sub-agent, check LEARNING HISTORY for relevant system_behavior entries. Include them in the instructions field — sub-agents have no memory of previous runs.
 
 {{if .EnableDynamicTierSelection}}
-**Tier Selection** (optional preferred_tier parameter):
+**Tier Selection** (REQUIRED preferred_tier parameter — you must pick a tier for every sub-agent call):
 - 1 (High): Complex, novel, critical tasks
 - 2 (Medium): Routine, well-defined tasks
 - 3 (Low): Simple, repetitive tasks
 
-**How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section. If it contains per-route tier recommendations, use those. Otherwise, omit preferred_tier to auto-select based on learning maturity.
+**How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section and use those when available. Otherwise, judge from the route's description and the task difficulty: favour tier 1 for first attempts on novel/complex work, tier 2 for routine work with an established recipe, tier 3 for purely mechanical/validation sub-tasks. There is no automatic fallback — calls without preferred_tier are rejected.
 
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
 {{end}}

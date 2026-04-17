@@ -524,8 +524,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 }
 
 // getConditionalAgentForStep returns the conditional agent to use for a specific step.
-// The LLM is selected by the tier resolver based on step learning maturity and the
-// Optimized flag; there is no step-level LLM override for the conditional evaluator.
+// The LLM is selected by the tier resolver (default Tier 1); there is no step-level
+// LLM override for the conditional evaluator.
 // Uses the standard factory pattern for proper event bridge connection and context setup.
 // agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
 // phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
@@ -544,22 +544,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 
 	// TIERED MODE: Use tier resolver for conditional agents
 	if hcpo.tierResolver != nil {
-		learningMode := ""
-		if agentConfigs != nil {
-			learningMode = agentConfigs.LearningMode
-		}
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
-		// Optimized steps have built skills — use lowest viable tier
-		if agentConfigs != nil &&
-			agentConfigs.Optimized != nil && *agentConfigs.Optimized &&
-			maturity >= HasLearnings {
-			maturity = LockedLearnings
-		}
 		if agentConfigs != nil && agentConfigs.DisableTierOptimization != nil && *agentConfigs.DisableTierOptimization {
 			llmConfig = hcpo.tierResolver.ResolveTier(TierHigh)
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using Tier 1 (High) — tier optimization disabled", step.GetTitle()))
 		} else {
-			llmConfig, _ = hcpo.tierResolver.ResolveForConditional(maturity)
+			llmConfig, _ = hcpo.tierResolver.ResolveForConditional()
 		}
 		if llmConfig == nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Tiered mode: No valid LLM configuration for conditional agent step '%s'", step.GetTitle()))
@@ -1306,39 +1295,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatValidationResponseForTemplate(v
 }
 
 // conversation history formatting moved to shared.FormatConversationHistory
-
-// getLearningMaturity determines the learning maturity level for a step by counting learning files
-// 0 files = NoLearnings, 1 file = HasLearnings, 2+ files = MatureLearnings
-// For human_assisted learning mode, 1 file is treated as MatureLearnings since curated learnings are higher quality.
-func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Context, stepID string, stepPath string, learningMode string) LearningMaturity {
-	if stepID == "" {
-		return NoLearnings
-	}
-
-	// Check if learnings folder is empty first
-	learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath)
-	if err != nil || learningsEmpty {
-		return NoLearnings
-	}
-
-	// Read learning files to count them
-	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
-	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-	if err != nil || len(learningFiles) == 0 {
-		return NoLearnings
-	}
-
-	if len(learningFiles) == 1 {
-		// Human-assisted learnings are manually curated and higher quality,
-		// so even 1 file is sufficient to consider the step mature.
-		if learningMode == "human_assisted" {
-			return MatureLearnings
-		}
-		return HasLearnings
-	}
-
-	return MatureLearnings
-}
 
 // SetSelectedRunFolder sets the run folder for the controller (exported for use in server.go chat mode).
 func (hcpo *StepBasedWorkflowOrchestrator) SetSelectedRunFolder(folder string) {

@@ -5,8 +5,8 @@
 Tiered allocation is the workflow's auto-selection mode for runtime LLM choice.
 
 - **Manual mode**: preset and step configs choose explicit models
-- **Tiered mode**: the runtime resolves Tier 1/2/3 from learning maturity and a few explicit overrides
-- **Phase LLM**: configured separately and not part of the maturity resolver
+- **Tiered mode**: the runtime resolves Tier 1/2/3 from a per-agent-type default plus a few explicit overrides
+- **Phase LLM**: configured separately and not part of the tier resolver
 
 The current resolver lives in `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/tiered_llm.go`.
 
@@ -16,41 +16,21 @@ The current resolver lives in `agent_go/pkg/orchestrator/agents/workflow/step_ba
 - **Tier 2**: Medium reasoning
 - **Tier 3**: Low reasoning
 
-## Learning Maturity
+## Default Tier per Agent Type
 
-The runtime uses four maturity states:
+| Agent | Default Tier |
+|---|---|
+| Execution | Tier 1 (High) |
+| Learning | Tier 2 (Medium) |
+| Conditional | Tier 1 (High) |
 
-- `NoLearnings`: no learning files
-- `HasLearnings`: one learning file
-- `MatureLearnings`: two or more learning files
-- `LockedLearnings`: step is effectively optimized/locked and can use the lowest viable tier
+Learning-maturity-based auto-downgrade has been removed. Tier selection no longer
+looks at the contents of the learnings folder. To run a step on a cheaper tier,
+use one of the explicit overrides below (`preferred_tier`, workshop `tier`
+argument, or the per-step `execution_llm` override).
 
-Current maturity behavior from `getLearningMaturity()`:
-
-- empty learnings folder => `NoLearnings`
-- one file => `HasLearnings`
-- one file with `learning_mode == "human_assisted"` => `MatureLearnings`
-- two or more files => `MatureLearnings`
-
-At execution time, optimized steps are pushed to `LockedLearnings` when they already have learnings:
-
-- `optimized=true` and maturity `>= HasLearnings` => treat as `LockedLearnings`
-
-If `disable_tier_optimization=true`, execution and conditional agents stay on Tier 1 regardless of maturity.
-
-## Current Resolver Rules
-
-| Agent / Path | No Learnings | Has Learnings | Mature | Locked |
-|---|---|---|---|---|
-| Execution | Tier 1 | Tier 1 | Tier 2 | Tier 3 |
-| Learning | Tier 2 | Tier 2 | Tier 3 | Tier 2 |
-| Conditional | Tier 1 | Tier 1 | Tier 2 | Tier 3 |
-
-Notes:
-
-- There is no dedicated validation tier resolver in the current main workflow path.
-- `LockedLearnings` is only used by execution and conditional resolution.
-- Learning agents do not have a separate locked branch; they use the normal learning resolver.
+`disable_tier_optimization=true` still forces execution and conditional agents
+to Tier 1. The `optimized` flag no longer affects tier selection.
 
 ## Selection Priority
 
@@ -69,7 +49,7 @@ Inside tiered resolution, execution uses this order:
 2. `preferred_tier` from sub-agent context
 3. `disable_tier_optimization=true` => Tier 1
 4. evaluation mode => Tier 2
-5. maturity-based resolution
+5. default execution tier (Tier 1)
 
 ### Learning agents
 
@@ -84,7 +64,7 @@ Current priority in `selectLearningLLM()`:
 Conditional agents use the tier resolver directly:
 
 1. `disable_tier_optimization=true` => Tier 1
-2. otherwise maturity-based conditional resolution
+2. otherwise default conditional tier (Tier 1)
 
 ## Phase LLM
 
@@ -116,20 +96,21 @@ Current priority in `selectTodoTaskOrchestratorLLM()`:
 
 ### Dynamic sub-agent tier selection
 
-When tiered mode is active, dynamic tier selection is effectively default-on unless the step explicitly sets:
+Tier selection for sub-agents is automatically controlled by whether the parent
+todo-task step pins an `execution_llm`:
 
-- `enable_dynamic_tier_selection=false`
+- **Parent step has no `execution_llm`** → dynamic tier selection is on:
+  - todo-task tools expose `preferred_tier` as a REQUIRED parameter
+  - the orchestrator must choose Tier 1/2/3 for every sub-agent call; calls without `preferred_tier` are rejected by the handler
+  - `preferred_tier` flows through context and is honored by `selectExecutionLLM`
 
-If dynamic selection is enabled:
+- **Parent step has `execution_llm` set** → dynamic tier selection is off:
+  - the parent step's `execution_llm` is propagated to every sub-agent spawned by the orchestrator via the `sub_agent_llm` context key
+  - `preferred_tier` is not exposed on the sub-agent tools
+  - all sub-agents use the pinned parent LLM
 
-- todo-task tools expose optional `preferred_tier`
-- the orchestrator can choose Tier 1/2/3 per sub-agent call
-- `preferred_tier` is passed through context and checked before maturity-based resolution
-- `sub_agent_llm` is intentionally skipped while dynamic tier selection is enabled
-
-If dynamic selection is disabled:
-
-- `sub_agent_llm` can directly force the sub-agent model
+There is no separate `enable_dynamic_tier_selection` flag — the mode is derived
+directly from the presence of `execution_llm` on the parent step.
 
 ## Manual vs Tiered Mode
 
@@ -169,7 +150,7 @@ The UI still exposes:
 - `used_tier`
 - `used_tier_label`
 
-This is populated for tiered start events using execution maturity resolution.
+This is populated for tiered start events using the default execution tier.
 
 ## Key Files
 

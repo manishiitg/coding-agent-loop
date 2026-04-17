@@ -516,10 +516,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 //
 // Priority for main step execution:
 //  1. step config ExecutionLLM   — explicit per-step override; always wins when set
-//  2. parent ExecutionLLM via context — propagated when spawned by a todo-task
-//     orchestrator whose parent step had an ExecutionLLM set; skipped if
-//     enable_dynamic_tier_selection=true
-//  3. tiered mode                — maturity-based tier resolution (preferred_tier ctx > maturity)
+//  2. parent ExecutionLLM via context — propagated when the parent todo-task step
+//     has an ExecutionLLM set; when present, tier selection is skipped entirely
+//  3. tiered mode                — preferred_tier from context, workshop override,
+//     or the default tier
 //  4. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
@@ -548,39 +548,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 
 	// ── 2. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
-	// When the todo-task orchestrator spawns a child agent, sub_agent_llm is
-	// injected into context. Skip it when dynamic tier selection is active —
-	// the orchestrator picks tiers dynamically via preferred_tier instead.
-	// Dynamic tier is default-on when tier resolver exists, unless explicitly disabled.
-	dynamicTierEnabled := hcpo.tierResolver != nil
-	if dynamicTierEnabled && stepConfig != nil &&
-		stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
-		dynamicTierEnabled = false
-	}
+	// When the parent todo-task step pins an ExecutionLLM, the wrapper injects it
+	// into the sub-agent's context. Its presence is itself the signal that we're
+	// in "propagate parent's LLM" mode — tier selection is bypassed.
 	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
 		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
-		if dynamicTierEnabled {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] sub_agent_llm (%s/%s) skipped for step %s because dynamic tier selection is enabled",
-				subAgentLLM.Provider, subAgentLLM.ModelID, stepPath))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [SUB-AGENT] Using sub_agent_llm override for step %s: %s/%s",
-				stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: subAgentLLM.Provider,
-					ModelID:  subAgentLLM.ModelID,
-				},
-				Fallbacks: convertAgentFallbacks(subAgentLLM.Fallbacks),
-				APIKeys:   hcpo.GetAPIKeys(),
-			}
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 [SUB-AGENT] Using parent ExecutionLLM for step %s: %s/%s",
+			stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: subAgentLLM.Provider,
+				ModelID:  subAgentLLM.ModelID,
+			},
+			Fallbacks: convertAgentFallbacks(subAgentLLM.Fallbacks),
+			APIKeys:   hcpo.GetAPIKeys(),
 		}
 	}
 
 	// ── 3. TIERED MODE ───────────────────────────────────────────────────────
-	// Maturity-based tier resolution when no explicit step override is set.
+	// Default-tier resolution when no explicit step override is set.
 	if hcpo.tierResolver != nil {
-		stepID := hcpo.resolveStepID(stepPath, "")
-
 		// Workshop execute_step tier override (e.g., execute_step(step_id, tier="medium"))
 		if workshopTier, ok := ctx.Value(WorkshopTierOverrideKey).(int); ok && workshopTier >= 1 && workshopTier <= 3 {
 			tier := TierLevel(workshopTier)
@@ -619,21 +606,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			}
 			return llmConfig
 		}
-		learningMode := ""
-		if stepConfig != nil {
-			learningMode = stepConfig.LearningMode
-		}
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
-		// Optimized steps have built skills — use lowest viable tier
-		if stepConfig != nil &&
-			stepConfig.Optimized != nil && *stepConfig.Optimized &&
-			maturity >= HasLearnings {
-			maturity = LockedLearnings
-		}
-		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
+		llmConfig, tier := hcpo.tierResolver.ResolveForExecution()
 		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
-				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 		}
 		return llmConfig
 	}
@@ -1063,15 +1039,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 
 	// ── 2. TIERED MODE ───────────────────────────────────────────────────────
 	if hcpo.tierResolver != nil {
-		learningMode := ""
-		if stepConfig != nil {
-			learningMode = stepConfig.LearningMode
-		}
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
-		llmConfig, tier := hcpo.tierResolver.ResolveForLearning(maturity)
+		llmConfig, tier := hcpo.tierResolver.ResolveForLearning()
 		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
-				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 		}
 		return llmConfig
 	}
@@ -1562,6 +1533,11 @@ type SubAgentExecutionContext struct {
 	Progress     *StepProgress
 	StepConfig   *AgentConfigs // Step-level configuration for LLM overrides
 
+	// TierSelectionRequired tells the sub-agent tool handlers to reject calls that
+	// don't include a valid preferred_tier. Mirrors the enableTierSelection flag
+	// used when building the tool schema.
+	TierSelectionRequired bool
+
 	// WorkshopCorrelationID is the correlation ID from the workshop's execute_step call.
 	// Propagated to sub-agent contexts so their events are tagged with the workshop step's ID.
 	WorkshopCorrelationID string
@@ -1761,15 +1737,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// IMPORTANT: Inject sub-agent tools for tool-based delegation
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
-		// Dynamic tier selection: enabled by default when tier resolver is available.
-		// Can be explicitly disabled via step config enable_dynamic_tier_selection=false.
+		// Tier selection is on by default when a tier resolver exists. It is
+		// automatically skipped when the parent todo-task step pins an
+		// ExecutionLLM — in that case the parent LLM is propagated to all
+		// sub-agents instead of letting the orchestrator pick tiers.
 		enableTierSelection := hcpo.tierResolver != nil
-		if enableTierSelection && subAgentExecCtx.TodoTaskStep != nil {
-			if stepConfig := getAgentConfigs(subAgentExecCtx.TodoTaskStep); stepConfig != nil &&
-				stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
-				enableTierSelection = false
-			}
+		if enableTierSelection && subAgentExecCtx.StepConfig != nil &&
+			subAgentExecCtx.StepConfig.ExecutionLLM != nil &&
+			subAgentExecCtx.StepConfig.ExecutionLLM.Provider != "" &&
+			subAgentExecCtx.StepConfig.ExecutionLLM.ModelID != "" {
+			enableTierSelection = false
 		}
+		// Mirror onto the execCtx so the wrapper can inject it into the tool-call
+		// context and the handler can enforce preferred_tier.
+		subAgentExecCtx.TierSelectionRequired = enableTierSelection
 		subAgentTools := virtualtools.CreateSubAgentTools(enableTierSelection)
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
 		subAgentCategory := virtualtools.GetSubAgentToolCategory()
@@ -1860,6 +1841,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 ) func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Return wrapper function that injects execution functions into context
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Signal to handlers that preferred_tier must be supplied when dynamic tier
+		// selection is active for this orchestrator.
+		if execCtx.TierSelectionRequired {
+			ctx = context.WithValue(ctx, virtualtools.TierSelectionRequiredKey, true)
+		}
+
 		// Inject execute_predefined_sub_agent function
 		executePredefinedFunc := hcpo.createExecutePredefinedSubAgentFunc(execCtx)
 		ctx = context.WithValue(ctx, virtualtools.ExecutePredefinedSubAgentKey, executePredefinedFunc)

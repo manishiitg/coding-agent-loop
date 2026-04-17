@@ -375,12 +375,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
-	// EnableDynamicTierSelection: enabled by default when tier resolver is available.
-	// Can be explicitly disabled via step config enable_dynamic_tier_selection=false.
+	// EnableDynamicTierSelection (prompt template var): on when a tier resolver
+	// exists AND the parent todo-task step does not pin an ExecutionLLM.
+	// When an ExecutionLLM is pinned, the parent LLM propagates to sub-agents
+	// and the orchestrator no longer picks tiers per call.
 	enableDynamicTier := hcpo.tierResolver != nil
 	if enableDynamicTier {
 		if stepConfig := getAgentConfigs(step); stepConfig != nil &&
-			stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
+			stepConfig.ExecutionLLM != nil &&
+			stepConfig.ExecutionLLM.Provider != "" &&
+			stepConfig.ExecutionLLM.ModelID != "" {
 			enableDynamicTier = false
 		}
 	}

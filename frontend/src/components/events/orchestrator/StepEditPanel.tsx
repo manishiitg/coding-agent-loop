@@ -1273,37 +1273,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     )}
                   </div>
 
-                  {/* Dynamic Tier Selection */}
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <label className="text-xs text-gray-600 dark:text-gray-400">Dynamic Tier Selection</label>
-                        <p className="text-[10px] text-gray-500 dark:text-gray-500">
-                          Allow orchestrator to choose tier for sub-agents
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={agentConfigs.enable_dynamic_tier_selection ?? false}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                          agentConfigs.enable_dynamic_tier_selection ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
-                        }`}
-                        onClick={() => {
-                          setAgentConfigs((prev) => ({
-                            ...prev,
-                            enable_dynamic_tier_selection: !prev.enable_dynamic_tier_selection,
-                          }));
-                        }}
-                      >
-                        <span
-                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                            agentConfigs.enable_dynamic_tier_selection ? 'translate-x-4' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
                 </div>
               </>
             )}

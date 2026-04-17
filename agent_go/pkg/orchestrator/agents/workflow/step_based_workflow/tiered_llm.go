@@ -40,17 +40,7 @@ type TieredLLMConfig struct {
 	Tier3 *AgentLLMConfig `json:"tier_3"` // Low reasoning
 }
 
-// LearningMaturity represents the maturity level of learnings for a step
-type LearningMaturity int
-
-const (
-	NoLearnings     LearningMaturity = 0 // No learning files exist
-	HasLearnings    LearningMaturity = 1 // 1 learning file exists
-	MatureLearnings LearningMaturity = 2 // 2+ learning files exist
-	LockedLearnings LearningMaturity = 3 // Learnings are locked (skill is built, use lowest viable tier)
-)
-
-// TierResolver resolves the appropriate LLM tier based on agent type and learning maturity
+// TierResolver resolves the appropriate LLM tier based on agent type.
 type TierResolver struct {
 	config  *TieredLLMConfig
 	apiKeys *orchestrator.APIKeys
@@ -109,45 +99,23 @@ func convertAgentFallbacks(fallbacks []AgentLLMFallback) []orchestrator.LLMModel
 	return models
 }
 
-// ResolveForExecution returns the LLM for execution agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium), Locked: Tier 3 (Low)
-// Locked learnings means the skill is fully built — the agent follows a recipe and doesn't need high reasoning.
-func (tr *TierResolver) ResolveForExecution(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
-	switch maturity {
-	case LockedLearnings:
-		return tr.ResolveTier(TierLow), TierLow
-	case MatureLearnings:
-		return tr.ResolveTier(TierMedium), TierMedium
-	default:
-		return tr.ResolveTier(TierHigh), TierHigh
-	}
+// ResolveForExecution returns the default LLM tier for execution agents (Tier 1 / High).
+// Explicit step-level overrides and dynamic tier selection (preferred_tier, workshop override)
+// are applied by the caller before reaching this resolver.
+func (tr *TierResolver) ResolveForExecution() (*orchestrator.LLMConfig, TierLevel) {
+	return tr.ResolveTier(TierHigh), TierHigh
 }
 
-// ResolveForLearning returns the LLM for learning agents based on learning maturity
-// No Learnings: Tier 2 (Medium), Has Learnings: Tier 2 (Medium), Mature: Tier 3 (Low)
-func (tr *TierResolver) ResolveForLearning(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
-	switch maturity {
-	case MatureLearnings:
-		return tr.ResolveTier(TierLow), TierLow
-	default:
-		return tr.ResolveTier(TierMedium), TierMedium
-	}
+// ResolveForLearning returns the default LLM tier for learning agents (Tier 2 / Medium).
+func (tr *TierResolver) ResolveForLearning() (*orchestrator.LLMConfig, TierLevel) {
+	return tr.ResolveTier(TierMedium), TierMedium
 }
 
 // Note: Phase agents use presetPhaseLLM which is independently configured (not part of tiered allocation).
-// No resolver method is needed since phase agents don't have maturity-based selection.
 
-// ResolveForConditional returns the LLM for conditional agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium), Locked: Tier 3 (Low)
-func (tr *TierResolver) ResolveForConditional(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
-	switch maturity {
-	case LockedLearnings:
-		return tr.ResolveTier(TierLow), TierLow
-	case MatureLearnings:
-		return tr.ResolveTier(TierMedium), TierMedium
-	default:
-		return tr.ResolveTier(TierHigh), TierHigh
-	}
+// ResolveForConditional returns the default LLM tier for conditional agents (Tier 1 / High).
+func (tr *TierResolver) ResolveForConditional() (*orchestrator.LLMConfig, TierLevel) {
+	return tr.ResolveTier(TierHigh), TierHigh
 }
 
 // GetTier1Config returns the Tier 1 AgentLLMConfig (for populating preset fields in backward-compatible way)

@@ -27,6 +27,10 @@ const (
 	PredefinedRoutesKey subAgentContextKey = "predefined_routes"
 	// PreferredTierContextKey is the context key for preferred LLM tier override (1/2/3)
 	PreferredTierContextKey subAgentContextKey = "preferred_tier"
+	// TierSelectionRequiredKey is the context key that signals handlers to reject
+	// sub-agent calls missing a valid preferred_tier. Set by the orchestrator wrapper
+	// when dynamic tier selection is active.
+	TierSelectionRequiredKey subAgentContextKey = "tier_selection_required"
 	// SubAgentLLMContextKey is the context key for direct LLM override for sub-agents (works in both tiered and manual modes)
 	SubAgentLLMContextKey subAgentContextKey = "sub_agent_llm"
 	// SubAgentShareBrowserKey is the context key for controlling browser session isolation in sub-agents
@@ -69,8 +73,9 @@ type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, in
 // Injected via context by the controller
 type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions string) (string, error)
 
-// CreateSubAgentTools creates the sub-agent calling virtual tools
-// If enableTierSelection is true, both tools include an optional preferred_tier parameter (1/2/3)
+// CreateSubAgentTools creates the sub-agent calling virtual tools.
+// When enableTierSelection is true, preferred_tier is a REQUIRED parameter on both
+// sub-agent tools — the orchestrator must explicitly choose a tier per call.
 func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
@@ -93,12 +98,14 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 	}
+	callSubAgentRequired := []string{"route_id", "todo_id", "instructions"}
 	if enableTierSelection {
 		callSubAgentProperties["preferred_tier"] = map[string]interface{}{
 			"type":        "integer",
-			"description": "LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). If omitted, system auto-selects based on learning maturity.",
+			"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
 			"enum":        []int{1, 2, 3},
 		}
+		callSubAgentRequired = append(callSubAgentRequired, "preferred_tier")
 	}
 	callSubAgentTool := llmtypes.Tool{
 		Type: "function",
@@ -108,7 +115,7 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callSubAgentProperties,
-				"required":   []string{"route_id", "todo_id", "instructions"},
+				"required":   callSubAgentRequired,
 			}),
 		},
 	}
@@ -129,12 +136,14 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 	}
+	callGenericAgentRequired := []string{"todo_id", "instructions"}
 	if enableTierSelection {
 		callGenericAgentProperties["preferred_tier"] = map[string]interface{}{
 			"type":        "integer",
-			"description": "LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). If omitted, system auto-selects based on learning maturity.",
+			"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
 			"enum":        []int{1, 2, 3},
 		}
+		callGenericAgentRequired = append(callGenericAgentRequired, "preferred_tier")
 	}
 	callGenericAgentTool := llmtypes.Tool{
 		Type: "function",
@@ -144,7 +153,7 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callGenericAgentProperties,
-				"required":   []string{"todo_id", "instructions"},
+				"required":   callGenericAgentRequired,
 			}),
 		},
 	}
@@ -231,9 +240,14 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		return "", fmt.Errorf("instructions are required")
 	}
 
-	// Extract preferred_tier if provided (for tiered LLM allocation)
-	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
-		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
+	tierRequired, _ := ctx.Value(TierSelectionRequiredKey).(bool)
+	preferredTierF, hasTier := args["preferred_tier"].(float64)
+	validTier := hasTier && int(preferredTierF) >= 1 && int(preferredTierF) <= 3
+	if tierRequired && !validTier {
+		return "", fmt.Errorf("preferred_tier is required and must be 1, 2, or 3 (1=high reasoning, 2=medium, 3=low) — pick a tier based on task difficulty")
+	}
+	if validTier {
+		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTierF))
 	}
 
 	// Extract share_browser param (defaults to true — shared browser)
@@ -297,9 +311,14 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 		return "", fmt.Errorf("instructions are required")
 	}
 
-	// Extract preferred_tier if provided (for tiered LLM allocation)
-	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
-		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
+	tierRequired, _ := ctx.Value(TierSelectionRequiredKey).(bool)
+	preferredTierF, hasTier := args["preferred_tier"].(float64)
+	validTier := hasTier && int(preferredTierF) >= 1 && int(preferredTierF) <= 3
+	if tierRequired && !validTier {
+		return "", fmt.Errorf("preferred_tier is required and must be 1, 2, or 3 (1=high reasoning, 2=medium, 3=low) — pick a tier based on task difficulty")
+	}
+	if validTier {
+		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTierF))
 	}
 
 	// Extract share_browser param (defaults to true — shared browser)

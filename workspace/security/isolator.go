@@ -14,9 +14,14 @@ import (
 type Isolator struct {
 	ReadPaths    []string
 	WritePaths   []string
-	BlockedPaths []string // Paths to explicitly deny (deny-list, takes precedence)
-	WorkDir      string
-	BaseDir      string // Workspace base directory (default: /app/workspace-docs)
+	BlockedPaths []string // Paths to explicitly deny READ AND WRITE (deny-list, takes precedence)
+	// BlockedWritePaths denies writes only — reads still pass through. Used for paths
+	// the agent should inspect but never modify (e.g. a workflow's planning/ folder).
+	// macOS: emitted as `(deny file-write*)` scoped to these subpaths.
+	// Linux: bind-mounted read-only over the writable subtree so writes return EROFS.
+	BlockedWritePaths []string
+	WorkDir           string
+	BaseDir           string // Workspace base directory (default: /app/workspace-docs)
 }
 
 
@@ -200,6 +205,21 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString(")\n")
 	}
 
+	// Explicit deny for write-only blocked paths — reads pass through, writes denied.
+	// Used for paths agents must be able to inspect but not modify (planning/, etc.).
+	if len(iso.BlockedWritePaths) > 0 {
+		sb.WriteString("; Explicit deny for write-only blocked paths (reads allowed)\n")
+		sb.WriteString("(deny file-write*\n")
+		for _, path := range iso.BlockedWritePaths {
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+		}
+		sb.WriteString(")\n")
+	}
+
 	return sb.String()
 }
 
@@ -309,6 +329,30 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 			sb.WriteString(fmt.Sprintf("if [ -e \"%s\" ]; then\n", tempPath))
 			sb.WriteString(fmt.Sprintf("  mkdir -p \"%s\"\n", absPath))
 			sb.WriteString(fmt.Sprintf("  mount --bind \"%s\" \"%s\"\n", tempPath, absPath))
+			sb.WriteString("fi\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Step 6: Overlay write-blocked subpaths as read-only. This runs AFTER step 5 so
+	// the read-only bind-mount wins for these subtrees even when their parent is
+	// bound read-write. Writes to these paths return EROFS; reads pass through
+	// unchanged so the agent can still cat/jq planning files.
+	if len(iso.BlockedWritePaths) > 0 {
+		sb.WriteString("# Re-mount write-blocked paths as read-only (reads allowed, writes denied)\n")
+		for _, path := range iso.BlockedWritePaths {
+			relPath := strings.TrimPrefix(path, baseDir+"/")
+			if relPath == path && !strings.HasPrefix(path, "/") {
+				relPath = path
+			}
+			tempPath := filepath.Join(tempDir, relPath)
+			absPath := path
+			if !strings.HasPrefix(path, "/") {
+				absPath = filepath.Join(baseDir, path)
+			}
+			sb.WriteString(fmt.Sprintf("if [ -e \"%s\" ]; then\n", tempPath))
+			sb.WriteString(fmt.Sprintf("  mkdir -p \"%s\"\n", absPath))
+			sb.WriteString(fmt.Sprintf("  mount --bind -o ro \"%s\" \"%s\"\n", tempPath, absPath))
 			sb.WriteString("fi\n")
 		}
 		sb.WriteString("\n")

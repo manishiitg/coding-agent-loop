@@ -16,12 +16,23 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
-// FolderGuardConfig represents folder access restrictions
+// FolderGuardConfig represents folder access restrictions.
+//
+// BlockedPaths is the "deny all" primitive — reads and writes are both blocked
+// at kernel level (sandbox-exec `(deny file-read* file-write*)` on macOS, tmpfs
+// overlay on Linux). Use for paths that must be fully hidden (e.g. secrets/).
+//
+// BlockedWritePaths denies writes only. Reads pass through. Used for paths where
+// the agent should be able to inspect but never modify — e.g.
+// `Workflow/<name>/planning/` where plan.json must be readable for the agent to
+// understand the workflow but must only be edited through typed plan-mod tools.
+// Implementation: macOS `(deny file-write*)`, Linux read-only bind-mount.
 type FolderGuardConfig struct {
-	Enabled      bool     `json:"enabled"`
-	ReadPaths    []string `json:"read_paths"`
-	WritePaths   []string `json:"write_paths"`
-	BlockedPaths []string `json:"blocked_paths"`
+	Enabled           bool     `json:"enabled"`
+	ReadPaths         []string `json:"read_paths"`
+	WritePaths        []string `json:"write_paths"`
+	BlockedPaths      []string `json:"blocked_paths"`
+	BlockedWritePaths []string `json:"blocked_write_paths,omitempty"`
 }
 
 // Client handles communication with the workspace API directly via REST
@@ -188,11 +199,24 @@ func validatePathAgainstGuard(guard *FolderGuardConfig, inputPath string, isWrit
 	// Normalize input path
 	inputPath = filepath.Clean(inputPath)
 
-	// Check blocked paths first
+	// Check blocked paths first (applies to both reads and writes — hard deny).
 	for _, blocked := range guard.BlockedPaths {
 		blocked = filepath.Clean(blocked)
 		if isPathUnder(inputPath, blocked) {
 			return fmt.Errorf("path %q is blocked", inputPath)
+		}
+	}
+
+	// Check blocked-write paths when this is a write operation. Reads are
+	// intentionally allowed — agents must be able to inspect files in write-blocked
+	// folders (e.g. read plan.json for workflow structure) without being allowed
+	// to modify them.
+	if isWrite {
+		for _, blocked := range guard.BlockedWritePaths {
+			blocked = filepath.Clean(blocked)
+			if isPathUnder(inputPath, blocked) {
+				return fmt.Errorf("path %q is blocked for writes", inputPath)
+			}
 		}
 	}
 

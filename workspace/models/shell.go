@@ -15,11 +15,15 @@ type ExecuteShellRequest struct {
 }
 
 type FolderGuardConfig struct {
-	Enabled         bool     `json:"enabled"`
-	ReadPaths       []string `json:"read_paths"`
-	WritePaths      []string `json:"write_paths"`
-	BlockedPaths    []string `json:"blocked_paths"`    // Paths to block (deny list) - takes precedence over read/write paths
-	EnforcementMode string   `json:"enforcement_mode"` // "strict" | "warn" | "audit"
+	Enabled    bool     `json:"enabled"`
+	ReadPaths  []string `json:"read_paths"`
+	WritePaths []string `json:"write_paths"`
+	// BlockedPaths denies READ AND WRITE (hard deny). Takes precedence over read/write paths.
+	BlockedPaths []string `json:"blocked_paths"`
+	// BlockedWritePaths denies WRITES only — reads pass through. Used for paths the agent
+	// must inspect but cannot modify (e.g. a workflow's planning/ subtree).
+	BlockedWritePaths []string `json:"blocked_write_paths,omitempty"`
+	EnforcementMode   string   `json:"enforcement_mode"` // "strict" | "warn" | "audit"
 }
 
 // IsPathBlocked checks if a path is in the blocked paths list

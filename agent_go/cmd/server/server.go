@@ -3361,12 +3361,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					readPaths,
 					append([]string{perUserChatsWrite, "Downloads/", "config/", perUserMemWrite, perUserChatHistory}, extraFolders...),
 				)
-				// Blocked paths flow through to the isolator's FolderGuardConfig and are
-				// enforced at kernel-sandbox level — source of truth for what the shell
-				// can actually write. Matches the blocked-write list applied to the
-				// typed-tool wrapper above so both surfaces deny the same prefixes.
+				// Blocked-write paths flow through to the isolator's
+				// FolderGuardConfig.BlockedWritePaths and are enforced at kernel-sandbox
+				// level — source of truth for what the shell can actually write. Matches
+				// the blocked-write list applied to the typed-tool wrapper above so both
+				// surfaces deny the same prefixes. Reads remain permitted so agents can
+				// still inspect plan.json and friends.
 				if len(fileContextBlockedWriteFolders) > 0 {
-					workspace.SetSessionFolderGuardBlockedPaths(sessionID, fileContextBlockedWriteFolders)
+					workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, fileContextBlockedWriteFolders)
 				}
 				log.Printf("[CHAT MODE FOLDER GUARD] Applied per-user folder restriction (chats: %s, mem: %s, read-only: %v, blocked-write: %v)", perUserChatsWrite, perUserMemWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}

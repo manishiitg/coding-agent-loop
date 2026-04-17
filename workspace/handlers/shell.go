@@ -120,16 +120,17 @@ func ExecuteShellCommand(c *gin.Context) {
 
 		// Use isolated execution with filesystem restrictions
 		isolator := &security.Isolator{
-			ReadPaths:    req.FolderGuard.ReadPaths,
-			WritePaths:   req.FolderGuard.WritePaths,
-			BlockedPaths: req.FolderGuard.BlockedPaths,
-			WorkDir:      workingDir,
-			BaseDir:      docsDir,
+			ReadPaths:         req.FolderGuard.ReadPaths,
+			WritePaths:        req.FolderGuard.WritePaths,
+			BlockedPaths:      req.FolderGuard.BlockedPaths,
+			BlockedWritePaths: req.FolderGuard.BlockedWritePaths,
+			WorkDir:           workingDir,
+			BaseDir:           docsDir,
 		}
 
 		// Debug: log isolator configuration for troubleshooting mount namespace issues
-		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v\n",
-			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths)
+		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v BlockedWritePaths=%v\n",
+			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths, req.FolderGuard.BlockedWritePaths)
 
 		fullCommand = stripShellPrefix(req.Command)
 

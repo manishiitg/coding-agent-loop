@@ -502,6 +502,92 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 	})
 }
 
+// TestBlockedWritePathsAllowsReads verifies the write-only deny primitive:
+// reads to paths under BlockedWritePaths pass through, writes are denied. This
+// is the semantic that lets the chat-agent #workflow setup grant
+// Workflow/<name>/ as a broad write prefix while keeping planning/ readable but
+// not writable. Distinct from BlockedPaths which denies both reads and writes.
+func TestBlockedWritePathsAllowsReads(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "isolator-blocked-write-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Workflow/test-ops/{reports,planning}/ with a file in planning so the
+	// isolator has something to bind-mount read-only on Linux.
+	workflowRoot := filepath.Join(tempDir, "Workflow", "test-ops")
+	if err := os.MkdirAll(filepath.Join(workflowRoot, "planning"), 0755); err != nil {
+		t.Fatalf("mkdir planning: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workflowRoot, "reports"), 0755); err != nil {
+		t.Fatalf("mkdir reports: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowRoot, "planning", "plan.json"), []byte(`{"ok":true}`), 0644); err != nil {
+		t.Fatalf("write plan.json: %v", err)
+	}
+
+	iso := &Isolator{
+		WritePaths:        []string{"Workflow/test-ops"},
+		BlockedWritePaths: []string{"Workflow/test-ops/planning"},
+		WorkDir:           tempDir,
+		BaseDir:           tempDir,
+	}
+
+	t.Run("MacOSProfileEmitsWriteOnlyDenyAndPreservesReads", func(t *testing.T) {
+		profile := iso.generateSandboxProfile()
+
+		// The profile has an unrelated `(deny file-read* file-write*` for the
+		// project-root (source code / configs) — that's a different concern.
+		// Narrow our assertion to the BlockedWritePaths section specifically.
+		const marker = "; Explicit deny for write-only blocked paths"
+		start := strings.Index(profile, marker)
+		if start < 0 {
+			t.Fatalf("profile missing BlockedWritePaths section (marker %q); got:\n%s", marker, profile)
+		}
+		// Take the block from marker to end of profile (it's appended last).
+		writeOnlySection := profile[start:]
+
+		if !strings.Contains(writeOnlySection, "(deny file-write*") {
+			t.Errorf("BlockedWritePaths section should emit `(deny file-write*`; got:\n%s", writeOnlySection)
+		}
+		// The read-deny form MUST NOT appear within the BlockedWritePaths block.
+		// If it does, reads to planning/ would be denied and the agent can't cat plan.json.
+		if strings.Contains(writeOnlySection, "file-read*") {
+			t.Errorf("BlockedWritePaths section must NOT deny reads; got:\n%s", writeOnlySection)
+		}
+		// The blocked path must be referenced under this block.
+		if !strings.Contains(writeOnlySection, "Workflow/test-ops/planning") {
+			t.Errorf("BlockedWritePaths section should reference the write-blocked subpath; got:\n%s", writeOnlySection)
+		}
+	})
+
+	t.Run("LinuxMountScriptBindMountsReadOnlyOverWritableParent", func(t *testing.T) {
+		script := iso.generateMountScript("cat Workflow/test-ops/planning/plan.json", nil)
+
+		// The WritePath should be bound read-write.
+		if !strings.Contains(script, `mount --bind "`) {
+			t.Errorf("mount script should bind-mount WritePaths; got:\n%s", script)
+		}
+		// The BlockedWritePath should be overlaid as a read-only bind AFTER the rw bind.
+		// Assert that the ro bind for Workflow/test-ops/planning appears in the script.
+		wantRO := `mount --bind -o ro`
+		if !strings.Contains(script, wantRO) {
+			t.Errorf("mount script should overlay BlockedWritePaths with `%s`; got:\n%s", wantRO, script)
+		}
+		if !strings.Contains(script, "Workflow/test-ops/planning") {
+			t.Errorf("mount script should reference the write-blocked subpath; got:\n%s", script)
+		}
+		// Ordering check: the rw bind for the parent must be emitted before the ro
+		// overlay for the child, otherwise the rw bind would overwrite the ro one.
+		rwIdx := strings.Index(script, `mount --bind "`)
+		roIdx := strings.Index(script, wantRO)
+		if rwIdx < 0 || roIdx < 0 || roIdx < rwIdx {
+			t.Errorf("ro bind-mount must come AFTER the rw bind-mount so the ro layer wins; rwIdx=%d roIdx=%d", rwIdx, roIdx)
+		}
+	})
+}
+
 // BenchmarkIsolatorOverhead measures the performance overhead of isolation
 func BenchmarkIsolatorOverhead(b *testing.B) {
 	env := &TestEnvironment{}

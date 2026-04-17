@@ -51,7 +51,14 @@ echo "==> Sync complete"
 # --- Sync frontend dist ---
 if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
   echo "    Syncing frontend dist..."
-  rsync -az -e "$RSYNC_SSH" "$REPO_ROOT/frontend/dist/" "root@$VM:$REMOTE/src/frontend-dist/"
+  # Exclude runtime-config.js — it's only for local dev (dynamic ports). In Docker
+  # prod, Caddy routes /api* to the fixed agent port and the frontend uses
+  # same-origin relative URLs via VITE build-time envs.
+  rsync -az --exclude='runtime-config.js' \
+    -e "$RSYNC_SSH" "$REPO_ROOT/frontend/dist/" "root@$VM:$REMOTE/src/frontend-dist/"
+  # Write an empty config so index.html's <script src="/runtime-config.js"> doesn't
+  # fall through nginx's try_files → /index.html (which would execute HTML as JS).
+  $SSH "echo 'window.__APP_RUNTIME_CONFIG__ = {};' > $REMOTE/src/frontend-dist/runtime-config.js"
 fi
 
 # --- Server-side: fix replaces, rebuild, restart ---
@@ -92,10 +99,8 @@ if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
 fi
 
 if [[ "$TARGET" == "all" || "$TARGET" == "workspace" ]]; then
-  cd $REMOTE/src
-  docker build -f ../Dockerfile.workspace --build-arg BASE_IMAGE=mcp-agent-base:latest -t mcp-agent-workspace-api:latest . 2>&1 | tail -1
-  cd $REMOTE && docker compose up -d --force-recreate workspace-api
-  echo "    Workspace deployed"
+  systemctl restart mcp-workspace
+  echo "    Workspace restarting (~30s to compile)"
 fi
 
 if [[ "$TARGET" == "all" ]]; then

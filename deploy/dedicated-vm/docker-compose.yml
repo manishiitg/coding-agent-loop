@@ -13,30 +13,10 @@ services:
       - caddy_config:/config
     depends_on:
       - frontend
-      - workspace-api
 
   frontend:
     image: mcp-agent-frontend:latest
     restart: always
-
-  workspace-api:
-    image: mcp-agent-workspace-api:latest
-    restart: always
-    privileged: true
-    cap_add:
-      - SYS_ADMIN
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "127.0.0.1:8080:8080"
-    volumes:
-      - /data/docs:/app/workspace-docs
-      - /data/workspace-db:/app/data
-    environment:
-      - PORT=8080
-      - DOCS_DIR=/app/workspace-docs
-      - DB_PATH=/app/data/workspace.db
-      - ENABLE_SEMANTIC_SEARCH=false
 
 volumes:
   caddy_data:

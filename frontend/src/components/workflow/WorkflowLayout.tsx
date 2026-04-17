@@ -535,8 +535,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [activeTab?.sessionId])
 
   // Keep the workspace sidebar hidden while Report is active. Reopen it on exit
-  // only if Report was the reason it got hidden.
+  // only if Report was the reason it got hidden. Gated on workflow mode — this
+  // component stays mounted in multiagent mode via `hidden` CSS, and without
+  // the guard the Report-minimize would leak into multiagent's workspace.
   useEffect(() => {
+    if (selectedModeCategory !== 'workflow') return
+
     if (canvasViewMode === 'report') {
       if (!workspaceMinimized) {
         reportAutoMinimizedWorkspaceRef.current = true
@@ -549,7 +553,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       reportAutoMinimizedWorkspaceRef.current = false
       setWorkspaceMinimized(false)
     }
-  }, [canvasViewMode, workspaceMinimized, setWorkspaceMinimized])
+  }, [selectedModeCategory, canvasViewMode, workspaceMinimized, setWorkspaceMinimized])
 
   useEffect(() => {
     return () => {

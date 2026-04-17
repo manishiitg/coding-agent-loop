@@ -750,8 +750,6 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 // startNewSessionDirect creates a unified bot chat session and starts it
 // immediately (async path, used by Slack / @mention flows).
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID) {
-	ctx := context.Background()
-
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
 	sessionID := uuid.New().String()
@@ -774,14 +772,9 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
 
-	connector := m.GetConnector(msg.Platform)
-	if connector != nil {
-		startMsg := "Starting session... (tag me to follow up in this thread)"
-		log.Printf("[BOT_MANAGER] Sending starting message to thread %s", threadID.Key())
-		if _, sendErr := connector.SendThreadMessage(ctx, threadID, startMsg); sendErr != nil {
-			log.Printf("[BOT_MANAGER] Failed to send starting message to %s: %v", threadID.Key(), sendErr)
-		}
-	} else {
+	// No "Starting session..." announcement — the agent's first streamed
+	// response appears quickly enough that a status preamble is just noise.
+	if m.GetConnector(msg.Platform) == nil {
 		log.Printf("[BOT_MANAGER] WARNING: no connector for platform %s", msg.Platform)
 	}
 
@@ -846,18 +839,15 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// Block until event filter signals session is done (or context is canceled)
 	<-sessionCtx.Done()
 
-	// Session completed or was canceled
+	// Session completed or was canceled. The agent's final response has already
+	// been posted to the thread by the event filter, so no extra "Session
+	// completed." status message is sent — it's noise for end users.
 	active.mu.Lock()
 	alreadyFailed := active.Status == chathistory.BotSessionStatusFailed
 	if !alreadyFailed {
 		active.Status = chathistory.BotSessionStatusCompleted
 	}
 	active.mu.Unlock()
-	if !alreadyFailed {
-		if _, sendErr := connector.SendThreadMessage(ctx, active.ThreadID, "Session completed."); sendErr != nil {
-			log.Printf("[BOT_MANAGER] Failed to send completion message to %s: %v", active.ThreadID.Key(), sendErr)
-		}
-	}
 
 	// Remove from active sessions map so a subsequent message starts a fresh session.
 	m.mu.Lock()

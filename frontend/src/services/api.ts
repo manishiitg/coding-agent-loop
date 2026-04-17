@@ -588,9 +588,14 @@ export const agentApi = {
     return apiResponse.data
   },
 
-  // Test Slack connection (with optional config to test without saving)
+  // Test Slack connection. If config is provided, test that config without saving.
+  // If called with no arg, the server tests the saved workspace config — in that
+  // case we must send an empty body (not {}), otherwise the server parses {} as
+  // a disabled config and refuses.
   testSlackConnection: async (config?: SlackConfigRequest): Promise<SlackTestResponse> => {
-    const apiResponse = await api.post('/api/human-feedback/slack/test', config || {})
+    const apiResponse = config
+      ? await api.post('/api/human-feedback/slack/test', config)
+      : await api.post('/api/human-feedback/slack/test')
     return apiResponse.data
   },
 

@@ -239,11 +239,9 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       setTestResult(null)
       setTestReply(null)
       setPollingForReply(false)
-      const result = await agentApi.testSlackConnection({
-        enabled: slackConfig.enabled, bot_token: slackConfig.bot_token || '',
-        app_token: slackConfig.app_token || '', channel_id: slackConfig.channel_id || '',
-        bot_mode: slackConfig.bot_mode || false,
-      })
+      // Test against the saved workspace config, not whatever is typed in the form.
+      // This ensures you're testing what the server will actually use at runtime.
+      const result = await agentApi.testSlackConnection()
       setTestResult(result)
       if (result.success && result.test_id) { setPollingForReply(true); pollForTestReply(result.test_id) }
     } catch (err) {
@@ -547,6 +545,48 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                             </Card>
                           )}
 
+                          <Card className="p-4 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
+                            <details>
+                              <summary className="cursor-pointer text-sm font-semibold text-blue-800 dark:text-blue-200 select-none">
+                                First time? Click for step-by-step setup instructions
+                              </summary>
+                              <div className="mt-3 text-xs text-blue-900 dark:text-blue-100 space-y-3">
+                                <div>
+                                  <p className="font-semibold">1. Create a Slack App</p>
+                                  <p className="mt-1">Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">api.slack.com/apps</a> → <b>Create New App</b> → <b>From scratch</b>. Pick a name and your workspace.</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold">2. Add Bot Token Scopes</p>
+                                  <p className="mt-1">In the sidebar: <b>OAuth &amp; Permissions</b> → <b>Scopes</b> → <b>Bot Token Scopes</b>. Add at minimum:</p>
+                                  <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mentions:read</code></li>
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">channels:history</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">groups:history</code></li>
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write.public</code></li>
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read.email</code> (required for per-user memory)</li>
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:write</code> (optional, for attachments)</li>
+                                  </ul>
+                                </div>
+                                <div>
+                                  <p className="font-semibold">3. Enable Socket Mode &amp; generate App Token</p>
+                                  <p className="mt-1"><b>Socket Mode</b> (sidebar) → toggle <b>Enable Socket Mode</b> ON. It will prompt you to create an <b>App-Level Token</b> with the <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">connections:write</code> scope. Copy the token — it starts with <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">xapp-</code>. This is your <b>App Token</b> below.</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold">4. Enable Event Subscriptions</p>
+                                  <p className="mt-1"><b>Event Subscriptions</b> (sidebar) → toggle <b>Enable Events</b> ON. Under <b>Subscribe to bot events</b>, add: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mention</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.channels</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.groups</code>. Save changes.</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold">5. Install to workspace &amp; copy Bot Token</p>
+                                  <p className="mt-1"><b>Install App</b> (sidebar) → <b>Install to Workspace</b> → approve. After install, go back to <b>OAuth &amp; Permissions</b> — the <b>Bot User OAuth Token</b> now appears at the top. Copy it — it starts with <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">xoxb-</code>. This is your <b>Bot Token</b> below.</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold">6. Invite the bot &amp; get Channel ID</p>
+                                  <p className="mt-1">In Slack, invite the bot to a channel: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">/invite @YourBot</code>. Then right-click the channel → <b>View channel details</b> → scroll to the bottom — the <b>Channel ID</b> starts with <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">C</code>.</p>
+                                </div>
+                                <p className="pt-1 italic opacity-80">If you re-add scopes or events later, you must re-install the app for changes to take effect.</p>
+                              </div>
+                            </details>
+                          </Card>
+
                           <Card className="p-4 bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700">
                             <div className="flex items-start gap-2">
                               <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
@@ -592,9 +632,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                             </Card>
 
                             {/* Test Connection */}
-                            <Button variant="outline" onClick={handleSlackTest} disabled={!slackConfig.enabled || slackTesting || slackLoading} className="w-full flex items-center justify-center gap-2">
-                              {slackTesting ? <><Loader2 className="w-4 h-4 animate-spin" />Testing...</> : 'Test Connection'}
-                            </Button>
+                            <div className="space-y-1">
+                              <Button variant="outline" onClick={handleSlackTest} disabled={!slackConfig.enabled || slackTesting || slackLoading} className="w-full flex items-center justify-center gap-2">
+                                {slackTesting ? <><Loader2 className="w-4 h-4 animate-spin" />Testing...</> : 'Test Connection'}
+                              </Button>
+                              <p className="text-xs text-muted-foreground text-center">
+                                Tests the <b>saved</b> config from the workspace — click <b>Save</b> first if you've edited any field above.
+                              </p>
+                            </div>
 
                             {testResult && (
                               <div className={`p-3 border rounded-lg flex items-start gap-2 ${testResult.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>

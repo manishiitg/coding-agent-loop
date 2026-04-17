@@ -1,0 +1,21 @@
+[Unit]
+Description=MCP Workspace API (bare metal)
+After=network.target
+Before=mcp-agent.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mcp-agent/src/workspace
+ExecStart=/opt/mcp-agent/run-workspace.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcp-workspace
+Environment=PATH=/usr/local/go/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+Environment=GOPATH=/root/go
+Environment=GOMODCACHE=/root/go/pkg/mod
+
+[Install]
+WantedBy=multi-user.target

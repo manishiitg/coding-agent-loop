@@ -25,6 +25,15 @@ FROM nginx:alpine
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Overwrite runtime-config.js with an empty config. The committed file in
+# frontend/public/ holds dev/desktop ports (e.g. http://127.0.0.1:18001) so the
+# Electron app can find its locally-spawned Go servers. In the web prod build
+# those localhost URLs would (a) not work, (b) trigger Chrome's Local Network
+# Access permission prompt for analytics-agent.citymall.live. With an empty
+# runtime config, getApiBaseUrl() in src/services/api.ts falls through to the
+# VITE_API_BASE_URL build arg (the real prod URL).
+RUN printf 'window.__APP_RUNTIME_CONFIG__ = {};\n' > /usr/share/nginx/html/runtime-config.js
+
 # Enable gzip and SPA fallback with cache headers for static assets
 RUN echo 'gzip on; \
 gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml; \

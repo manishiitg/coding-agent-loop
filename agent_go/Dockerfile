@@ -36,12 +36,13 @@ RUN cd /app/agent_go && \
 
 # Download dependencies (retry up to 3 times — proxy.golang.org can be flaky).
 # mcpagent and multi-llm-provider-go come from GitHub via go.mod tags.
-# GOFLAGS=-mod=mod lets `go mod download` add missing checksums to go.sum for those
-# modules, which aren't present in the committed go.sum because the developer's
-# go.sum was generated with the local `replace` directives active.
+# Inline GOFLAGS=-mod=mod + GOWORK=off lets `go mod download` add missing checksums
+# to go.sum for those modules, which aren't present in the committed go.sum because
+# the developer's go.sum was generated with the local `replace` directives active.
+# Scoped to this RUN — leaving -mod=mod set globally would break subsequent
+# workspace-mode builds (workspace mode forbids -mod=mod).
 WORKDIR /app/agent_go
-ENV GOFLAGS=-mod=mod
-RUN for i in 1 2 3; do go mod download && break || echo "Retry $i..."; sleep 5; done
+RUN for i in 1 2 3; do GOFLAGS=-mod=mod GOWORK=off go mod download && break || echo "Retry $i..."; sleep 5; done
 
 # Copy source code
 WORKDIR /app

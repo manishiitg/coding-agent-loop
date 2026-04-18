@@ -19,10 +19,14 @@ data:
   # Vertex/Gemini - two models; first is default
   VERTEX_PRIMARY_MODEL: "gemini-3-flash-preview"
   VERTEX_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3-pro-preview"
-  # LLM lock: per-provider; vertex locked (admin key), openrouter unlocked (user provides key)
-  SUPPORTED_LLM_PROVIDERS: "vertex,openrouter"
-  LLM_CONFIG_LOCKED: "vertex"
-  # Default published LLMs (first = default). User selection is honored when locked if in this list.
+  # LLM lock removed — empty SUPPORTED_LLM_PROVIDERS exposes all built-in providers
+  # (vertex, openrouter, anthropic, openai, bedrock, azure, claude-code, gemini-cli,
+  # codex-cli, minimax, minimax-coding-plan). LLM_CONFIG_LOCKED unset → users can
+  # configure providers / models from the UI again. Required so workflows that
+  # reference gemini-cli / minimax-coding-plan in tiered_config can run.
+  SUPPORTED_LLM_PROVIDERS: ""
+  # Default published LLMs (first = default). Still seeded so the dropdown shows
+  # something sensible on first login; users can override.
   DEFAULT_PUBLISHED_LLMS: '[{"id":"default-gemini-flash","name":"Gemini 3 Flash Preview","provider":"vertex","model_id":"gemini-3-flash-preview"},{"id":"default-gemini-pro","name":"Gemini 3 Pro Preview","provider":"vertex","model_id":"gemini-3-pro-preview"}]'
   # MCP lock: users cannot add/edit/remove MCP servers; only use pre-configured servers from mcp_config.json
   MCP_CONFIG_LOCKED: "true"

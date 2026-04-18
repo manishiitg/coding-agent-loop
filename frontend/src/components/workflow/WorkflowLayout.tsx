@@ -59,7 +59,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
-import { getTypedEventData, getRawEventData } from '../../generated/event-types'
+import { getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
@@ -130,41 +130,6 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
     const stepStatuses = new Map<string, 'pending' | 'running' | 'completed' | 'failed'>()
 
     for (const event of events) {
-      // Extract from step_progress_updated (most common, has batch context and step info)
-      if (event.type === 'step_progress_updated') {
-        // Try event.data.data first (standard format), then event.data (direct format)
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const groupName = data?.group_name as string
-        const groupIndex = data?.group_index as number
-        const totalGroups = data?.total_groups as number
-        const runFolder = data?.run_folder as string
-        const stepId = data?.current_step_id as string
-        const status = data?.status as string
-
-        if (groupName && totalGroups > 0) {
-          latestBatchContext = { groupName, groupIndex, totalGroups, runFolder }
-        }
-
-        // Track step status
-        if (stepId && status) {
-          if (status === 'start') {
-            latestRunningStepId = stepId
-            stepStatuses.set(stepId, 'running')
-          } else if (status === 'end') {
-            stepStatuses.set(stepId, 'completed')
-            if (latestRunningStepId === stepId) {
-              latestRunningStepId = null
-            }
-          } else if (status === 'failed') {
-            stepStatuses.set(stepId, 'failed')
-            if (latestRunningStepId === stepId) {
-              latestRunningStepId = null
-            }
-          }
-        }
-      }
-
       // Extract from todo_task_step_completed
       if (event.type === 'todo_task_step_completed') {
         const eventData = event.data as Record<string, unknown>
@@ -306,7 +271,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
-  const stepProgress = useWorkflowStore(state => state.stepProgress)
   const showRunningDrawer = useShowRunningDrawer()
 
   const getPhaseById = useWorkflowStore(state => state.getPhaseById)
@@ -320,7 +284,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // between workflow tabs. Without this, every tab switch fires canvasRef.refresh() for every
   // historical todo_steps_extracted event — causing hangs proportional to event history depth.
   const lastProcessedEventIndexRef = useRef<Map<string, number>>(new Map())
-  const lastProcessedStepProgressIndexRef = useRef<Map<string, number>>(new Map())
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
   // Loading state for session restoration (shown between chat tabs and chat area).
@@ -335,9 +298,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const setStepOverride = useWorkflowStore(state => state.setStepOverride)
-  const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
@@ -390,6 +351,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {
+    // Guard: WorkflowLayout stays mounted (hidden via CSS) in non-workflow modes.
+    // Without this check, the fetchFiles(workspacePath) below fires in multi-agent
+    // mode and overwrites the workspace file tree with workflow-scoped files,
+    // leaving the multi-agent sidebar showing "No files found".
+    const activeMode = useModeStore.getState().selectedModeCategory
+    if (activeMode !== 'workflow') {
+      return
+    }
+
     const selectionKey = selectedRunFolder && selectedRunFolder !== 'new' && workspacePath
       ? `${workspacePath}::${selectedRunFolder}::${(selectedGroupIds ?? []).slice().sort().join(',')}`
       : null
@@ -530,10 +500,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       const evts = useChatStore.getState().tabEvents[sid] ?? []
       lastProcessedEventIndexRef.current.set(sid, evts.length - 1)
     }
-    if (!lastProcessedStepProgressIndexRef.current.has(sid)) {
-      const evts = useChatStore.getState().tabEvents[sid] ?? []
-      lastProcessedStepProgressIndexRef.current.set(sid, evts.length - 1)
-    }
   }, [activeTab?.sessionId])
 
   // Keep the workspace sidebar hidden while Report is active. Reopen it on exit
@@ -640,62 +606,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       lastProcessedEventIndexRef.current.set(activeSessionId, i)
     }
   }, [events, activeSessionId])
-
-  // Listen for step_progress_updated events to refresh workspace files for current iteration
-  useEffect(() => {
-    if (events.length === 0 || !workspacePath) {
-      return
-    }
-
-    // Find new step_progress_updated events that we haven't processed yet
-    const lastStepIdx = lastProcessedStepProgressIndexRef.current.get(activeSessionId ?? '') ?? events.length - 1
-    for (let i = lastStepIdx + 1; i < events.length; i++) {
-      const event = events[i]
-
-      if (event.type === 'step_progress_updated') {
-        // Use typed helper function to get properly typed event data
-        const eventData = getTypedEventData(event, 'step_progress_updated')
-
-        if (!eventData) {
-          continue
-        }
-
-        // Check if this event is for the current workspace
-        const isForCurrentWorkspace = eventData.workspace_path === workspacePath
-        // Check if selectedRunFolder matches OR if selectedRunFolder is 'new' (just started execution)
-        // When selectedRunFolder is 'new', we should still process events to update the store
-        const isForCurrentOrNewRun =
-          selectedRunFolder === 'new' ||
-          selectedRunFolder === eventData.run_folder
-
-        // Process if this event is for the current workspace and either:
-        // 1. Matches the selected run folder, OR
-        // 2. We just started execution (selectedRunFolder is 'new')
-        if (isForCurrentWorkspace && isForCurrentOrNewRun) {
-          // If selectedRunFolder is 'new', update it to the actual run folder from the event
-          if (selectedRunFolder === 'new' && eventData.run_folder) {
-            setSelectedRunFolder(eventData.run_folder)
-          }
-
-          // Auto-focus disabled - running step name is now shown in StepLegend instead
-          // This prevents the canvas from jumping around during workflow execution
-
-          // PERF FIX: Mark workspace stale instead of calling debouncedFetchFiles().
-          //
-          // PROBLEM: Previously called debouncedFetchFiles(workspacePath) on every
-          // step_progress_updated event (500ms debounce). Each fetch is ~2-3MB for large
-          // workspaces. During a 10-step workflow, this triggered 10+ fetches.
-          //
-          // FIX: Set needsRefresh flag. New files are added incrementally via addFileToTree
-          // (from workspace_file_operation events, no network call). The Workspace component
-          // shows a "Files may be out of date" banner for manual refresh.
-          useWorkspaceStore.getState().setNeedsRefresh(true)
-          
-          lastProcessedStepProgressIndexRef.current.set(activeSessionId ?? '', i)
-        }
-      }
-    }
-  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, updateStepProgressFromEvent, plan, activeSessionId])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)
@@ -938,7 +848,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return
     }
 
-    // Check if preset actually changed (not just deps like selectedRunFolder/stepProgress)
+    // Check if preset actually changed (not just deps like selectedRunFolder)
     if (previousPresetIdRef.current !== activePresetId && activePresetId) {
       // Update ref immediately so dep-only re-fires don't re-enter this block
       const oldPreset = previousPresetIdRef.current
@@ -989,7 +899,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern

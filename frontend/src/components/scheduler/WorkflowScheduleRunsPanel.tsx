@@ -64,7 +64,6 @@ function getRunFolderIterationNumber(folderName: string): number {
 function getRunFolderActivityTime(folder: RunFolderInfo): number {
   const activityTimestamp =
     folder.metadata?.completed_at ||
-    folder.progress?.last_updated ||
     folder.metadata?.created_at ||
     ''
 

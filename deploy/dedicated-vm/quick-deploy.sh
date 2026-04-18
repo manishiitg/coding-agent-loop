@@ -71,6 +71,12 @@ export GOPATH=/root/go
 REMOTE=/opt/mcp-agent
 
 if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
+  # Keep CLI tools used by the bare-metal agent up to date. The agent shells out
+  # to these, so if any is missing the call fails with "not found" (code 127).
+  # Running on every agent deploy ensures they're installed and fresh.
+  echo "    Updating bare-metal CLI tools (agent-browser, claude, gemini)..."
+  npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest 2>&1 | tail -3
+
   # Fix go.mod replace directives
   cd $REMOTE/src/agent_go
   go mod edit -dropreplace=github.com/manishiitg/mcpagent 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/mcp-agent-builder-go/workspace 2>/dev/null

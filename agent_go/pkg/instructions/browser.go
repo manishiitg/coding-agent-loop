@@ -5,7 +5,14 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 )
+
+// agentBrowserSkillPath returns the absolute shell path to the agent-browser SKILL.md,
+// resolved via fsutil.WorkspaceShellRoot() (honors WORKSPACE_SHELL_ROOT / WORKSPACE_DOCS_PATH).
+func agentBrowserSkillPath() string {
+	return fsutil.WorkspaceShellRoot() + "/skills/agent-browser/SKILL.md"
+}
 
 // cdpHost returns the hostname to use in CDP instructions.
 // In native mode, use localhost. In Docker mode, use host.docker.internal.
@@ -183,7 +190,7 @@ You are using the Playwright MCP tools (browser_* functions), not agent_browser.
 // GetAgentBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
 // Appended to the agent's system prompt when browser access (agent-browser skill) is enabled.
 func GetAgentBrowserQuickStartInstructions() string {
-	return `## Browser Automation (Quick Start)
+	return fmt.Sprintf(`## Browser Automation (Quick Start)
 
 Call agent_browser via HTTP API:
 
@@ -191,7 +198,7 @@ Call agent_browser via HTTP API:
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
-For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat %s")`, agentBrowserSkillPath())
 }
 
 // GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
@@ -220,12 +227,12 @@ For operations that need more control (targeting specific tabs, running complex 
 `+"```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('%[1]s/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://%[2]s:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```"+`
 **Rules for direct CDP:** Always use `+"`Host: localhost`"+` header and `+"`suppress_origin=True`"+` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
 
-For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`, cdpURL, host)
+For detailed usage, read: execute_shell_command(command="cat %[3]s")`, cdpURL, host, agentBrowserSkillPath())
 }
 
 // GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).
 func GetHeadlessBrowserInstructions() string {
-	return `## Browser Automation (Headless Container Browser)
+	return fmt.Sprintf(`## Browser Automation (Headless Container Browser)
 
 You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium browser** inside a container.
 
@@ -242,7 +249,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - Browser state is **ephemeral** — it resets between sessions
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
-For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat %s")`, agentBrowserSkillPath())
 }
 
 // GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.

@@ -732,16 +732,32 @@ Run a workflow or single step in the background. Returns an agent_id visible in 
 
 ### Reading workflow state
 
-When the user asks "what did the workflow extract / produce / know?", each workflow has four places where state lives. Pick the right one for the question:
+When the user asks "what did the workflow extract / produce / know?", each workflow has six places where state lives. Pick the right one for the question:
 
 | User question | Where to look |
 |---|---|
 | "Latest results for group X?" | ` + "`Workflow/<name>/runs/iteration-0/<group>/execution/`" + ` (per-run step outputs, JSON) |
 | "What state has the workflow accumulated across runs?" | ` + "`Workflow/<name>/db/*.json`" + ` (structured rows, upsert-by-key across runs) |
-| "What does the workflow know about <company / person / domain>?" | ` + "`Workflow/<name>/knowledgebase/graph.json`" + ` (accumulated facts — entities + relationships). ` + "`knowledgebase/index.json`" + ` has a lightweight summary (counts, types). |
-| "How / why does the workflow do X?" | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (HOW-to-run notes kept by the learning agent) |
+| "What facts does the workflow know about <entity / company / topic>?" | ` + "`Workflow/<name>/knowledgebase/graph.json`" + ` (entities + relationships). ` + "`knowledgebase/index.json`" + ` has counts/types only. |
+| "What's the workflow's narrative on <topic>?" (summaries, patterns, explanations) | ` + "`Workflow/<name>/knowledgebase/notes/`" + `. Start with ` + "`_index.json`" + ` to discover available topics, then ` + "`cat notes/<id>.md`" + `. Never glob ` + "`notes/*.md`" + ` — the folder can be large. |
+| "How does the workflow do X?" (HOW-to-run notes) | ` + "`Workflow/<name>/learnings/_global/SKILL.md`" + ` (kept by the learning agent) |
+| "Why does the workflow do X?" (objective / success criteria / rationale) | ` + "`Workflow/<name>/soul/soul.md`" + ` (author-written "why" — objective, success criteria, key decisions & constraints) |
 
-` + "`cat`" + ` / ` + "`jq`" + ` these files directly via ` + "`execute_shell_command`" + `. **Do NOT modify them** — workflow internals (step configs, KB settings, learnings) belong to the workflow builder, not this chat. If the user wants to change how a workflow works, tell them to open it in the builder.
+**Schema hints** (so you can write correct ` + "`jq`" + ` queries without sniffing first):
+- ` + "`graph.json`" + `: ` + "`{schema_version, entities: [{id, type, label, properties, provenance}], relationships: [{from_id, to_id, type, properties, provenance}]}`" + `. Query examples:
+  - All entities of a type: ` + "`jq '.entities[] | select(.type==\"Company\")' graph.json`" + `
+  - One entity by id: ` + "`jq '.entities[] | select(.id==\"company-acme\")' graph.json`" + `
+  - Relationships from an entity: ` + "`jq '.relationships[] | select(.from_id==\"company-acme\")' graph.json`" + `
+- ` + "`notes/_index.json`" + `: ` + "`{topics: [{id, file, covers: [entity_ids], last_updated, size_bytes, section_count}]}`" + `. Read ` + "`_index.json`" + ` first to find which topic covers what, then ` + "`cat`" + ` only the relevant file.
+- ` + "`db/*.json`" + `: row shape is workflow-specific — ` + "`head`" + ` or ` + "`jq '.[0]'`" + ` the file to learn its fields before querying.
+
+**Example flow** for "does Trading know about technical_momentum?":
+1. ` + "`cat Workflow/trading/knowledgebase/index.json`" + ` — see if the KB is non-empty
+2. ` + "`jq '.entities[] | select(.id | contains(\"technical_momentum\"))' Workflow/trading/knowledgebase/graph.json`" + ` — pull matching entities
+3. ` + "`jq '.topics[] | select(.covers[] | contains(\"technical_momentum\"))' Workflow/trading/knowledgebase/notes/_index.json`" + ` — find any narrative notes
+4. ` + "`cat`" + ` the relevant notes ` + "`.md`" + ` files
+
+` + "`cat`" + ` / ` + "`jq`" + ` these files directly via ` + "`execute_shell_command`" + `. **Do NOT modify them** — workflow internals (step configs, KB settings, learnings, soul) belong to the workflow builder, not this chat. If the user wants to change how a workflow works, tell them to open it in the builder.
 
 ### Process
 

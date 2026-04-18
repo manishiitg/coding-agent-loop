@@ -586,7 +586,6 @@ export interface WorkflowMetadata {
   phase_name?: string;          // Phase display name
   is_minimized?: boolean;       // True when workflow is in background
   minimized_at?: number;        // Unix timestamp (ms) when minimized
-  step_progress?: StepProgress; // Current step progress
   current_step_id?: string;     // Currently executing step ID
   current_step_title?: string;  // Currently executing step title
   last_polled?: number;         // Unix timestamp (ms) of last status check
@@ -887,26 +886,6 @@ export interface CreateRunFolderResponse {
   message: string;
 }
 
-// Branch step progress for conditional steps
-export interface BranchStepProgress {
-  branch_executed: string;  // "if_true" or "if_false"
-  completed_steps: string[];
-}
-
-// Execution progress for a run folder
-export interface StepProgress {
-  completed_step_indices: number[];  // 0-based indices
-  total_steps: number;
-  last_updated: string;  // ISO timestamp
-  branch_steps?: Record<number, BranchStepProgress>;  // key is step index (0-based)
-  last_completed_step_id?: string;  // Step ID for direct node updates (from step_progress_updated event)
-}
-
-export interface ProgressResponse {
-  exists: boolean;
-  progress: StepProgress | null;
-}
-
 // Execution options for frontend-controlled execution
 // Note: AgentLLMConfig is already defined above (line ~462)
 export interface ExecutionOptions {
@@ -1174,16 +1153,6 @@ export interface ExecutionLogsResponse {
 }
 
 
-// Batch execution progress for multiple variable groups
-export interface BatchExecutionProgress {
-  total_groups: number;
-  enabled_groups: string[];  // Group IDs to execute
-  completed_groups: string[];  // Group IDs that finished
-  current_group: string;  // Currently executing group ID
-  group_progress: Record<string, StepProgress>;  // Per-group step progress
-  iteration_number: number;
-}
-
 // Batch execution event types
 export interface BatchExecutionStartEvent {
   total_groups: number;
@@ -1388,7 +1357,6 @@ export interface WorkspaceStateResponse {
 
 export interface WorkspaceState {
   run_folders: RunFolderInfo[];
-  selected_progress?: StepProgress;
   variables_manifest?: VariablesManifest;
   phases: WorkflowPhase[];
   active_executions?: ActiveWorkflowExecution[];
@@ -1440,20 +1408,7 @@ export interface RunMetadata {
 
 export interface RunFolderInfo {
   name: string;
-  progress?: StepProgress;
   metadata?: RunMetadata;
-}
-
-export interface StepProgress {
-  completed_step_indices: number[];
-  total_steps: number;
-  last_updated: string;
-  branch_steps?: Record<number, BranchStepProgress>;
-}
-
-export interface BranchStepProgress {
-  branch_executed: string;
-  completed_steps: string[];
 }
 
 export interface WorkflowPhase {

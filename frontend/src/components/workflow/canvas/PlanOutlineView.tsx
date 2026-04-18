@@ -20,13 +20,12 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import type { PlanStep, PlanningResponse, PlanRoutingRoute } from '../../../utils/stepConfigMatching'
-import type { StepProgress, PlannerFile } from '../../../services/api-types'
+import type { PlannerFile } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 interface PlanOutlineViewProps {
   plan: PlanningResponse
-  stepProgress: StepProgress | null
   stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
   onStepClick?: (stepId: string) => void
   onFileClick?: (filePath: string) => void
@@ -493,7 +492,6 @@ function ContentPanel({
 // ── Main component ───────────────────────────────────────────
 export function PlanOutlineView({
   plan,
-  stepProgress,
   stepStatusMap,
   onStepClick,
   onFileClick,
@@ -579,8 +577,7 @@ export function PlanOutlineView({
         </div>
 
         {steps.map((step, i) => {
-          const status = stepStatusMap.get(step.id) ||
-            (stepProgress?.completed_step_indices?.includes(i) ? 'completed' : undefined)
+          const status = stepStatusMap.get(step.id)
           return (
             <StepTreeNode
               key={step.id}

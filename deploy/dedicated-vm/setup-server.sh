@@ -148,6 +148,30 @@ APP_DIR="/opt/mcp-agent"
 mkdir -p "$APP_DIR"
 chown -R 1001:1001 "$APP_DIR"
 
+# ===================================================================
+# 7. Node.js + CLI tools the bare-metal agent shells out to
+# ===================================================================
+# The agent exec()s these binaries, so they must live on the host (not just
+# inside Docker). quick-deploy.sh keeps them up to date on every agent deploy;
+# this block bootstraps them on a fresh VM.
+if ! command -v node &>/dev/null; then
+  echo "==> Installing Node.js 24.x..."
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+  apt-get install -y --no-install-recommends nodejs
+fi
+echo "==> Installing CLI tools (agent-browser, claude, gemini)..."
+npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @google/gemini-cli@latest
+
+# Google Chrome — required for browser automation via agent-browser/playwright.
+# Some tools (and shell-exec calls like `which google-chrome`) look for
+# google-chrome specifically; chromium alone is not a drop-in replacement.
+if ! command -v google-chrome &>/dev/null; then
+  echo "==> Installing Google Chrome..."
+  wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  apt-get install -y /tmp/google-chrome.deb
+  rm -f /tmp/google-chrome.deb
+fi
+
 echo ""
 echo "==> Server setup complete!"
 echo "    Firewall:   UFW active (22, 80, 443)"

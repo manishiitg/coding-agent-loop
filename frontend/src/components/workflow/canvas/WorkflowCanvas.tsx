@@ -14,6 +14,7 @@ import {
 import { ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
+import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
@@ -370,8 +371,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  const stepProgress = useWorkflowStore(state => state.stepProgress)
-  
   // Get workspace minimized state to determine if StepSidebar should be compact
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
   
@@ -390,7 +389,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       return
     }
 
-    // Only highlight if selectedRunFolder actually changed and is valid
+    // Only highlight if selectedRunFolder actually changed and is valid.
+    // Guard: skip when the workflow canvas isn't the active mode — this effect
+    // can fire while the canvas stays mounted in other modes (e.g. multi-agent
+    // chat), and the fetchFiles(workspacePath) below would overwrite the
+    // workspace state with workflow-scoped files, leaving the multi-agent file
+    // panel empty after the filter pass.
+    const activeMode = useModeStore.getState().selectedModeCategory
+    if (activeMode !== 'workflow') {
+      return
+    }
+
     if (selectedRunFolder !== prevSelectedRunFolderRef.current && workspacePath) {
       prevSelectedRunFolderRef.current = selectedRunFolder
 
@@ -467,7 +476,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Transform run folders for WorkflowToolbar (memoized to avoid repeated transformations)
   const runFoldersForToolbar = React.useMemo(() => {
     if (!workspaceState?.run_folders) return []
-    return workspaceState.run_folders.map(f => ({ name: f.name, progress: f.progress || undefined }))
+    return workspaceState.run_folders.map(f => ({ name: f.name }))
   }, [workspaceState?.run_folders])
 
   useEffect(() => {
@@ -2185,11 +2194,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           hasPlan={false}
           currentPhase={currentPhase}
           workspacePath={workspacePath}
-          totalSteps={0}
           presetQueryId={presetQueryId}
           runFolders={runFoldersForToolbar}
           variablesManifest={variablesManifest}
-          stepProgress={stepProgress}
           isLoadingWorkspaceState={isLoadingWorkspaceState}
           onStartPhase={handleStartPhase}
           onStop={stopWorkflow}
@@ -2234,11 +2241,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         plan={plan || undefined}
         currentPhase={currentPhase}
         workspacePath={workspacePath}
-        totalSteps={totalSteps}
         presetQueryId={presetQueryId}
         runFolders={runFoldersForToolbar}
         variablesManifest={variablesManifest}
-        stepProgress={stepProgress}
         isLoadingWorkspaceState={isLoadingWorkspaceState}
         onStartPhase={handleStartPhase}
         onStop={stopWorkflow}
@@ -2260,8 +2265,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         <div className="flex-1 min-h-0 relative">
           {stablePlan && <PlanOutlineView
             plan={stablePlan}
-            stepProgress={stepProgress}
-            stepStatusMap={stepStatusMap}
+              stepStatusMap={stepStatusMap}
             onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
             onFileClick={(filePath) => {
               useWorkspaceStore.getState().highlightFile(filePath)

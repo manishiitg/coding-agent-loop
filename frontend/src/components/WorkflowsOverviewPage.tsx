@@ -9,7 +9,7 @@ import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
 import { EmployeeDashboard } from './EmployeeDashboard'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import type { RunFolderInfo, EvaluationReportsResponse, EvaluationReportEntry, StepProgress, RunMetadataModels } from '../services/api-types'
+import type { RunFolderInfo, EvaluationReportsResponse, EvaluationReportEntry, RunMetadataModels } from '../services/api-types'
 
 interface RunFolderDetail {
   folder: RunFolderInfo
@@ -143,22 +143,15 @@ function useWorkflowRows() {
 
           let latestTime = ''
           const runFolderDetails: RunFolderDetail[] = folders.map(f => {
-            const progress: StepProgress | undefined = f.progress
-            const totalSteps = progress?.total_steps || 0
-            const completedSteps = progress?.completed_step_indices?.length || 0
-            const lastUp = progress?.last_updated || null
-            if (lastUp && lastUp > latestTime) latestTime = lastUp
+            const totalSteps = 0
+            const completedSteps = 0
+            const lastUp: string | null = null
 
             const meta = f.metadata
-            let status = meta?.status || (totalSteps > 0 && completedSteps >= totalSteps ? 'completed' : totalSteps > 0 ? 'running' : 'unknown')
+            let status = meta?.status || 'unknown'
             // Reconcile: if metadata says "running" but not in active executions, it's stale
             if (status === 'running' && !activeRunFolders.has(f.name)) {
-              // Check if actually completed
-              if (totalSteps > 0 && completedSteps >= totalSteps) {
-                status = 'completed'
-              } else {
-                status = 'failed'
-              }
+              status = 'failed'
             }
 
             const evalEntry = evalByFolder[f.name]

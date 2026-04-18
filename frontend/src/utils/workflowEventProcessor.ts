@@ -18,11 +18,6 @@ type BatchGroupStartEventWithLegacyName = BatchGroupStartEventData & {
  * Workflow information extracted from events
  */
 export interface WorkflowEventInfo {
-  /** Step progress information */
-  progress?: {
-    completed_step_indices?: number[]
-    total_steps: number
-  }
   /** Title of the current or last completed step */
   stepTitle?: string
   /** Step ID of the currently executing step */
@@ -80,7 +75,6 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
   const found = {
     agentName: false,
     orchestratorPhase: false,
-    stepInfo: false,
     agentTurns: false,
     contextTokens: false,
     toolInfo: false,
@@ -104,22 +98,6 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
         if (!found.orchestratorPhase && metadata.orchestrator_phase) {
           info.orchestratorPhase = metadata.orchestrator_phase
           found.orchestratorPhase = true
-        }
-      }
-    }
-
-    // 2. Extract step progress data (if not already found)
-    if (!found.stepInfo) {
-      const progressData = getTypedEventData(pollingEvent, 'step_progress_updated')
-      if (progressData) {
-        // Note: step_progress_updated event no longer includes progress details
-        // Progress should be loaded from the API separately if needed
-        // We can still track the current step ID if available
-        if (progressData.current_step_id) {
-          // Current step ID is available but we don't store it in info.progress
-          // as progress details are not in the event anymore
-          // We mark as found since this is the latest update
-          found.stepInfo = true
         }
       }
     }
@@ -211,7 +189,7 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
     }
     
     // If we found everything we need, stop iterating
-    if (found.agentName && found.orchestratorPhase && found.stepInfo && 
+    if (found.agentName && found.orchestratorPhase &&
         found.contextTokens && found.toolInfo && found.finalResult && found.batchInfo) {
       break
     }

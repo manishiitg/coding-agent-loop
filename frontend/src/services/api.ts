@@ -27,7 +27,6 @@ import type {
   CompactContextResponse,
   RunFoldersResponse,
   CreateRunFolderResponse,
-  ProgressResponse,
   VariableGroupsResponse,
   VariablesManifest,
   SlackConfigRequest,
@@ -82,7 +81,6 @@ export type {
   SummarizeConversationResponse,
   RunFoldersResponse,
   CreateRunFolderResponse,
-  ProgressResponse,
   ExecutionLogsResponse,
   StepExecutionLogs,
   ValidationLog,
@@ -271,14 +269,24 @@ api.interceptors.request.use((config) => {
 })
 
 // --- Axios response interceptor to handle 401 errors ---
+// Only clear the auth token when the *token itself* is rejected as expired/invalid.
+// Clearing on every 401 is a footgun: a single transient 401 from any endpoint (e.g.
+// a race where a request fires before the token is attached) wipes localStorage, and
+// every subsequent request goes out with no Authorization header → infinite 401 loop
+// until the user hard-refreshes and re-logs in.
+function is401DueToBadToken(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const e = error as { response?: { status?: number; data?: { error?: string } } }
+  if (e.response?.status !== 401) return false
+  const msg = (e.response.data?.error || '').toLowerCase()
+  return msg.includes('expired') || msg.includes('invalid')
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Clear auth token on 401
+    if (is401DueToBadToken(error)) {
       clearAuthToken()
-      // Don't redirect automatically - let the app handle it
-      // window.location.href = '/login'
     }
     return Promise.reject(error)
   }
@@ -322,7 +330,7 @@ workspaceApi.interceptors.request.use((config) => {
 workspaceApi.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (is401DueToBadToken(error)) {
       clearAuthToken()
     }
     return Promise.reject(error)
@@ -1003,14 +1011,6 @@ export const agentApi = {
     const params: Record<string, string> = {}
     if (workspacePath) params.workspace_path = workspacePath
     const response = await api.get('/api/workflow/active-executions', { params })
-    return response.data
-  },
-
-  // Get execution progress for a run folder
-  getProgress: async (workspacePath: string, runFolder: string): Promise<ProgressResponse> => {
-    const response = await api.get('/api/workflow/progress', {
-      params: { workspace_path: workspacePath, run_folder: runFolder }
-    })
     return response.data
   },
 

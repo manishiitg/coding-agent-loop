@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { WorkflowPhase, StepProgress, ExecutionOptions, VariablesManifest, EvaluationPlan } from '../services/api-types'
+import type { WorkflowPhase, ExecutionOptions, VariablesManifest, EvaluationPlan } from '../services/api-types'
 import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -38,7 +38,7 @@ import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
 import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
-import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
+import { normalizeRunFolder } from '../utils/workflowStateNormalization'
 
 export type WorkflowWorkspaceView = 'builder' | 'execution' | 'report' | 'plan' | 'flow' | null
 
@@ -86,7 +86,6 @@ function persistWorkspaceViewForPreset(presetId: string | null, view: WorkflowWo
 
 export interface RunFolder {
   name: string
-  progress?: StepProgress
 }
 
 export interface WorkflowChatTab {
@@ -104,8 +103,6 @@ export interface WorkflowChatTab {
 // Per-preset workflow state — isolated so switching presets doesn't cross-contaminate
 export interface PresetWorkflowState {
   selectedRunFolder: string | null
-  stepProgress: StepProgress | null
-  stepProgressFolder: string | null
   activePhase: string | null
   showChatArea: boolean
   chatAreaExpanded: boolean
@@ -127,19 +124,11 @@ export interface PresetWorkflowState {
     remainingCount: number
     startTime: number | null
   } | null
-  selectedStartPoint: number
-  selectedBranchStep: {
-    parentStepIndex: number
-    branchType: 'if_true' | 'if_false'
-    branchStepIndex: number
-  } | null
 }
 
 function createDefaultPresetState(): PresetWorkflowState {
   return {
     selectedRunFolder: null,
-    stepProgress: null,
-    stepProgressFolder: null,
     activePhase: null,
     showChatArea: false,
     chatAreaExpanded: true,
@@ -152,8 +141,6 @@ function createDefaultPresetState(): PresetWorkflowState {
     currentStepId: null,
     stepStatusMap: new Map(),
     batchProgress: null,
-    selectedStartPoint: 0,
-    selectedBranchStep: null,
   }
 }
 
@@ -161,8 +148,6 @@ function createDefaultPresetState(): PresetWorkflowState {
 function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
   return {
     selectedRunFolder: state.selectedRunFolder,
-    stepProgress: state.stepProgress,
-    stepProgressFolder: state.stepProgressFolder,
     activePhase: state.activePhase,
     showChatArea: state.showChatArea,
     chatAreaExpanded: state.chatAreaExpanded,
@@ -175,8 +160,6 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     currentStepId: state.currentStepId,
     stepStatusMap: new Map(state.stepStatusMap),
     batchProgress: state.batchProgress,
-    selectedStartPoint: state.selectedStartPoint,
-    selectedBranchStep: state.selectedBranchStep,
   }
 }
 
@@ -195,18 +178,7 @@ interface WorkflowStore {
   selectedRunFolder: string | null // Folder name or null
   isLoadingRunFolders: boolean
 
-  // Step progress
-  stepProgress: StepProgress | null
-  stepProgressFolder: string | null // Track which folder the current progress belongs to
-  isLoadingProgress: boolean
-
   // Execution options
-  selectedStartPoint: number // 0 = beginning, >0 = step number (1-based)
-  selectedBranchStep: {  // For resuming from branch steps
-    parentStepIndex: number;  // 0-based index of conditional step
-    branchType: 'if_true' | 'if_false';  // Which branch
-    branchStepIndex: number;  // 0-based index within the branch
-  } | null
   saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
   disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
   disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
@@ -261,7 +233,6 @@ interface WorkflowStore {
   workshopModeByPreset: Record<string, WorkshopMode>
   setWorkshopMode: (mode: WorkshopMode) => void
   evaluationPlan: EvaluationPlan | null
-  evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
 
   // Global step override (from step_override.json - applies to all steps)
@@ -280,16 +251,7 @@ interface WorkflowStore {
   setRunFolders: (folders: RunFolder[]) => void
   setSelectedRunFolder: (folder: string | null) => void
 
-  // Progress
-  loadProgress: (workspacePath: string, runFolder: string, forceLoad?: boolean) => Promise<void>
-  loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
-  setStepProgress: (progress: StepProgress | null) => void
-  getCompletedStepIndices: () => number[]
-  updateStepProgressFromEvent: (progress: StepProgress) => void
-
   // Execution options
-  setStartPoint: (step: number) => void
-  setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => void
   buildExecutionOptions: () => ExecutionOptions
   setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
@@ -400,14 +362,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       })(),
       isLoadingRunFolders: false,
 
-      // Progress
-      stepProgress: null,
-      stepProgressFolder: null, // Track which folder the current progress belongs to
-      isLoadingProgress: false,
-
-      // Execution options
-      selectedStartPoint: 0,
-      selectedBranchStep: null,
       // Save validation responses to workspace (always enabled, not persisted)
       saveValidationResponses: true,
       // Disable shell exec access (defaults to false, not persisted)
@@ -541,7 +495,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         })
       },
       evaluationPlan: null,
-      evaluationStepProgress: null,
       isLoadingEvaluationPlan: false,
 
       // Global step override
@@ -662,7 +615,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             try {
               localStorage.setItem(SELECTED_RUN_FOLDER_KEY, defaultRunFolder)
             } catch { /* ignore */ }
-            get().loadProgress(workspacePath, defaultRunFolder)
           }
 
           // Validate current selection
@@ -670,7 +622,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             // Check if the selection looks like a valid iteration folder (e.g., "iteration-3")
             // This handles the case where a folder was just created but hasn't appeared in the list yet
             const isValidIterationPattern = /^iteration-\d+/.test(currentSelection)
-            
+
             if (isValidIterationPattern) {
               // Preserve the selection even if not in list yet (it was likely just created)
               // The folder should appear in the next refresh
@@ -689,11 +641,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 }
               } catch (error) {
                 console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
-              }
-
-              // Load progress for new selection if it exists
-              if (newSelection) {
-                get().loadProgress(workspacePath, newSelection)
               }
             }
           }
@@ -744,332 +691,27 @@ export const useWorkflowStore = create<WorkflowStore>()(
         } catch (error) {
           console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
         }
-
-        // Clear progress when switching to null
-        if (!normalized) {
-          set({ stepProgress: null, stepProgressFolder: null })
-        }
-      },
-
-      // Load step progress for a run folder
-      // NOTE: During active execution (isStreaming=true), this will skip API calls
-      // and trust step_progress_updated events instead to avoid race conditions.
-      loadProgress: async (workspacePath: string, runFolder: string, forceLoad = false) => {
-        if (!workspacePath || runFolder === 'new') {
-          set({ stepProgress: null })
-          return
-        }
-
-        // During execution, skip API calls - trust events instead
-        // This prevents race conditions where API might return stale data
-        // before backend cleanup completes (e.g., when resuming from step 3)
-        const { isStreaming } = useChatStore.getState()
-        if (isStreaming && !forceLoad) {
-          console.log('[PROGRESS_DEBUG] Skipping loadProgress during execution - trusting step_progress_updated events')
-          return
-        }
-
-        set({ isLoadingProgress: true, stepProgressFolder: null }) // Clear folder tracking while loading
-
-        try {
-          const response = await agentApi.getProgress(workspacePath, runFolder)
-          console.log('[PROGRESS_DEBUG] Loaded progress response:', {
-            exists: response.exists,
-            hasProgress: !!response.progress,
-            completedStepIndices: response.progress?.completed_step_indices,
-            totalSteps: response.progress?.total_steps,
-            runFolder
-          })
-          if (response.exists && response.progress) {
-            const state = get()
-            const previousProgressFolder = state.stepProgressFolder
-            
-            set({ 
-              stepProgress: response.progress, 
-              stepProgressFolder: runFolder,
-              isLoadingProgress: false 
-            })
-            console.log('[PROGRESS_DEBUG] Set stepProgress in store:', {
-              completedStepIndices: response.progress.completed_step_indices,
-              totalSteps: response.progress.total_steps,
-              folder: runFolder
-            })
-
-            // Update the folder info in state so we can show progress in the dropdown
-            set(prevState => ({
-              runFolders: prevState.runFolders.map(f =>
-                f.name === runFolder
-                  ? { ...f, progress: response.progress || undefined }
-                  : f
-              )
-            }))
-
-            // Update start point when switching groups - recalculate based on new group's progress
-            // Always update start point to match the loaded progress (handles both folder switches and initial loads)
-            const completedIndices = response.progress.completed_step_indices || []
-            const totalSteps = response.progress.total_steps || 0
-            const currentStartPoint = get().selectedStartPoint
-            
-            // Check if folder changed (group switch detected)
-            const folderChanged = previousProgressFolder && previousProgressFolder !== runFolder && previousProgressFolder !== 'new'
-            
-            console.log('[WorkflowStore] loadProgress - checking start point update:', {
-              previousProgressFolder,
-              newFolder: runFolder,
-              folderChanged,
-              completedIndices: completedIndices.length,
-              totalSteps,
-              currentStartPoint
-            })
-            
-            if (completedIndices.length > 0 && totalSteps > 0) {
-              // Calculate the resume point based on the group's progress
-              const completedStepNumbers = completedIndices.map(idx => idx + 1).sort((a, b) => a - b)
-              const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
-              const nextStep = lastCompletedStep + 1
-              const resumePoint = nextStep <= totalSteps ? nextStep : lastCompletedStep
-
-              // Always auto-set start point to match loaded progress
-              if (currentStartPoint !== resumePoint) {
-                console.log('[WorkflowStore] ✅ Updating start point to match group progress:', {
-                  previousFolder: previousProgressFolder,
-                  newFolder: runFolder,
-                  completedSteps: completedStepNumbers,
-                  lastCompletedStep,
-                  resumePoint,
-                  previousStartPoint: currentStartPoint
-                })
-                // Normalize and set start point, clear branch step
-                const normalized = normalizeStartPoint(resumePoint)
-                set({ selectedStartPoint: normalized, selectedBranchStep: null })
-              } else {
-                console.log('[WorkflowStore] Start point already matches progress, skipping update')
-              }
-            } else if (completedIndices.length === 0) {
-              // Group has no progress - reset to start from beginning
-              if (currentStartPoint !== 0) {
-                console.log('[WorkflowStore] ✅ Group has no progress, resetting to start from beginning:', {
-                  previousFolder: previousProgressFolder,
-                  newFolder: runFolder,
-                  previousStartPoint: currentStartPoint
-                })
-                // Reset to 0 and clear branch step
-                set({ selectedStartPoint: 0, selectedBranchStep: null })
-              } else {
-                console.log('[WorkflowStore] Start point already 0, skipping update')
-              }
-            }
-          } else {
-            // No progress file exists - only reset progress, preserve user's selectedStartPoint
-            // The user's selection should only be reset when they explicitly choose "Start from Beginning"
-            const currentStartPoint = get().selectedStartPoint
-            const state = get()
-            const previousProgressFolder = state.stepProgressFolder
-            
-            set({ stepProgress: null, stepProgressFolder: null, isLoadingProgress: false })
-            console.log('[RESUME_DEBUG] No progress file found, preserving selectedStartPoint:', currentStartPoint)
-            
-            // If switching to a folder with no progress, reset start point
-            if (previousProgressFolder && previousProgressFolder !== runFolder && previousProgressFolder !== 'new') {
-              if (currentStartPoint !== 0) {
-                console.log('[WorkflowStore] Group switched to folder with no progress, resetting to start from beginning:', {
-                  previousFolder: previousProgressFolder,
-                  newFolder: runFolder,
-                  previousStartPoint: currentStartPoint
-                })
-                set({ selectedStartPoint: 0 })
-              }
-            }
-          }
-        } catch (error) {
-          // On error, only reset progress, preserve user's selectedStartPoint
-          // The user's selection should only be reset when they explicitly choose "Start from Beginning"
-          const currentStartPoint = get().selectedStartPoint
-          set({ stepProgress: null, stepProgressFolder: null, isLoadingProgress: false })
-          console.error('[RESUME_DEBUG] Failed to load progress, preserving selectedStartPoint:', currentStartPoint, error)
-        }
-      },
-
-      // Load progress on-demand for a folder (for dropdown display)
-      // Only loads if folder doesn't have progress data yet
-      loadFolderProgressOnDemand: async (workspacePath: string, folderName: string) => {
-        if (!workspacePath || folderName === 'new') return
-
-        // Check if folder already has progress
-        const folder = get().runFolders.find(f => f.name === folderName)
-        if (folder?.progress) return // Already has progress, no need to load
-
-        try {
-          const response = await agentApi.getProgress(workspacePath, folderName)
-          if (response.exists && response.progress) {
-            // Update folder info with loaded progress
-            set(state => ({
-              runFolders: state.runFolders.map(f =>
-                f.name === folderName
-                  ? { ...f, progress: response.progress || undefined }
-                  : f
-              )
-            }))
-          }
-        } catch (error) {
-          // Silent fail - this is on-demand loading for display purposes
-          console.debug('[WorkflowStore] On-demand progress load failed for', folderName, error)
-        }
-      },
-
-      getCompletedStepIndices: () => {
-        return get().stepProgress?.completed_step_indices || []
-      },
-
-      setStepProgress: (progress: StepProgress | null) => {
-        const state = get()
-        const previousProgressFolder = state.stepProgressFolder
-        const currentFolder = state.selectedRunFolder
-        
-        // Clear folder tracking if progress is cleared
-        set({ 
-          stepProgress: progress,
-          stepProgressFolder: progress ? currentFolder : null
-        })
-        
-        // Update start point when switching groups - same logic as in loadProgress
-        if (progress && currentFolder && currentFolder !== 'new') {
-          // Check if folder changed (group switch detected)
-          const folderChanged = previousProgressFolder && previousProgressFolder !== currentFolder && previousProgressFolder !== 'new'
-          const completedIndices = progress.completed_step_indices || []
-          const totalSteps = progress.total_steps || 0
-          const currentStartPoint = get().selectedStartPoint
-          
-          console.log('[WorkflowStore] setStepProgress - checking start point update:', {
-            previousProgressFolder,
-            newFolder: currentFolder,
-            folderChanged,
-            completedIndices: completedIndices.length,
-            totalSteps,
-            currentStartPoint
-          })
-          
-          if (completedIndices.length > 0 && totalSteps > 0) {
-            // Calculate the resume point based on the NEW group's progress
-            const completedStepNumbers = completedIndices.map(idx => idx + 1).sort((a, b) => a - b)
-            const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
-            const nextStep = lastCompletedStep + 1
-            const resumePoint = nextStep <= totalSteps ? nextStep : lastCompletedStep
-            
-            // Always update to match the loaded progress (don't check folderChanged - always sync)
-            if (currentStartPoint !== resumePoint) {
-              console.log('[WorkflowStore] ✅ Updating start point (via setStepProgress):', {
-                previousFolder: previousProgressFolder,
-                newFolder: currentFolder,
-                folderChanged,
-                completedSteps: completedStepNumbers,
-                lastCompletedStep,
-                resumePoint,
-                previousStartPoint: currentStartPoint
-              })
-              // Normalize and set start point, clear branch step
-              const normalized = normalizeStartPoint(resumePoint)
-              set({ selectedStartPoint: normalized, selectedBranchStep: null })
-            } else {
-              console.log('[WorkflowStore] Start point already matches progress (setStepProgress), skipping update')
-            }
-          } else if (completedIndices.length === 0) {
-            // New group has no progress - reset to start from beginning
-            if (currentStartPoint !== 0) {
-              console.log('[WorkflowStore] ✅ Group has no progress (via setStepProgress), resetting:', {
-                previousFolder: previousProgressFolder,
-                newFolder: currentFolder,
-                folderChanged,
-                previousStartPoint: currentStartPoint
-              })
-              // Reset to 0 and clear branch step
-              set({ selectedStartPoint: 0, selectedBranchStep: null })
-            } else {
-              console.log('[WorkflowStore] Start point already 0 (setStepProgress), skipping update')
-            }
-          }
-        } else if (!progress && previousProgressFolder) {
-          // Progress cleared - reset start point if it was set
-          const currentStartPoint = get().selectedStartPoint
-          if (currentStartPoint !== 0) {
-            console.log('[WorkflowStore] Progress cleared, resetting start point to 0')
-            set({ selectedStartPoint: 0 })
-          }
-        }
-      },
-
-      // Update step progress from event data (called when step_progress_updated events are received)
-      updateStepProgressFromEvent: (progress: StepProgress) => {
-        const state = get()
-        // Only update if this progress is for the currently selected run folder
-        // Note: We can't check run_folder here since it's not in StepProgress type,
-        // but the caller (WorkflowLayout) will filter by run_folder before calling this
-        set({ stepProgress: progress })
-        
-        // Also update the folder info in state if it exists
-        if (state.selectedRunFolder && state.selectedRunFolder !== 'new') {
-          set(prevState => ({
-            runFolders: prevState.runFolders.map(f =>
-              f.name === state.selectedRunFolder
-                ? { ...f, progress }
-                : f
-            )
-          }))
-        }
-      },
-
-      setStartPoint: (step: number | string) => {
-        // Use normalization utility to ensure canonical format
-        const normalized = normalizeStartPoint(step)
-        console.log('[RESUME_DEBUG] setStartPoint called:', step, '→ normalized:', normalized)
-        set({ selectedStartPoint: normalized, selectedBranchStep: null }) // Clear branch step when setting regular step
-        // Note: startPoint is NOT persisted to localStorage - it's always calculated from progress
-      },
-      setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => {
-        set({ selectedBranchStep: branchStep, selectedStartPoint: 0 }) // Clear regular step when setting branch step
       },
 
       // Build execution options from current state
       buildExecutionOptions: () => {
         const state = get()
-        const isResuming = state.selectedStartPoint > 0
-        const isResumingBranch = state.selectedBranchStep !== null
 
-        console.log('[RESUME_DEBUG] buildExecutionOptions called:', {
-          selectedStartPoint: state.selectedStartPoint,
-          selectedBranchStep: state.selectedBranchStep,
-          isResuming,
-          isResumingBranch
-        })
-
-        // All execution uses learning enabled, no human feedback
-        const executionStrategy: string = (isResuming || isResumingBranch)
-          ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
-          : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
+        // Runs always start from the beginning — resume-from-step logic has been removed.
+        const executionStrategy: string = ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
         // Manual runs reuse the user-selected iteration and clear outputs;
         // scheduled runs create a new iteration in the scheduler.
         const shouldUseSameRun = true
 
-        console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
-
         // Resolve the specific group folder path for phases that need context
         // Uses utility function to consolidate logic
-        console.log('[buildExecutionOptions] Before resolveGroupFolderPath:', {
-          currentRunningGroupId: state.currentRunningGroupId,
-          selectedRunFolder: state.selectedRunFolder,
-          selectedGroupIds: state.selectedGroupIds,
-          selectedGroupIdsLength: state.selectedGroupIds.length,
-          hasManifest: !!state.variablesManifest,
-          groupsCount: state.variablesManifest?.groups?.length || 0
-        })
         const resolvedRunFolder = resolveGroupFolderPath({
           currentRunningGroupId: state.currentRunningGroupId,
           selectedRunFolder: state.selectedRunFolder,
           selectedGroupIds: state.selectedGroupIds,
           manifest: state.variablesManifest
         })
-        console.log('[buildExecutionOptions] After resolveGroupFolderPath, resolvedRunFolder:', resolvedRunFolder)
-        
+
         const options: ExecutionOptions = {
           run_mode: shouldUseSameRun ? 'use_same_run' : 'create_new_runs_always',
           selected_run_folder: resolvedRunFolder,
@@ -1080,79 +722,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
           })(),
         }
 
-        // Include resume_from_step for regular step resuming
-        // CRITICAL: Only set resume_from_step if we have a valid step number (> 0)
-        // This prevents sending resume_from_step=0 which causes backend to delete all completed steps
-        console.log('[RESUME_DEBUG] Checking resume_from_step conditions:', {
-          isResuming,
-          isResumingBranch,
-          selectedStartPoint: state.selectedStartPoint,
-          executionStrategy,
-          isResumeStrategy: executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-                           executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP
-        })
-
-        if (isResuming && !isResumingBranch &&
-            state.selectedStartPoint > 0 &&
-            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-             executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP)) {
-          options.resume_from_step = state.selectedStartPoint
-          console.log('[RESUME_DEBUG] ✅ Setting resume_from_step:', state.selectedStartPoint)
-        } else if (state.selectedStartPoint > 0 && !isResumingBranch) {
-          // Log warning if selectedStartPoint > 0 but strategy is not a resume strategy
-          console.warn('[RESUME_DEBUG] ⚠️ selectedStartPoint is', state.selectedStartPoint, 
-            'but strategy is', executionStrategy, '- not including resume_from_step')
-          console.warn('[RESUME_DEBUG] ⚠️ This means resume_from_step will NOT be set in options!')
-        } else if (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN &&
-                   !isResumingBranch && state.selectedStartPoint === 0) {
-          // CRITICAL: If resume strategy is selected but no valid step, log error and fallback to start from beginning
-          console.error('[RESUME_DEBUG] 🚨 CRITICAL: Resume strategy selected but selectedStartPoint is 0! Falling back to start from beginning.')
-          console.error('[RESUME_DEBUG] 🚨 This would cause backend to delete all completed steps. Strategy:', executionStrategy)
-          // Override strategy to start from beginning to prevent data loss
-          options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-          console.log('[RESUME_DEBUG] ✅ Overridden strategy to:', options.execution_strategy)
-        } else {
-          console.log('[RESUME_DEBUG] ℹ️ Not setting resume_from_step:', {
-            isResuming,
-            isResumingBranch,
-            selectedStartPoint: state.selectedStartPoint,
-            executionStrategy,
-            reason: !isResuming ? 'not resuming' : 
-                    isResumingBranch ? 'resuming branch' :
-                    state.selectedStartPoint === 0 ? 'startPoint is 0' :
-                    'strategy mismatch'
-          })
-        }
-
-        // Include resume_from_branch_step for branch step resuming
-        if (isResumingBranch && state.selectedBranchStep &&
-            executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN) {
-          options.resume_from_branch_step = {
-            parent_step_index: state.selectedBranchStep.parentStepIndex,
-            branch_type: state.selectedBranchStep.branchType,
-            branch_step_index: state.selectedBranchStep.branchStepIndex
-          }
-        }
-        
         // Include save validation responses flag (always send to ensure backend knows user preference)
         options.save_validation_responses = state.saveValidationResponses
 
-        // Include enabled group IDs from user selection
-        // NOTE: Execute button is disabled when no groups are selected, so if execution happens,
-        // selectedGroupIds MUST have values (when groups exist). We use them directly.
-        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] Group selection check:', {
-          selectedGroupIds: state.selectedGroupIds,
-          selectedGroupIdsLength: state.selectedGroupIds.length,
-          hasManifest: !!state.variablesManifest,
-          groupsCount: state.variablesManifest?.groups?.length || 0
-        })
-        
         // Prefer explicit group selection from the UI, but fall back to enabled groups
         // from the manifest so workflow builder chat still works before the user has
         // manually clicked a group selector in the canvas.
         if (state.selectedGroupIds.length > 0) {
           options.enabled_group_names = state.selectedGroupIds
-          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_names from selectedGroupIds:', state.selectedGroupIds)
         } else {
           const enabledManifestGroupIds = (state.variablesManifest?.groups || [])
             .filter(group => group.enabled)
@@ -1160,9 +737,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           if (enabledManifestGroupIds.length > 0) {
             options.enabled_group_names = enabledManifestGroupIds
-            console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Falling back to enabled manifest groups:', enabledManifestGroupIds)
-          } else {
-            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected and no enabled manifest groups found - enabled_group_names will be omitted')
           }
         }
 
@@ -1178,16 +752,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.enable_context_summarization = false
         }
 
-        console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
-          execution_strategy: options.execution_strategy,
-          resume_from_step: options.resume_from_step,
-          resume_from_branch_step: options.resume_from_branch_step,
-          run_mode: options.run_mode,
-          selected_run_folder: options.selected_run_folder,
-          enabled_group_names: options.enabled_group_names
-        }, null, 2))
-
-        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] buildExecutionOptions returning:', JSON.stringify(options, null, 2))
         return options
       },
       
@@ -1270,7 +834,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Restore selection state from localStorage (called after API load completes)
-      // Note: startPoint is NOT restored - it's calculated from progress via loadProgress
+      // Load per-preset settings from localStorage (selectedRunFolder, selectedGroupIds, currentRunningGroupId)
       restoreSelectionFromLocalStorage: () => {
         try {
           let hasChanges = false
@@ -1446,12 +1010,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           state.loadRunFolders(workspacePath).catch(err => {
             console.warn('[WorkflowStore] Failed to reload run folders:', err)
           })
-
-          if (normalizedFolder) {
-            state.loadProgress(workspacePath, normalizedFolder).catch(err => {
-              console.warn('[WorkflowStore] Failed to load progress:', err)
-            })
-          }
         }
       },
 
@@ -1854,7 +1412,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Load saved settings from localStorage for a preset
       // Uses a single set() call to avoid multiple re-renders
       // Restores selectedRunFolder, selectedGroupIds, currentRunningGroupId from localStorage
-      // Note: startPoint is NOT restored - it's calculated from progress via loadProgress
       loadSavedSettings: (presetId: string) => {
         if (!presetId) return
 
@@ -1884,7 +1441,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
                     savedRunFolder = parsed.runFolder
                   }
                 }
-                // Note: startPoint is intentionally NOT restored - calculated from progress
               }
               // Handle old format: just array of groupIds
               else if (Array.isArray(parsed)) {
@@ -1912,13 +1468,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
 
           // Build state update object - restore from localStorage or use defaults
-          // startPoint is always 0 - will be calculated from progress via loadProgress
           // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
           // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
-            selectedStartPoint: 0,  // Always start fresh - calculated from progress
-            selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,
             currentRunningGroupId: savedCurrentRunningGroupId,
           }
@@ -1985,7 +1538,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             // Just reset workflow context but preserve selection - localStorage will be restored by loadSavedSettings
             set({
               runFolders: [],
-              stepProgress: null,
               variablesManifest: null,
               currentStepId: null,
               stepStatusMap: new Map(),
@@ -2025,8 +1577,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             variablesManifest: null,
             // Restore per-preset state
             selectedRunFolder: restored.selectedRunFolder,
-            stepProgress: restored.stepProgress,
-            stepProgressFolder: restored.stepProgressFolder,
             activePhase: restored.activePhase,
             showChatArea: restored.showChatArea,
             chatAreaExpanded: restored.chatAreaExpanded,
@@ -2041,8 +1591,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             currentStepId: restored.currentStepId,
             stepStatusMap: new Map(restored.stepStatusMap),
             batchProgress: restored.batchProgress,
-            selectedStartPoint: restored.selectedStartPoint,
-            selectedBranchStep: restored.selectedBranchStep,
             _currentPresetId: presetId
           } as Partial<WorkflowStore>)
 
@@ -2069,9 +1617,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({
           runFolders: [],
           selectedRunFolder: 'new',
-          stepProgress: null,
-          selectedStartPoint: 0,
-          selectedBranchStep: null,
           variablesManifest: null,
           selectedGroupIds: [],
           currentRunningGroupId: null,
@@ -2102,8 +1647,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
 export const useWorkflowPhases = () => useWorkflowStore(state => state.phases)
 export const useWorkflowPhasesLoading = () => useWorkflowStore(state => state.isLoadingPhases)
 export const useWorkflowRunFolders = () => useWorkflowStore(state => state.runFolders)
-export const useWorkflowProgress = () => useWorkflowStore(state => state.stepProgress)
-export const useCompletedStepIndices = () => useWorkflowStore(state => state.stepProgress?.completed_step_indices || [])
 
 // Legacy selector removed - use selectedGroupIds array instead
 // Group selection is now exclusively managed via checkbox multi-select (selectedGroupIds)

@@ -60,7 +60,6 @@ export function useWorkspaceState(
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
 
   const prevWorkspaceRef = useRef<string | null>(null)
-  const prevFolderRef = useRef<string | null>(null)
   const initialLoadCompleteRef = useRef<boolean>(false)
   const loadingRef = useRef<boolean>(false)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -82,7 +81,6 @@ export function useWorkspaceState(
     const workflowStore = useWorkflowStore.getState()
     const folders = nextState.run_folders.map(folder => ({
       name: folder.name,
-      progress: folder.progress || undefined
     }))
 
     workflowStore.setRunFolders(folders)
@@ -91,15 +89,7 @@ export function useWorkspaceState(
 
     initialLoadCompleteRef.current = true
     workflowStore.restoreSelectionFromLocalStorage()
-
-    if (workspacePath && selectedFolder && selectedFolder !== 'new') {
-      workflowStore.loadProgress(workspacePath, selectedFolder)
-    } else if (nextState.selected_progress) {
-      workflowStore.setStepProgress(nextState.selected_progress)
-    } else {
-      workflowStore.setStepProgress(null)
-    }
-  }, [selectedFolder, workspacePath])
+  }, [])
 
   const scheduleRetry = useCallback(() => {
     if (retryTimeoutRef.current) {
@@ -238,10 +228,8 @@ export function useWorkspaceState(
 
   useEffect(() => {
     const workspaceChanged = prevWorkspaceRef.current !== workspacePath
-    const folderChanged = prevFolderRef.current !== selectedFolder
 
     prevWorkspaceRef.current = workspacePath
-    prevFolderRef.current = selectedFolder || null
 
     if (!workspacePath) {
       setState(null)
@@ -265,14 +253,9 @@ export function useWorkspaceState(
       setIsRetrying(false)
       initialLoadCompleteRef.current = false
       loadFull()
-    } else if (folderChanged && selectedFolder && selectedFolder !== 'new') {
-      if (initialLoadCompleteRef.current && !loadingRef.current) {
-        const workflowStore = useWorkflowStore.getState()
-        workflowStore.loadProgress(workspacePath, selectedFolder)
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, selectedFolder])
+  }, [workspacePath])
 
   useEffect(() => {
     return () => {

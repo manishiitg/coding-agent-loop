@@ -30,9 +30,8 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
-import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useChatStore } from '../../../stores/useChatStore'
-import type { StepProgress, VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -62,33 +61,16 @@ const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
 const REPORT_EXECUTION_PHASE_ID = 'report-execution'
 
 
-// Start Point options - where to start execution
-type StartPointType = 'from_beginning' | 'resume' | 'single_step' | 'resume_branch'
-interface StartPointOption {  
-  id: StartPointType
-  stepNumber?: number  // For resume/single_step, which step to target (1-based)
-  branchStep?: {  // For resume_branch
-    parentStepIndex: number;  // 0-based index of conditional step
-    branchType: 'if_true' | 'if_false';  // Which branch
-    branchStepIndex: number;  // 0-based index within the branch
-  };
-  label: string
-  icon: typeof Play
-  description: string
-}
-
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
   hasPlan: boolean
   plan?: PlanningResponse | null  // Plan data for identifying conditional steps and branches
   currentPhase?: string
   workspacePath?: string | null
-  totalSteps?: number
   presetQueryId?: string | null  // Used to persist settings per workflow
   // API data passed as props (avoids store subscription issues)
   runFolders: RunFolder[]
   variablesManifest: VariablesManifest | null
-  stepProgress: StepProgress | null
   isLoadingWorkspaceState?: boolean  // Whether workspace state (iterations, manifest) is loading
   onStartPhase: (phaseId: string, executionOptions?: ExecutionOptions) => void
   onStop: () => void
@@ -169,11 +151,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   plan,
   currentPhase,
   workspacePath,
-  totalSteps = 0,
   presetQueryId,
   runFolders,
   variablesManifest,
-  stepProgress,
   isLoadingWorkspaceState = false,
   onStartPhase,
   onStop,
@@ -195,19 +175,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
 
   // Workflow store - use useShallow to prevent unnecessary re-renders
-  // Note: runFolders, variablesManifest, stepProgress come from props (passed from WorkflowCanvas)
+  // Note: runFolders, variablesManifest come from props (passed from WorkflowCanvas)
   const {
     selectedRunFolder,
-    selectedStartPoint,
-    selectedBranchStep,
     selectedGroupIds,
     currentRunningGroupId,
     loadRunFolders,
     setSelectedRunFolder,
-    loadProgress,
-    loadFolderProgressOnDemand,
-    setStartPoint,
-    setBranchStep,
     buildExecutionOptions,
     loadSavedSettings,
     toggleGroupSelection,
@@ -219,20 +193,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     canvasViewMode,
     setCanvasViewMode,
     setWorkflowWorkspaceView,
-    layoutDirection,
-    setLayoutDirection
   } = useWorkflowStore(useShallow(state => ({
     selectedRunFolder: state.selectedRunFolder,
-    selectedStartPoint: state.selectedStartPoint,
-    selectedBranchStep: state.selectedBranchStep,
     selectedGroupIds: state.selectedGroupIds,
     currentRunningGroupId: state.currentRunningGroupId,
     loadRunFolders: state.loadRunFolders,
     setSelectedRunFolder: state.setSelectedRunFolder,
-    loadProgress: state.loadProgress,
-    loadFolderProgressOnDemand: state.loadFolderProgressOnDemand,
-    setStartPoint: state.setStartPoint,
-    setBranchStep: state.setBranchStep,
     buildExecutionOptions: state.buildExecutionOptions,
     loadSavedSettings: state.loadSavedSettings,
     toggleGroupSelection: state.toggleGroupSelection,
@@ -244,8 +210,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     canvasViewMode: state.canvasViewMode,
     setCanvasViewMode: state.setCanvasViewMode,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
-    layoutDirection: state.layoutDirection,
-    setLayoutDirection: state.setLayoutDirection
   })))
 
   // Reset start point when switching away from plan mode
@@ -303,7 +267,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Local UI state (dropdowns)
   const [isIterationDropdownOpen, setIsIterationDropdownOpen] = React.useState(false)
-  const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = React.useState(false)
   const [isCreatingIteration, setIsCreatingIteration] = React.useState(false)
   
   // Delete confirmation dialog state
@@ -323,13 +286,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Refs for dropdown click-outside detection
   const iterationDropdownRef = useRef<HTMLDivElement>(null)
-  const startPointDropdownRef = useRef<HTMLDivElement>(null)
   const iterationDropdownButtonRef = useRef<HTMLButtonElement>(null)
-  const startPointButtonRef = useRef<HTMLButtonElement>(null)
-  
+
   // State for dropdown positions (for portal rendering)
   const [iterationDropdownPosition, setIterationDropdownPosition] = useState<{ top: number; left: number } | null>(null)
-  const [startPointDropdownPosition, setStartPointDropdownPosition] = useState<{ top: number; left: number } | null>(null)
   
   // Keep isRunning for other uses (like dropdown disabled state)
   const isRunning = status === 'running'
@@ -390,18 +350,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     if (!isLoadingWorkspaceState && variablesManifest && !hasRestoredRef.current) {
       restoreSelectionFromLocalStorage()
       hasRestoredRef.current = true
-
-      // After restoring, load progress for the restored run folder
-      const restoredRunFolder = useWorkflowStore.getState().selectedRunFolder
-      if (restoredRunFolder && workspacePath) {
-        loadProgress(workspacePath, restoredRunFolder)
-      }
     }
     // Reset the flag when workspace starts loading (preset change)
     if (isLoadingWorkspaceState) {
       hasRestoredRef.current = false
     }
-  }, [isLoadingWorkspaceState, variablesManifest, restoreSelectionFromLocalStorage, workspacePath, loadProgress])
+  }, [isLoadingWorkspaceState, variablesManifest, restoreSelectionFromLocalStorage])
 
   // Restore selectedGroupIds from execution state when page refreshes during execution
   // This handles the case where execution is running but selectedGroupIds was lost on page refresh
@@ -437,11 +391,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Settings are no longer persisted to localStorage - removed save logic
 
-  // NOTE: loadRunFolders and loadProgress are NOT called here anymore.
+  // NOTE: loadRunFolders is NOT called here anymore.
   // useWorkspaceState in WorkflowCanvas handles initial load of:
   // - run_folders (via setRunFolders)
   // - variables_manifest (via setVariablesManifest)
-  // - selected_progress (via setStepProgress)
   // This eliminates duplicate API calls on initial page load.
 
   // Close dropdowns when clicking outside
@@ -456,19 +409,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       if (!clickedIterationButton && !clickedIterationDropdown) {
         setIsIterationDropdownOpen(false)
       }
-      
-      // Check start point dropdown
-      const startPointDropdown = document.querySelector('[data-start-point-dropdown]')
-      const clickedStartPointButton = startPointButtonRef.current?.contains(target)
-      const clickedStartPointDropdown = startPointDropdown?.contains(target)
-      if (!clickedStartPointButton && !clickedStartPointDropdown) {
-        setIsStartPointDropdownOpen(false)
-      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-  
+
   useEffect(() => {
     if (isIterationDropdownOpen && iterationDropdownButtonRef.current) {
       const rect = iterationDropdownButtonRef.current.getBoundingClientRect()
@@ -480,21 +425,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       setIterationDropdownPosition(null)
     }
   }, [isIterationDropdownOpen])
-  
-  useEffect(() => {
-    if (isStartPointDropdownOpen && startPointButtonRef.current) {
-      const rect = startPointButtonRef.current.getBoundingClientRect()
-      setStartPointDropdownPosition({
-        top: rect.bottom + 4, // mt-1 = 4px
-        left: rect.left
-      })
-    } else {
-      setStartPointDropdownPosition(null)
-    }
-  }, [isStartPointDropdownOpen])
-
-  const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
-
 
   // Helper to format the selected run folder display text
   const getSelectedRunFolderDisplay = useMemo(() => {
@@ -524,7 +454,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       name: string  // Display name like "group-5" or "iteration-1"
       iteration: string  // e.g., "iteration-1"
       groupName: string | null  // e.g., "group-5" or null if no group
-      progress: StepProgress | null
       exists: boolean  // Whether folder exists (from runFolders)
       enabled: boolean  // Whether group is enabled
     }
@@ -589,7 +518,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             name: group.name,
             iteration,
             groupName: group.name,
-            progress: matchingFolder?.progress || null,
             exists: matchingFolder !== null, // Only true if matching folder found
             enabled: group.enabled
           }
@@ -619,7 +547,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             name: iteration,
             iteration,
             groupName: null,
-            progress: folder.progress || null,
             exists: true,
             enabled: true
           }
@@ -675,7 +602,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             name: matchingManifestGroup?.name || groupName,
             iteration,
             groupName: matchingManifestGroup?.name || groupName,
-            progress: folder.progress || null,
             exists: true,
             enabled: matchingManifestGroup?.enabled ?? true
           }
@@ -815,77 +741,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     })
   }, [])
   
-  // Generate start point options based on completed steps and branch steps
-  // Start point is always "from beginning" — resume logic removed
-  const startPointOptions: StartPointOption[] = [
-    { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
-  ]
-
-  // Get current start point info
-  const currentStartPointInfo = useMemo(() => {
-    if (selectedBranchStep && selectedBranchStep !== null && selectedBranchStep !== undefined) {
-      // Find branch step option
-      return startPointOptions.find(o =>
-        o.id === 'resume_branch' &&
-        o.branchStep !== undefined &&
-        o.branchStep !== null &&
-        o.branchStep.parentStepIndex === selectedBranchStep.parentStepIndex &&
-        o.branchStep.branchType === selectedBranchStep.branchType &&
-        o.branchStep.branchStepIndex === selectedBranchStep.branchStepIndex
-      ) || startPointOptions[0]
-    }
-    if (selectedStartPoint === 0) {
-      return startPointOptions[0] // "Start from Beginning"
-    }
-    const found = startPointOptions.find(o => o.stepNumber === selectedStartPoint)
-    console.log('[WorkflowToolbar] currentStartPointInfo:', {
-      selectedStartPoint,
-      optionsCount: startPointOptions.length,
-      found: found?.label,
-      fallback: startPointOptions[0]?.label
-    })
-
-    // If option not found but we have a valid start point, create a synthetic option
-    if (!found && selectedStartPoint > 0) {
-      return {
-        id: 'resume',
-        stepNumber: selectedStartPoint,
-        label: `Resume from Step ${selectedStartPoint}`,
-        icon: Play,
-        description: `Resume execution from step ${selectedStartPoint}`
-      }
-    }
-
-    return found || startPointOptions[0]
-  }, [selectedStartPoint, selectedBranchStep, startPointOptions])
-
-  // Validate selectedStartPoint - only check if it's within valid range (1 to totalSteps)
-  // We don't need to check if it's in startPointOptions because:
-  // 1. startPointOptions is just a UI convenience showing common options
-  // 2. Users should be able to select any step number, not just completed ones
-  // 3. The backend will handle execution from any valid step number
-  useEffect(() => {
-    // Don't validate if no start point is selected
-    if (selectedStartPoint === 0) {
-      return
-    }
-
-    // Don't validate if totalSteps is not yet known
-    if (totalSteps === 0) {
-      return
-    }
-
-    // Only validate that the step number is within valid range
-    if (selectedStartPoint < 1 || selectedStartPoint > totalSteps) {
-      console.log(`[WorkflowToolbar] Selected start point ${selectedStartPoint} is out of range (1-${totalSteps}), resetting to 0`)
-      setStartPoint(0)
-    } else {
-      console.log(`[WorkflowToolbar] ✅ Selected start point ${selectedStartPoint} is valid (range: 1-${totalSteps})`)
-    }
-  }, [selectedStartPoint, totalSteps, setStartPoint])
-
-  // Auto-resume logic removed - start point always defaults to 0
-
   const isExecutionWorkspace =
     workflowWorkspaceView === 'execution' ||
     (workflowWorkspaceSelectionTouched &&
@@ -903,26 +758,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isPlanWorkspace = canvasViewMode === 'plan'
   const isFlowWorkspace = canvasViewMode === 'flow'
 
-  // Handle selecting start point from dropdown
-  const handleSelectStartPoint = useCallback((option: StartPointOption) => {
-    if (option.id === 'resume_branch' && option.branchStep) {
-      setBranchStep(option.branchStep)
-    } else if (option.stepNumber !== undefined) {
-      setStartPoint(option.stepNumber)
-      // Note: setStartPoint already clears selectedBranchStep in the store
-    } else if (option.id === 'from_beginning') {
-      setStartPoint(0) // "Start from Beginning"
-      // Note: setStartPoint already clears selectedBranchStep in the store
-    }
-    setIsStartPointDropdownOpen(false)
-  }, [setStartPoint, setBranchStep])
-
-  // Handle selecting run folder
-  const handleSelectRunFolder = useCallback((folder: string) => {
-    setSelectedRunFolder(folder)
-    setIsIterationDropdownOpen(false)
-  }, [setSelectedRunFolder])
-
   // Handle creating new iteration
   const handleCreateIteration = useCallback(async () => {
     if (!workspacePath || isCreatingIteration) return
@@ -934,22 +769,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       if (response.success && response.folder_name) {
         // Refresh workspace files to reflect new folder
         await fetchFiles()
-        
+
         // Refresh folder list in store (for backward compatibility)
         await loadRunFolders(workspacePath)
-        
+
         // Select the newly created iteration
         setSelectedRunFolder(response.folder_name)
-        
-        // Load progress for the new iteration (will be empty, but ensures consistency)
-        await loadProgress(workspacePath, response.folder_name)
-        
+
         // CRITICAL: Refresh workspace state in parent component to update runFolders prop
         // This ensures the new iteration appears in the dropdown immediately
         if (onRefresh) {
           await onRefresh()
         }
-        
+
         // Close dropdown
         setIsIterationDropdownOpen(false)
       } else {
@@ -962,7 +794,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     } finally {
       setIsCreatingIteration(false)
     }
-  }, [workspacePath, isCreatingIteration, fetchFiles, loadRunFolders, setSelectedRunFolder, loadProgress, onRefresh])
+  }, [workspacePath, isCreatingIteration, fetchFiles, loadRunFolders, setSelectedRunFolder, onRefresh])
 
   // Handle delete folder confirmation
   const handleDeleteFolderClick = useCallback((e: React.MouseEvent, folderName: string) => {
@@ -997,13 +829,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       if (selectedRunFolder === deleteDialog.folderName || updatedFolders.length > 0) {
         const nextHighest = updatedFolders.length > 0 ? updatedFolders[0].name : 'new'
         setSelectedRunFolder(nextHighest)
-        
-        // Load progress for the selected iteration if it's not 'new'
-        if (nextHighest !== 'new') {
-          await loadProgress(workspacePath, nextHighest)
-        }
       }
-      
+
       // Close dialog
       setDeleteDialog({
         isOpen: false,
@@ -1015,7 +842,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       // Keep dialog open on error so user can retry
       setDeleteDialog(prev => ({ ...prev, isLoading: false }))
     }
-  }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
+  }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, fetchFiles])
 
   // Visual feedback + double-click guard: shows "Starting..." with spinner while
   // waiting for SSE to connect (can take 20s+). Without this, the button stays as
@@ -1057,10 +884,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         console.log('[WorkflowToolbar] Auto-selecting execution target:', defaultExecutionSelection)
         setSelectedGroupIds(defaultExecutionSelection.groupIds)
         setSelectedRunFolder(defaultExecutionSelection.runFolder)
-
-        if (workspacePath) {
-          void loadProgress(workspacePath, defaultExecutionSelection.runFolder)
-        }
       }
 
       // Set guard + show "Starting..." AFTER validation passes (so errors don't lock the button)
@@ -1105,8 +928,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       const options = buildExecutionOptions()
       console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] Starting execution with options:', JSON.stringify({
         execution_strategy: options.execution_strategy,
-        resume_from_step: options.resume_from_step,
-        resume_from_branch_step: options.resume_from_branch_step,
         selected_run_folder: options.selected_run_folder,
         run_mode: options.run_mode,
         enabled_group_names: options.enabled_group_names,
@@ -1121,13 +942,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     isExecutionStarting,
     buildExecutionOptions,
     defaultExecutionSelection,
-    loadProgress,
     onStartPhase,
     selectedGroupIds,
     setSelectedGroupIds,
     setSelectedRunFolder,
     variablesManifest,
-    workspacePath
   ])
 
   const handleRunEvaluation = useCallback(async (runFolder: string) => {

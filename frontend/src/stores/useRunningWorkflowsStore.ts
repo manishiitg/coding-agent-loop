@@ -1,8 +1,6 @@
 import { create } from 'zustand'
-import type { StepProgress } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
-import { getTypedEventData } from '../generated/event-types'
 import {
   POLLING_INTERVALS,
   WORKFLOW_LIMITS,
@@ -26,7 +24,6 @@ export interface RunningWorkflow {
   phaseId: string               // Which phase (planning, execution, etc.)
   phaseName: string             // Display name
   status: 'running' | 'completed' | 'failed' | 'paused'
-  progress?: StepProgress       // Current step progress
   currentStepTitle?: string     // Title of the currently executing step
   selectedGroupIds?: string[]   // Selected group IDs (for batch execution)
   minimizedAt: number           // Timestamp when minimized
@@ -93,7 +90,6 @@ interface RunningWorkflowsStore {
     runFolder: string
     phaseId: string
     phaseName: string
-    progress?: StepProgress
     selectedGroupIds?: string[]
   }) => void
   restoreWorkflow: (runningWorkflowId: string) => RunningWorkflow | undefined
@@ -162,7 +158,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             phaseId: params.phaseId,
             phaseName: params.phaseName,
             status: 'running',
-            progress: params.progress,
             selectedGroupIds: params.selectedGroupIds,
             minimizedAt,
             lastUpdated: Date.now(),
@@ -187,14 +182,11 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         get().startRunningPolling(state.drawerIsOpen)
 
         // Mirror minimization state into the workflow-owned running registry.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const currentStepTitle = (params.progress as any)?.last_completed_step_title
         agentApi.updateRunningWorkflow(params.sessionId, {
           phase_id: params.phaseId,
           phase_name: params.phaseName,
           is_minimized: true,
           minimized_at: minimizedAt,
-          current_step_title: currentStepTitle,
         }).catch(error => {
           console.warn('[RunningWorkflowsStore] Failed to update running workflow:', error)
         })
@@ -427,7 +419,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 // Check for events that indicate workflow is still running
                 // These events mean the workflow is active, even if it was previously marked as completed
                 const runningEventTypes = [
-                  'step_progress_updated',
                   'agent_start',
                   'tool_call_start',
                   'tool_call_end',
@@ -438,23 +429,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 ]
                 if (event.type && runningEventTypes.includes(event.type)) {
                   hasRunningEvents = true
-                }
-
-                // Handle step_progress_updated
-                if (event.type === 'step_progress_updated') {
-                  const eventData = getTypedEventData(event, 'step_progress_updated')
-
-                  if (eventData) {
-                    // Note: Progress details (completed_step_indices, total_steps) are no longer in the event
-                    // The frontend should load progress from the API if needed
-                    const updates: Partial<RunningWorkflow> = {}
-                    if (eventData.current_step_id) {
-                      // Update current step ID if available
-                      // Note: We can't update progress here since it's not in the event anymore
-                    }
-
-                    get().updateRunningWorkflowStatus(bg.id, updates)
-                  }
                 }
 
                 // Check for completion/error events (primary check for workflows)

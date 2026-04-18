@@ -51,6 +51,17 @@ export const useModeStore = create<ModeState>()(
 
             set({ selectedModeCategory: normalizedCategory })
 
+            // On mode switch, clear the workspace activeFolder AND force a root
+            // re-fetch. Otherwise the cached files from the previous category
+            // (e.g. a workflow scope like "Workflow/confida-login/...") stay in
+            // the store, and multi-agent's whitelist filter drops all of them →
+            // "No files found".
+            import('./useWorkspaceStore').then(({ useWorkspaceStore }) => {
+              const ws = useWorkspaceStore.getState()
+              ws.setActiveFolder(null)
+              ws.fetchFiles(undefined, { force: true }).catch(() => {})
+            }).catch(() => {})
+
             // Automatically sync AppStore's agentMode when category changes
             // Use dynamic import to avoid circular dependency at module level
             if (!isSyncing) {

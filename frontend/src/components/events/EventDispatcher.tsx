@@ -76,7 +76,6 @@ import {
   OrchestratorAgentErrorEventDisplay,
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay,
-  StepProgressUpdatedEventDisplay,
   RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
@@ -1026,18 +1025,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Step Token Usage Events
   if (isEventType(event, 'step_token_usage')) {
     return <CompactWrapper compact={compact}><StepTokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-
-  // Step Progress Updated Event
-  if (isEventType(event, 'step_progress_updated')) {
-    return (
-      <CompactWrapper compact={compact}>
-        <StepProgressUpdatedEventDisplay 
-          event={getEventData(event)} 
-          compact={compact}
-        />
-      </CompactWrapper>
-    )
   }
 
   // Routing Evaluated Event

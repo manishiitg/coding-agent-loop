@@ -138,25 +138,6 @@ export function getGroupInfo(
 }
 
 /**
- * Normalizes start point from any format to canonical format
- * 
- * @param input - Could be number, string, or undefined
- * @returns Canonical start point: 0 (beginning) or step number (1-based)
- */
-export function normalizeStartPoint(input: number | string | undefined | null): number {
-  if (input === undefined || input === null || input === '') {
-    return 0 // Default: start from beginning
-  }
-
-  const parsed = typeof input === 'string' ? parseInt(input, 10) : input
-  if (isNaN(parsed) || parsed < 0) {
-    return 0 // Invalid: default to beginning
-  }
-
-  return parsed
-}
-
-/**
  * Normalizes run folder selection
  * 
  * Ensures the folder path is valid and extracts iteration/group info

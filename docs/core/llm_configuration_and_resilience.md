@@ -210,25 +210,18 @@ graph TD
 - `PARTIAL`/`INCOMPLETE`/`COMPLETED` with unmet criteria still retry, but they do not change model selection
 
 **Special Cases**:
-- **Decision Step False Result**: Steps routed from decision step with `false` result are treated as validation failure.
 - **Loop Iterations**: New loop iterations after failure (`loopIterationCount > 1`) trigger `isRetryAfterValidationFailure`.
 
 ### 🔄 Implementation Details
 
 #### Key Logic
 
-**File:** [`controller_execution.go:1221-1228`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1221)
+**File:** [`controller_execution.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go)
 
 ```go
 // Validation failure check
 isRetryAfterValidationFailure := isValidationFailure(previousValidationResponse) &&
     (retryAttempt > 1 || (hasLoop(step) && loopIterationCount > 1))
-
-// Also treat decision step false result as validation failure
-isDecisionStepFalse := decisionContext != nil && !decisionContext.DecisionResult
-if isDecisionStepFalse {
-    isRetryAfterValidationFailure = true
-}
 ```
 
 **File:** [`controller_agent_factory.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go)

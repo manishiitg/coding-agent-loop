@@ -10,7 +10,6 @@ func TestAllSchemaFunctionsReturnValidJSON(t *testing.T) {
 		"UpdateRegularStep":     getUpdateRegularStepSchema,
 		"DeletePlanSteps":       getDeletePlanStepsSchema,
 		"AddRegularStep":        getAddRegularStepSchema,
-		"AddDecisionStep":       getAddDecisionStepSchema,
 		"AddRoutingStep":        getAddRoutingStepSchema,
 		"UpdateRoutingStep":     getUpdateRoutingStepSchema,
 		"AddHumanInputStep":     getAddHumanInputStepSchema,
@@ -19,7 +18,6 @@ func TestAllSchemaFunctionsReturnValidJSON(t *testing.T) {
 		"AddTodoTaskRoute":      getAddTodoTaskRouteSchema,
 		"UpdateTodoTaskRoute":   getUpdateTodoTaskRouteSchema,
 		"DeleteTodoTaskRoute":   getDeleteTodoTaskRouteSchema,
-		"UpdateDecisionStep":    getUpdateDecisionStepSchema,
 		"UpdateHumanInputStep":  getUpdateHumanInputStepSchema,
 		"UpdateValidationSchema": getUpdateValidationSchemaSchema,
 	}

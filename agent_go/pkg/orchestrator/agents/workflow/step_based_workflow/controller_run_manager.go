@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 // resolveRunFolderWithOptions always resolves to iteration-0 under the workflow's
@@ -254,11 +256,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
 		}
-		// Seed empty graph.json + index.json so the KB update agent and readers always find valid files.
-		if err := InitKBGraphFiles(ctx, hcpo.BaseOrchestrator, workspacePath); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize KB graph files: %v (continuing)", err))
+		// Seed the KB artifacts the declared shape calls for. Graph+notes seeds graph.json/index.json/notes/_index.json;
+		// notes-only seeds only notes/_index.json. Pre-existing files are left untouched either way.
+		kbShape := hcpo.KBShape()
+		if err := InitKBGraphFiles(ctx, hcpo.BaseOrchestrator, workspacePath, kbShape); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize KB files: %v (continuing)", err))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Initialized empty KB graph files in %s/%s/", workspacePath, KnowledgebaseFolderName))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Initialized KB files (shape=%s) in %s/%s/", workflowtypes.ResolveKBShape(kbShape), workspacePath, KnowledgebaseFolderName))
 		}
 	} else {
 		hcpo.GetLogger().Info("⏭️ Skipping knowledgebase folder creation (disabled in preset)")

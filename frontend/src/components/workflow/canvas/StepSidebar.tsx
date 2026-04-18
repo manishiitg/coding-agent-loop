@@ -18,7 +18,6 @@ import type {
   WorkflowNode,
   StepNodeData,
   ConditionalNodeData,
-  DecisionNodeData,
   TodoTaskNodeData,
   ValidationNodeData,
   LearningNodeData,
@@ -26,7 +25,7 @@ import type {
 } from '../hooks/usePlanToFlow'
 import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 interface StepSidebarProps {
   node: WorkflowNode | null
@@ -174,7 +173,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     // Get step ID
     let stepId: string | undefined
     if (node?.data) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+      const stepData = node.data as StepNodeData | ConditionalNodeData
       stepId = stepData.step?.id
     }
 
@@ -211,7 +210,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Get step ID from node data
-    const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | TodoTaskNodeData
     const stepId = stepData.step?.id
     
     if (!stepId) {
@@ -389,17 +388,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       }
     }
 
-    if (isDecisionStep(planStep)) {
-      return {
-        ...base,
-        has_decision_step: true,
-        decision_step: planStep.decision_step ? convertPlanStepToTodoStep(planStep.decision_step) : undefined,
-        decision_evaluation_question: planStep.decision_evaluation_question,
-        if_true_next_step_id: planStep.if_true_next_step_id,
-        if_false_next_step_id: planStep.if_false_next_step_id,
-      }
-    }
-
     if (isHumanInputStep(planStep)) {
       return {
         ...base,
@@ -442,7 +430,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Check if step exists (for step/conditional/loop/decision nodes)
     // Sub-agents are type 'step', so they should be handled here
-    const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData
     if (!stepData || !stepData.step) {
       return null
     }
@@ -455,8 +443,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -469,8 +457,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -508,8 +496,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -527,7 +515,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     setIsSaving(true)
     try {
       // Get the actual step ID from step data (not node.id which is React Flow node ID)
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+      const stepData = node.data as StepNodeData | ConditionalNodeData
       const stepId = stepData.step?.id
       
       if (!stepId) {
@@ -601,23 +589,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
         // Save to parent step
         await onEditStep(stepId, updates)
-
-        // For decision steps, also save agent_configs to the inner step
-        if (stepDataForLogging && isDecisionStep(stepDataForLogging) && stepDataForLogging.decision_step?.id) {
-          const innerStepId = stepDataForLogging.decision_step.id
-          console.log('[StepSidebar] Saving agent config to inner step of decision step:', {
-            parentStepId: stepId,
-            innerStepId: innerStepId,
-            hasAgentConfigs: !!agentConfigs
-          })
-
-          // Save only agent_configs to the inner step (don't update other fields)
-          const innerStepUpdates: Partial<PlanStep> = {
-            agent_configs: agentConfigs
-          }
-
-          await onEditStep(innerStepId, innerStepUpdates)
-        }
 
         // For todo_task steps with legacy inner todo_task_step, also save agent_configs there for backwards compat
         console.log('[StepSidebar] Checking if todo_task step:', {
@@ -920,7 +891,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }
 
   // At this point, node must be step/conditional/loop/decision (validation/learning handled above)
-  const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+  const stepData = node.data as StepNodeData | ConditionalNodeData
   const step = stepData.step
 
   // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
@@ -1015,7 +986,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               
               {/* View Learnings Button - Hide for evaluation steps */}
               {!isEvaluationStep && workspacePath && node && (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData
                 return stepData.step?.id ? (
                   <button
                     onClick={handleViewLearnings}
@@ -1357,15 +1328,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               {(() => {
                 // For different node types, validation_schema is stored in different places:
                 // - Orchestrator: node data or step.validation_schema
-                // - Decision: decision_step.validation_schema (nested step)
                 // - Conditional: wrapper step.validation_schema (branch steps have their own)
                 // - Regular/Loop: step.validation_schema
                 let validationSchema: ValidationSchema | undefined
-                
-                if ((node.type as string) === 'decision' && isDecisionStep(step)) {
-                  // For decision steps, validation_schema is on the nested decision_step
-                  validationSchema = step.decision_step?.validation_schema as ValidationSchema | undefined
-                } else if ((node.type as string) === 'conditional' && isConditionalStep(step)) {
+
+                if ((node.type as string) === 'conditional' && isConditionalStep(step)) {
                   // For conditional steps, check wrapper step first, then show note about branch steps
                   validationSchema = step.validation_schema as ValidationSchema | undefined
                 } else {
@@ -1547,51 +1514,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
               />
             </div>
-          ) : isDecisionStep(step) && (node.type as string) === 'decision' ? (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-              {/* Decision Step Info */}
-              <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
-                <p className="text-xs text-indigo-700 dark:text-indigo-300">
-                  <strong>Decision Step:</strong> Executes the inner step first, then evaluates the output to determine routing.
-                </p>
-                {step.decision_step && (
-                  <div className="mt-2 p-2 bg-white dark:bg-gray-800 rounded border border-indigo-100 dark:border-indigo-900">
-                    <p className="text-xs font-medium text-gray-900 dark:text-white">
-                      Inner Step: {step.decision_step.title || 'Untitled'}
-                    </p>
-                    {step.decision_evaluation_question && (
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                        Evaluates: {step.decision_evaluation_question}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {step.if_true_next_step_id && (
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-2">
-                    ✓ True → {step.if_true_next_step_id === 'end' ? 'End workflow' : step.if_true_next_step_id}
-                  </p>
-                )}
-                {step.if_false_next_step_id && (
-                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                    ✗ False → {step.if_false_next_step_id === 'end' ? 'End workflow' : step.if_false_next_step_id}
-                  </p>
-                )}
-              </div>
-              <StepEditPanel
-                step={stepWithConfigs}
-                stepIndex={stepIndex}
-                onSave={handleSave}
-                onCancel={() => {}}
-                isSaving={isSaving}
-                presetServers={presetServers}
-                presetLLMConfig={presetLLMConfig}
-                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={(node.type as string) === 'todo_task'}
-                isExpanded={true}
-                onToggleExpanded={() => {}}
-
-              />
-            </div>
           ) : isTodoTaskStep(step) && (node.type as string) === 'todo_task' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Todo Task Step Info */}
@@ -1732,9 +1654,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
               })()
@@ -1752,9 +1674,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | TodoTaskNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 const stepId = stepData.step?.id || `step-${stepIndex + 1}`
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/${stepId}/\` and all its contents. This action cannot be undone.`

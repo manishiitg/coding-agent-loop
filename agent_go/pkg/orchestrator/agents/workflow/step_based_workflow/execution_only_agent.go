@@ -119,14 +119,6 @@ You are running as an **evaluation agent** — your job is to **verify and asses
 - Focus on evidence-based assessment: quote specific content from files, reference exact field values
 {{end}}
 
-{{if .DecisionEvaluationQuestion}}
-## Output Formatting for Evaluation
-**Evaluation Question**: {{.DecisionEvaluationQuestion}}
-Include:
-1. **Clear Status**: Succeeded or Failed.
-2. **Evidence**: Specific details (file sizes, grep matches, API status codes) that answer the evaluation question.
-{{end}}
-
 ## Completion
 **IMPORTANT**: Do NOT stop with a text message mid-task. Always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.
 
@@ -134,10 +126,7 @@ End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)
 
-var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .WorkshopHumanFeedback}}## 🚨 HUMAN FEEDBACK (CRITICAL — READ FIRST)
-{{.WorkshopHumanFeedback}}
-
-{{end}}{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
+var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
 {{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
@@ -153,12 +142,6 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 ### Validation Issues
 {{.ValidationFeedback}}
 *Fix these errors in your next execution.*
-{{end}}
-
-{{if .DecisionReasoning}}
-### Routing Context
-{{.DecisionReasoning}}
-*Consider why you were routed to this step during execution.*
 {{end}}
 
 ### Inputs
@@ -178,30 +161,27 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
-	StepTitle                  string
-	StepDescription            string
-	StepContextDependencies    string
-	WorkshopHumanFeedback      string // Human feedback from workshop execute_step or run_full_workflow human_inputs (shown at top, highest priority)
-	StepContextOutput          string
-	WorkspacePath              string
-	IsCodeExecutionMode        string // "true" or "false" - indicates if code execution mode is enabled
-	ValidationFeedback         string
-	PreviousIterationOutput    string // Previous iteration execution output
-	VariableNames              string // Variable names with descriptions ({{VAR_NAME}} - description)
-	VariableValues             string // Variable names with actual values ({{VAR_NAME}} = value)
-	LearningHistory            string // Formatted learning conversation history (REQUIRED for execution-only mode)
-	LearningFilePaths          string // Learning file paths (when KeepLearningFull is false)
-	StepNumber                 string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-	StepExecutionPath          string // Full execution folder path (e.g., "execution/step-8")
-	DecisionReasoning          string // Context from decision step that routed to this step (empty if not routed from decision)
-	DecisionEvaluationQuestion string // Evaluation question for decision inner steps (used to format output for LLM evaluation)
-	PreviousStepsSummary       string // Summary of previous completed steps (titles, descriptions, outputs)
-	StepSuccessCriteria        string // Success criteria for the step
-	BaseDescription            string // Step description without orchestrator instructions
-	OrchestratorInstructions   string // Orchestrator instructions (split from description)
-	HasSkill                   string // "true" if skill files are available
-	IsLearnCodeMode            string // "true" when learn_code mode is enabled
-	LearnCodePriorContext      string // Prior script context (failed script + error, or existing script for update)
+	StepTitle                string
+	StepDescription          string
+	StepContextDependencies  string
+	StepContextOutput        string
+	WorkspacePath            string
+	IsCodeExecutionMode      string // "true" or "false" - indicates if code execution mode is enabled
+	ValidationFeedback       string
+	PreviousIterationOutput  string // Previous iteration execution output
+	VariableNames            string // Variable names with descriptions ({{VAR_NAME}} - description)
+	VariableValues           string // Variable names with actual values ({{VAR_NAME}} = value)
+	LearningHistory          string // Formatted learning conversation history (REQUIRED for execution-only mode)
+	LearningFilePaths        string // Learning file paths (when KeepLearningFull is false)
+	StepNumber               string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+	StepExecutionPath        string // Full execution folder path (e.g., "execution/step-8")
+	PreviousStepsSummary     string // Summary of previous completed steps (titles, descriptions, outputs)
+	StepSuccessCriteria      string // Success criteria for the step
+	BaseDescription          string // Step description without orchestrator instructions
+	OrchestratorInstructions string // Orchestrator instructions (split from description)
+	HasSkill                 string // "true" if skill files are available
+	IsLearnCodeMode          string // "true" when learn_code mode is enabled
+	LearnCodePriorContext    string // Prior script context (failed script + error, or existing script for update)
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -338,7 +318,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	// Get variable names and values for system prompt
 	variableNames := templateVars["VariableNames"]
 	variableValues := templateVars["VariableValues"]
-	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
 	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
@@ -363,7 +342,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
-		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema,                     // Validation schema JSON string
 		"KnowledgebasePath":          knowledgebasePath,                    // Knowledgebase folder path
 		"DBPath":                     dbPath,                               // DB folder path (always enabled)
@@ -415,9 +393,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		LearningFilePaths:        templateVars["LearningFilePaths"],
 		StepNumber:               templateVars["StepNumber"],
 		StepExecutionPath:        templateVars["StepExecutionPath"],
-		DecisionReasoning:        templateVars["DecisionReasoning"],
 		PreviousStepsSummary:     templateVars["PreviousStepsSummary"],
-		WorkshopHumanFeedback:    templateVars["WorkshopHumanFeedback"],
 		StepSuccessCriteria:      templateVars["StepSuccessCriteria"],
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsLearnCodeMode:          fmt.Sprintf("%t", isLearnCodeMode),

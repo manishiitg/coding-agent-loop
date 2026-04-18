@@ -337,6 +337,7 @@ interface ChatState extends StoreActions {
   // Loading states
   isLoadingHistory: boolean
   isApprovingWorkflow: boolean
+  isRestoringWorkflowSessions: boolean
   
   // Session management
   sessionState: 'loading' | 'active' | 'completed' | 'not_found' | 'error'
@@ -418,6 +419,7 @@ interface ChatState extends StoreActions {
   // Loading actions
   setIsLoadingHistory: (loading: boolean) => void
   setIsApprovingWorkflow: (loading: boolean) => void
+  setIsRestoringWorkflowSessions: (restoring: boolean) => void
   
   // Session management actions
   setSessionState: (state: 'loading' | 'active' | 'completed' | 'not_found' | 'error') => void
@@ -505,6 +507,7 @@ export const useChatStore = create<ChatState>()(
       isCompleted: false,
       isLoadingHistory: false,
       isApprovingWorkflow: false,
+      isRestoringWorkflowSessions: false,
       sessionState: 'loading',
       isCheckingActiveSessions: false,
       currentWorkflowPhase: 'planning' as WorkflowPhase,
@@ -972,6 +975,10 @@ export const useChatStore = create<ChatState>()(
         set({ isApprovingWorkflow: loading })
       },
 
+      setIsRestoringWorkflowSessions: (restoring) => {
+        set({ isRestoringWorkflowSessions: restoring })
+      },
+
       // Session management actions
       setSessionState: (state) => {
         set({ sessionState: state })
@@ -1282,6 +1289,7 @@ export const useChatStore = create<ChatState>()(
           isCompleted: false,
           isLoadingHistory: false,
           isApprovingWorkflow: false,
+          isRestoringWorkflowSessions: false,
           sessionState: 'loading',
           isCheckingActiveSessions: false,
           currentWorkflowPhase: 'planning' as WorkflowPhase,

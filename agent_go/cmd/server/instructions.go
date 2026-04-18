@@ -203,7 +203,6 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
 - ` + "`execution/execution-attempt-{A}-iteration-{I}-conversation.json`" + ` — full LLM conversation for that attempt
 - ` + "`conditional-evaluation.json`" + ` — conditional-step branch results
-- ` + "`decision-evaluation.json`" + ` — decision-step routing results
 - ` + "`routing-evaluation.json`" + ` — routing-step results
 - ` + "`orchestration-execution.json`" + ` — JSONL log for orchestration / todo_task steps (one line per iteration)
 
@@ -337,7 +336,6 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 
 **Step types** (use ` + "`regular`" + ` by default; only use others when needed):
 - ` + "`regular`" + ` — LLM-driven execution step (the common case).
-- ` + "`decision`" + ` — Execute + evaluate + branch on yes/no. Needs ` + "`decision_evaluation_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
 - ` + "`conditional`" + ` — Evaluate only, no execution, branch. Needs ` + "`condition_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
 - ` + "`routing`" + ` — N-way branching. Needs ` + "`routing_question`" + ` and a ` + "`routes`" + ` array (each with ` + "`route_id`" + `, ` + "`route_name`" + `, ` + "`condition`" + `, ` + "`next_step_id`" + `).
 - ` + "`human_input`" + ` — Pause for user response. Needs ` + "`question`" + `, ` + "`response_type`" + ` (` + "`text`" + `/` + "`yesno`" + `/` + "`multiple_choice`" + `), ` + "`next_step_id`" + `, and (for yesno) ` + "`if_yes_next_step_id`" + `/` + "`if_no_next_step_id`" + `.
@@ -786,7 +784,6 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**
 - Regular steps: `+"`step-{X}/`"+` (X = 1-based step number)
 - Conditional branches: `+"`step-{X}-if-true-{idx}/`"+`, `+"`step-{X}-if-false-{idx}/`"+`
-- Decision steps: `+"`step-{X}-decision/`"+`
 - Sub-agents (orchestration/todo_task): `+"`step-{X}-sub-agent-{idx}/`"+`
 - Generic agents (todo_task only): `+"`step-{X}-generic-agent-{idx}/`"+`
 
@@ -794,7 +791,6 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - All steps: `+"`logs/step-X/validation-{N}.json`"+` (validation attempts), `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}.json`"+` (execution result)
 - Full LLM conversation: `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}-conversation.json`"+`
 - Conditional: `+"`logs/step-X/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
-- Decision: `+"`logs/step-X/decision-evaluation.json`"+` — decision_result, decision_reasoning, routing targets
 - Orchestration/TodoTask: `+"`logs/step-X/orchestration-execution.json`"+` (JSONL, one line per iteration)
 
 **How to Investigate:**

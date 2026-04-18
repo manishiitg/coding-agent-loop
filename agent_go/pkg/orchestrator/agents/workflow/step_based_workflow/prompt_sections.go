@@ -322,9 +322,6 @@ func ResolveDependencyPathCandidates(
 		prevOutput := ResolveVariables(allSteps[j].GetContextOutput().String(), variableValues)
 		if contextOutputMatchesDependency(prevOutput, dep) {
 			prevStepPath := fmt.Sprintf("step-%d", j+1)
-			if allSteps[j].StepType() == StepTypeDecision {
-				prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
-			}
 			prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, allSteps[j].GetID(), prevStepPath)
 			appendCandidate(buildDepAbsPath(prevStepExecPath, dep))
 		}

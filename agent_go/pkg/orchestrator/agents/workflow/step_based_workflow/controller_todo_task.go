@@ -49,7 +49,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	execCtx *ExecutionContext,
 	allSteps []PlanStepInterface,
 	stepPath string,
-	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
 ) (bool, string, error) {
 	// Cast to TodoTaskPlanStep
 	todoTaskStep, ok := step.(*TodoTaskPlanStep)
@@ -152,7 +151,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		previousContextFiles,
 		previousExecutionResults,
 		allSteps,
-		decisionContext,
 		orchestratorLearningHistory,
 	)
 
@@ -264,7 +262,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	previousContextFiles []string,
 	previousExecutionResults []string,
 	allSteps []PlanStepInterface,
-	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step
 	orchestratorLearningHistory string, // Persisted learnings from previous runs
 ) map[string]string {
 	// Build predefined routes list (title + ID only — use get_route_description tool for details)
@@ -362,16 +359,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
 	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 
-	// Append workshop human input as critical feedback (passed via execute_step's human_input parameter)
-	if hcpo.interactiveWorkflowHumanInput != "" {
-		if previousStepsSummary == "" {
-			previousStepsSummary = "## 📋 Previous Steps Context\n\n"
-		}
-		previousStepsSummary += fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n")
-		previousStepsSummary += "The human provided the following instructions via the interactive workshop.\n"
-		previousStepsSummary += "**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n"
-		previousStepsSummary += fmt.Sprintf("```\n%s\n```\n", hcpo.interactiveWorkflowHumanInput)
-	}
+	// Workshop-guidance for todo_task steps flows through WorkshopExecuteOptions.Instructions
+	// (appended to the step description). HumanInput is only consumed by controller_human_input.go.
 
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
@@ -401,28 +390,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Add orchestrator learning history if available
 	if orchestratorLearningHistory != "" {
 		templateVars["LearningHistory"] = orchestratorLearningHistory
-	}
-
-	// Add decision context if this step was routed from a decision step
-	if decisionContext != nil {
-		decisionReasoning := fmt.Sprintf(
-			"## 🎯 Decision Context\n\n"+
-				"This step was routed from decision step **%d: %s**.\n\n"+
-				"**Decision Result**: %v\n"+
-				"**Decision Reasoning**: %s\n\n"+
-				"## 📋 Decision Step Execution Output\n\n"+
-				"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
-				"```\n%s\n```\n\n"+
-				"Use this context to understand why this step is being executed and what conditions led to routing here.",
-			decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
-			decisionContext.DecisionStepTitle,
-			decisionContext.DecisionResult,
-			decisionContext.DecisionReasoning,
-			decisionContext.DecisionExecutionResult,
-		)
-		templateVars["DecisionReasoning"] = decisionReasoning
-	} else {
-		templateVars["DecisionReasoning"] = ""
 	}
 
 	return templateVars
@@ -697,9 +664,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		true,            // isBranchStep = true (generic task is like a branch step)
 		execCtx,         // execCtx
 		allSteps,        // allSteps
-		false,           // isDecisionInnerStep = false
-		nil,             // decisionContext = nil
-		"",              // decisionEvaluationQuestion - empty
 		true,            // isSubAgent = true (sub-agents never request human feedback)
 		[]string{response.InstructionsToSubAgent}, // previousExecutionResults - pass instructions
 		nil, // orchestrationRoutes - none for generic agent
@@ -762,10 +726,6 @@ func cloneStepWithDelegationOverrides(
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
 		return &stepCopy, nil
-	case *DecisionPlanStep:
-		stepCopy := *s
-		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
-		return &stepCopy, nil
 	case *RoutingPlanStep:
 		stepCopy := *s
 		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
@@ -813,7 +773,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 			localExecCtx,
 			allSteps,
 			subAgentStepPath,
-			nil,
 		)
 		if err != nil {
 			return "", capturedHistory, err
@@ -846,9 +805,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		true,
 		localExecCtx,
 		allSteps,
-		false,
-		nil,
-		"",
 		true,
 		[]string{},
 		orchestrationRoutesForSubAgent,

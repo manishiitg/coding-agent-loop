@@ -115,12 +115,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	if err != nil {
 		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No existing evaluation progress file found, initializing fresh progress: %v", err))
 		progress = &StepProgress{
-			CompletedStepIndices:     []int{},
-			TotalSteps:               len(breakdownSteps),
-			LastUpdated:              time.Now(),
-			BranchSteps:              make(map[int]BranchStepProgress),
-			ValidationFailures:       make(map[string]int),
-			DecisionEvaluationCounts: make(DecisionEvaluationCount),
+			CompletedStepIndices:    []int{},
+			TotalSteps:              len(breakdownSteps),
+			LastUpdated:             time.Now(),
+			BranchSteps:             make(map[int]BranchStepProgress),
+			ValidationFailures:      make(map[string]int),
+			RoutingEvaluationCounts: make(RoutingEvaluationCount),
 		}
 	}
 

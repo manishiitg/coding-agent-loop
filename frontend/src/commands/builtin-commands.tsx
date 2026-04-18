@@ -275,6 +275,46 @@ List the diff_patch_workspace_file or update_step_config calls the user can copy
     }
   },
   {
+    command: 'kb-consolidate',
+    description: 'Run a cross-step KB consolidation pass (holistic view, distinct from reorganize)',
+    icon: <Layers className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const objective = ctx.beforeSlash.trim()
+      if (objective) {
+        ctx.onSubmit(`Run consolidate_knowledgebase(objective="${objective.replace(/"/g, '\\"')}").`)
+      } else {
+        ctx.onSubmit(`I want to run a cross-step knowledgebase consolidation pass — this is DIFFERENT from reorganize. Consolidation reads every step's knowledgebase_contribution plus the step output folders from the selected run, and does work only possible with the holistic view: type-name drift across steps (e.g. "company" vs "organization" for the same concept), property-name drift (e.g. "industry" vs "sector"), entity dedupe by label across step ids, cross-step pattern narratives in notes/pattern-*.md, and contested-property surfacing where two steps disagree.
+
+First read planning/plan.json + planning/step_config.json and summarize each step's knowledgebase_contribution (group/diff them). Also jq graph.json for entity type counts and relationship type counts. Flag visible drift candidates (same concept under different type names; same property under different names; probable duplicate entities). Then propose a specific, concrete consolidation objective for me to confirm (examples: "reconcile company/organization type-name drift; canonicalize to company", "write pattern-*.md for repeating shapes across the per-account steps", "surface contested employee-count values between step-extract and step-enrich without rewriting the graph"). Once I confirm, call consolidate_knowledgebase(objective="...").
+
+Avoid vague objectives like "clean up the KB" — the tool will reject them.`)
+      }
+    }
+  },
+  {
+    command: 'learnings-organize',
+    description: 'Reorganize learnings/_global/ + consolidate cross-step lessons (holistic)',
+    icon: <Lightbulb className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const guidance = ctx.beforeSlash.trim()
+      if (guidance) {
+        ctx.onSubmit(`Run organize_global_learnings(guidance="${guidance.replace(/"/g, '\\"')}").`)
+      } else {
+        ctx.onSubmit(`I want to clean up learnings/_global/. The organize tool now sees every step's learning_objective as a cross-step view, so it can do BOTH targeted cleanup (split bloated files, merge small ones, dedupe) AND holistic consolidation (promote lessons implied by multiple steps' objectives into shared references/ sections; flag declared objectives whose scope has no matching content in SKILL.md — that usually means the per-step learning agent failed for that step).
+
+First read learnings/_global/SKILL.md + references/*.md and summarize the current structure (files, approximate sizes, main topics). Then read planning/step_config.json for every step's learning_objective and cross-check: which objectives' scope is reflected in SKILL.md? Which aren't? Any lessons that appear under multiple step-specific headings? Propose a specific guidance string for me to confirm (examples: "promote HOW-knowledge implied by multiple learning_objectives into shared references/ sections and remove step-specific duplicates", "flag any declared learning_objective whose scope has no matching content in SKILL.md", "merge the auth files into one", "split the API section by endpoint"). Once I confirm, call organize_global_learnings(guidance="...").`)
+      }
+    }
+  },
+  {
     command: 'report-improve',
     description: 'Validate reports/report_plan.md and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,
@@ -657,7 +697,7 @@ Re-read the conversation and extract the concrete, repeatable steps the workflow
 - A detailed \`description\` of what the step does, in enough detail that a worker with no memory of this conversation could execute it
 - A \`success_criteria\` line describing how to tell the step succeeded
 - Optionally \`context_dependencies\` (file names produced by earlier steps) and \`context_output\` (file name this step produces)
-- Most steps should use \`"type": "regular"\`. Use \`"decision"\` / \`"conditional"\` / \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching or human-in-the-loop.
+- Most steps should use \`"type": "regular"\`. Use \`"conditional"\` / \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching or human-in-the-loop.
 
 ## Step 4 — Call create_workflow
 Build the two JSON objects yourself in this turn and call the privileged tool:

@@ -243,7 +243,6 @@ type StepType string
 const (
 	StepTypeRegular     StepType = "regular"
 	StepTypeConditional StepType = "conditional"
-	StepTypeDecision    StepType = "decision"
 	StepTypeHumanInput  StepType = "human_input"
 	StepTypeTodoTask    StepType = "todo_task"
 	StepTypeRouting     StepType = "routing"
@@ -452,158 +451,6 @@ func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
 	} else {
 		c.IfFalseSteps = nil
 	}
-
-	return nil
-}
-
-// DecisionPlanStep represents a decision step (execute step, evaluate output, route based on result)
-// Decision steps execute their own description/success_criteria (execution phase),
-// then evaluate the output against DecisionEvaluationQuestion (evaluation phase),
-// and route to IfTrueNextStepID or IfFalseNextStepID based on the evaluation result.
-type DecisionPlanStep struct {
-	Type StepType `json:"type"` // Always "decision" - required for JSON marshaling/unmarshaling
-	CommonStepFields
-	DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
-	IfTrueNextStepID           string            `json:"if_true_next_step_id,omitempty"`         // ID of step to connect to if decision is true (or "end")
-	IfFalseNextStepID          string            `json:"if_false_next_step_id,omitempty"`        // ID of step to connect to if decision is false (or "end")
-	DecisionResult             *bool             `json:"-"`                                      // runtime: stores evaluation result (backward compatibility) - not stored in plan.json
-	DecisionReason             string            `json:"-"`                                      // runtime: stores evaluation reasoning (backward compatibility) - not stored in plan.json
-	DecisionResponse           *DecisionResponse `json:"-"`                                      // runtime: stores structured decision evaluation response - not stored in plan.json
-	AgentConfigs               *AgentConfigs     `json:"-"`                                      // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
-}
-
-// Implement PlanStepInterface for DecisionPlanStep
-func (d *DecisionPlanStep) GetID() string                           { return d.ID }
-func (d *DecisionPlanStep) GetTitle() string                        { return d.Title }
-func (d *DecisionPlanStep) GetDescription() string                  { return d.Description }
-func (d *DecisionPlanStep) GetSuccessCriteria() string              { return d.SuccessCriteria }
-func (d *DecisionPlanStep) GetContextDependencies() []string        { return d.ContextDependencies }
-func (d *DecisionPlanStep) GetContextOutput() FlexibleContextOutput { return d.ContextOutput }
-func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema  { return d.ValidationSchema }
-func (d *DecisionPlanStep) StepType() StepType                      { return StepTypeDecision }
-func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
-	return CommonStepFields{
-		ID:                  d.ID,
-		Title:               d.Title,
-		Description:         d.Description,
-		SuccessCriteria:     d.SuccessCriteria,
-		ContextDependencies: d.ContextDependencies,
-		ContextOutput:       d.ContextOutput,
-		ValidationSchema:    d.ValidationSchema,
-		SharedWith:          d.SharedWith,
-	}
-}
-
-// MarshalJSON ensures the type field is always set when marshaling
-func (d *DecisionPlanStep) MarshalJSON() ([]byte, error) {
-	// Ensure type is set
-	d.Type = StepTypeDecision
-	// Use type alias to avoid infinite recursion
-	type Alias DecisionPlanStep
-	return json.Marshal((*Alias)(d))
-}
-
-// UnmarshalJSON implements custom unmarshaling for DecisionPlanStep
-// This handles both the new flattened format and the legacy nested decision_step format
-func (d *DecisionPlanStep) UnmarshalJSON(data []byte) error {
-	// First, check if this is the legacy format with nested decision_step
-	var legacyCheck struct {
-		DecisionStep json.RawMessage `json:"decision_step,omitempty"`
-	}
-	if err := json.Unmarshal(data, &legacyCheck); err == nil && len(legacyCheck.DecisionStep) > 0 && string(legacyCheck.DecisionStep) != "null" {
-		// Legacy format detected - migrate from nested decision_step
-		return d.unmarshalLegacyFormat(data)
-	}
-
-	// New flattened format - use type alias to avoid infinite recursion
-	type Alias DecisionPlanStep
-	var temp Alias
-	if err := json.Unmarshal(data, &temp); err != nil {
-		return fmt.Errorf("failed to unmarshal decision step: %w", err)
-	}
-
-	*d = DecisionPlanStep(temp)
-	return nil
-}
-
-// unmarshalLegacyFormat handles migration from the old nested decision_step format
-func (d *DecisionPlanStep) unmarshalLegacyFormat(data []byte) error {
-	// Parse the legacy format
-	var legacy struct {
-		Type                       StepType              `json:"type"`
-		ID                         string                `json:"id"`
-		Title                      string                `json:"title"`
-		DecisionStep               json.RawMessage       `json:"decision_step,omitempty"`
-		DecisionEvaluationQuestion string                `json:"decision_evaluation_question,omitempty"`
-		IfTrueNextStepID           string                `json:"if_true_next_step_id,omitempty"`
-		IfFalseNextStepID          string                `json:"if_false_next_step_id,omitempty"`
-		ContextDependencies        []string              `json:"context_dependencies,omitempty"`
-		ContextOutput              FlexibleContextOutput `json:"context_output,omitempty"`
-		ValidationSchema           *ValidationSchema     `json:"validation_schema,omitempty"`
-	}
-
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return fmt.Errorf("failed to unmarshal legacy decision step: %w", err)
-	}
-
-	// Parse the nested decision_step to extract its fields
-	var innerStep struct {
-		ID                  string                `json:"id"`
-		Title               string                `json:"title"`
-		Description         string                `json:"description"`
-		SuccessCriteria     string                `json:"success_criteria"`
-		ContextDependencies []string              `json:"context_dependencies,omitempty"`
-		ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`
-		ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"`
-	}
-
-	if err := json.Unmarshal(legacy.DecisionStep, &innerStep); err != nil {
-		return fmt.Errorf("failed to unmarshal inner decision_step: %w", err)
-	}
-
-	// Migrate: Copy fields from inner step to the flattened structure
-	// Use inner step's ID if wrapper doesn't have one, otherwise use wrapper's ID
-	d.Type = legacy.Type
-	if legacy.ID != "" {
-		d.ID = legacy.ID
-	} else {
-		d.ID = innerStep.ID
-	}
-	if legacy.Title != "" {
-		d.Title = legacy.Title
-	} else {
-		d.Title = innerStep.Title
-	}
-	d.Description = innerStep.Description
-	d.SuccessCriteria = innerStep.SuccessCriteria
-
-	// Context dependencies: prefer inner step's, fallback to wrapper's
-	if len(innerStep.ContextDependencies) > 0 {
-		d.ContextDependencies = innerStep.ContextDependencies
-	} else {
-		d.ContextDependencies = legacy.ContextDependencies
-	}
-
-	// Context output: prefer inner step's, fallback to wrapper's
-	if innerStep.ContextOutput != "" {
-		d.ContextOutput = innerStep.ContextOutput
-	} else {
-		d.ContextOutput = legacy.ContextOutput
-	}
-
-	// Validation schema: prefer inner step's, fallback to wrapper's
-	if innerStep.ValidationSchema != nil {
-		d.ValidationSchema = innerStep.ValidationSchema
-	} else {
-		d.ValidationSchema = legacy.ValidationSchema
-	}
-
-	d.DecisionEvaluationQuestion = legacy.DecisionEvaluationQuestion
-	d.IfTrueNextStepID = legacy.IfTrueNextStepID
-	d.IfFalseNextStepID = legacy.IfFalseNextStepID
-
-	// Log the migration (note: we don't have access to logger here, so this is silent)
-	// The migration will be visible when the plan is next saved (it will be in the new format)
 
 	return nil
 }
@@ -902,7 +749,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 	}
 
 	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, decision, human_input, todo_task, or routing)", label, index)
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, human_input, todo_task, or routing)", label, index)
 	}
 
 	switch stepWithType.Type {
@@ -916,12 +763,6 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		var step ConditionalPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse conditional %s %d: %w", label, index, err)
-		}
-		return &step, nil
-	case "decision":
-		var step DecisionPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse decision %s %d: %w", label, index, err)
 		}
 		return &step, nil
 	case "human_input":
@@ -943,7 +784,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		}
 		return &step, nil
 	default:
-		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, decision, human_input, todo_task, or routing)", stepWithType.Type, label, index)
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, human_input, todo_task, or routing)", stepWithType.Type, label, index)
 	}
 }
 
@@ -1028,7 +869,7 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 
 // PartialPlanStep represents a partial update to a plan step (used only in tool schemas)
 // NOTE: This struct works with typed steps (PlanStepInterface).
-// Nested steps (DecisionStep, OrchestrationStep, IfTrueSteps, IfFalseSteps) are PlanStepInterface.
+// Nested steps (OrchestrationStep, IfTrueSteps, IfFalseSteps) are PlanStepInterface.
 // Once plan.json is migrated to use new type-safe types, this struct can be updated accordingly.
 type PartialPlanStep struct {
 	ExistingStepID      string                `json:"existing_step_id"`               // Required: ID of existing step to update
@@ -1047,9 +888,6 @@ type PartialPlanStep struct {
 	ConditionContext  string                   `json:"condition_context,omitempty"`  // Optional: Updated condition context
 	IfTrueSteps       []map[string]interface{} `json:"if_true_steps,omitempty"`      // Optional: Updated if_true_steps (nil = not provided, empty array = clear steps) - will be converted to PlanStepInterface
 	IfFalseSteps      []map[string]interface{} `json:"if_false_steps,omitempty"`     // Optional: Updated if_false_steps (nil = not provided, empty array = clear steps) - will be converted to PlanStepInterface
-	// Decision step fields
-	DecisionStep               map[string]interface{} `json:"decision_step,omitempty"`                // Optional: Updated decision step - will be converted to PlanStepInterface
-	DecisionEvaluationQuestion string                 `json:"decision_evaluation_question,omitempty"` // Optional: Updated decision evaluation question
 	// Todo task step fields
 	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
@@ -1209,97 +1047,6 @@ func getAddRegularStepSchema() string {
 			}
 		},
 		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "has_loop", "insert_after_step_id", "validation_schema"]
-	}`
-}
-
-// getAddDecisionStepSchema returns the JSON schema for add_decision_step tool
-// Decision steps use a flattened structure: description, success_criteria, context_output, etc. are directly on the step
-func getAddDecisionStepSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"id": {
-				"type": "string",
-				"description": "REQUIRED: Stable step ID for this decision step. Generate a unique, URL-friendly ID based on the step title."
-			},
-			"title": {
-				"type": "string",
-				"description": "REQUIRED: Short, clear title for the decision step"
-			},
-			"description": {
-				"type": "string",
-				"description": "REQUIRED: Description of what the decision step does during execution phase"
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "REQUIRED: How to verify the decision step's execution phase completed successfully"
-			},
-			"context_dependencies": {
-				"type": "array",
-				"items": {"type": "string"},
-				"description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."
-			},
-			"context_output": {
-				"type": "string",
-				"description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."
-			},
-			"validation_schema": {
-				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}.",
-				"properties": {
-					"files": {
-						"type": "array",
-						"items": {
-							"type": "object",
-							"properties": {
-								"file_name": {"type": "string"},
-								"must_exist": {"type": "boolean"},
-								"json_checks": {
-									"type": "array",
-									"items": {
-										"type": "object",
-										"properties": {
-											"path": {"type": "string"},
-											"must_exist": {"type": "boolean"},
-											"value_type": {"type": "string"},
-											"min_length": {"type": "number"},
-											"max_length": {"type": "number"},
-											"pattern": {"type": "string"},
-											"min_value": {"type": "number"},
-											"max_value": {"type": "number"},
-											"consistency_check": {
-												"type": "object",
-												"properties": {
-													"type": {"type": "string"},
-													"compare_with_path": {"type": "string"}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			},
-			"decision_evaluation_question": {
-				"type": "string",
-				"description": "REQUIRED: Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?'). This is asked AFTER the step executes."
-			},
-			"if_true_next_step_id": {
-				"type": "string",
-				"description": "REQUIRED: ID of step to route to after evaluation is true. Use step's id field from the plan, or 'end' to terminate workflow."
-			},
-			"if_false_next_step_id": {
-				"type": "string",
-				"description": "REQUIRED: ID of step to route to after evaluation is false. Use step's id field from the plan, or 'end' to terminate workflow."
-			},
-			"insert_after_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
-			}
-		},
-		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "validation_schema", "decision_evaluation_question", "if_true_next_step_id", "if_false_next_step_id", "insert_after_step_id"]
 	}`
 }
 
@@ -1829,71 +1576,6 @@ func getDeleteTodoTaskRouteSchema() string {
 	}`
 }
 
-// getUpdateDecisionStepSchema returns the JSON schema for update_decision_step tool
-// Decision steps use a flattened structure with description, success_criteria, etc. directly on the step
-func getUpdateDecisionStepSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"existing_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the decision step to update. Use the step's id field from the plan."
-			},
-			"title": {
-				"type": "string",
-				"description": "OPTIONAL: New title for the step. Only include if you want to rename the step. If omitted, the existing title is preserved."
-			},
-			"description": {
-				"type": "string",
-				"description": "OPTIONAL: Updated description. Only include if you want to change the description. This is used during the execution phase. If omitted, the existing description is preserved."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: Updated success criteria. Only include if you want to change it. This is used during the execution phase. If omitted, the existing success criteria is preserved."
-			},
-			"context_dependencies": {
-				"type": "array",
-				"items": { "type": "string" },
-				"description": "OPTIONAL: Updated context dependencies. Only include if you want to change them. If omitted, the existing context dependencies are preserved."
-			},
-			"context_output": {
-				"type": "string",
-				"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
-			},
-			"validation_schema": {
-				"type": "object",
-				"description": "OPTIONAL: Updated validation schema. Only include if you want to change it. If omitted, the existing validation schema is preserved.",
-				"properties": {
-					"files": {
-						"type": "array",
-						"items": {
-							"type": "object",
-							"properties": {
-								"file_name": {"type": "string"},
-								"must_exist": {"type": "boolean"},
-								"json_checks": {"type": "array", "items": {"type": "object"}}
-							}
-						}
-					}
-				}
-			},
-			"decision_evaluation_question": {
-				"type": "string",
-				"description": "OPTIONAL: Updated decision evaluation question. Only include if you want to change it. Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?'). This is asked AFTER the step executes. If omitted, the existing question is preserved."
-			},
-			"if_true_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: Updated if_true_next_step_id. Only include if you want to change it. ID of step to route to after evaluation is true. Use step's id field from the plan, or 'end' to terminate. If omitted, the existing value is preserved."
-			},
-			"if_false_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: Updated if_false_next_step_id. Only include if you want to change it. ID of step to route to after evaluation is false. Use step's id field from the plan, or 'end' to terminate. If omitted, the existing value is preserved."
-			}
-		},
-		"required": ["existing_step_id"]
-	}`
-}
-
 // getUpdateHumanInputStepSchema returns the JSON schema for update_human_input_step tool
 func getUpdateHumanInputStepSchema() string {
 	return `{
@@ -2098,12 +1780,6 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse conditional step: %w", err)
 		}
 		typedStep = &step
-	case "decision":
-		var step DecisionPlanStep
-		if err := json.Unmarshal(stepJSON, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse decision step: %w", err)
-		}
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepJSON, &step); err != nil {
@@ -2164,13 +1840,6 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		}
 		step.Type = StepTypeConditional
 		typedStep = &step
-	case "decision":
-		var step DecisionPlanStep
-		if err := json.Unmarshal(stepData, &step); err != nil {
-			return nil, fmt.Errorf("failed to parse decision step: %w", err)
-		}
-		step.Type = StepTypeDecision
-		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
@@ -2193,7 +1862,7 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		step.Type = StepTypeRouting
 		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, human_input, todo_task, or routing)", stepType)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, human_input, todo_task, or routing)", stepType)
 	}
 
 	return typedStep, nil
@@ -2419,9 +2088,6 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 		s.ValidationSchema = schema
 	case *ConditionalPlanStep:
 		s.ValidationSchema = schema
-	case *DecisionPlanStep:
-		// DecisionPlanStep has validation schema directly via CommonStepFields
-		s.ValidationSchema = schema
 	case *HumanInputPlanStep:
 		s.ValidationSchema = schema
 	case *TodoTaskPlanStep:
@@ -2609,36 +2275,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 			}
 		}
 
-	case *DecisionPlanStep:
-		if newS, ok := newStep.(*DecisionPlanStep); ok {
-			// DecisionPlanStep is now flattened - compare decision-specific fields
-			// Common fields (Title, Description, SuccessCriteria, etc.) are already compared above
-			if oldS.DecisionEvaluationQuestion != newS.DecisionEvaluationQuestion {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".decision_evaluation_question",
-					OldValue: oldS.DecisionEvaluationQuestion,
-					NewValue: newS.DecisionEvaluationQuestion,
-				})
-			}
-			if oldS.IfTrueNextStepID != newS.IfTrueNextStepID {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_true_next_step_id",
-					OldValue: oldS.IfTrueNextStepID,
-					NewValue: newS.IfTrueNextStepID,
-				})
-			}
-			if oldS.IfFalseNextStepID != newS.IfFalseNextStepID {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".if_false_next_step_id",
-					OldValue: oldS.IfFalseNextStepID,
-					NewValue: newS.IfFalseNextStepID,
-				})
-			}
-		}
-
 	}
 }
 
@@ -2747,38 +2383,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
-		}
-		return &updated
-
-	case *DecisionPlanStep:
-		updated := *step
-		// DecisionPlanStep is now flattened - all fields are directly on the step
-		if partialUpdate.Title != "" {
-			updated.Title = partialUpdate.Title
-		}
-		if partialUpdate.Description != "" {
-			updated.Description = partialUpdate.Description
-		}
-		if partialUpdate.SuccessCriteria != "" {
-			updated.SuccessCriteria = partialUpdate.SuccessCriteria
-		}
-		if partialUpdate.ContextDependencies != nil {
-			updated.ContextDependencies = partialUpdate.ContextDependencies
-		}
-		if partialUpdate.ContextOutput != "" {
-			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
-		}
-		if partialUpdate.ValidationSchema != nil {
-			updated.ValidationSchema = partialUpdate.ValidationSchema
-		}
-		if partialUpdate.DecisionEvaluationQuestion != "" {
-			updated.DecisionEvaluationQuestion = partialUpdate.DecisionEvaluationQuestion
-		}
-		if partialUpdate.IfTrueNextStepID != "" {
-			updated.IfTrueNextStepID = partialUpdate.IfTrueNextStepID
-		}
-		if partialUpdate.IfFalseNextStepID != "" {
-			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
 		}
 		return &updated
 
@@ -3200,8 +2804,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		oldIfTrueNextStepID := ""
 		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
 			oldIfTrueNextStepID = conditionalStep.IfTrueNextStepID
-		} else if decisionStep, ok := existingStep.(*DecisionPlanStep); ok {
-			oldIfTrueNextStepID = decisionStep.IfTrueNextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
@@ -3215,29 +2817,12 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		oldIfFalseNextStepID := ""
 		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
 			oldIfFalseNextStepID = conditionalStep.IfFalseNextStepID
-		} else if decisionStep, ok := existingStep.(*DecisionPlanStep); ok {
-			oldIfFalseNextStepID = decisionStep.IfFalseNextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "if_false_next_step_id",
 			OldValue: oldIfFalseNextStepID,
 			NewValue: partialUpdate.IfFalseNextStepID,
-		})
-	}
-	// Decision step fields - DecisionPlanStep is now flattened, so only track decision_evaluation_question
-	// Common fields (description, success_criteria, etc.) are tracked via the common field tracking above
-	if partialUpdate.DecisionEvaluationQuestion != "" {
-		changedFields = append(changedFields, "decision_evaluation_question")
-		oldDecisionEvaluationQuestion := ""
-		if decisionStep, ok := existingStep.(*DecisionPlanStep); ok {
-			oldDecisionEvaluationQuestion = decisionStep.DecisionEvaluationQuestion
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "decision_evaluation_question",
-			OldValue: oldDecisionEvaluationQuestion,
-			NewValue: partialUpdate.DecisionEvaluationQuestion,
 		})
 	}
 	// Legacy todo_task_step field — extract fields and track them as top-level changes
@@ -3476,104 +3061,6 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 
 		logger.Info(fmt.Sprintf("✅ Updated regular step '%s' in plan", partialUpdate.ExistingStepID))
 		return fmt.Sprintf("Successfully updated regular step '%s' in the plan", partialUpdate.ExistingStepID), nil
-	}
-}
-
-// createUpdateDecisionStepExecutor creates an executor function for update_decision_step tool
-func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to PartialPlanStep
-		stepJSON, err := json.Marshal(args)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal step: %w", err)
-		}
-
-		var partialUpdate PartialPlanStep
-		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf("failed to parse step: %w", err)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the decision step
-		var existingStep PlanStepInterface
-		for _, step := range plan.Steps {
-			if step.GetID() == partialUpdate.ExistingStepID {
-				existingStep = step
-				break
-			}
-		}
-		if existingStep == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
-		}
-
-		// Validate it's a decision step before updating
-		_, ok := existingStep.(*DecisionPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a decision step", partialUpdate.ExistingStepID)
-		}
-
-		// Track changes for changelog
-		fieldChanges := make([]PlanFieldChange, 0)
-
-		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-		var stepIndex int
-		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
-		if err != nil {
-			return "", err
-		}
-
-		// Get the updated step from the plan (updateSingleStep already updated it)
-		updatedStep := plan.Steps[stepIndex]
-		updatedDecisionStep, ok := updatedStep.(*DecisionPlanStep)
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("updated step is not a decision step"), nil)
-		}
-
-		// Validate the updated step has all required fields for decision steps
-		// This ensures the agent gets immediate feedback if validation fails
-		if err := validateDecisionStepFieldsTyped(updatedDecisionStep); err != nil {
-			return "", fmt.Errorf("validation failed after update: %w", err)
-		}
-
-		// Validate all steps after update
-		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		// Unlock learnings for updated step
-		if unlockLearningsFunc != nil && stepIndex >= 0 {
-			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", partialUpdate.ExistingStepID, err))
-			} else {
-				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", partialUpdate.ExistingStepID))
-			}
-		}
-
-		logger.Info(fmt.Sprintf("✅ Updated decision step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated decision step '%s' in the plan", partialUpdate.ExistingStepID), nil
 	}
 }
 
@@ -4048,11 +3535,6 @@ func createAddRegularStepExecutor(workspacePath string, logger loggerv2.Logger, 
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "regular", unlockLearningsFunc)
 }
 
-// createAddDecisionStepExecutor creates an executor function for add_decision_step tool
-func createAddDecisionStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "decision", unlockLearningsFunc)
-}
-
 // createAddHumanInputStepExecutor creates an executor function for add_human_input_step tool
 func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "human_input", unlockLearningsFunc)
@@ -4061,28 +3543,6 @@ func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logge
 // createAddTodoTaskStepExecutor creates an executor function for add_todo_task_step tool
 func createAddTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "todo_task", unlockLearningsFunc)
-}
-
-// validateDecisionStepFieldsTyped validates that a DecisionPlanStep has all required fields
-// Returns an error message suitable for returning as a tool response if validation fails
-// DecisionPlanStep is now flattened - fields are directly on the step
-func validateDecisionStepFieldsTyped(step *DecisionPlanStep) error {
-	if step.ID == "" {
-		return fmt.Errorf("step (title: %q) is missing required ID field. Please provide an ID for the decision step", step.Title)
-	}
-	if step.Description == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) is missing required description field. Please provide a description for the decision step", step.Title, step.ID)
-	}
-	if step.DecisionEvaluationQuestion == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) is missing required decision_evaluation_question field. Please provide a question to evaluate the decision step's execution output", step.Title, step.ID)
-	}
-	if step.IfTrueNextStepID == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) is missing required if_true_next_step_id field. Please provide the ID of the step to route to after evaluation is true", step.Title, step.ID)
-	}
-	if step.IfFalseNextStepID == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) is missing required if_false_next_step_id field. Please provide the ID of the step to route to after evaluation is false", step.Title, step.ID)
-	}
-	return nil
 }
 
 // validateTodoTaskStepFieldsTyped validates that a TodoTaskPlanStep has all required fields
@@ -4133,11 +3593,6 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 			s.Title = title
 		}
 	case *ConditionalPlanStep:
-		s.ID = id
-		if strings.TrimSpace(s.Title) == "" {
-			s.Title = title
-		}
-	case *DecisionPlanStep:
 		s.ID = id
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
@@ -4222,8 +3677,6 @@ func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, 
 				return err
 			}
 		}
-	case *DecisionPlanStep:
-		// DecisionPlanStep is flattened in the current plan model; there is no nested decision sub-step to recurse into.
 	}
 	return nil
 }
@@ -4445,12 +3898,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Validate step type-specific required fields BEFORE writing to plan
 		// This allows the agent to correct errors immediately via tool response
 		switch stepType {
-		case "decision":
-			if decisionStep, ok := typedStep.(*DecisionPlanStep); ok {
-				if err := validateDecisionStepFieldsTyped(decisionStep); err != nil {
-					return "", fmt.Errorf("validation failed: %w", err)
-				}
-			}
 		case "todo_task":
 			if todoTaskStep, ok := typedStep.(*TodoTaskPlanStep); ok {
 				if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
@@ -4615,21 +4062,6 @@ func registerPlanModificationTools(
 
 	// NOTE: update_conditional_step tool removed (deprecated in favor of decision/routing).
 
-	decisionUpdateSchema := getUpdateDecisionStepSchema()
-	decisionUpdateParams, err := parseSchemaForToolParameters(decisionUpdateSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update decision step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_decision_step",
-		"Update a decision step in the plan. Provide existing_step_id (required) to identify which decision step to update, and only include the fields you want to change (decision_step, decision_evaluation_question, if_true_next_step_id, if_false_next_step_id). The plan.json file is updated immediately when this tool is called.",
-		decisionUpdateParams,
-		createUpdateDecisionStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_decision_step tool: %w", err)
-	}
-
 	// NOTE: update_orchestration_step tool removed (deprecated in favor of todo_task).
 
 	humanInputUpdateSchema := getUpdateHumanInputStepSchema()
@@ -4680,21 +4112,6 @@ func registerPlanModificationTools(
 
 	// NOTE: add_conditional_step tool removed (deprecated in favor of decision/routing).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
-
-	decisionSchema := getAddDecisionStepSchema()
-	decisionParams, err := parseSchemaForToolParameters(decisionSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse decision step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_decision_step",
-		"Add a decision step to the plan. Use this when you need to execute a step first, evaluate its output, and route based on the result. Decision steps EXECUTE a single step, then evaluate the output to determine routing. Provide: id, title, decision_step (the step to execute), decision_evaluation_question, if_true_next_step_id, if_false_next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
-		decisionParams,
-		createAddDecisionStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_decision_step tool: %w", err)
-	}
 
 	// NOTE: add_orchestration_step tool removed (deprecated in favor of todo_task).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.

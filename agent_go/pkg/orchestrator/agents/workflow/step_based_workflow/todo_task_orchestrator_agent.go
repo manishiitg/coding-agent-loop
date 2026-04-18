@@ -212,9 +212,6 @@ var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestrato
 The following files from previous steps are available for reading:
 {{.StepContextDependencies}}
 {{end}}
-{{if .DecisionReasoning}}
-{{.DecisionReasoning}}
-{{end}}
 
 {{if .ValidationFeedback}}
 ## Pre-Validation Failed (Previous Attempt)
@@ -354,7 +351,6 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 		"StepTitle":               templateVars["StepTitle"],
 		"StepDescription":         templateVars["StepDescription"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
-		"DecisionReasoning":       templateVars["DecisionReasoning"],
 		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
 		"ValidationFeedback":      templateVars["ValidationFeedback"],
 	}

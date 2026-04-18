@@ -120,6 +120,7 @@ type WorkflowOrchestrator struct {
 	// Preset-level feature toggles
 	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
 	lockKnowledgebase bool // When true, post-step KB update agent never fires; graph.json mutates only via explicit reorganize_knowledgebase calls
+	kbShape           string // "graph+notes" (default) | "notes-only"; controls which KB artifacts exist.
 
 	// Tiered LLM allocation mode
 	tieredConfig *step_based_workflow.TieredLLMConfig
@@ -194,6 +195,16 @@ func (wo *WorkflowOrchestrator) LockKnowledgebase() bool {
 // SetLockKnowledgebase toggles the lock_knowledgebase flag.
 func (wo *WorkflowOrchestrator) SetLockKnowledgebase(v bool) {
 	wo.lockKnowledgebase = v
+}
+
+// KBShape returns the preset-declared KB shape (raw; empty = default "graph+notes").
+func (wo *WorkflowOrchestrator) KBShape() string {
+	return wo.kbShape
+}
+
+// SetKBShape overrides the KB shape; accepts empty to fall back to the default.
+func (wo *WorkflowOrchestrator) SetKBShape(v string) {
+	wo.kbShape = v
 }
 
 // Human verification types
@@ -342,6 +353,10 @@ func NewWorkflowOrchestrator(
 	if presetLLMConfig != nil && presetLLMConfig.LockKnowledgebase != nil {
 		lockKnowledgebase = *presetLLMConfig.LockKnowledgebase
 	}
+	kbShape := ""
+	if presetLLMConfig != nil {
+		kbShape = presetLLMConfig.KBShape
+	}
 
 	// Override context editing from preset config (base orchestrator defaults to env var)
 	if presetLLMConfig != nil && presetLLMConfig.EnableContextEditing != nil {
@@ -355,6 +370,7 @@ func NewWorkflowOrchestrator(
 		presetPhaseLLM:    presetPhaseLLM,
 		useKnowledgebase:  useKnowledgebase,
 		lockKnowledgebase: lockKnowledgebase,
+		kbShape:           kbShape,
 		tieredConfig:      tieredConfig,
 	}
 
@@ -487,8 +503,9 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
 
-	// Propagate knowledgebase lock flag
+	// Propagate knowledgebase lock flag + declared KB shape.
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
+	todoPlannerAgent.SetKBShape(wo.kbShape)
 
 	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
@@ -593,8 +610,9 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		todoPlannerAgent.SetCdpPort(wo.cdpPort)
 	}
 
-	// Propagate knowledgebase lock flag
+	// Propagate knowledgebase lock flag + declared KB shape.
 	todoPlannerAgent.SetLockKnowledgebase(wo.lockKnowledgebase)
+	todoPlannerAgent.SetKBShape(wo.kbShape)
 
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {

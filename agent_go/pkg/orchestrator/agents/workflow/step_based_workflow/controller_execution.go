@@ -744,8 +744,6 @@ func getEffectiveLearningPathIdentifier(stepID string, stepPath string, agentCon
 
 // executeConditionalStep is now in controller_conditional.go
 
-// executeDecisionStep is now in controller_decision.go
-
 // saveExecutionConversationLogs saves execution result, conversation history, and prompts to log files.
 // Called on both success and failure/cancellation paths so partial conversations from interrupted
 // executions can be inspected via debug_step or direct log file access.
@@ -959,12 +957,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 			description = description[:200] + "..."
 		}
 
-		// Compute the step execution folder path based on step type
-		// Decision steps use step-N-decision, everything else uses step-N
+		// Compute the step execution folder path
 		stepPath := fmt.Sprintf("step-%d", i+1)
-		if step.StepType() == StepTypeDecision {
-			stepPath = fmt.Sprintf("step-%d-decision", i+1)
-		}
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), stepPath)
 
 		summary.WriteString(fmt.Sprintf("**Step %d: %s**\n", i+1, resolvedTitle))
@@ -1051,9 +1045,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	isBranchStep bool, // true if this is a branch step (affects progress tracking)
 	execCtx *ExecutionContext, // Execution context with flags (skipHumanInput, etc.)
 	allSteps []PlanStepInterface, // All steps in the plan
-	isDecisionInnerStep bool, // true if this is the inner step of a decision step (skips final human feedback on success)
-	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
-	decisionEvaluationQuestion string, // Optional: evaluation question for decision inner steps (used to format output for LLM evaluation)
 	isSubAgent bool, // true if this is a sub-agent from an orchestration step (never requests human feedback)
 	previousExecutionResults []string, // Execution outputs from previous steps (indexed by step index)
 	orchestrationRoutes []OrchestrationRoute, // Optional: orchestration routes (sub-agents) - only used when isSubAgent is true
@@ -1344,55 +1335,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["VariableNames"] = variableNames
 		}
 
-		// Add variable values only in tool search mode — tool search agents cannot read env vars,
-		// so they need values in the prompt. Code exec and learn_code agents read values via
-		// SECRET_<VAR> env vars and must NOT have values hardcoded in the prompt.
-		// Add decision evaluation question if this is a decision inner step
-		if isDecisionInnerStep && decisionEvaluationQuestion != "" {
-			templateVars["DecisionEvaluationQuestion"] = decisionEvaluationQuestion
-		} else {
-			templateVars["DecisionEvaluationQuestion"] = ""
-		}
-
-		// Add decision context if this step was routed from a decision step
-		if decisionContext != nil {
-			decisionReasoning := fmt.Sprintf(
-				"## 🎯 Decision Context\n\n"+
-					"This step was routed from decision step **%d: %s**.\n\n"+
-					"**Decision Result**: %v\n"+
-					"**Decision Reasoning**: %s\n\n"+
-					"## 📋 Decision Step Execution Output\n\n"+
-					"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
-					"```\n%s\n```\n\n"+
-					"Use this context to understand why this step is being executed and what conditions led to routing here.",
-				decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
-				decisionContext.DecisionStepTitle,
-				decisionContext.DecisionResult,
-				decisionContext.DecisionReasoning,
-				decisionContext.DecisionExecutionResult,
-			)
-			templateVars["DecisionReasoning"] = decisionReasoning
-		} else {
-			templateVars["DecisionReasoning"] = ""
-		}
+		// Workshop-guidance for non-human-input steps flows through WorkshopExecuteOptions.Instructions
+		// (appended to the step description via appendInstructionsToStep). HumanInput is only
+		// consumed by controller_human_input.go as a response substitution.
 
 		// Build previous steps summary from completed steps (include execution outputs)
 		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
-
-		// Append workshop human input as critical feedback (passed via execute_step's human_input parameter)
-		if hcpo.interactiveWorkflowHumanInput != "" {
-			if previousStepsSummary == "" {
-				previousStepsSummary = "## 📋 Previous Steps Context\n\n"
-			}
-			previousStepsSummary += fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n")
-			previousStepsSummary += "The human provided the following instructions via the interactive workshop.\n"
-			previousStepsSummary += "**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n"
-			previousStepsSummary += fmt.Sprintf("```\n%s\n```\n", hcpo.interactiveWorkflowHumanInput)
-			// Also set as a dedicated top-level variable so the user template can show it prominently.
-			templateVars["WorkshopHumanFeedback"] = fmt.Sprintf("The human provided the following instructions. **You MUST incorporate this into your work. This takes priority over everything else.**\n\n```\n%s\n```", hcpo.interactiveWorkflowHumanInput)
-		} else {
-			templateVars["WorkshopHumanFeedback"] = ""
-		}
 
 		templateVars["PreviousStepsSummary"] = previousStepsSummary
 
@@ -1660,10 +1608,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				var executionAgent agents.OrchestratorAgent
-				isDecisionStepFalse := decisionContext != nil && !decisionContext.DecisionResult
-				if isDecisionStepFalse {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step routed from decision step with FALSE result - retrying execution"))
-				}
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
 
@@ -2344,12 +2288,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🤖 Sub-agent %d - auto-approving without human feedback (sub-agents never request human feedback)", stepIndex+1))
 			approved = true
 			feedback = "" // No feedback for sub-agents
-		} else if isDecisionInnerStep && validationResponse != nil && !isValidationFailure(validationResponse) {
-			// For decision inner steps that succeeded, skip human feedback (decision step will handle routing)
-			// Still allow human feedback if validation failed (handled in retry loop above)
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Decision inner step %d succeeded - auto-approving without human feedback (decision step will handle routing)", stepIndex+1))
-			approved = true
-			feedback = "" // No feedback for decision inner steps
 		} else if hcpo.runSingleStepOnly {
 			// Single-step mode (workshop / run-single-step UI): no next step to continue with
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Single-step mode: Auto-approving step %d without human feedback (no next step)", stepIndex+1))
@@ -2445,12 +2383,6 @@ func isConditionalStep(step PlanStepInterface) bool {
 	return ok
 }
 
-// isDecisionStep returns true if the step is a decision step (executes inner step and routes based on evaluation)
-func isDecisionStep(step PlanStepInterface) bool {
-	_, ok := step.(*DecisionPlanStep)
-	return ok
-}
-
 // isHumanInputStep returns true if the step is a human input step (asks question and blocks for input)
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)
@@ -2475,8 +2407,6 @@ func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	case *RegularPlanStep:
 		return s.AgentConfigs
 	case *ConditionalPlanStep:
-		return s.AgentConfigs
-	case *DecisionPlanStep:
 		return s.AgentConfigs
 	case *TodoTaskPlanStep:
 		return s.AgentConfigs
@@ -2539,10 +2469,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 	if stepsToLoad > 0 {
 		previousExecutionResults = hcpo.loadExecutionResultsFromLogs(ctx, breakdownSteps, stepsToLoad)
 	}
-
-	// Track decision context for steps routed from decision steps
-	// Key: target step index (0-based), Value: decision context
-	decisionContextMap := make(map[int]*DecisionContext)
 
 	// Execute each step one by one
 	// Use traditional for loop to allow jumping to different steps
@@ -2743,179 +2669,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		// Check if this is a decision step
-		if isDecisionStep(step) {
-			// Execute decision step - executes inner step, evaluates output, returns result for routing
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting decision step execution: %s", step.GetTitle()))
-			decisionResult, executionResult, err := hcpo.executeDecisionStep(ctx, step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps)
-			if err != nil {
-				// Check if this is a workflow termination signal
-				if strings.Contains(err.Error(), "WORKFLOW_END") {
-					hcpo.GetLogger().Info(fmt.Sprintf("🏁 Decision step %d signaled workflow termination - ending workflow", i+1))
-					// Mark step as completed and break to end workflow
-					hcpo.addCompletedStepIndex(progress, i)
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step termination: %v", err))
-					}
-					break // Break out of the execution loop to end workflow
-				}
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Decision step %d execution failed: %v", i+1, err), nil)
-				// Emit error event using centralized method
-				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "decision-step-execution", fmt.Sprintf("Execute decision step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf("decision step %d execution failed: %w", i+1, err)
-			}
-
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step %d completed successfully: %s", i+1, step.GetTitle()))
-
-			// Mark decision step as completed
-			hcpo.addCompletedStepIndex(progress, i)
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: decision step %d marked as completed", i+1))
-			}
-
-			// Check if we're in single step mode and should stop
-			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
-				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
-				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
-				break
-			}
-
-			// Determine next step based on decision result (using returned value instead of state variable)
-			var nextStepID string
-			var resultStr string
-			if decisionStep, ok := step.(*DecisionPlanStep); ok {
-				if decisionResult {
-					nextStepID = decisionStep.IfTrueNextStepID
-					resultStr = "true"
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Decision step evaluated to TRUE - using if_true_next_step_id: %s", nextStepID))
-				} else {
-					nextStepID = decisionStep.IfFalseNextStepID
-					resultStr = "false"
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Decision step evaluated to FALSE - using if_false_next_step_id: %s", nextStepID))
-				}
-			}
-
-			// Track decision evaluations to prevent infinite loops
-			// Initialize DecisionEvaluationCounts if nil
-			if progress.DecisionEvaluationCounts == nil {
-				progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
-			}
-
-			// Create key: stepID:result (e.g., "verify-minute-file:false")
-			decisionKey := fmt.Sprintf("%s:%s", step.GetID(), resultStr)
-			currentCount := progress.DecisionEvaluationCounts[decisionKey]
-			newCount := currentCount + 1
-			progress.DecisionEvaluationCounts[decisionKey] = newCount
-
-			hcpo.GetLogger().Info(fmt.Sprintf("📊 Decision evaluation count for %s: %d", decisionKey, newCount))
-
-			// Check if we've made this same decision more than 2 times (3rd time = error)
-			if newCount > 2 {
-				errorMsg := fmt.Sprintf("infinite loop detected: decision step '%s' (ID: %s) has evaluated to %s %d times. This indicates a workflow logic error that would cause an infinite loop. Please review the decision step configuration and routing logic.", step.GetTitle(), step.GetID(), resultStr, newCount)
-				hcpo.GetLogger().Error(errorMsg, nil)
-				// Emit error event
-				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "decision-step-loop-detection", fmt.Sprintf("Decision step: %s", step.GetTitle()), errorMsg, i, iteration)
-				return fmt.Errorf("workflow error: %s", errorMsg)
-			}
-
-			// Save progress with updated decision count
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision evaluation: %v", err))
-			}
-
-			// Handle next step navigation
-			if nextStepID == "end" {
-				// End workflow
-				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Decision step %d specified 'end' - terminating workflow", i+1))
-				break
-			} else if nextStepID != "" {
-				// Find target step by ID and jump to it
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
-
-					// Store decision context for the target step ONLY when decision result is false
-					// When decision is true, the step executes normally without decision context
-					// When decision is false, we pass context to help understand why this step is being executed
-					if !decisionResult {
-						decisionContextMap[targetStepIndex] = &DecisionContext{
-							DecisionStepIndex: i,
-							DecisionStepTitle: step.GetTitle(),
-							DecisionResult:    decisionResult,
-							DecisionReasoning: func() string {
-								if decisionStep, ok := step.(*DecisionPlanStep); ok && decisionStep.DecisionResponse != nil {
-									return decisionStep.DecisionResponse.Reasoning
-								}
-								return ""
-							}(),
-							DecisionExecutionResult: executionResult,
-						}
-						hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored decision context for step %d (from decision step %d: %s) - decision was FALSE", targetStepIndex+1, i+1, step.GetTitle()))
-					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Skipping decision context for step %d - decision was TRUE (normal execution path)", targetStepIndex+1))
-					}
-
-					// When decision step routes back to a previous step, we need to:
-					// 1. Remove target step AND all subsequent steps from completed list (they all depend on target step's output)
-					// 2. Delete execution folders for target step AND all subsequent steps
-					// This ensures a clean state for re-execution
-
-					// Use cleanupProgressFromStep to remove all steps from targetStepIndex onward from progress
-					// This also handles branch step cleanup and saves progress to steps_done.json
-					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
-					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
-					}
-
-					// Archive execution folders for target step and all subsequent steps
-					// This preserves execution artifacts for debugging while allowing clean re-execution
-					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-					archivedCount := 0
-					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
-						} else {
-							archivedCount++
-							hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folder for step %d to run-%d", stepNum, runNumber))
-						}
-					}
-					if archivedCount > 0 {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived execution folders for %d steps (step-%d to step-%d) to run-%d", archivedCount, targetStepIndex+1, len(breakdownSteps), runNumber))
-					}
-					// Save updated archival counts
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-					}
-
-					// Update startFromStep to allow execution from target step
-					// This prevents the skip check (i < startFromStep) from blocking execution
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
-					}
-
-					// Set loop index to jump to target step (subtract 1 because loop will increment)
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-					// Fall through to default behavior (continue to next step)
-				}
-			}
-
-			// Default: continue to next sequential step
-			continue
-		}
-
 		// Check if this is a routing step
 		if isRoutingStep(step) {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Starting routing step execution: %s", step.GetTitle()))
@@ -2960,14 +2713,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				}
 			}
 
-			// Track routing evaluations to prevent infinite loops (reuse DecisionEvaluationCounts)
-			if progress.DecisionEvaluationCounts == nil {
-				progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
+			// Track routing evaluations to prevent infinite loops
+			if progress.RoutingEvaluationCounts == nil {
+				progress.RoutingEvaluationCounts = make(RoutingEvaluationCount)
 			}
 			routingKey := fmt.Sprintf("%s:%s", step.GetID(), selectedRouteID)
-			currentCount := progress.DecisionEvaluationCounts[routingKey]
+			currentCount := progress.RoutingEvaluationCounts[routingKey]
 			newCount := currentCount + 1
-			progress.DecisionEvaluationCounts[routingKey] = newCount
+			progress.RoutingEvaluationCounts[routingKey] = newCount
 			hcpo.GetLogger().Info(fmt.Sprintf("📊 Routing evaluation count for %s: %d", routingKey, newCount))
 
 			if newCount > 2 {
@@ -3031,16 +2784,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			// Generate step path for todo task step
 			todoTaskStepPath := fmt.Sprintf("step-%d", i+1)
 
-			// Check if this todo task step has decision context (routed from a decision step)
-			var todoTaskDecisionCtx *DecisionContext
-			if dc, exists := decisionContextMap[i]; exists {
-				todoTaskDecisionCtx = dc
-				// Clean up after use (optional, but good practice)
-				delete(decisionContextMap, i)
-				hcpo.GetLogger().Info(fmt.Sprintf("📝 Using decision context for todo task step %d (routed from decision step %d)", i+1, dc.DecisionStepIndex+1))
-			}
-
-			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath, todoTaskDecisionCtx)
+			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
@@ -3256,15 +3000,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 		}
 
-		// Check if this step has decision context (routed from a decision step)
-		var decisionCtx *DecisionContext
-		if dc, exists := decisionContextMap[i]; exists {
-			decisionCtx = dc
-			// Clean up after use (optional, but good practice)
-			delete(decisionContextMap, i)
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using decision context for step %d (routed from decision step %d)", i+1, dc.DecisionStepIndex+1))
-		}
-
 		stepPath := fmt.Sprintf("step-%d", i+1)
 		// Allow workshop inner steps to use a custom step path (e.g., "step-3-sub-login-expert")
 		// so they don't collide with top-level step folders.
@@ -3287,9 +3022,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			false, // isBranchStep = false
 			execCtx,
 			breakdownSteps,           // allSteps
-			false,                    // isDecisionInnerStep = false (regular step)
-			decisionCtx,              // decisionContext - nil if not routed from decision step
-			"",                       // decisionEvaluationQuestion - empty for regular steps
 			false,                    // isSubAgent = false (regular step)
 			previousExecutionResults, // Execution outputs from previous steps
 			nil,                      // orchestrationRoutes - nil for regular steps (not sub-agents)

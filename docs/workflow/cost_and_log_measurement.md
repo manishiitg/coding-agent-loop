@@ -190,7 +190,6 @@ The main log families are:
 - learning execution JSONL
 - learning conversation JSON
 - conditional evaluation JSON
-- decision evaluation JSON
 - orchestration execution JSONL
 - todo-task execution JSONL
 - `step_done.json` markers
@@ -212,7 +211,6 @@ Common files:
 - `logs/{step-folder}/learning-execution.json`
 - `logs/{step-folder}/learning-conversation.json`
 - `logs/{step-folder}/conditional-evaluation.json`
-- `logs/{step-folder}/decision-evaluation.json`
 - `logs/{step-folder}/orchestration-execution.json`
 - `logs/{step-folder}/todo-task-execution.json`
 
@@ -258,7 +256,7 @@ This is why the execution log popup can show:
 - per-step execution attempts
 - validation history
 - learning traces
-- conditional and decision results
+- conditional results
 - orchestration and todo-task traces
 
 The implementation is in [workflow.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow.go).

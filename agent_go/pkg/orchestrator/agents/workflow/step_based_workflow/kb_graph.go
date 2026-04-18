@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 const (
@@ -45,22 +46,34 @@ const (
 `
 )
 
-// InitKBGraphFiles creates empty graph.json, index.json, and notes/_index.json if
-// they don't exist yet. Safe to call repeatedly — existing files are left alone so
-// agent-written content survives.
-func InitKBGraphFiles(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspaceRoot string) error {
-	graphPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBGraphFileName)
-	if exists, _ := bo.CheckWorkspaceFileExists(ctx, graphPath); !exists {
-		if err := bo.WriteWorkspaceFile(ctx, graphPath, emptyGraphJSON); err != nil {
-			return fmt.Errorf("init graph.json: %w", err)
+// InitKBGraphFiles seeds the empty KB artifacts that the declared shape calls
+// for. Safe to call repeatedly — existing files are left alone so agent-written
+// content survives. Shape controls which artifacts exist:
+//
+//   - KBShapeGraphNotes (default): graph.json + index.json + notes/_index.json
+//   - KBShapeNotesOnly:            notes/_index.json only
+//
+// For notes-only we intentionally do NOT touch any pre-existing graph.json/
+// index.json — migration of shape is handled separately.
+func InitKBGraphFiles(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspaceRoot, kbShape string) error {
+	shape := workflowtypes.ResolveKBShape(kbShape)
+
+	if shape == workflowtypes.KBShapeGraphNotes {
+		graphPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBGraphFileName)
+		if exists, _ := bo.CheckWorkspaceFileExists(ctx, graphPath); !exists {
+			if err := bo.WriteWorkspaceFile(ctx, graphPath, emptyGraphJSON); err != nil {
+				return fmt.Errorf("init graph.json: %w", err)
+			}
+		}
+		indexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBIndexFileName)
+		if exists, _ := bo.CheckWorkspaceFileExists(ctx, indexPath); !exists {
+			if err := bo.WriteWorkspaceFile(ctx, indexPath, emptyIndexJSON); err != nil {
+				return fmt.Errorf("init index.json: %w", err)
+			}
 		}
 	}
-	indexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBIndexFileName)
-	if exists, _ := bo.CheckWorkspaceFileExists(ctx, indexPath); !exists {
-		if err := bo.WriteWorkspaceFile(ctx, indexPath, emptyIndexJSON); err != nil {
-			return fmt.Errorf("init index.json: %w", err)
-		}
-	}
+
+	// notes/_index.json is seeded for every non-empty shape — both shapes use narrative notes.
 	notesIndexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBNotesFolderName, KBNotesIndexFileName)
 	if exists, _ := bo.CheckWorkspaceFileExists(ctx, notesIndexPath); !exists {
 		if err := bo.WriteWorkspaceFile(ctx, notesIndexPath, emptyNotesIndexJSON); err != nil {

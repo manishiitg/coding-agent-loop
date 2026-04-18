@@ -774,6 +774,7 @@ export interface PresetLLMConfig {
 
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
+  kb_shape?: 'graph+notes' | 'notes-only'  // shape of the KB (default 'graph+notes'). 'notes-only' skips graph.json/index.json.
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
   enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
@@ -1010,13 +1011,6 @@ export interface ExecutionAttemptLog {
   content?: any; // Full JSON content of execution result
 }
 
-export interface DecisionLog {
-  decision_result: boolean;
-  decision_reasoning: string;
-  timestamp: string;
-  execution_result?: string;
-}
-
 export interface OrchestrationLog {
   type: string;
   timestamp: string;
@@ -1072,7 +1066,6 @@ export interface ArchivedLogEntry {
   timestamp: string;  // Archive timestamp (e.g., "20260106-115300")
   validations: ValidationLog[];
   executions: ExecutionAttemptLog[];
-  decisions?: DecisionLog[];
   orchestration?: OrchestrationLog[];
   todo_task?: TodoTaskLog[];
   conditionals?: ConditionalLog[];
@@ -1085,7 +1078,7 @@ export interface StepOutputContent {
   is_json: boolean;
 }
 
-// Archived execution outputs from decision step routing (when step routes back to earlier step)
+// Archived execution outputs (when step routes back to earlier step)
 export interface ArchivedExecutionEntry {
   run_number: string;
   artifacts?: { file_name: string; file_path: string }[];
@@ -1105,13 +1098,12 @@ export interface StepExecutionLogs {
   artifacts?: { file_name: string; file_path: string }[]; // Other output files
   validations: ValidationLog[];
   executions: ExecutionAttemptLog[];
-  decisions?: DecisionLog[];
   orchestration?: OrchestrationLog[];
   todo_task?: TodoTaskLog[];
   conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
   archived_logs?: ArchivedLogEntry[];  // Logs from previous runs
-  archived_executions?: ArchivedExecutionEntry[];  // Archived execution outputs from decision step routing
+  archived_executions?: ArchivedExecutionEntry[];  // Archived execution outputs from previous routing
 }
 
 export interface ModelTokenUsage {

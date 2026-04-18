@@ -626,6 +626,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   
   // State for session restoration loading
   const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
+  // Workflow-mode restore flag is owned by WorkflowLayout via useChatStore so we can show
+  // an in-panel spinner here while reconnectWorkflowTabs() is replaying events.
+  const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
 
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
@@ -2723,12 +2726,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onPresetCleared={handleWorkflowPresetCleared}
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
+            {/* Restoring Sessions Loading Indicator - shown while reconnectWorkflowTabs replays events */}
+            {isRestoringWorkflowSessions && displayEvents.length === 0 && !isStreaming && (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
+              </div>
+            )}
             {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
+            {displayEvents.length === 0 && !isStreaming && !isRestoringWorkflowSessions && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
-            {!showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
+            {!isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
             )}
 

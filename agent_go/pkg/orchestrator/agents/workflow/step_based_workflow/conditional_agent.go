@@ -46,37 +46,12 @@ Return ONLY JSON: {"result": true|false, "reason": "evidence-based explanation"}
 var conditionalUserTemplate = MustRegisterTemplate("conditionalUser", `## 📝 TASK
 **Condition**: {{.Question}}
 **Context**: {{.ConditionContext}}
-
+{{if .StepContextDependencies}}
+## 📎 CONTEXT DEPENDENCIES (declared input files for this condition)
+{{.StepContextDependencies}}
+{{end}}
 **MANDATORY**: Use tools to verify reality. Do NOT rely on historical context alone.
 **Output**: JSON {"result": bool, "reason": "string"}`)
-
-var decisionSystemTemplate = MustRegisterTemplate("decisionSystem", `## 🤖 ROLE: Decision Evaluator
-**Task**: Analyze execution output vs. evaluation question.
-
-## 🔍 PROCESS
-1. **Analyze**: Review output for specific evidence.
-2. **Compare**: Apply criteria from the question.
-3. **Decide**: TRUE if criteria are clearly met.
-
-{{if .VariableValues}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-**Current Values**: {{.VariableValues}}
-{{end}}
-
-{{if .LearningHistory}}
-## 📚 LEARNINGS
-{{.LearningHistory}}
-{{end}}
-
-## 📤 OUTPUT
-Call 'submit_decision_result' with structured reasoning.`)
-
-var decisionUserTemplate = MustRegisterTemplate("decisionUser", `## 📝 EVALUATION
-**Question**: {{.Question}}
-**Execution Output**: {{.ExecutionOutput}}
-
-**Analyze and submit results via 'submit_decision_result'.**`)
 
 var routingSystemTemplate = MustRegisterTemplate("routingSystem", `## 🤖 ROLE: Routing Evaluator
 **Task**: Analyze context/output and select the best route from available options.
@@ -114,12 +89,6 @@ type ConditionalResponse struct {
 // GetResult returns the boolean result
 func (cr *ConditionalResponse) GetResult() bool {
 	return cr.Result
-}
-
-// DecisionResponse represents the structured response from decision evaluation
-type DecisionResponse struct {
-	Result    bool   `json:"result"`    // The decision result (true or false)
-	Reasoning string `json:"reasoning"` // Detailed reasoning for the decision
 }
 
 // WorkflowConditionalAgent evaluates conditional decisions for step branching
@@ -170,31 +139,16 @@ func (hctpca *WorkflowConditionalAgent) conditionalUserMessageProcessor(template
 	return result.String()
 }
 
-func (hctpca *WorkflowConditionalAgent) decisionSystemPromptProcessor(templateVars map[string]string) string {
-	var result strings.Builder
-	if err := decisionSystemTemplate.Execute(&result, templateVars); err != nil {
-		panic(fmt.Sprintf("decision system prompt template execution failed (missing variable?): %v", err))
-	}
-	return result.String()
-}
-
-func (hctpca *WorkflowConditionalAgent) decisionUserMessageProcessor(templateVars map[string]string) string {
-	var result strings.Builder
-	if err := decisionUserTemplate.Execute(&result, templateVars); err != nil {
-		panic(fmt.Sprintf("decision user message template execution failed (missing variable?): %v", err))
-	}
-	return result.String()
-}
-
 // Decide makes a true/false decision based on context and question
-func (hctpca *WorkflowConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string) (*ConditionalResponse, error) {
+func (hctpca *WorkflowConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string, stepContextDependencies string) (*ConditionalResponse, error) {
 	templateVars := map[string]string{
-		"ConditionContext": conditionContext,
-		"Question":         question,
-		"Description":      description,
-		"LearningHistory":  learningHistory,
-		"VariableNames":    variableNames,
-		"VariableValues":   variableValues,
+		"ConditionContext":        conditionContext,
+		"Question":                question,
+		"Description":             description,
+		"LearningHistory":         learningHistory,
+		"VariableNames":           variableNames,
+		"VariableValues":          variableValues,
+		"StepContextDependencies": stepContextDependencies,
 	}
 
 	systemPrompt := hctpca.conditionalSystemPromptProcessor(templateVars, isCodeExecutionMode)
@@ -224,49 +178,6 @@ func (hctpca *WorkflowConditionalAgent) Decide(ctx context.Context, conditionCon
 
 	if err != nil {
 		return nil, fmt.Errorf("conditional decision failed: %w", err)
-	}
-	return &result, nil
-}
-
-// EvaluateDecision makes a structured decision evaluation for decision steps
-func (hctpca *WorkflowConditionalAgent) EvaluateDecision(ctx context.Context, executionOutput, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string) (*DecisionResponse, error) {
-	templateVars := map[string]string{
-		"ExecutionOutput": executionOutput,
-		"Question":        question,
-		"LearningHistory": learningHistory,
-		"VariableNames":   variableNames,
-		"VariableValues":  variableValues,
-	}
-
-	systemPrompt := hctpca.decisionSystemPromptProcessor(templateVars)
-	inputProcessor := func(vars map[string]string) string {
-		return hctpca.decisionUserMessageProcessor(vars)
-	}
-
-	schema := `{
-		"type": "object",
-		"properties": {
-			"result": {"type": "boolean"},
-			"reasoning": {"type": "string"}
-		},
-		"required": ["result", "reasoning"]
-	}`
-
-	result, _, err := agents.ExecuteStructuredWithInputProcessorViaTool[DecisionResponse](
-		hctpca.BaseOrchestratorAgent,
-		ctx,
-		templateVars,
-		inputProcessor,
-		[]llmtypes.MessageContent{},
-		schema,
-		systemPrompt,
-		isCodeExecutionMode,
-		"submit_decision_result",
-		"Submit the decision evaluation result.",
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("decision evaluation failed: %w", err)
 	}
 	return &result, nil
 }

@@ -36,7 +36,6 @@ The log viewer still supports these file families:
 - `validation.json` and `validation-{N}.json`
 - `learning-execution.json`
 - `conditional-evaluation.json`
-- `decision-evaluation.json`
 - `orchestration-execution.json`
 - `todo-task-execution.json`
 

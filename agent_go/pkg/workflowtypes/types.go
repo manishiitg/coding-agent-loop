@@ -19,6 +19,41 @@ const (
 	WorkflowStatusEvalBuilder      = "evaluation-builder"
 )
 
+// Knowledgebase shape — how the workflow's cross-run memory is laid out.
+// Picked once by the builder per workflow; controls which artifacts get seeded
+// into knowledgebase/ on init and which ones the KB update agent maintains.
+//
+// Empty string is treated as KBShapeGraphNotes for backward compatibility with
+// workflows authored before this field existed.
+const (
+	// KBShapeGraphNotes (default) — graph.json + index.json + notes/_index.json.
+	// Right when the workflow answers entity/relationship queries ("what do we
+	// know about company X", "which services depend on Y").
+	KBShapeGraphNotes = "graph+notes"
+	// KBShapeNotesOnly — only notes/_index.json + notes/*.md. Right when the
+	// workflow accumulates narrative observations across runs but has no need
+	// for typed entities/relationships (e.g. cost-analysis, research summaries).
+	KBShapeNotesOnly = "notes-only"
+)
+
+// ValidKBShape reports whether s is a recognised kb_shape value. Empty is valid
+// (means "use default").
+func ValidKBShape(s string) bool {
+	switch s {
+	case "", KBShapeGraphNotes, KBShapeNotesOnly:
+		return true
+	}
+	return false
+}
+
+// ResolveKBShape returns the effective shape, defaulting empty to KBShapeGraphNotes.
+func ResolveKBShape(s string) string {
+	if s == "" {
+		return KBShapeGraphNotes
+	}
+	return s
+}
+
 // PresetLLMConfig represents LLM configuration stored with workflow presets.
 type PresetLLMConfig struct {
 	// Legacy single-model form (backward compat).
@@ -30,10 +65,11 @@ type PresetLLMConfig struct {
 	PhaseLLM    *AgentLLMConfig `json:"phase_llm,omitempty"`
 
 	// Feature toggles.
-	UseKnowledgebase           *bool `json:"use_knowledgebase,omitempty"`
-	LockKnowledgebase          *bool `json:"lock_knowledgebase,omitempty"`
-	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"`
-	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`
+	UseKnowledgebase           *bool  `json:"use_knowledgebase,omitempty"`
+	LockKnowledgebase          *bool  `json:"lock_knowledgebase,omitempty"`
+	KBShape                    string `json:"kb_shape,omitempty"` // "graph+notes" (default) | "notes-only"
+	EnableContextSummarization *bool  `json:"enable_context_summarization,omitempty"`
+	EnableContextEditing       *bool  `json:"enable_context_editing,omitempty"`
 
 	// Image generation.
 	EnableImageGeneration *bool  `json:"enable_image_generation,omitempty"`

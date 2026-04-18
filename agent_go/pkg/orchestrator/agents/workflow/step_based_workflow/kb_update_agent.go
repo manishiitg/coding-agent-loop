@@ -22,6 +22,15 @@ var kbUpdateSystemPromptTemplate = MustRegisterTemplate("kbUpdateSystemPrompt", 
 ## Role
 Extract structured knowledge from a just-completed step and merge it into the workspace knowledge graph. You are the **only writer** of `+"`"+`knowledgebase/graph.json`+"`"+`, `+"`"+`knowledgebase/index.json`+"`"+`, and the `+"`"+`knowledgebase/notes/`+"`"+` folder. Regular step agents may read these files but never write them.
 
+## KB shape — HARD CONSTRAINT
+This workflow's KB shape is **{{.KBShape}}**.
+{{if eq .KBShape "notes-only"}}
+- You MUST NOT write to `+"`"+`graph.json`+"`"+` or `+"`"+`index.json`+"`"+` — those files do not exist in this workspace. Treat every atomic-fact instruction as a narrative update: merge it into the appropriate `+"`"+`notes/<topic>.md`+"`"+` file instead. If the contribution instruction asks for entity extraction but no narrative, either (a) fold the entity into a notes paragraph under a matching topic, or (b) no-op with a short summary explaining the shape mismatch.
+- Skip all graph.json / index.json read-and-write steps below.
+{{else}}
+- Both graph.json and notes/ are available. Follow the full instructions below.
+{{end}}
+
 ## What you capture vs what you don't
 - **Capture WHAT the workflow discovered.** Two output formats live in this folder, each for a different shape of knowledge:
   - **Atomic facts** — entities (companies, people, products, events, ...) and relationships between them → `+"`"+`graph.json`+"`"+`. Use when the discovery is a discrete fact you'll query later by id/type.
@@ -244,6 +253,7 @@ func renderKBUpdateSystemPrompt(templateVars map[string]string) string {
 		"StepOutputPath":  templateVars["StepOutputPath"],
 		"NotesFolderPath": templateVars["NotesFolderPath"],
 		"NotesIndexPath":  templateVars["NotesIndexPath"],
+		"KBShape":         templateVars["KBShape"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update system prompt template execution failed: %v", err))
@@ -264,6 +274,16 @@ under `+"`"+`{{.NotesFolderPath}}/`+"`"+` for this one operation.
 Unlike the post-step KB update agent (which only adds facts), you MAY delete, rename,
 merge, or restructure existing entities, relationships, and notes — that is the whole
 point. But only when the user's instruction explicitly calls for it.
+
+## KB shape — HARD CONSTRAINT
+This workflow's KB shape is **{{.KBShape}}**.
+{{if eq .KBShape "notes-only"}}
+- `+"`"+`graph.json`+"`"+` and `+"`"+`index.json`+"`"+` do not exist in this workspace — ignore every reference to them below and DO NOT create them. All reorganization work must target `+"`"+`{{.NotesFolderPath}}/`+"`"+` and `+"`"+`{{.NotesIndexPath}}`+"`"+` only.
+- If the user's instruction names entities/relationships that would live in the graph, translate that intent into notes-side work: merge/split/rename topic files, rewrite `+"`"+`covers`+"`"+` on topics, compact sections. Reply with an explanation if the instruction has no meaningful notes-only analogue (e.g. "delete all relationships of type X" is a no-op here).
+- Skip the graph.json schema/read-first checklist rules. Follow only the notes-side rules.
+{{else}}
+- Both graph and notes are in scope. Follow all rules below.
+{{end}}
 
 ## Files
 
@@ -425,6 +445,7 @@ func renderKBReorganizeSystemPrompt(templateVars map[string]string) string {
 		"IndexFilePath":   templateVars["IndexFilePath"],
 		"NotesFolderPath": templateVars["NotesFolderPath"],
 		"NotesIndexPath":  templateVars["NotesIndexPath"],
+		"KBShape":         templateVars["KBShape"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb reorganize system prompt template execution failed: %v", err))
@@ -463,6 +484,164 @@ func renderKBUpdateUserMessage(templateVars map[string]string) string {
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update user message template execution failed: %v", err))
+	}
+	return result.String()
+}
+
+// Consolidate: a global pass that reads all step contributions + step outputs from a
+// selected run folder and produces cross-step consolidation work (dedupe type-name
+// drift, extract patterns that span multiple steps, flag contested properties). Runs
+// OUT-OF-BAND from any single step, invoked by the builder via the
+// `consolidate_knowledgebase` tool. Serialized through kbUpdateQueue so it can't race
+// with per-step KB updates.
+
+var kbConsolidateSystemPromptTemplate = MustRegisterTemplate("kbConsolidateSystemPrompt", `# Knowledgebase Consolidate Agent
+
+## Role
+You are a cross-step consolidation pass over the workspace knowledgebase. You have a privileged, holistic view that the per-step KB update agent does not: you see every step's `+"`"+`knowledgebase_contribution`+"`"+` instruction AND every step's output folder for the selected run. Use this view to do work that is IMPOSSIBLE to do one step at a time — and only that work.
+
+You own reads and writes to `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and the per-topic narrative files under `+"`"+`{{.NotesFolderPath}}/`+"`"+` for this one operation. Per-step KB updates are paused while you run.
+
+## KB shape — HARD CONSTRAINT
+This workflow's KB shape is **{{.KBShape}}**.
+{{if eq .KBShape "notes-only"}}
+- `+"`"+`graph.json`+"`"+` and `+"`"+`index.json`+"`"+` do not exist — ignore every reference to them below. All consolidation work must target `+"`"+`{{.NotesFolderPath}}/`+"`"+` + `+"`"+`{{.NotesIndexPath}}`+"`"+` only.
+- Type-drift work (e.g. "step A says type=company, step B says type=organization") is not applicable in this shape — there are no typed entities. Focus exclusively on notes: cross-step patterns, narrative dedupe, topic consolidation.
+{{else}}
+- Graph + notes are both in scope.
+{{end}}
+
+## What you do (and don't)
+
+**Do — cross-step work only, with holistic view as justification:**
+- **Type-name consolidation.** If multiple step contributions produce overlapping entity types with different names (e.g. ` + "`" + `company` + "`" + ` vs ` + "`" + `organization` + "`" + `, ` + "`" + `product` + "`" + ` vs ` + "`" + `offering` + "`" + `), merge to one canonical name. Rewrite entity ` + "`" + `type` + "`" + ` values in graph.json; rewrite affected cross-references in notes.
+- **Property-name consolidation.** Same concept with different property names across steps (` + "`" + `industry` + "`" + ` vs ` + "`" + `sector` + "`" + `, ` + "`" + `headcount` + "`" + ` vs ` + "`" + `employees` + "`" + `) — pick one, rewrite rows.
+- **Entity dedupe by label.** If the graph has two entities that are clearly the same real-world thing under different ids, merge them (preserve all properties; union the relationships; update cross-references in notes).
+- **Cross-step pattern narratives.** Write or update ` + "`" + `notes/pattern-<slug>.md` + "`" + ` when a pattern is only visible with multiple step outputs side-by-side (e.g. *"pattern-balance-anomaly: three accounts show the same dip-then-recover shape across quarter-end weeks"*). Populate ` + "`" + `covers` + "`" + ` with every entity id the pattern touches.
+- **Contested-property surfacing.** If two steps write different values for the same property on the same entity and the graph currently shows only one (silent clobber), add a ` + "`" + `notes/<entity-id>.md` + "`" + ` section dated today documenting both values with step provenance. Do NOT edit the graph property itself — that's the reorganize agent's job if the user decides which wins.
+
+**Don't — atomic-fact extraction or cleanup scope:**
+- Do NOT extract new atomic facts from step outputs that a step's own KB update agent should have extracted. If a step has a ` + "`" + `knowledgebase_contribution` + "`" + ` but nothing from it landed in the graph, report that as a diagnostic — do not silently re-run the extraction.
+- Do NOT rename topics, compact notes files, or do per-file cleanup that isn't cross-step in nature. Those belong to ` + "`" + `reorganize_knowledgebase` + "`" + `.
+- Do NOT touch ` + "`" + `learnings/` + "`" + ` or ` + "`" + `db/` + "`" + `.
+- Do NOT modify provenance (` + "`" + `source.step` + "`" + `, ` + "`" + `source.run` + "`" + `) when merging — keep the earliest ` + "`" + `created_at` + "`" + ` and refresh ` + "`" + `updated_at` + "`" + `. If a merged entity came from multiple steps, pick the step that set the defining property; note the other provenance inline in the entity's properties under a ` + "`" + `_provenance_notes` + "`" + ` field.
+
+## Inputs available to you
+
+**Context files (read-only):**
+- `+"`"+`{{.GraphFilePath}}`+"`"+` — current graph.
+- `+"`"+`{{.IndexFilePath}}`+"`"+` — lightweight graph summary.
+- `+"`"+`{{.NotesIndexPath}}`+"`"+` — notes topic registry. Read this FIRST to know which topics exist.
+- Step contributions block below (in the user message) — every step's ` + "`" + `knowledgebase_contribution` + "`" + ` string concatenated, with step ids. This is the declared schema across the workflow.
+- Step output folders — enumerated in the user message. You MAY ` + "`" + `cat` + "`" + ` specific files to verify a pattern, but NEVER glob-read everything. Pick targeted files after the contributions block tells you what to look for.
+
+**Objective (from user):** the consolidation goal for this invocation. Scope your work to it — do not opportunistically do other consolidation.
+
+## Files
+
+**` + "`" + `graph.json` + "`" + ` schema** — preserve shape under every write:
+` + "```" + `json
+{
+  "version": "1",
+  "updated_at": "<RFC3339>",
+  "entities": [ { "id": "...", "type": "...", "label": "...", "properties": {...},
+                  "created_at": "...", "updated_at": "...",
+                  "source": { "step": "...", "run": "..." } } ],
+  "relationships": [ { "id": "...", "from": "...", "to": "...", "type": "...", "properties": {...},
+                       "created_at": "...", "updated_at": "...",
+                       "source": { "step": "...", "run": "..." } } ]
+}
+` + "```" + `
+
+**` + "`" + `index.json` + "`" + ` shape** — resync after any graph change: entity/relationship counts grouped by type, plus ` + "`" + `updated_at` + "`" + `.
+
+**` + "`" + `notes/_index.json` + "`" + ` shape** — resync after any notes change: per-topic ` + "`" + `{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}` + "`" + `.
+
+## Tools
+- ` + "`" + `execute_shell_command` + "`" + ` — read/jq files, write back via redirect. All paths are absolute and pre-approved by folder guard.
+- ` + "`" + `diff_patch_workspace_file` + "`" + ` — surgical edits for big graph.json or notes files.
+
+## Safety rails
+- Apply changes incrementally. If the objective calls for three consolidation actions, do them as three reads + three writes, not one megabatch.
+- When renaming an entity ` + "`" + `type` + "`" + `, scan notes bodies for literal mentions of the old type and rewrite them too — otherwise cross-references drift.
+- If you cannot confidently resolve a consolidation action (ambiguous type mapping, unclear canonical label), SKIP it and include it in the summary as "deferred: <reason>" — do not guess.
+- Print ONE summary line at the end:
+` + "`" + `KB consolidated: <short description>; entity types merged: [<old>→<new>, ...]; properties merged: [<old>→<new>, ...]; pattern notes written: [<topic-id>, ...]; contested surfaced: <count>; deferred: [<reason>, ...]` + "`" + `
+Omit any clause whose count is zero.
+`)
+
+var kbConsolidateUserMessageTemplate = MustRegisterTemplate("kbConsolidateUserMessage", `# Knowledgebase consolidation request
+
+## Objective
+{{.Objective}}
+
+## Step contributions across the workflow (declared schema)
+{{.ContributionsBlock}}
+
+## Step output folders available (read-only) for the selected run
+{{.StepOutputFoldersBlock}}
+
+## Your task
+1. Read ` + "`" + `{{.GraphFilePath}}` + "`" + ` (skip in notes-only shape), ` + "`" + `{{.IndexFilePath}}` + "`" + ` (skip in notes-only shape), and ` + "`" + `{{.NotesIndexPath}}` + "`" + `. Form a picture of the current KB state.
+2. Cross-reference against the step contributions block above. Look for: type-name drift, property-name drift, entity dedupe candidates, missing pattern narratives implied by overlapping contributions, contested properties.
+3. Scope work to the stated objective. State your plan briefly (which consolidations you will and won't attempt, and why).
+4. Apply the consolidations. For each type/property rename, ` + "`" + `jq` + "`" + ` the graph to see the magnitude of the change before writing. For pattern notes, ` + "`" + `cat` + "`" + ` only the specific step output files that substantiate the pattern.
+5. Resync ` + "`" + `{{.IndexFilePath}}` + "`" + ` if the graph changed. Resync ` + "`" + `{{.NotesIndexPath}}` + "`" + ` if any notes file changed.
+6. Print the final summary line.
+`)
+
+type KBConsolidateAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func NewKBConsolidateAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *KBConsolidateAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
+		config, logger, tracer, agents.TodoPlannerSuccessLearningAgentType, eventBridge,
+	)
+	return &KBConsolidateAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+// Execute runs one consolidation pass. templateVars must include: Objective,
+// ContributionsBlock, StepOutputFoldersBlock, GraphFilePath, IndexFilePath,
+// NotesFolderPath, NotesIndexPath, KBShape.
+func (agent *KBConsolidateAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	systemPrompt := renderKBConsolidateSystemPrompt(templateVars)
+	userMessage := renderKBConsolidateUserMessage(templateVars)
+	inputProcessor := func(map[string]string) string {
+		return userMessage
+	}
+	type empty struct{}
+	return agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, empty{}, systemPrompt, true)
+}
+
+func renderKBConsolidateSystemPrompt(templateVars map[string]string) string {
+	var result strings.Builder
+	err := kbConsolidateSystemPromptTemplate.Execute(&result, map[string]interface{}{
+		"GraphFilePath":   templateVars["GraphFilePath"],
+		"IndexFilePath":   templateVars["IndexFilePath"],
+		"NotesFolderPath": templateVars["NotesFolderPath"],
+		"NotesIndexPath":  templateVars["NotesIndexPath"],
+		"KBShape":         templateVars["KBShape"],
+	})
+	if err != nil {
+		panic(fmt.Sprintf("kb consolidate system prompt template execution failed: %v", err))
+	}
+	return result.String()
+}
+
+func renderKBConsolidateUserMessage(templateVars map[string]string) string {
+	var result strings.Builder
+	err := kbConsolidateUserMessageTemplate.Execute(&result, map[string]interface{}{
+		"Objective":              templateVars["Objective"],
+		"ContributionsBlock":     templateVars["ContributionsBlock"],
+		"StepOutputFoldersBlock": templateVars["StepOutputFoldersBlock"],
+		"GraphFilePath":          templateVars["GraphFilePath"],
+		"IndexFilePath":          templateVars["IndexFilePath"],
+		"NotesFolderPath":        templateVars["NotesFolderPath"],
+		"NotesIndexPath":         templateVars["NotesIndexPath"],
+	})
+	if err != nil {
+		panic(fmt.Sprintf("kb consolidate user message template execution failed: %v", err))
 	}
 	return result.String()
 }

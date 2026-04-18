@@ -1701,9 +1701,6 @@ func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 			}
 		}
 
-		// Handle decision steps - DecisionPlanStep is now flattened, ID already collected above
-		// No nested step to collect
-
 		// Handle todo_task steps - collect sub-agent step IDs from predefined_routes
 		if todoTaskStep, ok := step.(*todo_creation_human.TodoTaskPlanStep); ok {
 			// Collect sub-agent step IDs from predefined routes
@@ -1863,10 +1860,6 @@ type PlanStepUpdate struct {
 	IfFalseSteps      json.RawMessage `json:"if_false_steps,omitempty"` // Will be converted to []PlanStepInterface
 	IfTrueNextStepID  *string         `json:"if_true_next_step_id,omitempty"`
 	IfFalseNextStepID *string         `json:"if_false_next_step_id,omitempty"`
-
-	// Decision step fields
-	DecisionStep               json.RawMessage `json:"decision_step,omitempty"` // Will be converted to PlanStepInterface
-	DecisionEvaluationQuestion *string         `json:"decision_evaluation_question,omitempty"`
 
 	// Routing/TodoTask step fields
 	NextStepID *string `json:"next_step_id,omitempty"`
@@ -2193,9 +2186,6 @@ func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID 
 				return found, foundPath
 			}
 		}
-	case *todo_creation_human.DecisionPlanStep:
-		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
-		// The step itself contains all fields - no nested steps to search
 	case *todo_creation_human.TodoTaskPlanStep:
 		for routeIdx, route := range s.PredefinedRoutes {
 			if route.SubAgentStep != nil {
@@ -2245,9 +2235,6 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 						return found, foundPath
 					}
 				}
-			case *todo_creation_human.DecisionPlanStep:
-				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
-				// The step itself contains all fields - no nested steps to search
 			case *todo_creation_human.TodoTaskPlanStep:
 				// Check predefined_routes
 				for j, route := range s.PredefinedRoutes {
@@ -2340,35 +2327,6 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 		}
 		updatedStep = &updated
 
-	case *todo_creation_human.DecisionPlanStep:
-		updated := *s // Copy the step
-		// Decision steps now have flattened structure with all common fields
-		if updates.Title != nil {
-			updated.Title = *updates.Title
-		}
-		if updates.Description != nil {
-			updated.Description = *updates.Description
-		}
-		if updates.SuccessCriteria != nil {
-			updated.SuccessCriteria = *updates.SuccessCriteria
-		}
-		if updates.ContextDependencies != nil {
-			updated.ContextDependencies = *updates.ContextDependencies
-		}
-		if updates.ContextOutput != nil {
-			updated.ContextOutput = *updates.ContextOutput
-		}
-		if updates.DecisionEvaluationQuestion != nil {
-			updated.DecisionEvaluationQuestion = *updates.DecisionEvaluationQuestion
-		}
-		if updates.IfTrueNextStepID != nil {
-			updated.IfTrueNextStepID = *updates.IfTrueNextStepID
-		}
-		if updates.IfFalseNextStepID != nil {
-			updated.IfFalseNextStepID = *updates.IfFalseNextStepID
-		}
-		updatedStep = &updated
-
 	case *todo_creation_human.TodoTaskPlanStep:
 		updated := *s // Copy the step
 		// TodoTaskPlanStep only has ID and Title (no embedded CommonStepFields)
@@ -2444,12 +2402,6 @@ func unmarshalStepFromJSON(data json.RawMessage) (todo_creation_human.PlanStepIn
 			return nil, fmt.Errorf("failed to unmarshal conditional step: %w", err)
 		}
 		return &s, nil
-	case "decision":
-		var s todo_creation_human.DecisionPlanStep
-		if err := json.Unmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal decision step: %w", err)
-		}
-		return &s, nil
 	case "todo_task":
 		var s todo_creation_human.TodoTaskPlanStep
 		if err := json.Unmarshal(data, &s); err != nil {
@@ -2504,10 +2456,6 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 		}
 		// Deeper nesting - recursively update
 		return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
-	case *todo_creation_human.DecisionPlanStep:
-		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
-		// The step itself is updated directly at the parent level, no nested updates needed
-		return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 	case *todo_creation_human.TodoTaskPlanStep:
 		if len(path) >= 3 && path[1] == -4 {
 			// predefined_routes[path[2]].sub_agent_step
@@ -2545,9 +2493,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 		switch s := step.(type) {
 		case *todo_creation_human.ConditionalPlanStep:
 			return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
-		case *todo_creation_human.DecisionPlanStep:
-			// DecisionPlanStep now has flattened structure (no nested DecisionStep)
-			return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 		case *todo_creation_human.TodoTaskPlanStep:
 			if len(path) >= 3 && path[1] == -4 {
 				routeIndex := path[2]
@@ -2575,9 +2520,6 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 			switch s := step.(type) {
 			case *todo_creation_human.ConditionalPlanStep:
 				return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
-			case *todo_creation_human.DecisionPlanStep:
-				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
-				return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 			case *todo_creation_human.TodoTaskPlanStep:
 				if len(path) >= 3 && path[1] == -4 {
 					routeIndex := path[2]
@@ -3145,7 +3087,7 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 	// Determine step type and unmarshal to typed step
 	stepType, ok := req.Step["type"].(string)
 	if !ok {
-		http.Error(w, "step must have 'type' field (regular, conditional, decision, or orchestration)", http.StatusBadRequest)
+		http.Error(w, "step must have 'type' field (regular, conditional, human_input, todo_task, or routing)", http.StatusBadRequest)
 		return
 	}
 
@@ -3169,13 +3111,6 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 		var s todo_creation_human.ConditionalPlanStep
 		if err := json.Unmarshal(stepJSON, &s); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to parse conditional step: %v", err), http.StatusBadRequest)
-			return
-		}
-		newStep = &s
-	case "decision":
-		var s todo_creation_human.DecisionPlanStep
-		if err := json.Unmarshal(stepJSON, &s); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to parse decision step: %v", err), http.StatusBadRequest)
 			return
 		}
 		newStep = &s
@@ -4507,18 +4442,7 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		}
 
 		// Handle inner steps for complex types
-		if inner, ok := step["decision_step"].(map[string]interface{}); ok {
-			if desc == "" {
-				if innerDesc, ok := inner["description"].(string); ok {
-					desc = innerDesc
-				}
-			}
-			if criteria == "" {
-				if innerCriteria, ok := inner["success_criteria"].(string); ok {
-					criteria = innerCriteria
-				}
-			}
-		} else if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
+		if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
 			if desc == "" {
 				if innerDesc, ok := inner["description"].(string); ok {
 					desc = innerDesc
@@ -4552,21 +4476,6 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			}
 		}
 
-		// Also check decision_step for inner step context_output
-		if len(contextOutputs) == 0 {
-			if inner, ok := step["decision_step"].(map[string]interface{}); ok {
-				if co, ok := inner["context_output"].(string); ok && co != "" {
-					contextOutputs = []string{co}
-				} else if coList, ok := inner["context_output"].([]interface{}); ok {
-					for _, co := range coList {
-						if coStr, ok := co.(string); ok && coStr != "" {
-							contextOutputs = append(contextOutputs, coStr)
-						}
-					}
-				}
-			}
-		}
-
 		meta := map[string]string{
 			"title":            title,
 			"description":      desc,
@@ -4580,40 +4489,6 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		metadata[stepKey] = meta
 		if id != "" {
 			metadata[id] = meta
-		}
-
-		// Handle decision inner step
-		if decisionStep, ok := step["decision_step"].(map[string]interface{}); ok {
-			decisionKey := stepKey + "-decision"
-			dTitle, _ := decisionStep["title"].(string)
-			dDesc, _ := decisionStep["description"].(string)
-			dId, _ := decisionStep["id"].(string)
-			dCriteria, _ := decisionStep["success_criteria"].(string)
-
-			// Extract context_output for inner decision step
-			var dContextOutputs []string
-			if co, ok := decisionStep["context_output"].(string); ok && co != "" {
-				dContextOutputs = []string{co}
-			} else if coList, ok := decisionStep["context_output"].([]interface{}); ok {
-				for _, co := range coList {
-					if coStr, ok := co.(string); ok && coStr != "" {
-						dContextOutputs = append(dContextOutputs, coStr)
-					}
-				}
-			}
-
-			dMeta := map[string]string{
-				"title":            dTitle,
-				"description":      dDesc,
-				"success_criteria": dCriteria,
-				"original_id":      dId,
-				"type":             "decision-inner",
-				"context_output":   strings.Join(dContextOutputs, ","),
-			}
-			metadata[decisionKey] = dMeta
-			if dId != "" {
-				metadata[dId] = dMeta
-			}
 		}
 
 		// Recurse into conditional/branch steps

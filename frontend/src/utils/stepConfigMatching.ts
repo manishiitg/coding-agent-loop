@@ -60,12 +60,6 @@ export interface TodoStepWithConfigs {
   if_false_next_step_id?: string;
   condition_result?: boolean;
   condition_reason?: string;
-  // Decision step fields (execute step, evaluate output, route based on result)
-  has_decision_step?: boolean;
-  decision_step?: TodoStepWithConfigs;
-  decision_evaluation_question?: string;
-  decision_result?: boolean;
-  decision_reason?: string;
   next_step_id?: string;
   // Human input step fields (asks question to human and blocks for input)
   has_human_input?: boolean;
@@ -194,17 +188,6 @@ export interface ConditionalPlanStep extends CommonStepFields {
   condition_reason?: string;
 }
 
-// Decision step (execute step, evaluate output, route based on result)
-export interface DecisionPlanStep extends CommonStepFields {
-  type: 'decision';
-  decision_step?: PlanStep;           // The single step to execute
-  decision_evaluation_question?: string; // Question to evaluate step output
-  if_true_next_step_id?: string;      // ID of step to connect to if decision is true (or "end")
-  if_false_next_step_id?: string;     // ID of step to connect to if decision is false (or "end")
-  decision_result?: boolean;          // runtime: stores evaluation result
-  decision_reason?: string;           // runtime: stores evaluation reasoning
-}
-
 // Todo task step (orchestrator with todo list management + predefined routes + generic agent)
 // Fields from the former inner todo_task_step are now flattened onto this level:
 //   description, success_criteria, context_dependencies, context_output, validation_schema
@@ -248,7 +231,7 @@ export interface RoutingPlanStep extends CommonStepFields {
 }
 
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -275,10 +258,6 @@ export function isRegularStep(step: PlanStep): step is RegularPlanStep {
 
 export function isConditionalStep(step: PlanStep): step is ConditionalPlanStep {
   return step.type === 'conditional';
-}
-
-export function isDecisionStep(step: PlanStep): step is DecisionPlanStep {
-  return step.type === 'decision';
 }
 
 export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {

@@ -13,7 +13,6 @@ import {
   CheckCircle2,
   Loader2,
   XCircle,
-  Zap,
   Settings,
   Braces,
   Play,
@@ -79,7 +78,6 @@ function StatusDot({ status }: { status?: 'pending' | 'running' | 'completed' | 
 function stepTypeIcon(step: PlanStep): { icon: React.ElementType; accent: string } {
   switch (step.type) {
     case 'conditional': return { icon: GitBranch, accent: 'text-purple-500' }
-    case 'decision': return { icon: Zap, accent: 'text-amber-500' }
     case 'human_input': return { icon: User, accent: 'text-blue-500' }
     case 'todo_task': return { icon: ListTodo, accent: 'text-teal-500' }
     case 'routing': return { icon: Route, accent: 'text-orange-500' }
@@ -112,13 +110,8 @@ function buildFiles(step: PlanStep): VirtualFile[] {
   // Flat format: description and validation_schema are directly on the step
   const description = step.description
   const validationSchema = step.validation_schema
-  const decisionDesc = step.type === 'decision' && step.decision_step?.description && !description
-    ? step.decision_step.description : null
-
   if (description) {
     files.push({ name: 'README.md', icon: FileText, iconClass: 'text-muted-foreground', content: description })
-  } else if (decisionDesc) {
-    files.push({ name: 'README.md', icon: FileText, iconClass: 'text-muted-foreground', content: decisionDesc })
   }
 
   if (validationSchema?.files?.length) {
@@ -148,9 +141,6 @@ function buildFiles(step: PlanStep): VirtualFile[] {
   // Type-specific
   if (step.type === 'conditional' && step.condition_question) {
     files.push({ name: 'condition.md', icon: GitBranch, iconClass: 'text-purple-500', content: step.condition_question })
-  }
-  if (step.type === 'decision' && step.decision_evaluation_question) {
-    files.push({ name: 'evaluation.md', icon: Zap, iconClass: 'text-amber-500', content: step.decision_evaluation_question })
   }
   if (step.type === 'human_input') {
     const c = step.question + (step.options?.length ? '\n\nOptions:\n' + step.options.map((o, i) => `${i + 1}. ${o}`).join('\n') : '')
@@ -386,9 +376,6 @@ function StepTreeNode({
   if (step.type === 'conditional') {
     if (step.if_true_steps?.length) childBranches.push({ label: 'if_true', steps: step.if_true_steps })
     if (step.if_false_steps?.length) childBranches.push({ label: 'if_false', steps: step.if_false_steps })
-  }
-  if (step.type === 'decision' && step.decision_step) {
-    childBranches.push({ label: 'decision_step', steps: [step.decision_step] })
   }
   const todoRoutes: PlanRoutingRoute[] = step.type === 'todo_task' ? (step.predefined_routes || []) : []
 

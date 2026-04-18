@@ -313,39 +313,6 @@ func (e *LearningSkippedEvent) GetEventType() events.EventType {
 	return LearningSkipped
 }
 
-// DecisionFeedback represents feedback from decision evaluation
-type DecisionFeedback struct {
-	Type        string `json:"type"`        // "observation", "recommendation", "issue"
-	Description string `json:"description"` // Brief description
-	Severity    string `json:"severity"`    // HIGH/MEDIUM/LOW
-}
-
-// DecisionResponse represents the structured response from decision evaluation
-type DecisionResponse struct {
-	Result     bool               `json:"result"`     // The decision result (true or false)
-	Reasoning  string             `json:"reasoning"`  // Detailed reasoning for the decision
-	Confidence string             `json:"confidence"` // HIGH/MEDIUM/LOW - confidence level in the decision
-	Feedback   []DecisionFeedback `json:"feedback"`   // Optional feedback and observations
-	Evidence   []string           `json:"evidence"`   // List of evidence points that support the decision
-}
-
-// DecisionEvaluatedEvent represents the event when a decision step evaluation completes
-type DecisionEvaluatedEvent struct {
-	events.BaseEventData
-	StepID           string           `json:"step_id"`           // Step ID from plan
-	StepIndex        int              `json:"step_index"`        // 0-based step index
-	StepTitle        string           `json:"step_title"`        // Step title
-	StepPath         string           `json:"step_path"`         // Step path (e.g., "step-2")
-	DecisionQuestion string           `json:"decision_question"` // The evaluation question
-	DecisionResponse DecisionResponse `json:"decision_response"` // Structured decision response
-	RunFolder        string           `json:"run_folder"`        // Run folder name (e.g., "iteration-1")
-	WorkspacePath    string           `json:"workspace_path"`    // Workspace path
-}
-
-func (e *DecisionEvaluatedEvent) GetEventType() events.EventType {
-	return DecisionEvaluated
-}
-
 // =============================================================================
 // BATCH EXECUTION EVENTS (for variable groups)
 // =============================================================================

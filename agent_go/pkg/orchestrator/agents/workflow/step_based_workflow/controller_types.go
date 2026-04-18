@@ -16,9 +16,9 @@ type BranchStepProgress struct {
 	CompletedSteps []string `json:"completed_steps"` // e.g., ["step-3-if-true-0", "step-3-if-true-1"]
 }
 
-// DecisionEvaluationCount tracks how many times a specific decision has been made
-// Key format: "{stepID}:{result}" where result is "true" or "false"
-type DecisionEvaluationCount map[string]int
+// RoutingEvaluationCount tracks how many times a specific route has been selected
+// Key format: "{stepID}:{routeID}"
+type RoutingEvaluationCount map[string]int
 
 // OrchestrationRoute represents a possible route/sub-agent (private to orchestration step)
 type OrchestrationRoute struct {
@@ -36,7 +36,7 @@ type StepProgress struct {
 	LastUpdated              time.Time                  `json:"last_updated"`
 	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
 	ValidationFailures       map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
-	DecisionEvaluationCounts DecisionEvaluationCount    `json:"-"`                             // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
+	RoutingEvaluationCounts  RoutingEvaluationCount     `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
 	ArchivalCounts           map[int]int                `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
 }
 
@@ -91,21 +91,17 @@ type ExecutionContext struct {
 	// Propagated from ExecutionOptions.HumanInputs to controller.humanInputOverrides.
 	HumanInputs map[string]string
 
+	// WorkshopHumanInput is the single-step response the builder agent supplies via
+	// execute_step(human_input="..."). Only consumed by controller_human_input.go as
+	// the substitute response for a human_input step. For prompt-level guidance to
+	// any other step type, use WorkshopExecuteOptions.Instructions instead.
+	WorkshopHumanInput string
+
 	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine
 	// writes the agent's full conversation history into it after Execute() returns.
 	// This is used by sub-agent callers (e.g., get_sub_agent_conversation tool) to
 	// retrieve the internal conversation without modifying the execution path.
 	ConversationHistoryCapture *[]llmtypes.MessageContent
-}
-
-// DecisionContext represents context from a decision step that routed to this step
-// This context is passed to the next step after a decision step routes to it
-type DecisionContext struct {
-	DecisionStepIndex       int    // Index of the decision step that made the decision (0-based)
-	DecisionStepTitle       string // Title of the decision step
-	DecisionResult          bool   // The decision result (true/false)
-	DecisionReasoning       string // The reasoning text from the decision evaluation
-	DecisionExecutionResult string // The execution output from the decision step's inner step
 }
 
 // Execution strategy constants

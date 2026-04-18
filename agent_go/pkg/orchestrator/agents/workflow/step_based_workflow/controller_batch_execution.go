@@ -363,10 +363,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			// If loading fails, create in-memory progress
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load progress for group %s, using in-memory: %v", group.Name, err))
 			progress = &StepProgress{
-				CompletedStepIndices:     make([]int, 0),
-				TotalSteps:               len(breakdownSteps),
-				LastUpdated:              time.Now(),
-				DecisionEvaluationCounts: make(DecisionEvaluationCount),
+				CompletedStepIndices:    make([]int, 0),
+				TotalSteps:              len(breakdownSteps),
+				LastUpdated:             time.Now(),
+				RoutingEvaluationCounts: make(RoutingEvaluationCount),
 			}
 		}
 

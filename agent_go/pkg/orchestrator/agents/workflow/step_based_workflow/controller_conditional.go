@@ -99,6 +99,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	conditionContext := contextBuilder.String()
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Condition context length: %d characters (only last execution output)", len(conditionContext)))
 
+	// Compute workspace/execution paths up front so context_dependency resolution can use them.
+	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), conditionalStepPath)
+
+	// Resolve and format the step's declared context_dependencies so the conditional
+	// agent can reason over explicit input files (parallel to how regular/todo_task steps
+	// handle StepContextDependencies). Without this, the field is ignored for conditionals.
+	docsRoot := GetPromptDocsRoot()
+	var stepContextDependencies string
+	if deps := step.GetContextDependencies(); len(deps) > 0 {
+		resolvedDeps := ResolveVariablesArray(deps, hcpo.variableValues)
+		resolvedContextDeps := hcpo.resolveDependencyPathsWithWorkspace(
+			ctx, resolvedDeps, stepIndex, conditionalStepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues,
+		)
+		if formatted, depsErr := hcpo.formatContextDependenciesWithContent(ctx, resolvedContextDeps, docsRoot); depsErr == nil {
+			stepContextDependencies = formatted
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to inline context deps for conditional step: %v", depsErr))
+			stepContextDependencies = strings.Join(resolvedContextDeps, ", ")
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("📎 Resolved %d context_dependencies for conditional step (length: %d chars)", len(resolvedContextDeps), len(stepContextDependencies)))
+	}
+
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
 	agentConfigs := getAgentConfigs(step)
 	var learningHistory string
@@ -116,9 +140,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	}
 
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
-	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, step.GetID(), conditionalStepPath)
 	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 		// Non-blocking: log warning but continue execution (folder will be created when files are written)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure conditional step execution folder exists: %v (continuing - folder will be created when files are written)", err))
@@ -143,12 +164,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	// Pre-save prompts.json so get_step_prompts works during execution
 	{
 		tv := map[string]string{
-			"ConditionContext": conditionContext,
-			"Question":         conditionalStep.ConditionQuestion,
-			"Description":      stepDescription,
-			"LearningHistory":  learningHistory,
-			"VariableNames":    variableNames,
-			"VariableValues":   variableValues,
+			"ConditionContext":        conditionContext,
+			"Question":                conditionalStep.ConditionQuestion,
+			"Description":             stepDescription,
+			"LearningHistory":         learningHistory,
+			"VariableNames":           variableNames,
+			"VariableValues":          variableValues,
+			"StepContextDependencies": stepContextDependencies,
 		}
 		sp := conditionalAgent.conditionalSystemPromptProcessor(tv, isCodeExecutionMode)
 		um := conditionalAgent.conditionalUserMessageProcessor(tv)
@@ -159,7 +181,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), conditionalStepPath, "conditional_evaluation", sp, um, model, "conditional-prompts.json")
 	}
 
-	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, conditionalStep.ConditionQuestion, stepDescription, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues)
+	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, conditionalStep.ConditionQuestion, stepDescription, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues, stepContextDependencies)
 
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)
@@ -361,8 +383,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 							s.AgentConfigs = &AgentConfigs{}
 						case *ConditionalPlanStep:
 							s.AgentConfigs = &AgentConfigs{}
-						case *DecisionPlanStep:
-							s.AgentConfigs = &AgentConfigs{}
 						case *RoutingPlanStep:
 							s.AgentConfigs = &AgentConfigs{}
 						}
@@ -384,8 +404,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 								case *RegularPlanStep:
 									s.AgentConfigs = &AgentConfigs{}
 								case *ConditionalPlanStep:
-									s.AgentConfigs = &AgentConfigs{}
-								case *DecisionPlanStep:
 									s.AgentConfigs = &AgentConfigs{}
 								case *RoutingPlanStep:
 									s.AgentConfigs = &AgentConfigs{}
@@ -414,9 +432,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 				true, // isBranchStep = true
 				execCtx,
 				allSteps,                 // Pass allSteps so branch steps can see previous regular steps
-				false,                    // isDecisionInnerStep = false (branch step)
-				nil,                      // decisionContext = nil (branch steps are not routed from decision steps)
-				"",                       // decisionEvaluationQuestion - empty for branch steps
 				false,                    // isSubAgent = false (branch step, not a sub-agent)
 				previousExecutionResults, // Execution outputs from previous steps (for context)
 				nil,                      // orchestrationRoutes - nil for branch steps (not sub-agents)

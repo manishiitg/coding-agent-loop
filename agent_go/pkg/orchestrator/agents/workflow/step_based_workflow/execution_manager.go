@@ -387,7 +387,7 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	}()
 
 	// 1. Delete progress file if requested
-	// This is a fresh start - delete progress file which includes DecisionEvaluationCounts
+	// This is a fresh start - delete progress file which includes RoutingEvaluationCounts
 	if scope.DeleteProgress {
 		if err := orch.deleteStepProgress(ctx); err != nil {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete progress: %v (continuing)", err))

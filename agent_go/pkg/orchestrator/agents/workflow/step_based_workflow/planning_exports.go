@@ -15,6 +15,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,11 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["ProgressSummary"] = templateVars["ProgressSummary"]
 		templateData["GroupInfo"] = templateVars["GroupInfo"]
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
+		kbShape := templateVars["KBShape"]
+		if kbShape == "" {
+			kbShape = workflowtypes.KBShapeGraphNotes
+		}
+		templateData["KBShape"] = kbShape
 		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
 		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
@@ -724,6 +730,58 @@ func RegisterReorganizeKnowledgebaseTool(
 		},
 	); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register reorganize_knowledgebase tool: %v", err))
+	}
+}
+
+// RegisterConsolidateKnowledgebaseTool registers a consolidate_knowledgebase tool that
+// runs a cross-step KB consolidation pass. Unlike per-step KB updates (scoped to one
+// step's output) or reorganize (operates only on existing graph/notes), consolidation
+// reads every step's knowledgebase_contribution + every step output folder from the
+// selected run and does work that is only possible with the holistic view: type-name
+// and property-name drift across steps, entity dedupe by label, cross-step pattern
+// narratives, contested-property surfacing.
+//
+// Runs synchronously — blocks until the agent finishes — but serialized through
+// kbUpdateQueue so it can't race with live post-step updates or a reorganize call.
+func RegisterConsolidateKnowledgebaseTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"consolidate_knowledgebase",
+		"Run a holistic cross-step consolidation pass over knowledgebase/graph.json + notes/. Use this AFTER multiple steps have contributed to catch drift that per-step KB updates can't see: two steps extracting the same concept under different type names (company vs organization), properties with different names for the same thing (industry vs sector), duplicate entities from different steps, cross-step patterns that need a `pattern-*.md` note, contested property values that got silently clobbered. The agent reads every step's knowledgebase_contribution plus step output folders from the selected run. Takes one argument 'objective' describing the consolidation goal — be specific; the agent scopes work to it and won't opportunistically reorganize beyond. Returns the agent's summary line.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"objective": map[string]interface{}{
+					"type":        "string",
+					"description": "What to consolidate, in natural language. Good examples: 'reconcile type-name drift across company/organization; canonicalize to company and rewrite references', 'write pattern notes for any repeating shape across per-account steps — balance dips, transaction-volume anomalies, or login-flow changes', 'surface contested properties where two steps disagree on the same entity (e.g. employee count) without rewriting the graph — add provenance-annotated notes sections instead'. Avoid vague objectives like 'clean up the KB' — the agent will ask for scope.",
+				},
+			},
+			"required": []string{"objective"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			objective, _ := args["objective"].(string)
+			objective = strings.TrimSpace(objective)
+			if objective == "" {
+				return "objective is required — describe the consolidation goal in natural language, e.g. 'reconcile company vs organization type-name drift'", nil
+			}
+			if session == nil || session.controller == nil {
+				return "session controller not available — cannot run KB consolidate", nil
+			}
+			summary, err := session.controller.RunKBConsolidate(session.sessionCtx, objective)
+			if err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ consolidate_knowledgebase failed: %v", err))
+				return fmt.Sprintf("KB consolidate failed: %v", err), nil
+			}
+			if summary == "" {
+				return "KB consolidate completed (no summary line returned by agent)", nil
+			}
+			return summary, nil
+		},
+	); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to register consolidate_knowledgebase tool: %v", err))
 	}
 }
 

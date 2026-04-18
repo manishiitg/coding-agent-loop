@@ -4108,6 +4108,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					phaseTemplateVars["RunFolder"] = phaseRunFolder
 					phaseTemplateVars["UseKnowledgebase"] = "true" // default; overridden by preset below if needed
+					phaseTemplateVars["KBShape"] = workflowtypes.KBShapeGraphNotes // default; overridden from manifest below if set
+					if phaseWorkspacePath != "" {
+						if manifest, found, mErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath); mErr == nil && found && manifest.Capabilities.LLMConfig != nil {
+							if manifest.Capabilities.LLMConfig.KBShape != "" {
+								phaseTemplateVars["KBShape"] = workflowtypes.ResolveKBShape(manifest.Capabilities.LLMConfig.KBShape)
+							}
+						}
+					}
 				}
 
 				// Use a detached context for workspace file reads during setup so that
@@ -4622,6 +4630,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
 						todo_creation_human.RegisterReorganizeKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
+						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools

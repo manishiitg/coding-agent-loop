@@ -10,7 +10,7 @@ import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip'
 import type { LLMOption } from '../../../types/llm'
 import type { AgentLLMConfig, AgentConfigs, PlanStep, PlanningResponse } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import { getToolsByCategory, getCategoryForTool, HUMAN_TOOLS } from '../../../utils/customToolNames'
 
 // Sub-categories that belong to workspace_tools parent
@@ -72,9 +72,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
         if (isConditionalStep(step)) {
           if (step.if_true_steps) collectSteps(step.if_true_steps)
           if (step.if_false_steps) collectSteps(step.if_false_steps)
-        }
-        if (isDecisionStep(step) && step.decision_step) {
-          steps.push({ step: step.decision_step as PlanStep, stepId: step.decision_step.id })
         }
         if (isTodoTaskStep(step)) {
           // Flat format: no inner todo_task_step to add; the step itself has the metadata

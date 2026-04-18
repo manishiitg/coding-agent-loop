@@ -26,6 +26,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -664,6 +665,11 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 		llmCfg = make(map[string]interface{})
 	}
 	llmCfg["lock_knowledgebase"] = iwm.controller.LockKnowledgebase()
+	if shape := iwm.controller.KBShape(); shape != "" {
+		llmCfg["kb_shape"] = shape
+	} else {
+		delete(llmCfg, "kb_shape")
+	}
 	caps["llm_config"] = llmCfg
 
 	manifest["capabilities"] = caps
@@ -811,9 +817,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Plan modification tools
 	planMod := []string{
-		"add_regular_step", "add_decision_step", "add_routing_step",
+		"add_regular_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_decision_step", "update_routing_step",
+		"update_regular_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps",
 		"update_validation_schema",
@@ -1074,6 +1080,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	if iwm.controller.UseKnowledgebase() {
 		useKB = "true"
 	}
+	kbShape := workflowtypes.ResolveKBShape(iwm.controller.KBShape())
 	// Objective and success_criteria are resolved from soul/soul.md (canonical)
 	// with workflow.json as legacy fallback — see ResolveWorkflowObjective.
 	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
@@ -1099,6 +1106,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"SessionID":                         iwm.sessionID,
 		"WorkflowID":                        iwm.workflowID,
 		"UseKnowledgebase":                  useKB,
+		"KBShape":                           kbShape,
 		"WorkflowObjective":                 workflowObjective,
 		"WorkflowSuccessCriteria":           workflowSuccessCriteria,
 		"AvailableGroups":                   availableGroups,
@@ -1308,9 +1316,11 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
 **knowledgebase/ — decisions, facts, strategies, and narrative analysis built up over time**
-- Two formats co-located in this folder, both written at runtime by the **post-step KB update agent only**:
-  - `+"`graph.json`"+` (+ `+"`index.json`"+`) — atomic facts as entities/relationships with provenance. Use for facts you'll query later by id/type.
-  - `+"`notes/`"+` — per-topic narrative markdown. One file per topic (entity-id or `+"`pattern-<slug>`"+`), plus `+"`notes/_index.json`"+` as a registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns — anything too prosaic to fit cleanly as an entity property but durable across runs.
+- Current workflow shape: **kb_shape={{.KBShape}}** (see the KB shape block below to change it).
+- Two formats are available; which ones exist on disk depends on `+"`kb_shape`"+`:
+  - `+"`graph.json`"+` (+ `+"`index.json`"+`) — atomic facts as entities/relationships with provenance. Use for facts you'll query later by id/type. **Only exists when kb_shape=graph+notes.**
+  - `+"`notes/`"+` — per-topic narrative markdown. One file per topic (entity-id or `+"`pattern-<slug>`"+`), plus `+"`notes/_index.json`"+` as a registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns — anything too prosaic to fit cleanly as an entity property but durable across runs. **Exists in both shapes.**
+- Both formats are written at runtime by the **post-step KB update agent only**.
 - **Written by (runtime):** the **post-step KB update agent only**. Step code (main.py, step agent shell) does NOT write graph.json, index.json, or notes/ directly — even with knowledgebase_access=write, that guard exists for the KB update agent, not for step shell writes.
 - **Written by (design time — you):** YOU (the builder) MAY shell-write these files directly for bootstrap/repair work — seeding initial entities before first run, fixing a corrupt graph.json, hand-curating a topic note. Your FolderGuard allows it. Use with care: keep the schema valid (entities[], relationships[], ids unique, provenance present) so the KB update agent's merge logic still works. Prefer `+"`knowledgebase_contribution`"+` instructions on steps when the data comes from step output — that's what keeps growth automatic and consistent.
 - Read as: step agents shell-read on demand if knowledgebase_access grants read. For graph: `+"`jq`"+` on graph.json. For notes: ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob notes/*.md.
@@ -1333,9 +1343,14 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Shape: JSON with per-file schema (primary key + merge rule) decided by the builder at design time.
 - Examples: "db/processed_companies.json with rows keyed by company_id", "db/monthly_totals.json aggregated across all months", "db/cursors.json tracking last-processed dates".
 
+**KB shape — pick once per workflow (workflow-level setting `+"`kb_shape`"+`):**
+- `+"`graph+notes`"+` (default) — graph.json + index.json + notes/. Use when the workflow answers **entity/relationship/traversal** queries across runs: "what do we know about company X", "which services depend on Y", "has this entity changed since last run". The graph is genuinely load-bearing.
+- `+"`notes-only`"+` — only notes/*.md + notes/_index.json (no graph.json / index.json). Use when the workflow accumulates **narrative observations** but doesn't need typed entities or relationship traversal: cost-analysis over time, research summaries, recommendation-history tracking. Shipping an empty graph.json here is dead weight — a stale "looks like memory but isn't" artifact. Pick this and save yourself the mental tax.
+- The current workflow is configured as `+"`kb_shape={{.KBShape}}`"+`. Change it via `+"`update_workflow_config(kb_shape=\"notes-only\")`"+` if the graph isn't earning its keep — e.g. if no step has a `+"`knowledgebase_contribution`"+` that mentions entities or relationships, or if graph.json is still at bootstrap provenance after several runs.
+
 **When to use which — deciding questions:**
 - *Does it tell the agent HOW to do the task?* → learnings/ (the learning agent writes it; you rarely do)
-- *Is it a decision, fact, or strategy the workflow has discovered about its subject matter?* → knowledgebase/ (write a knowledgebase_contribution; the KB update agent extracts into graph.json)
+- *Is it a decision, fact, or strategy the workflow has discovered about its subject matter?* → knowledgebase/ (write a knowledgebase_contribution; the KB update agent extracts into graph.json when kb_shape=graph+notes, or into notes/ when kb_shape=notes-only)
 - *Is it the workflow's actual output data — rows, records, results this run produced?* → db/ (the step writes JSON directly; upsert by key, never overwrite wholesale)
 
 **Rule of thumb on the split:**
@@ -1369,18 +1384,37 @@ Every non-trivial step has a ` + "`" + `context_output` + "`" + ` file (e.g. ` +
 - Full data → ` + "`" + `db/<file>.json` + "`" + ` with upsert-by-key (preserves rows from other groups and prior runs).
 - Lightweight pointer/summary → ` + "`" + `context_output` + "`" + ` (status, count, maybe a path reference). This keeps validation precise, downstream dependencies wired, and the heavy payload out of the volatile per-run folder.
 
-**Upsert-by-key discipline:** when writing to ` + "`" + `db/` + "`" + `, the step MUST read the existing file first, merge by the builder-defined primary key, then write back. Wholesale overwrites destroy rows written by other groups / prior runs. Declare the primary key and merge rule in the step's db schema note so the builder and the step agent agree.
+**DB schema discipline — declare BEFORE you write.** Every ` + "`" + `db/<file>.json` + "`" + ` is shared across groups and runs. Without a declared primary key and merge rule, a step doing the "read → mutate → write back" cycle is one bug away from clobbering rows another group just wrote. Treat the schema as a contract, not a convention.
+
+**Where the contract lives: ` + "`" + `db/README.md` + "`" + `** (you create and maintain it — FolderGuard allows builder shell-writes). One section per db file, in this shape:
+
+` + "```" + `markdown
+## db/processed_companies.json
+- **primary_key**: ` + "`" + `company_id` + "`" + ` (string, stable across runs)
+- **merge_rule**: upsert by company_id; on conflict, newer ` + "`" + `updated_at` + "`" + ` wins; never delete rows
+- **writers**: step-extract-companies (insert/update), step-score-companies (update scores field only)
+- **shape**: ` + "`" + `[{company_id, name, industry, scored_at, score}]` + "`" + `
+- **used by**: report widget ` + "`" + `companies-table` + "`" + ` in report_plan.md; step-rank-companies reads it
+` + "```" + `
+
+**Before you create or edit any step that writes to ` + "`" + `db/` + "`" + `:**
+1. Check ` + "`" + `db/README.md` + "`" + ` for an entry matching the file. If missing, add one FIRST (PK, merge rule, writers, shape, consumers).
+2. If multiple steps write the same file, each writer must be listed — and they must agree on the merge rule (e.g. one step inserts rows, another only updates specific fields, never rewrites the whole record).
+3. Reference the entry in the step's description: *"Writes ` + "`" + `db/processed_companies.json` + "`" + ` per schema in ` + "`" + `db/README.md` + "`" + ` — upsert by company_id."* This way the step agent, reviewers, and future you all read from the same contract.
+
+**Upsert-by-key mechanics the step agent must follow:** read the existing file first, merge by the declared primary key, then write back. Wholesale overwrites destroy rows written by other groups / prior runs — this is the single most common db bug and it shows up as "the report was fine yesterday, now it's only showing this group's rows."
 
 ### Deciding which steps opt in to learning and KB — your call, per step
 
 Both learning and knowledgebase are **off by default** for every step. Running them is YOUR deliberate decision, not a passive default — and you are expected to justify both the opt-in and the opt-out. The runtime will flatly refuse writes to SKILL.md or knowledgebase/graph.json when the opt-in field is empty, so these aren't advisory flags; they're the on/off switch.
 
-**For each step, ask yourself two questions:**
+**For each step, ask yourself three questions:**
 
 1. **Should this step build up SKILL.md?** — Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set ` + "`" + `learning_objective` + "`" + ` to a concrete instruction naming exactly what SKILL.md should capture (e.g. *"Selectors for the ICICI login form, OTP field timing, and the 'clearing fingerprint' banner that indicates session expiry"*). Leave empty for plumbing steps (send email, generate PDF, upload to S3) whose "how" is boring and generic.
 2. **Should this step contribute to knowledgebase/graph.json?** — Only if the step produces durable facts about the subject matter of the workflow: entities discovered, relationships, decisions, cross-run strategies. If yes, set ` + "`" + `knowledgebase_access` + "`" + ` to ` + "`" + `write` + "`" + ` or ` + "`" + `read-write` + "`" + ` AND set ` + "`" + `knowledgebase_contribution` + "`" + ` to a concrete extraction instruction (e.g. *"Extract each company mentioned as an entity with type=company + size/industry properties; link to its parent group via parent-of relationships"*). Access without a contribution is a validation error.
+3. **Should this step write to ` + "`" + `db/` + "`" + `?** — Only if the step produces rows the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure ` + "`" + `db/README.md` + "`" + ` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use ` + "`" + `context_output` + "`" + ` instead. KB ≠ db: facts about the subject go through ` + "`" + `knowledgebase_contribution` + "`" + `, not ` + "`" + `db/` + "`" + `.
 
-**Record your reasoning.** When you set ` + "`" + `learning_objective` + "`" + ` or ` + "`" + `knowledgebase_contribution` + "`" + ` on a step, also update ` + "`" + `review_notes` + "`" + ` with one sentence explaining WHY this step is worth learning from or extracting from — future hardening passes and other LLM reviewers will read it. Example: *"Opted into learning: ICICI login selectors change quarterly so auth-flow drift must be captured. Opted into KB: account nicknames surface here and nowhere else."*
+**Record your reasoning.** When you set ` + "`" + `learning_objective` + "`" + ` or ` + "`" + `knowledgebase_contribution` + "`" + `, or designate the step as a ` + "`" + `db/` + "`" + ` writer, also update ` + "`" + `review_notes` + "`" + ` with one sentence explaining WHY — future hardening passes and other LLM reviewers will read it. Example: *"Opted into learning: ICICI login selectors change quarterly so auth-flow drift must be captured. Opted into KB: account nicknames surface here and nowhere else. Writes db/accounts.json (PK=account_id, merge=latest-wins) per schema in db/README.md — consumed by the balances widget."*
 
 **Symmetric rules for opt-OUT:** if most steps in a workflow shouldn't learn or contribute, that's fine — just leave the fields empty. Don't set either field "because the others have it" — that accumulates noise. If you unset a step (via ` + "`" + `clear_fields` + "`" + `), explain in ` + "`" + `review_notes` + "`" + ` why the step no longer deserves the overhead.
 
@@ -1389,6 +1423,7 @@ Both learning and knowledgebase are **off by default** for every step. Running t
 - **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT).
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
+- **Step uses ` + "`" + `declared_execution_mode = \"learn_code\"` + "`" + `**: generally leave ` + "`" + `learning_objective` + "`" + ` empty. The saved ` + "`" + `learnings/{step-id}/main.py` + "`" + ` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared ` + "`" + `_global/` + "`" + ` skill).
 
 {{if eq .WorkshopMode "builder"}}
 **BUILD MODE** — Design, build, and test the workflow. Focus on getting a working plan with steps that produce correct output.
@@ -1652,7 +1687,7 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 {{if .StepSummary}}### Plan Steps
 {{.StepSummary}}
 {{end}}
-{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`decision_step`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`predefined_routes[].orphan_step_ref`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`. Reusable orphan definitions live under `+"`orphan_steps[]`"+` and may expose `+"`shared_with.orchestrator_ids`"+` to allow specific todo_task steps to reuse them.
 
 Use `+"`execute_shell_command`"+` with focused queries like:
 - **Top-level overview only**: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`
@@ -1679,7 +1714,6 @@ Break the user's requirement into **concrete actions** — things an agent must 
 | Agent performs a task and writes output | **Regular** | Simplest type — one agent, one output |
 | Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
 | Need to branch based on prior step output (no new work) | **Conditional** | Inspection-only — reads context, picks a branch |
-| Need to do work first, then branch based on the result | **Decision** | Execute → evaluate → route |
 | Need to pick one of N paths based on context | **Routing** | N-way LLM evaluation → pick one route |
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
 | User input determines the path | **Human Input** → **Routing** | Collect input first, then LLM routes based on it |
@@ -1743,7 +1777,6 @@ Step-level `+"`success_criteria`"+` is deprecated. Rely on a strong `+"`descript
 ### Step Types Reference
 
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
-- **Decision** (type: "decision"): Executes a step, then branches based on evidence in context. Contains **if_true_steps** and **if_false_steps**.
 - **Conditional** (type: "conditional"): Inspection-only branch (no execution). Contains **if_true_steps** and **if_false_steps** — evaluated based on prior context.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
@@ -1850,6 +1883,7 @@ After a step runs successfully, always check: could a stale/fake output file pas
   - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): Always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
   - **Locking learnings**: Use `+"`lock_learnings: true`"+` in step config to freeze learnings for a step. Review the global skill first with `+"`cat learnings/_global/SKILL.md`"+` before deciding to lock.
   - **Keep learning off for irrelevant steps**: Review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should leave `+"`learning_objective`"+` empty (the default). Learning is opt-in — only set `+"`learning_objective`"+` on steps that interact with the target system (the subject of the skill objective). If a step currently has `+"`learning_objective`"+` set but shouldn't, clear it via `+"`update_step_config(step_id, clear_fields=[\"learning_objective\"])`"+`.
+  - **learn_code steps usually don't need `+"`learning_objective`"+`**: When `+"`declared_execution_mode == \"learn_code\"`"+`, the saved `+"`learnings/{step-id}/main.py`"+` IS the learned artifact — the HOW is encoded directly as code. Running a separate learning pass on top of it just duplicates what the script already captures and risks drift between script and SKILL.md. Default to leaving `+"`learning_objective`"+` empty for learn_code steps; only opt in when there's cross-step domain knowledge that belongs in the shared `+"`_global/`"+` skill and genuinely can't be captured in the script.
 
 #### The Three Locks — What They Freeze and When To Use
 
@@ -2041,6 +2075,16 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - After several successful runs where the post-step KB update agent produces only trivial/no-op edits to `+"`knowledgebase/graph.json`"+`, set `+"`update_workflow_config(lock_knowledgebase=true)`"+`. Reads keep working; the automatic writer stops. This is a pure cost-saver — no output quality regression.
 - If you later add a new step that needs to capture new domain facts, either unlock temporarily (`+"`lock_knowledgebase=false`"+`) for a few runs, or just call `+"`reorganize_knowledgebase`"+` explicitly after running it.
 
+**Framing `+"`reorganize_knowledgebase`"+` instructions for the current KB shape (kb_shape={{.KBShape}}):**
+- If `+"`kb_shape=graph+notes`"+` — instructions can target entities, relationships, and notes. Examples: *"merge company-acme and company-acme-corp into one entity"*, *"drop all relationships where source.run starts with iteration-0/abandoned"*, *"compact notes/pattern-tax-cycle.md"*.
+- If `+"`kb_shape=notes-only`"+` — `+"`graph.json`"+` / `+"`index.json`"+` do not exist. Only notes-side instructions make sense: *"merge notes/architecture.md and notes/topology.md"*, *"drop sections in notes/recommendation-history.md that mention iteration-0/abandoned"*, *"rename topic company-acme to company-acme-corp"*, *"compact notes/architecture.md to under 10KB"*. Graph-targeted instructions (entities, relationships, types) will be reported back as no-ops by the reorganize agent — don't waste the call.
+- Always phrase the instruction in one sentence referencing concrete ids/filenames; the agent follows instructions literally and will not opportunistically clean up adjacent data.
+
+**` + "`" + `consolidate_knowledgebase` + "`" + ` — the cross-step pass (distinct from reorganize).** Per-step KB updates see one step's output at a time, so they can't catch drift like *"step A extracts type=company, step B extracts type=organization for the same concept"* or *"a pattern only visible when you look at step-5 and step-7 outputs side by side."* Run ` + "`" + `consolidate_knowledgebase(objective=...)` + "`" + ` after several contributing steps have run to do exactly that cross-step work: canonicalize type/property names across contributions, dedupe entities that different steps created under different ids, write ` + "`" + `notes/pattern-*.md` + "`" + ` files that span steps, surface contested properties that got silently clobbered.
+- The agent is given every step's ` + "`" + `knowledgebase_contribution` + "`" + ` + the list of step output folders from the selected run, so it has the holistic view the per-step agent never does.
+- Good objective examples: *"reconcile company/organization type-name drift across step contributions; canonicalize to company"*, *"write a pattern-*.md for any repeating shape across the per-account steps"*, *"surface contested employee-count values where step-extract and step-enrich disagree — annotate in entity notes without rewriting graph properties"*.
+- Boundary: consolidate is for **cross-step work with holistic view as justification**. Use ` + "`" + `reorganize_knowledgebase` + "`" + ` when the operation is a single targeted transformation (*"merge these two topic files"*, *"drop this bad run's entries"*). If you can describe the instruction without referencing multiple steps or patterns, you want reorganize.
+
 ### 9. Orchestrator (Sub-Workflow / Pipeline) — The Preferred Multi-Step Pattern
 **Default to todo_task** when a step involves multiple distinct sub-tasks. Users may call this an "orchestrator", "sub-workflow", or "pipeline" — it's the most powerful step type, giving each sub-task (sub-agent) independent learnings, tools, skills, and debugging.
 
@@ -2110,8 +2154,8 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
-- **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
-- **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
+- **Steps**: add_regular_step, add_conditional_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Update**: update_regular_step, update_conditional_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
   For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
@@ -4653,13 +4697,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7a: organize_global_learnings — reorganize and consolidate the global skill folder
 	if err := mcpAgent.RegisterCustomTool(
 		"organize_global_learnings",
-		"Reorganize and consolidate the global skill folder (learnings/_global/). Reads all files, restructures them following the Anthropic skill-creator guide — splits bloated files, merges small ones, removes duplicates, updates the SKILL.md index. Call after several steps have contributed to clean up the accumulated knowledge.",
+		"Reorganize and consolidate the global skill folder (learnings/_global/). The agent now receives the full list of per-step `learning_objective` declarations as a cross-step view, so it can do BOTH targeted reorganization (split bloated files, merge small ones, remove duplicates, update SKILL.md index per the skill-creator guide) AND holistic consolidation (promote lessons that multiple steps imply into shared `references/` sections; flag declared objectives whose scope isn't reflected in current SKILL.md). Call after several steps have contributed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"guidance": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional guidance for how to reorganize. E.g., 'merge the auth files into one', 'split the API section by endpoint', 'remove outdated selectors'.",
+					"description": "Optional guidance for how to reorganize. Targeted examples: 'merge the auth files into one', 'split the API section by endpoint', 'remove outdated selectors'. Holistic-consolidation examples (leverage the cross-step view): 'promote any HOW-knowledge implied by multiple steps' learning_objectives into shared references/ sections and remove step-specific duplicates', 'flag any declared learning_objective whose scope has no matching content in SKILL.md — that likely means the step's learning agent failed to run'. Leave empty for a default pass that does both kinds of cleanup scoped to what the agent notices.",
 				},
 			},
 		},
@@ -4694,7 +4738,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				skillObjective = stepOverrides.GlobalSkillObjective
 			}
 
-			// Build template vars — reuse the global learning template with a special "reorganize" trigger
+			// Build template vars — reuse the global learning template with a special "reorganize" trigger.
+			// LearningObjectivesBlock gives the agent holistic-view input: every step's declared
+			// learning_objective, so it can catch redundantly-learned lessons and objectives whose
+			// scope isn't reflected in SKILL.md. Parallel to KB consolidate's contributions block.
 			templateVars := map[string]string{
 				"StepTitle":                "Global Skill Reorganization",
 				"StepDescription":          "Reorganize and consolidate the global skill folder. Review all files, restructure following the skill-creator guide, remove duplicates, split bloated files, merge small ones, and update the SKILL.md index.",
@@ -4711,6 +4758,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"StepNumber":               GlobalLearningID,
 				"ExecutionLogsPath":        "",
 				"ExistingLearningsContent": existingContent,
+				"LearningObjectivesBlock":  iwm.controller.BuildLearningObjectivesBlock(),
 				"UseGlobalLearning":        "true",
 				"ContributingStepID":       "reorganize",
 				"ContributingStepTitle":    "Reorganization",
@@ -6333,6 +6381,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Knowledgebase lock state
 			sb.WriteString("\n**Knowledgebase**:\n")
 			sb.WriteString(fmt.Sprintf("- use_knowledgebase: %v\n", ctrl.UseKnowledgebase()))
+			sb.WriteString(fmt.Sprintf("- kb_shape: %s", workflowtypes.ResolveKBShape(ctrl.KBShape())))
+			if ctrl.KBShape() == "" {
+				sb.WriteString(" (default — not explicitly set)")
+			}
+			sb.WriteString("\n")
 			sb.WriteString(fmt.Sprintf("- lock_knowledgebase: %v", ctrl.LockKnowledgebase()))
 			if ctrl.LockKnowledgebase() {
 				sb.WriteString(" — post-step KB update agent is FROZEN workflow-wide; graph.json mutates only via explicit reorganize_knowledgebase calls")
@@ -6439,6 +6492,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"lock_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workflow-level freeze on the post-step KB update agent. When true, graph.json only mutates via explicit reorganize_knowledgebase calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
+				},
+				"kb_shape": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"graph+notes", "notes-only"},
+					"description": "Workflow-level KB layout. 'graph+notes' (default) seeds graph.json + index.json + notes/; 'notes-only' seeds only notes/_index.json and skips the graph. Pick 'notes-only' when the workflow accumulates narrative observations but has no entity/traversal queries — shipping an empty graph.json there is dead weight. Existing graph.json files are NOT deleted when you switch to notes-only (migration is a separate action).",
 				},
 			},
 		},
@@ -6709,8 +6767,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- KB Shape ---
+			if raw, ok := args["kb_shape"]; ok && raw != nil {
+				if shapeVal, ok := raw.(string); ok {
+					if !workflowtypes.ValidKBShape(shapeVal) {
+						return fmt.Sprintf("Invalid kb_shape %q. Valid values: %q, %q.", shapeVal, workflowtypes.KBShapeGraphNotes, workflowtypes.KBShapeNotesOnly), nil
+					}
+					iwm.controller.SetKBShape(shapeVal)
+					anyChanged = true
+					resolved := workflowtypes.ResolveKBShape(shapeVal)
+					switch resolved {
+					case workflowtypes.KBShapeNotesOnly:
+						sb.WriteString("\n### KB Shape (notes-only)\nFuture runs will seed only `notes/_index.json` (graph.json + index.json are skipped). Existing graph.json files are left untouched — delete them manually if you want a clean slate, or leave them as read-only archive. Update any step with `knowledgebase_contribution` referencing entities to instead target `notes/` narrative.\n")
+					case workflowtypes.KBShapeGraphNotes:
+						sb.WriteString("\n### KB Shape (graph+notes, default)\nFuture runs seed graph.json + index.json + notes/_index.json. Post-step KB update agent extracts entities/relationships from steps with `knowledgebase_contribution`.\n")
+					}
+					logger.Info(fmt.Sprintf("Updated workflow kb_shape=%s", resolved))
+				}
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, kb_shape.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -8085,7 +8162,6 @@ The plan JSON uses these nested structures — analyze ALL of them:
 | `+"`todo_task`"+` | `+"`todo_task_step`"+` (orchestrator) + routes using either `+"`predefined_routes[].sub_agent_step`"+` or `+"`predefined_routes[].orphan_step_ref`"+` | Do routes cover all cases? Any missing route? Is the orchestrator description clear enough to dispatch correctly? Are reusable routes pointing at the right orphan definitions? |
 | `+"`orchestration`"+` | `+"`orchestration_step`"+` + `+"`orchestration_routes[].sub_agent_step`"+` | Same as todo_task |
 | `+"`conditional`"+` | `+"`if_true_steps[]`"+` + `+"`if_false_steps[]`"+` | Is each branch populated correctly? Is a branch empty when it should have steps? |
-| `+"`decision`"+` | `+"`decision_step`"+` + branch steps | Is the decision logic right for the objective? |
 | `+"`routing`"+` | `+"`routes[]`"+` (each with `+"`sub_agent_step`"+`) | Are all necessary routes present? Any route that should be split or merged? |
 
 Reference nested steps as `+"`parent-id > sub-id`"+`.
@@ -8140,12 +8216,12 @@ For each gap in the objective that no existing step covers:
 - **Gap**: <which part of the objective is not covered>
 - **Suggested ID**: <kebab-case-id>
 - **Title**: <short title>
-- **Type**: <regular | todo_task | conditional | decision | routing | human_input>
+- **Type**: <regular | todo_task | conditional | routing | human_input>
 - **Location**: top-level after `+"`[step-id]`"+` | new route in `+"`[parent-step-id]`"+` | `+"`if_true`"+`/`+"`if_false`"+` branch in `+"`[parent-step-id]`"+`
 - **Description**: <1-2 sentences: what the agent should do and what it should output>
 - **Context output**: <filename>
 - **Context dependencies**: <files it needs from prior steps, or none>
-- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_conditional_step`"+` | `+"`add_todo_task_step`"+` | `+"`add_decision_step`"+`
+- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_conditional_step`"+` | `+"`add_todo_task_step`"+`
 
 ### Redundant / Misplaced Steps
 For each step or route that duplicates work or is in the wrong position:
@@ -8482,7 +8558,7 @@ Prioritize this area while replanning: **{{.Focus}}**
    - combine steps when the handoff is artificial
    - split steps when one failing step hides multiple responsibilities
    - reorder steps to reflect actual dependencies
-   - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` / `+"`decision`"+` when the results show hidden branching
+   - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` when the results show hidden branching
 4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
 5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
 6. Update step execution modes if the new structure changes the best fit. Prefer `+"`learn_code`"+` for stable paths, `+"`code_exec`"+` for adaptive work.
@@ -9842,9 +9918,9 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 		"execute_shell_command", "diff_patch_workspace_file",
 		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
 		"update_step_config", "analyze_step",
-		"add_regular_step", "add_decision_step", "add_routing_step",
+		"add_regular_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
-		"update_regular_step", "update_decision_step", "update_routing_step",
+		"update_regular_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps",
 		"update_validation_schema",
@@ -9966,7 +10042,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		"execute_shell_command", "diff_patch_workspace_file",
 		"get_step_prompts", "get_workflow_config", "get_llm_config",
 		"update_step_config",
-		"update_regular_step", "update_decision_step", "update_routing_step",
+		"update_regular_step", "update_routing_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"update_validation_schema",
 	}
@@ -10114,7 +10190,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 		execCtx,
 		[]PlanStepInterface{todoStep},
 		stepID,
-		nil,
 	)
 	if err != nil {
 		return fmt.Sprintf("Background todo task %q failed: %v", name, err), err

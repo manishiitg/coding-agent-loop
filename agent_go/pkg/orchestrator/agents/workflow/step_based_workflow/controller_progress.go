@@ -71,63 +71,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Con
 	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (end) for step %d: %s", stepIndex+1, stepTitle))
 }
 
-// emitDecisionEvaluatedEvent emits a decision evaluated event with structured response
-// decisionResponse is from the workflow package (conditional_agent.go) - same package, so we can use it directly
-func (hcpo *StepBasedWorkflowOrchestrator) emitDecisionEvaluatedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, decisionResponse *DecisionResponse) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	stepTitle := step.GetTitle()
-	if stepTitle == "" {
-		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
-	}
-	stepId := step.GetID()
-	if stepId == "" {
-		stepId = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-
-	// Convert workflow DecisionResponse to event DecisionResponseEvent
-	// Since DecisionResponse is in the same package, we can access fields directly
-	eventDecisionResponse := DecisionResponseEvent{
-		Result:    decisionResponse.Result,
-		Reasoning: decisionResponse.Reasoning,
-	}
-
-	evaluatedEvent := &DecisionEvaluatedEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-			Component: "orchestrator",
-		},
-		StepID:    stepId,
-		StepIndex: stepIndex,
-		StepTitle: stepTitle,
-		StepPath:  stepPath,
-		DecisionQuestion: func() string {
-			if decisionStep, ok := step.(*DecisionPlanStep); ok {
-				return decisionStep.DecisionEvaluationQuestion
-			}
-			return ""
-		}(),
-		DecisionResponse: eventDecisionResponse,
-		RunFolder:        hcpo.selectedRunFolder,
-		WorkspacePath:    hcpo.GetWorkspacePath(),
-	}
-
-	agentEvent := &baseevents.AgentEvent{
-		Type:      events.DecisionEvaluated,
-		Timestamp: time.Now(),
-		Data:      evaluatedEvent,
-	}
-
-	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit decision evaluated event: %v", err))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted decision_evaluated event for step %d: %s (result=%t)", stepIndex+1, stepTitle, decisionResponse.Result))
-	}
-}
-
 // emitStepProgressUpdatedEvent emits an event when step progress is updated
 // status can be "start" (step started), "stop" (step stopped), "end" (step ended), "failed" (step failed), or empty (regular progress update)
 // errorMsg is populated when status is "failed"

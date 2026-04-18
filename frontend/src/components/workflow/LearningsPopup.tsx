@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Terminal } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
+import { isConditionalStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useActiveWorkflowPreset } from '../../hooks/useActiveWorkflowPreset'
 import type { PlannerFile } from '../../services/api-types'
@@ -99,10 +99,6 @@ function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
       if ('if_false_steps' in step && step.if_false_steps) {
         const found = findStep(step.if_false_steps, id)
         if (found) return found
-      }
-      // Check decision step
-      if ('decision_step' in step && step.decision_step && step.decision_step.id === id) {
-        return step.decision_step
       }
       // Check todo_task predefined_routes
       if ('predefined_routes' in step && step.predefined_routes) {
@@ -464,19 +460,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
           }
           if (step.if_false_steps && step.if_false_steps.length > 0) {
             collectSteps(step.if_false_steps, 'false')
-          }
-        }
-
-        // Handle decision steps - collect decision step ID
-        if (isDecisionStep(step) && step.decision_step) {
-          if (step.decision_step.id) {
-            stepCounter++
-            stepsWithMetadata.push({
-              stepId: step.decision_step.id,
-              stepNumber: stepCounter,
-              stepType: 'decision_inner',
-              branchType
-            })
           }
         }
 

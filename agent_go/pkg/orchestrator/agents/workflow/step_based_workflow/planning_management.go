@@ -27,31 +27,6 @@ type LearningFileInfo struct {
 	ModifiedAt time.Time `json:"modified_at"`
 }
 
-// validateDecisionStep validates that a decision step has all required fields
-// Returns error if any required field is missing
-// DecisionPlanStep is now flattened - fields are directly on the step
-func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
-	if decisionStep, ok := step.(*DecisionPlanStep); ok {
-		if decisionStep.ID == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required ID field", stepIndex, step.GetTitle())
-		}
-		if decisionStep.Description == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required description field", stepIndex, step.GetTitle())
-		}
-		if decisionStep.DecisionEvaluationQuestion == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle())
-		}
-		if decisionStep.IfTrueNextStepID == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required if_true_next_step_id field", stepIndex, step.GetTitle())
-		}
-		if decisionStep.IfFalseNextStepID == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.GetTitle())
-		}
-		// No nested step to validate - DecisionPlanStep is flattened
-	}
-	return nil
-}
-
 // validateRoutingStepTyped validates that a routing step has all required fields
 func validateRoutingStepTyped(step PlanStepInterface, stepIndex int) error {
 	if routingStep, ok := step.(*RoutingPlanStep); ok {
@@ -94,11 +69,6 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 	for i, step := range steps {
 		if step.GetID() == "" {
 			return fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, step.GetTitle())
-		}
-
-		// Validate decision step fields
-		if err := validateDecisionStepTyped(step, i); err != nil {
-			return err
 		}
 
 		// Validate routing step fields
@@ -226,12 +196,6 @@ func validateLoadedPlanStep(typedStep PlanStepInterface, stepIndex int) error {
 	case *RegularPlanStep, *HumanInputPlanStep, *EvaluationStep:
 		return nil
 
-	case *DecisionPlanStep:
-		if err := validateDecisionStepTyped(step, stepIndex); err != nil {
-			return err
-		}
-		return nil
-
 	case *RoutingPlanStep:
 		if err := validateRoutingStepTyped(step, stepIndex); err != nil {
 			return err
@@ -352,15 +316,6 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		}
 		return nil
 
-	case *DecisionPlanStep:
-		// Decision step is now flattened - no nested step to populate
-		// Populate runtime field directly on plan step
-		step.AgentConfigs = agentConfigs
-		if validationSchemaOverride != nil {
-			step.ValidationSchema = validationSchemaOverride
-		}
-		return nil
-
 	case *HumanInputPlanStep:
 		// Human input step: no execution, validation, or learning - just asks question and blocks.
 		// With learning now opt-in via non-empty LearningObjective, no explicit disable
@@ -450,9 +405,6 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 			}
 		}
 
-	case *DecisionPlanStep:
-		// Decision step is now flattened - no nested step to populate
-
 	case *EvaluationStep:
 		// No nested steps for evaluation steps currently
 
@@ -530,7 +482,7 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
+	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
 		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" ||
 		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
@@ -601,7 +553,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 				}
 
 				switch toolName {
-				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step":
+				case "update_regular_step", "update_conditional_step", "update_routing_step":
 					// Extract existing_step_id from updated step
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)
@@ -617,7 +569,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_loop_step":
+				case "add_regular_step", "add_conditional_step", "add_routing_step", "add_loop_step":
 					// Extract id from new step
 					if stepID, ok := argsMap["id"].(string); ok && stepID != "" {
 						changed.Added = append(changed.Added, stepID)

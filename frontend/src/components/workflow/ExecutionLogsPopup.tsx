@@ -78,7 +78,6 @@ const getStepIcon = (type: string) => {
     case 'todo_task':
       return <ListTodo className="w-4 h-4 text-purple-500" />
     case 'conditional':
-    case 'decision':
       return <GitBranch className="w-4 h-4 text-blue-500" />
     case 'human_input':
       return <User className="w-4 h-4 text-orange-500" />
@@ -86,8 +85,6 @@ const getStepIcon = (type: string) => {
       return <Bot className="w-4 h-4 text-indigo-500" />
     case 'branch':
       return <Split className="w-4 h-4 text-indigo-500" />
-    case 'decision-inner':
-      return <Terminal className="w-4 h-4 text-blue-400" />
     default:
       return <Terminal className="w-4 h-4 text-muted-foreground" />
   }
@@ -105,11 +102,11 @@ const parseStepId = (stepId: string): (string | number)[] => {
   const withoutPrefix = stepId.replace(/^step-/, '')
 
   // Match: number, or 'true', or 'false', or 'sub-agent', or 'sub', or 'generic'
-  const pattern = /(\d+|true|false|sub-agent|sub|generic|decision)/g
+  const pattern = /(\d+|true|false|sub-agent|sub|generic)/g
   let match
   while ((match = pattern.exec(withoutPrefix)) !== null) {
     const val = match[1]
-    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic' || val === 'decision') {
+    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic') {
       segments.push(val)
     } else {
       segments.push(parseInt(val, 10))
@@ -156,7 +153,7 @@ const getStepNestingLevel = (stepId: string): number => {
   let level = 0
 
   for (const seg of segments) {
-    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic' || seg === 'decision') {
+    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic') {
       level++
     }
   }
@@ -1158,29 +1155,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           )}
 
-          {/* Decisions Section */}
-          {stepLogs.decisions && stepLogs.decisions.filter(matchesSearch).length > 0 && (
-            <div className="p-4 bg-muted/30 border-t border-border">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <GitBranch className="w-4 h-4" /> Decision Logs
-              </h4>
-              <div className="space-y-3">
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.decisions.filter(matchesSearch).map((dec: any, idx: number) => (
-                  <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${dec.decision_result ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
-                        Result: {dec.decision_result ? 'True' : 'False'}
-                      </span>
-                      <span className="text-xs text-muted-foreground ml-auto">{new Date(dec.timestamp).toLocaleTimeString()}</span>
-                    </div>
-                    <p className="text-muted-foreground text-xs italic">{dec.decision_reasoning}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Archived Logs Section (Previous Runs) */}
           {stepLogs.archived_logs && stepLogs.archived_logs.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-amber-500/5 border-t border-amber-500/20">
@@ -1194,7 +1168,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const isArchiveExpanded = expandedArchived.has(archiveId)
                   const totalLogs = (archive.validations?.length || 0) + (archive.executions?.length || 0) +
                                    (archive.learnings?.length || 0) + (archive.orchestration?.length || 0) +
-                                   (archive.conditionals?.length || 0) + (archive.decisions?.length || 0)
+                                   (archive.conditionals?.length || 0)
 
                   // Format timestamp for display (20260106-115300 -> 2026-01-06 11:53:00)
                   const formatArchiveTimestamp = (ts: string) => {
@@ -1408,27 +1382,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                             </div>
                           )}
 
-                          {/* Archived Decisions */}
-                          {archive.decisions && archive.decisions.length > 0 && (
-                            <div>
-                              <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                <GitBranch className="w-3 h-3" /> Decisions ({archive.decisions.length})
-                              </div>
-                              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                              {archive.decisions.map((dec: any, idx: number) => (
-                                <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className={`px-1.5 py-0.5 rounded text-xs ${dec.decision_result ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
-                                      {dec.decision_result ? 'True' : 'False'}
-                                    </span>
-                                  </div>
-                                  {dec.decision_reasoning && (
-                                    <p className="text-muted-foreground mt-1 line-clamp-2">{dec.decision_reasoning}</p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>

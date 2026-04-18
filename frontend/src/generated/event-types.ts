@@ -83,7 +83,6 @@ import type {
   OrchestratorAgentErrorEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
-  DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
   LearnCodeScriptExecutionEvent,
   TodoStepsExtractedEvent,
@@ -237,7 +236,6 @@ export type EventTypeString =
   | 'orchestrator_agent_error'
   | 'step_token_usage'
   | 'step_progress_updated'
-  | 'decision_evaluated'
   | 'routing_evaluated'
   | 'pre_validation_completed'
   | 'learn_code_script_execution'
@@ -364,7 +362,6 @@ export interface EventTypeToDataMap {
   'orchestrator_agent_error': OrchestratorAgentErrorEvent;
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
-  'decision_evaluated': DecisionEvaluatedEvent;
   'routing_evaluated': RoutingEvaluatedEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
   'learn_code_script_execution': LearnCodeScriptExecutionEvent;
@@ -898,7 +895,6 @@ export type {
   OrchestratorAgentErrorEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
-  DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
   LearnCodeScriptExecutionEvent,
   TodoStepsExtractedEvent,

@@ -1370,8 +1370,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
               )}
             </div>
 
-            {/* Conditional Branching Configuration - Hidden for decision steps */}
-            {!step.has_decision_step && (
+            {/* Conditional Branching Configuration */}
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
               <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-2">
                 Conditional Branching
@@ -1547,7 +1546,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 )}
               </div>
             </div>
-            )}
 
             {/* Loop Configuration (only shown if has_loop is true) */}
             {step.has_loop && (

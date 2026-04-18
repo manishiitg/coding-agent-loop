@@ -132,7 +132,6 @@ export interface EventDataUnion {
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
-  decision_evaluated?: DecisionEvaluatedEvent;
   routing_evaluated?: RoutingEvaluatedEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
   learn_code_script_execution?: LearnCodeScriptExecutionEvent;
@@ -1474,36 +1473,6 @@ export interface StepProgressUpdatedEvent {
   total_groups?: number;
   used_tier?: number;
   used_tier_label?: string;
-}
-export interface DecisionEvaluatedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  decision_question?: string;
-  decision_response?: DecisionResponseEvent;
-  run_folder?: string;
-  workspace_path?: string;
-}
-export interface DecisionResponseEvent {
-  result?: boolean;
-  reasoning?: string;
-  confidence?: string;
-  feedback?: unknown[];
-  evidence?: string[];
 }
 export interface RoutingEvaluatedEvent {
   timestamp?: string;

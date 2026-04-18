@@ -99,6 +99,7 @@ async function readText(filepath: string): Promise<string | null> {
 }
 
 type Tab = 'graph' | 'notes'
+type KBShape = 'graph+notes' | 'notes-only'
 
 export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps) {
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
@@ -108,6 +109,7 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   const [graph, setGraph] = useState<KBGraph | null>(null)
   const [index, setIndex] = useState<KBIndex | null>(null)
   const [notesIndex, setNotesIndex] = useState<KBNotesIndex | null>(null)
+  const [kbShape, setKbShape] = useState<KBShape>('graph+notes')
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -123,20 +125,34 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   const notesIndexPath = workspacePath
     ? `${workspacePath}/knowledgebase/notes/_index.json`
     : null
+  const workflowJsonPath = workspacePath ? `${workspacePath}/workflow.json` : null
 
   const load = useCallback(async () => {
-    if (!graphPath || !indexPath || !notesIndexPath) return
+    if (!graphPath || !indexPath || !notesIndexPath || !workflowJsonPath) return
     setLoading(true)
     setError(null)
     try {
-      const [g, i, ni] = await Promise.all([
-        readJSON<KBGraph>(graphPath),
-        readJSON<KBIndex>(indexPath),
-        readJSON<KBNotesIndex>(notesIndexPath),
-      ])
-      setGraph(g)
-      setIndex(i)
-      setNotesIndex(ni)
+      // Read workflow.json first to learn kb_shape; skip graph/index fetches when notes-only.
+      const manifest = await readJSON<{ capabilities?: { llm_config?: { kb_shape?: string } } }>(workflowJsonPath)
+      const shapeRaw = manifest?.capabilities?.llm_config?.kb_shape
+      const shape: KBShape = shapeRaw === 'notes-only' ? 'notes-only' : 'graph+notes'
+      setKbShape(shape)
+
+      const notesIndexPromise = readJSON<KBNotesIndex>(notesIndexPath)
+      if (shape === 'notes-only') {
+        setGraph(null)
+        setIndex(null)
+        setNotesIndex(await notesIndexPromise)
+      } else {
+        const [g, i, ni] = await Promise.all([
+          readJSON<KBGraph>(graphPath),
+          readJSON<KBIndex>(indexPath),
+          notesIndexPromise,
+        ])
+        setGraph(g)
+        setIndex(i)
+        setNotesIndex(ni)
+      }
       // Reset per-topic markdown cache on reload — sizes/content may have changed.
       setNotesBodies({})
       setExpandedNotes(new Set())
@@ -145,11 +161,16 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
     } finally {
       setLoading(false)
     }
-  }, [graphPath, indexPath, notesIndexPath])
+  }, [graphPath, indexPath, notesIndexPath, workflowJsonPath])
 
   useEffect(() => {
     if (isOpen) load()
   }, [isOpen, load])
+
+  // Snap to the notes tab when the workspace has no graph — graph tab would be empty and misleading.
+  useEffect(() => {
+    if (kbShape === 'notes-only' && tab === 'graph') setTab('notes')
+  }, [kbShape, tab])
 
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
@@ -306,7 +327,9 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
             <Database className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">Knowledgebase</h2>
             <span className="text-xs text-muted-foreground ml-2">
-              graph.json + notes/ · entities, relationships, narrative
+              {kbShape === 'notes-only'
+                ? 'notes/ only · narrative topics (graph disabled for this workflow)'
+                : 'graph.json + notes/ · entities, relationships, narrative'}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -318,14 +341,16 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            <button
-              onClick={handleExport}
-              disabled={!hasAnyContent}
-              className="p-1.5 rounded-md hover:bg-muted transition-colors disabled:opacity-40"
-              title="Export graph.json"
-            >
-              <Download className="w-4 h-4" />
-            </button>
+            {kbShape !== 'notes-only' && (
+              <button
+                onClick={handleExport}
+                disabled={!hasAnyContent}
+                className="p-1.5 rounded-md hover:bg-muted transition-colors disabled:opacity-40"
+                title="Export graph.json"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1 rounded-md hover:bg-muted transition-colors ml-2"
@@ -338,14 +363,18 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
 
         {/* Summary strip */}
         <div className="flex items-center gap-4 px-4 py-3 border-b border-border flex-shrink-0 text-sm">
-          <div>
-            <span className="text-muted-foreground">Entities: </span>
-            <span className="font-medium">{entities.length}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Relationships: </span>
-            <span className="font-medium">{relationships.length}</span>
-          </div>
+          {kbShape !== 'notes-only' && (
+            <>
+              <div>
+                <span className="text-muted-foreground">Entities: </span>
+                <span className="font-medium">{entities.length}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Relationships: </span>
+                <span className="font-medium">{relationships.length}</span>
+              </div>
+            </>
+          )}
           <div>
             <span className="text-muted-foreground">Notes topics: </span>
             <span className="font-medium">{topics.length}</span>
@@ -361,16 +390,18 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
 
         {/* Tabs */}
         <div className="flex items-center gap-1 px-4 pt-2 border-b border-border flex-shrink-0">
-          <button
-            onClick={() => setTab('graph')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
-              tab === 'graph'
-                ? 'bg-muted text-foreground border border-b-0 border-border'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Graph ({entities.length + relationships.length})
-          </button>
+          {kbShape !== 'notes-only' && (
+            <button
+              onClick={() => setTab('graph')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
+                tab === 'graph'
+                  ? 'bg-muted text-foreground border border-b-0 border-border'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Graph ({entities.length + relationships.length})
+            </button>
+          )}
           <button
             onClick={() => setTab('notes')}
             className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-colors ${
@@ -381,6 +412,9 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
           >
             Notes ({topics.length})
           </button>
+          {kbShape === 'notes-only' && (
+            <span className="ml-auto text-[11px] text-muted-foreground">kb_shape: notes-only (no graph)</span>
+          )}
         </div>
 
         {/* Filter controls — only relevant in graph tab */}
@@ -694,7 +728,7 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
                     </button>
                     {isOpenRow && (
                       <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/20">
-                        {t.covers && t.covers.length > 0 && (
+                        {Array.isArray(t.covers) && t.covers.length > 0 && (
                           <div>
                             <span className="font-medium">Covers: </span>
                             <span className="font-mono">{t.covers.join(', ')}</span>

@@ -49,11 +49,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 
 	// Calculate run number
 	runNumber := 1
-	if progress.DecisionEvaluationCounts != nil {
+	if progress.RoutingEvaluationCounts != nil {
 		totalEvals := 0
 		for _, route := range routingStep.Routes {
 			key := fmt.Sprintf("%s:%s", step.GetID(), route.RouteID)
-			totalEvals += progress.DecisionEvaluationCounts[key]
+			totalEvals += progress.RoutingEvaluationCounts[key]
 		}
 		runNumber = totalEvals + 1
 	}
@@ -69,16 +69,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 
 		_ = ApplyStepConfigFromFile(ctx, step, hcpo)
 
-		// In headless/skip-human mode, inject humanInputOverrides for this routing step
-		// so the execution agent receives the user's intent (e.g., "Option 2, ai-workshop").
-		// This mirrors how controller_human_input.go uses humanInputOverrides for human_input steps.
-		if hcpo.IsSkipHumanInput() && hcpo.interactiveWorkflowHumanInput == "" {
-			if val, ok := hcpo.humanInputOverrides[step.GetID()]; ok && val != "" {
-				hcpo.interactiveWorkflowHumanInput = val
-				hcpo.GetLogger().Info(fmt.Sprintf("🔀 Routing step '%s': injecting human_inputs override as human feedback (length=%d chars)", step.GetID(), len(val)))
-			}
-		}
-
 		var err error
 		executionResult, _, err = hcpo.executeSingleStep(
 			ctx,
@@ -92,9 +82,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 			false,
 			execCtx,
 			allSteps,
-			true,
-			nil,
-			routingStep.RoutingQuestion,
 			false,
 			[]string{},
 			nil,

@@ -67,9 +67,6 @@ const (
 	// Learning events
 	LearningSkipped events.EventType = "learning_skipped"
 
-	// Decision step evaluation events
-	DecisionEvaluated events.EventType = "decision_evaluated"
-
 	// Routing step evaluation events
 	RoutingEvaluated events.EventType = "routing_evaluated"
 
@@ -98,7 +95,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, BlockingHumanQuestions, PlanApproval,
 		LearningSkipped,
-		DecisionEvaluated, RoutingEvaluated, PreValidationCompleted,
+		RoutingEvaluated, PreValidationCompleted,
 		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
 		return "orchestrator"
 	default:

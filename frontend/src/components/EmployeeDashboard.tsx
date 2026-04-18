@@ -5,10 +5,10 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { DiscoveredWorkflow, Employee, EvaluationReportEntry, TokenUsageFile, WorkflowFinalOutputResponse } from '../services/api-types'
+import type { DiscoveredWorkflow, Employee, EvaluationReportEntry, TokenUsageFile } from '../services/api-types'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
-import { MarkdownRenderer } from './ui/MarkdownRenderer'
+import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
 
 interface WorkflowSummary {
@@ -47,8 +47,6 @@ interface SelectedWorkflowEntry {
 
 interface WorkflowReviewState {
   loading: boolean
-  report: WorkflowFinalOutputResponse | null
-  reportError: string | null
   evaluation: EvaluationReportEntry | null
   evaluationError: string | null
   tokenUsage: TokenUsageFile | null
@@ -85,8 +83,6 @@ const StatusDot: React.FC<{ status: string }> = ({ status }) => {
 
 const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   loading: false,
-  report: null,
-  reportError: null,
   evaluation: null,
   evaluationError: null,
   tokenUsage: null,
@@ -355,28 +351,15 @@ export const EmployeeDashboard: React.FC = () => {
     const workspacePath = entry.workflow.workspacePath
     const runFolder = entry.workflow.latestRunFolder
 
-    setReviewState(prev => ({
+    setReviewState({
       ...EMPTY_REVIEW_STATE,
       loading: true,
-      report: prev.report?.run_folder === runFolder ? prev.report : null,
-    }))
+    })
 
-    const [reportResult, evaluationResult, costResult] = await Promise.allSettled([
-      agentApi.getFinalOutput(workspacePath, runFolder),
+    const [evaluationResult, costResult] = await Promise.allSettled([
       agentApi.getEvaluationReports(workspacePath, runFolder),
       agentApi.getCosts(workspacePath),
     ])
-
-    let report: WorkflowFinalOutputResponse | null = null
-    let reportError: string | null = null
-    if (reportResult.status === 'fulfilled') {
-      report = reportResult.value
-      if (report && report.success === false && report.error) {
-        reportError = report.error
-      }
-    } else {
-      reportError = reportResult.reason instanceof Error ? reportResult.reason.message : 'Failed to load report'
-    }
 
     let evaluation: EvaluationReportEntry | null = null
     let evaluationError: string | null = null
@@ -409,8 +392,6 @@ export const EmployeeDashboard: React.FC = () => {
 
     setReviewState({
       loading: false,
-      report,
-      reportError,
       evaluation,
       evaluationError,
       tokenUsage,
@@ -794,21 +775,9 @@ export const EmployeeDashboard: React.FC = () => {
                     Loading latest workflow review data...
                   </div>
                 ) : reviewTab === 'report' ? (
-                  reviewState.report?.exists && reviewState.report.content ? (
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Latest Archived Report</div>
-                        <div className="mt-1 text-sm text-foreground">
-                          {reviewState.report.output_path || `reports/${selectedWorkflow.latestRunFolder.split('/').pop() || 'group'}/<timestamp>.md`}
-                        </div>
-                      </div>
-                      <MarkdownRenderer content={reviewState.report.content} className="max-w-none" showScrollbar={true} />
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                      {reviewState.reportError || 'No report has been generated for the latest run yet.'}
-                    </div>
-                  )
+                  <div className="h-[calc(100vh-320px)] min-h-[400px]">
+                    <ReportView workspacePath={selectedWorkflow.workspacePath} />
+                  </div>
                 ) : reviewTab === 'evaluation' ? (
                   reviewState.evaluation ? (
                     <div className="space-y-4">

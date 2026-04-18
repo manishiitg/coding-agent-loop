@@ -904,6 +904,62 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	return agent, nil
 }
 
+// createKBConsolidateAgent builds the one-shot KB consolidate agent. Same folder-guard
+// shape as KB update/reorganize: read execution folder + KB, write KB only. The read
+// path on executionWorkspacePath is what gives it access to ALL step output folders
+// under the selected run, which is exactly what distinguishes consolidation from per-step
+// updates and from reorganize.
+func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.Context, phase string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
+	stepID := "builder-consolidate"
+	stepPath := "builder-consolidate"
+
+	readPaths, writePaths := hcpo.setupKBUpdateFolderGuard(stepID, stepPath)
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB consolidate agent - Read: %v, Write: %v", readPaths, writePaths))
+
+	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
+	if llmConfig == nil {
+		return nil, fmt.Errorf("no valid LLM configuration found for KB consolidate agent")
+	}
+
+	// Consolidation may touch many entities and write multiple pattern notes — give it
+	// the same headroom as reorganize (60 turns).
+	maxTurns := 60
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	config.ServerNames = []string{mcpclient.NoServers}
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+		Provider: config.LLMConfig.Primary.Provider,
+		ModelID:  config.LLMConfig.Primary.ModelID,
+	})
+	disabled := false
+	config.EnableContextOffloading = &disabled
+
+	toolsToRegister, executorsToUse := hcpo.prepareWorkspaceToolsOnly()
+
+	createAgentFunc := func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return NewKBConsolidateAgent(config, logger, tracer, eventBridge)
+	}
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		phase,
+		0,
+		0,
+		stepID,
+		createAgentFunc,
+		toolsToRegister,
+		executorsToUse,
+		false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create KB consolidate agent: %w", err)
+	}
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
+	}
+	return agent, nil
+}
+
 // createKBReorganizeAgent builds the one-shot KB reorganize agent. Same folder-guard
 // shape as KB update (read execution + KB, write KB only). stepID/stepPath are
 // synthetic because reorganize runs outside step context.

@@ -77,7 +77,6 @@ import {
   IndependentStepsSelectedEventDisplay,
   TodoStepsExtractedEventDisplay,
   StepProgressUpdatedEventDisplay,
-  DecisionEvaluatedEventDisplay,
   RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
@@ -1034,18 +1033,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper compact={compact}>
         <StepProgressUpdatedEventDisplay 
-          event={getEventData(event)} 
-          compact={compact}
-        />
-      </CompactWrapper>
-    )
-  }
-
-  // Decision Evaluated Event
-  if (isEventType(event, 'decision_evaluated')) {
-    return (
-      <CompactWrapper compact={compact}>
-        <DecisionEvaluatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
         />

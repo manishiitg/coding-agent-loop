@@ -1,6 +1,5 @@
 import { StepNode } from './StepNode'
 import { ConditionalNode } from './ConditionalNode'
-import { DecisionNode } from './DecisionNode'
 import { TodoTaskNode } from './TodoTaskNode'
 import { HumanInputNode } from './HumanInputNode'
 import { EvaluationNode } from './EvaluationNode'
@@ -12,7 +11,6 @@ import { WorkflowArtifactNode } from './WorkflowArtifactNode'
 
 export { StepNode } from './StepNode'
 export { ConditionalNode } from './ConditionalNode'
-export { DecisionNode } from './DecisionNode'
 export { TodoTaskNode } from './TodoTaskNode'
 export { HumanInputNode } from './HumanInputNode'
 export { EvaluationNode } from './EvaluationNode'
@@ -27,7 +25,6 @@ export { NodeConfigFooter } from './NodeConfigFooter'
 export const nodeTypes = {
   step: StepNode,
   conditional: ConditionalNode,
-  decision: DecisionNode,
   todo_task: TodoTaskNode,
   human_input: HumanInputNode,
   evaluation: EvaluationNode,

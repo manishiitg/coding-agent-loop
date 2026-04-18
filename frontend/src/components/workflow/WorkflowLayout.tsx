@@ -323,8 +323,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const lastProcessedStepProgressIndexRef = useRef<Map<string, number>>(new Map())
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
-  // Loading state for session restoration (shown between chat tabs and chat area)
-  const [isRestoringWorkflowSessions, setIsRestoringWorkflowSessions] = useState(false)
+  // Loading state for session restoration (shown between chat tabs and chat area).
+  // Lifted into useChatStore so ChatArea can render an in-panel spinner during restore.
+  const isRestoringWorkflowSessions = useChatStore(state => state.isRestoringWorkflowSessions)
+  const setIsRestoringWorkflowSessions = useChatStore(state => state.setIsRestoringWorkflowSessions)
   // Track the previous preset ID for auto-minimize on preset switch
   const previousPresetIdRef = useRef<string | null>(null)
   // NOTE: During workflow execution, we no longer auto-fetch workspace files (response is 2-3MB).

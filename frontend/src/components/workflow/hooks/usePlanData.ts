@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // and to preserve per-workspace data across workflow switches.
@@ -122,14 +122,6 @@ function mergeStepConfigs(
       } as PlanStep
     }
     
-    // Handle decision step
-    if (isDecisionStep(step)) {
-      mergedStep = {
-        ...mergedStep,
-        decision_step: step.decision_step ? mergeIntoStep(step.decision_step) : undefined,
-      } as PlanStep
-    }
-    
     // Handle todo task step - configs are now flat on the step itself
     if (isTodoTaskStep(step)) {
       mergedStep = {
@@ -169,13 +161,6 @@ function resolveOrphanStepRefs(plan: PlanningResponse): PlanningResponse {
         ...step,
         if_true_steps: step.if_true_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
         if_false_steps: step.if_false_steps?.map(branchStep => resolveStep(branchStep, orphanChain)),
-      }
-    }
-
-    if (isDecisionStep(step)) {
-      return {
-        ...step,
-        decision_step: step.decision_step ? resolveStep(step.decision_step, orphanChain) : step.decision_step,
       }
     }
 

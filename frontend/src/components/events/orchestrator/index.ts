@@ -6,7 +6,6 @@ export { IndependentStepsSelectedEventDisplay } from './IndependentStepsSelected
 export { TodoStepsExtractedEventDisplay } from './TodoStepsExtractedEvent'
 export { StepEditPanel } from './StepEditPanel'
 export { StepProgressUpdatedEventDisplay } from './StepProgressUpdatedEvent'
-export { DecisionEvaluatedEventDisplay } from './DecisionEvaluatedEvent'
 export { RoutingEvaluatedEventDisplay } from './RoutingEvaluatedEvent'
 export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
 export * from './TodoTaskEvents'

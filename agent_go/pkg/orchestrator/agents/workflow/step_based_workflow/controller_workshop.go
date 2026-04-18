@@ -138,8 +138,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 			return "", fmt.Errorf("failed to apply execute options: %w", err)
 		}
 		releaseGroupSession = releaseFn
-		// Set workshop human input (cleared after execution)
-		hcpo.interactiveWorkflowHumanInput = opts.HumanInput
 	}
 	if hcpo.selectedRunFolder == "" {
 		return "", fmt.Errorf("no run folder selected; cannot execute step %q — pass group_name or run_folder in execute_step, or select a group first", stepID)
@@ -317,6 +315,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 
 	execManager.ApplyExecutionContext(setup)
 
+	// Thread builder-supplied human_input into the execution context so the
+	// human_input controller can substitute it for the UI prompt without relying
+	// on session-scoped state.
+	if opts != nil && opts.HumanInput != "" {
+		setup.Context.WorkshopHumanInput = opts.HumanInput
+	}
+
 	// Reload progress after cleanup
 	progress, err = hcpo.loadStepProgress(ctx)
 	if err != nil {
@@ -356,9 +361,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Step %q completed (result len=%d)", stepID, len(result)))
 	}
 
-	// Reset single step mode and workshop human input so subsequent calls don't inherit them
+	// Reset single step mode so subsequent calls don't inherit it.
+	// WorkshopHumanInput is scoped via ExecutionContext, so no session-level reset needed.
 	hcpo.SetRunSingleStepMode(false, -1)
-	hcpo.interactiveWorkflowHumanInput = ""
 
 	return result, execErr
 }

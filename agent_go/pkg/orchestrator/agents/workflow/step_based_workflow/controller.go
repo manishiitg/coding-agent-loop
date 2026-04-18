@@ -111,15 +111,13 @@ type StepBasedWorkflowOrchestrator struct {
 	// Preset-level feature toggles
 	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
 	lockKnowledgebase bool // When true, post-step KB update agent never enqueues — graph.json only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
+	kbShape           string // "graph+notes" | "notes-only"; empty resolves to "graph+notes". Controls which KB artifacts exist.
 
 	// Tiered LLM allocation mode
 	tierResolver *TierResolver // nil when no tiered config
 
 	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
 	enabledGroupNames []string
-
-	// Workshop: ad-hoc human input passed via execute_step (injected into PreviousStepsSummary as critical feedback)
-	interactiveWorkflowHumanInput string
 
 	// Human input overrides: per-step responses for human_input steps during run_full_workflow.
 	// Key is step ID (e.g., "choose-workflow"), value is the response to use.
@@ -907,7 +905,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		if err := execManager.CleanupForStartFromBeginning(ctx, hcpo.GetWorkspacePath(), runMode); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Start from beginning cleanup failed: %v", err))
 		}
-		// Reset progress to nil to ensure fresh initialization (this will reset DecisionEvaluationCounts)
+		// Reset progress to nil to ensure fresh initialization (this will reset RoutingEvaluationCounts)
 		existingProgress = nil
 		earlyProgress = nil // Also clear earlyProgress to ensure old counts don't persist
 		// startFromStep is already 0 from initialization
@@ -1182,6 +1180,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) LockKnowledgebase() bool {
 // SetLockKnowledgebase toggles the lock_knowledgebase flag.
 func (hcpo *StepBasedWorkflowOrchestrator) SetLockKnowledgebase(v bool) {
 	hcpo.lockKnowledgebase = v
+}
+
+// KBShape returns the effective KB shape (defaulting empty → "graph+notes"),
+// i.e. which knowledgebase artifacts this workflow maintains. Callers that
+// need raw config use the field directly; most callers want the resolved form.
+func (hcpo *StepBasedWorkflowOrchestrator) KBShape() string {
+	return hcpo.kbShape
+}
+
+// SetKBShape sets the workflow's KB shape. Empty string is accepted and means
+// "use default" (graph+notes). Invalid shapes are accepted silently here —
+// validation happens at preset-load time.
+func (hcpo *StepBasedWorkflowOrchestrator) SetKBShape(v string) {
+	hcpo.kbShape = v
 }
 
 // Helper methods for human feedback tracking

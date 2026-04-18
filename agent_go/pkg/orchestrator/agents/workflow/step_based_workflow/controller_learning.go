@@ -656,3 +656,47 @@ func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Cont
 
 	return nil
 }
+
+// BuildLearningObjectivesBlock produces a deterministic markdown block listing every
+// step's declared learning_objective. Consumed by the organize_global_learnings flow so
+// the agent can check cross-step coherence: lessons that multiple objectives imply the
+// same HOW-knowledge (worth promoting to a shared section) and objectives whose scope
+// is never reflected in SKILL.md (worth a diagnostic line, not silent re-learning).
+//
+// Mirrors buildKBContributionsBlock in controller_kb_update.go — same "declared schema"
+// idea, different store.
+func (hcpo *StepBasedWorkflowOrchestrator) BuildLearningObjectivesBlock() string {
+	plan := hcpo.approvedPlan
+	if plan == nil || len(plan.Steps) == 0 {
+		return "_No plan loaded — cannot enumerate step learning objectives._"
+	}
+	var sb strings.Builder
+	count := 0
+	for _, s := range plan.Steps {
+		if s == nil {
+			continue
+		}
+		cfg := getAgentConfigs(s)
+		if cfg == nil {
+			continue
+		}
+		objective := strings.TrimSpace(cfg.LearningObjective)
+		if objective == "" {
+			continue
+		}
+		count++
+		sb.WriteString(fmt.Sprintf("### step: %s — %s\n", s.GetID(), s.GetTitle()))
+		sb.WriteString("- learning_objective:\n")
+		for _, line := range strings.Split(objective, "\n") {
+			sb.WriteString("  > ")
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+	if count == 0 {
+		return "_No steps in this workflow declare a learning_objective. There is no cross-step declared-scope to cross-check against the current SKILL.md content — fall back to file-level reorganization._"
+	}
+	header := fmt.Sprintf("_%d step(s) declare a learning_objective. Cross-check against SKILL.md content: look for lessons redundantly learned under step-specific framing that should be promoted to shared sections, and objectives whose scope is not reflected anywhere in SKILL.md (that's a signal the learning agent may not have run successfully for those steps)._\n\n", count)
+	return header + sb.String()
+}

@@ -84,9 +84,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 
 	// Workshop mode: if the builder agent provided human_input via execute_step,
 	// use it as the response instead of blocking for user input.
-	// This allows the workshop agent to answer human input steps based on conversation context.
-	if hcpo.interactiveWorkflowHumanInput != "" {
-		response = hcpo.interactiveWorkflowHumanInput
+	// The value is threaded on the ExecutionContext (WorkshopHumanInput), not a session field,
+	// so it only applies to the specific execute_step call that set it.
+	workshopHumanInput := ""
+	if execCtx != nil {
+		workshopHumanInput = execCtx.WorkshopHumanInput
+	}
+	if workshopHumanInput != "" {
+		response = workshopHumanInput
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 Workshop mode: using pre-filled response for human input step (response_type=%s, length=%d chars)", responseType, len(response)))
 
 		// For yesno, normalize the response
@@ -256,7 +261,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 	// Determine next step ID based on response and routing configuration
 	nextStepID := hcpo.getNextStepIDForHumanInput(humanInputStep, response, responseType, selectedOptionIndex)
 
-	// Store computed next step ID in the step for routing (similar to DecisionPlanStep.DecisionResponse)
+	// Store computed next step ID in the step for routing
 	humanInputStep.SelectedNextStepID = nextStepID
 	hcpo.GetLogger().Info(fmt.Sprintf("🔗 Computed next step ID: %s", nextStepID))
 

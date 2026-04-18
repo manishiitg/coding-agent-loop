@@ -78,6 +78,17 @@ Place your MCP server config at **`deploy/k8s/agent/mcp_config.json`**. When you
 
 # Build and deploy specific service
 ./deploy/k8s/scripts/deploy-k8s.sh --build agent
+
+# Sync a local workflow to the prod PVC as part of the deploy.
+# Source: workspace-docs/Workflow/<name>/ on your machine.
+# Behavior: clean-replace — deletes the remote folder, then uploads a zip
+# of the local folder via the workspace-api /api/workspace/import endpoint.
+# runs/ is excluded by default (historical execution artifacts); pass
+# --sync-workflow-include-runs to ship them too.
+./deploy/k8s/scripts/deploy-k8s.sh --sync-workflow citymall-infra
+./deploy/k8s/scripts/deploy-k8s.sh --sync-workflow citymall-infra --sync-workflow codeanalysis
+./deploy/k8s/scripts/deploy-k8s.sh --build --sync-workflow citymall-infra
+./deploy/k8s/scripts/deploy-k8s.sh --sync-workflow citymall-infra --sync-workflow-include-runs
 ```
 
 ## Verify

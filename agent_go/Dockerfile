@@ -9,7 +9,7 @@
 # =============================================================================
 
 # Build stage - Debian so the binary links against glibc and runs on the Debian runtime
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
@@ -20,19 +20,38 @@ WORKDIR /app
 COPY workspace/go.mod workspace/go.sum ./workspace/
 COPY agent_go/go.mod agent_go/go.sum ./agent_go/
 
-# go.work so workspace module resolves locally (agent_go depends on workspace)
-RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work
+# go.work so workspace module resolves locally (agent_go depends on workspace).
+# Bump this when the module go directives in agent_go/go.mod or workspace/go.mod change.
+RUN printf 'go 1.25.0\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work
 ENV GOWORK=/app/go.work
 
-# Download dependencies (retry up to 3 times — proxy.golang.org can be flaky)
-# mcpagent and multi-llm-provider-go come from GitHub via go.mod tags
+# Drop local-dev replace directives for mcpagent and multi-llm-provider-go — those
+# point to ../../mcpagent / ../../multi-llm-provider-go on the developer's laptop and
+# are not part of the Docker build context. The production build must pull these
+# modules from GitHub at the version pinned in require blocks. The `workspace` replace
+# IS kept (workspace/ lives in this repo and is part of the build context).
+RUN cd /app/agent_go && \
+    go mod edit -dropreplace=github.com/manishiitg/mcpagent && \
+    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go
+
+# Download dependencies (retry up to 3 times — proxy.golang.org can be flaky).
+# mcpagent and multi-llm-provider-go come from GitHub via go.mod tags.
+# GOFLAGS=-mod=mod lets `go mod download` add missing checksums to go.sum for those
+# modules, which aren't present in the committed go.sum because the developer's
+# go.sum was generated with the local `replace` directives active.
 WORKDIR /app/agent_go
+ENV GOFLAGS=-mod=mod
 RUN for i in 1 2 3; do go mod download && break || echo "Retry $i..."; sleep 5; done
 
 # Copy source code
 WORKDIR /app
 COPY workspace/ ./workspace/
 COPY agent_go/ ./agent_go/
+
+# Full COPY overwrote the patched go.mod — re-drop the local-dev replaces before build.
+RUN cd /app/agent_go && \
+    go mod edit -dropreplace=github.com/manishiitg/mcpagent && \
+    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go
 # Build from /app so go.work is found; output binary to agent_go dir (glibc-linked for Debian runtime)
 RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
 
@@ -71,6 +90,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Google Workspace CLI for GWS integration
 RUN npm install -g @googleworkspace/cli
+
+# Optionally install Gemini CLI (@google/gemini-cli). Enabled only by deploy targets
+# that need the `gemini-cli` LLM provider adapter (see multi-llm-provider-go/pkg/adapters/geminicli).
+# Opt-in via build arg to keep non-k8s images (azure, dedicated-vm) lean.
+ARG INSTALL_GEMINI_CLI=false
+RUN if [ "$INSTALL_GEMINI_CLI" = "true" ]; then \
+        npm install -g @google/gemini-cli && which gemini && gemini --version; \
+    else \
+        echo "Skipping @google/gemini-cli install (INSTALL_GEMINI_CLI=$INSTALL_GEMINI_CLI)"; \
+    fi
 
 # Install uv (uvx for Python MCP servers) and pypdf (for read_pdf tool)
 RUN pip3 install --break-system-packages uv pypdf

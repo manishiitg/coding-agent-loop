@@ -25,12 +25,21 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-arn:aws:eks:ap-south-1:414085459896:cluster/app-se
 DEPLOY_SUFFIX="${DEPLOY_SUFFIX:--cs}"
 BUILD=false
 SERVICES=()
+SYNC_WORKFLOWS=()
+SYNC_INCLUDE_RUNS=false
+SYNC_PORT="${SYNC_PORT:-18080}"
 NEXT_IS_SUFFIX=false
+NEXT_IS_SYNC_WORKFLOW=false
 
 for arg in "$@"; do
     if [ "$NEXT_IS_SUFFIX" = true ]; then
         DEPLOY_SUFFIX="$arg"
         NEXT_IS_SUFFIX=false
+        continue
+    fi
+    if [ "$NEXT_IS_SYNC_WORKFLOW" = true ]; then
+        SYNC_WORKFLOWS+=("$arg")
+        NEXT_IS_SYNC_WORKFLOW=false
         continue
     fi
     case "$arg" in
@@ -46,6 +55,15 @@ for arg in "$@"; do
         --no-suffix)
             DEPLOY_SUFFIX=""
             ;;
+        --sync-workflow)
+            NEXT_IS_SYNC_WORKFLOW=true
+            ;;
+        --sync-workflow=*)
+            SYNC_WORKFLOWS+=("${arg#--sync-workflow=}")
+            ;;
+        --sync-workflow-include-runs)
+            SYNC_INCLUDE_RUNS=true
+            ;;
         *)
             SERVICES+=("$arg")
             ;;
@@ -54,6 +72,11 @@ done
 
 if [ "$NEXT_IS_SUFFIX" = true ]; then
     echo -e "${RED}Error: --suffix requires a value (e.g. --suffix -cs)${NC}" >&2
+    exit 1
+fi
+
+if [ "$NEXT_IS_SYNC_WORKFLOW" = true ]; then
+    echo -e "${RED}Error: --sync-workflow requires a workflow name (e.g. --sync-workflow citymall-infra)${NC}" >&2
     exit 1
 fi
 
@@ -125,6 +148,11 @@ get_build_args_for_image() {
     case "$image" in
         mcpagent-frontend)
             echo "--build-arg VITE_API_BASE_URL=https://analytics-agent.citymall.live --build-arg VITE_WORKSPACE_API_URL=https://analytics-agent.citymall.live/workspace"
+            ;;
+        mcpagent-agent)
+            # Install @google/gemini-cli in the k8s agent image so the `gemini-cli` LLM
+            # provider adapter works on prod. Other deploy targets skip this to stay lean.
+            echo "--build-arg INSTALL_GEMINI_CLI=true"
             ;;
         *)
             echo ""
@@ -443,6 +471,118 @@ if [ "$BUILD" = true ] || [ "$MCP_CONFIG_UPDATED" = true ]; then
             echo -e "${YELLOW}⚠ Could not restart ${deployment_name} (may not exist)${NC}\n"
         fi
     done
+fi
+
+# Sync workflows from local workspace-docs/Workflow/<name>/ to the prod workspace-api PVC.
+# Uses the workspace-api /api/workspace/import endpoint via a short-lived port-forward.
+# Clean-replace semantics: deletes the remote folder first, then uploads a zip of the local folder.
+sync_workflow() {
+    local workflow_name=$1
+    local src_dir="$PROJECT_ROOT/workspace-docs/Workflow/$workflow_name"
+    local svc_name="mcpagent-workspace-api${DEPLOY_SUFFIX}"
+    local zip_path="/tmp/sync-workflow-${workflow_name}-$$.zip"
+
+    echo -e "${BLUE}Syncing workflow '${workflow_name}' to ${svc_name}...${NC}"
+
+    if [ ! -d "$src_dir" ]; then
+        echo -e "${RED}✗ Local workflow not found: $src_dir${NC}"
+        return 1
+    fi
+    if ! command -v zip &> /dev/null; then
+        echo -e "${RED}✗ 'zip' command not found — install it (macOS: preinstalled; Debian: apt install zip)${NC}"
+        return 1
+    fi
+    if ! command -v curl &> /dev/null; then
+        echo -e "${RED}✗ 'curl' command not found${NC}"
+        return 1
+    fi
+
+    # Build the zip. Import extracts entries into workspace_path=Workflow, so entries
+    # must be prefixed with the workflow folder name (zip -r <name> from Workflow/ does that).
+    local zip_excludes=("*.DS_Store" "*__pycache__*" "*.pyc")
+    if [ "$SYNC_INCLUDE_RUNS" != true ]; then
+        zip_excludes+=("${workflow_name}/runs/*")
+    fi
+    rm -f "$zip_path"
+    (cd "$PROJECT_ROOT/workspace-docs/Workflow" && zip -rq "$zip_path" "$workflow_name" -x "${zip_excludes[@]}")
+    if [ ! -s "$zip_path" ]; then
+        echo -e "${RED}✗ Failed to create zip archive at $zip_path${NC}"
+        return 1
+    fi
+    local zip_size
+    zip_size=$(du -h "$zip_path" | awk '{print $1}')
+    if [ "$SYNC_INCLUDE_RUNS" = true ]; then
+        echo -e "${BLUE}  Archive: $zip_size (runs/ included)${NC}"
+    else
+        echo -e "${BLUE}  Archive: $zip_size (runs/ excluded — use --sync-workflow-include-runs to include)${NC}"
+    fi
+
+    # Start port-forward in background; ensure it's cleaned up on any exit path
+    local pf_log
+    pf_log=$(mktemp)
+    kubectl port-forward -n "$NAMESPACE" "svc/${svc_name}" "${SYNC_PORT}:80" >"$pf_log" 2>&1 &
+    local pf_pid=$!
+    # shellcheck disable=SC2064
+    trap "kill $pf_pid 2>/dev/null; rm -f '$zip_path' '$pf_log'" RETURN
+
+    # Wait up to 10s for the port-forward to become reachable
+    local ready=false
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -fsS "http://localhost:${SYNC_PORT}/health" >/dev/null 2>&1; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$ready" != true ]; then
+        echo -e "${RED}✗ Port-forward to ${svc_name} did not become ready. Log:${NC}"
+        cat "$pf_log"
+        return 1
+    fi
+
+    # Clean-replace: delete existing remote folder (404 is fine — first-time sync)
+    local del_http
+    del_http=$(curl -s -o /tmp/sync-del-$$.json -w '%{http_code}' -X DELETE \
+        "http://localhost:${SYNC_PORT}/api/folders/Workflow/${workflow_name}?confirm=true&commit_message=sync-workflow%20replace%20${workflow_name}")
+    rm -f /tmp/sync-del-$$.json
+    if [ "$del_http" = "200" ]; then
+        echo -e "${GREEN}  ✓ Removed existing remote Workflow/${workflow_name}${NC}"
+    elif [ "$del_http" = "404" ]; then
+        echo -e "${YELLOW}  ℹ No existing remote Workflow/${workflow_name} (first-time sync)${NC}"
+    else
+        echo -e "${RED}  ✗ Delete failed (HTTP $del_http) — aborting sync${NC}"
+        return 1
+    fi
+
+    # Upload the zip
+    local resp
+    resp=$(curl -s -X POST "http://localhost:${SYNC_PORT}/api/workspace/import" \
+        -F "workspace_path=Workflow" \
+        -F "overwrite=true" \
+        -F "file=@${zip_path}")
+    local ok files
+    ok=$(echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('success'))" 2>/dev/null || echo "")
+    files=$(echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('files_extracted',''))" 2>/dev/null || echo "")
+    if [ "$ok" != "True" ]; then
+        echo -e "${RED}  ✗ Import failed. Response: $resp${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}  ✓ Imported ${files} files into Workflow/${workflow_name}${NC}\n"
+    return 0
+}
+
+# Run any requested workflow syncs after deploy + any BUILD rollout have settled
+if [ ${#SYNC_WORKFLOWS[@]} -gt 0 ]; then
+    echo -e "${GREEN}[4] Syncing workflows from local workspace-docs/...${NC}\n"
+    sync_failures=0
+    for wf in "${SYNC_WORKFLOWS[@]}"; do
+        if ! sync_workflow "$wf"; then
+            sync_failures=$((sync_failures + 1))
+        fi
+    done
+    if [ "$sync_failures" -gt 0 ]; then
+        echo -e "${YELLOW}⚠ ${sync_failures} workflow sync(s) failed${NC}\n"
+    fi
 fi
 
 # Clean up stale pods (Evicted, Failed, ContainerStatusUnknown) left behind by dead nodes

@@ -411,6 +411,10 @@ func sessionDirs() []string {
 // successful open command — when Chrome is guaranteed alive and still a child of
 // the daemon. This lets killSessionRuntime use the stored PID later, avoiding the
 // PPID timing race where Chrome has already been reparented or re-launched.
+//
+// Topology (verified against agent-browser v0.26): each session spawns its own
+// daemon (PPID=1) which spawns exactly one Chrome child. Daemons and Chromes
+// are not shared across sessions, so kids[0] is always this session's Chrome.
 func captureChromePID(session string) {
 	for _, dir := range sessionDirs() {
 		pidFile := filepath.Join(dir, session+".pid")
@@ -426,7 +430,7 @@ func captureChromePID(session string) {
 		if len(kids) == 0 {
 			continue
 		}
-		// First child is Chrome (daemon only spawns Chrome).
+		// One daemon = one Chrome child (see function doc).
 		chromePID := kids[0]
 		chromePIDFile := filepath.Join(dir, session+".chrome-pid")
 		if err := os.WriteFile(chromePIDFile, []byte(strconv.Itoa(chromePID)), 0600); err == nil {
@@ -452,18 +456,22 @@ func killChromePID(chromePID int, session string) {
 }
 
 // killSessionRuntime closes the agent-browser session and kills all associated
-// processes. Always runs both graceful close AND force kill:
-// - Graceful: handles the alive-daemon case (daemon kills Chrome, exits cleanly)
-// - Force kill: handles the dead-daemon case where graceful returns false success
-//   but Chrome is still alive as an orphan (PPID=1)
+// processes. Each session owns its own daemon + Chrome (verified 1:1:1), so
+// killing this session's daemon does not affect any other session.
+//
+// Always runs both graceful close AND force kill:
+//   - Graceful: daemon closes Chrome and exits cleanly (the happy path).
+//   - Force kill: covers (a) daemon already dead but Chrome still alive as an
+//     orphan (PPID=1), and (b) graceful close returning success even when the
+//     daemon is dead, which means we cannot trust its return code.
 func killSessionRuntime(session string) {
 	// Step 1: ask the daemon to close gracefully — kills Chrome and exits cleanly
 	// when the daemon is alive. NOTE: agent-browser close returns success even
 	// when the daemon is already dead, so we cannot rely on this alone.
 	gracefulCloseSession(session)
 
-	// Step 2: force kill as safety net — covers orphaned Chrome (daemon died but
-	// Chrome survived) and any other edge cases graceful close missed.
+	// Steps 2-4 below are the force-kill safety net. They read this session's
+	// daemon PID from <session>.pid and kill the daemon's process tree.
 	for _, dir := range sessionDirs() {
 		pidFile := filepath.Join(dir, session+".pid")
 		pidBytes, err := os.ReadFile(pidFile)
@@ -477,6 +485,8 @@ func killSessionRuntime(session string) {
 
 		// Step 2: kill live children of the daemon first (catches daemon-restarted
 		// Chrome with a new PID that differs from the stored .chrome-pid).
+		// Safe even though childPIDs is unfiltered: per verified 1:1:1 topology
+		// the daemon has at most one Chrome child, belonging to this session.
 		for _, chromePID := range childPIDs(daemonPID) {
 			killChromePID(chromePID, session)
 		}
@@ -490,7 +500,7 @@ func killSessionRuntime(session string) {
 			}
 		}
 
-		// Step 4: kill the daemon itself.
+		// Step 4: kill the daemon itself. Safe because daemons are per-session.
 		proc, err := os.FindProcess(daemonPID)
 		if err != nil {
 			continue
@@ -526,7 +536,19 @@ func gracefulCloseSession(session string) bool {
 // (daemon was killed but Chrome survived). This handles the case where the daemon
 // auto-restarted Chrome after the original Chrome crashed — the restarted Chrome gets
 // a new PID that was never captured in .chrome-pid, so it slips past the normal kill.
-// We identify orphans by the "agent-browser-chrome-" pattern in their user-data-dir.
+//
+// The pgrep pattern is global (no session filter) because agent-browser uses
+// random UUIDs in its user-data-dir path, not session names — there is no way
+// to scope by session from the cmdline alone. This is safe because the PPID=1
+// filter only matches Chromes whose daemon is already dead: a live session's
+// Chrome has PPID = daemon, so it won't match. In other words, anything this
+// function kills is by definition already disowned and leaking.
+//
+// The session argument is logging context only — the kill is not session-scoped.
+//
+// Note: v0.24.1+ of agent-browser puts Chrome in its own process group and uses
+// PR_SET_PDEATHSIG on Linux, so orphans are much rarer now. This remains a safety
+// net for crash scenarios and for macOS (no PR_SET_PDEATHSIG equivalent).
 func killOrphanedChrome(session string) {
 	// Use pgrep to find all Chrome for Testing processes whose cmdline contains
 	// the agent-browser temp user-data-dir marker AND whose parent is PID 1.

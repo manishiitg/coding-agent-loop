@@ -79,24 +79,28 @@ func CreateMemoryTools() []llmtypes.Tool {
 	}
 	tools = append(tools, recallMemoryTool)
 
-	compressMemoryTool := llmtypes.Tool{
+	enrichMemoryTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "compress_memory",
-			Description: "Compress and consolidate persistent memories. Spawns a background agent that reads all memory files in memories/, identifies redundant/superseded/verbose entries, merges related content, and rewrites the files cleanly. Returns immediately — the agent runs in the background.",
+			Name:        "enrich_memory",
+			Description: "Enrich persistent memory by distilling past chats into memories, then consolidating all memory files. Spawns a background agent that (1) reads every session in chat_history/, extracts insights into today's date folder and entity files, then deletes chat sessions older than delete_older_than_days, and (2) reads all memory files, merges related/duplicate entries, removes superseded ones, and regenerates index.md. Returns immediately — the agent runs in the background.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"focus": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional topic to focus compression on. If provided, only memories related to this topic will be compressed. If omitted, all memories are compressed.",
+						"description": "Optional topic to focus on. If provided, only memories related to this topic are consolidated. Chat-history extraction still runs for all sessions. If omitted, all memories are processed.",
+					},
+					"delete_older_than_days": map[string]interface{}{
+						"type":        "number",
+						"description": "Delete chat sessions older than this many days after extraction (default 7). Set to 0 to disable deletion.",
 					},
 				},
 				"required": []string{},
 			}),
 		},
 	}
-	tools = append(tools, compressMemoryTool)
+	tools = append(tools, enrichMemoryTool)
 
 	return tools
 }
@@ -107,7 +111,7 @@ func CreateMemoryToolExecutors() map[string]func(ctx context.Context, args map[s
 
 	executors["save_memory"] = handleSaveMemory
 	executors["recall_memory"] = handleRecallMemory
-	executors["compress_memory"] = handleCompressMemory
+	executors["enrich_memory"] = handleEnrichMemory
 
 	return executors
 }
@@ -220,6 +224,7 @@ execute_shell_command(command: "cat > ` + dateDir + `/{category}.md << 'MEMEOF'\
 - Prefer appending to existing category files
 - Do NOT modify prompt.md or files in other date folders
 - Entity excerpts should be self-contained summaries, not just pointers to the date entry
+- **Do NOT store facts queryable from workflows, MCP servers, or APIs** (e.g. PR status, channel lists, live metrics, calendar events). Memory is for user preferences, communication style, recurring use cases, dislikes, patterns, decisions/reasoning, and project context — things that cannot be rediscovered from live data.
 
 ### Current timestamp: ` + currentTimestamp + `
 
@@ -306,7 +311,7 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 
 ### Priority 0 — Index Check (if query is broad or orientation-seeking):
 0. If the query is broad ("what do I know", "what was decided", "give me context", "index") or you need orientation:
-   Read index.md: execute_shell_command(command: "cat ` + memoryFolder + `/index.md 2>/dev/null || echo 'no index yet — run compress_memory to generate one'")
+   Read index.md: execute_shell_command(command: "cat ` + memoryFolder + `/index.md 2>/dev/null || echo 'no index yet — run enrich_memory to generate one'")
    Return index.md contents directly. Only proceed to entity/date search if more detail is needed.
 
 ### Priority 1 — Entity Lookup (fast path):
@@ -368,9 +373,18 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 	return string(resultJSON), nil
 }
 
-// handleCompressMemory spawns a background agent to consolidate and deduplicate memories
-func handleCompressMemory(ctx context.Context, args map[string]interface{}) (string, error) {
+// handleEnrichMemory spawns a background agent that (a) distils chat history into memories
+// and then (b) consolidates and deduplicates the memory files.
+func handleEnrichMemory(ctx context.Context, args map[string]interface{}) (string, error) {
 	focus, _ := args["focus"].(string)
+
+	deleteOlderThanDays := 7
+	if v, ok := args["delete_older_than_days"].(float64); ok {
+		deleteOlderThanDays = int(v)
+	}
+	if deleteOlderThanDays < 0 {
+		deleteOlderThanDays = 0
+	}
 
 	// Get workspace client for reading prompt.md
 	wsClient, _ := ctx.Value(WorkspaceClientKey).(*workspace.Client)
@@ -388,9 +402,100 @@ func handleCompressMemory(ctx context.Context, args map[string]interface{}) (str
 	}
 
 	memoryFolder := getMemoryFolder(ctx)
-	sb.WriteString(`## Your Task: Compress and Consolidate Memories
+	// chat_history lives as a sibling of the memory folder (e.g. _users/{id}/chat_history).
+	chatHistoryFolder := strings.TrimSuffix(memoryFolder, "/memories") + "/chat_history"
+	now := time.Now()
+	currentDate := now.Format("2006-01-02")
+	dateDir := fmt.Sprintf("%s/%s", memoryFolder, currentDate)
 
-You are a memory compression agent. Your job is to read all memory files, identify redundancies, and rewrite them cleanly.
+	sb.WriteString(`## Your Task: Enrich Memory (Distil Chats + Consolidate)
+
+You are a memory enrichment agent. Your job has two halves:
+- **Phase 0** — turn recent chat sessions into durable memories, then delete the ones that are too old to keep around.
+- **Phases 1–4** — read all memory files, dedupe/merge/rewrite them, and regenerate index.md.
+
+### Phase 0 — Distil Chat History
+The user's raw chat sessions live in ` + chatHistoryFolder + `/ (each session is a folder containing conversation.json).
+
+**File shape** — each conversation.json is a JSON object with this structure:
+` + "```" + `json
+{
+  "agent_mode": "simple" | "multi-agent" | ...,
+  "session_id": "<uuid>",
+  "updated_at": "<ISO timestamp>",
+  "conversation_history": [
+    {"Role": "system", "Parts": [{"Text": "..."}]},
+    {"Role": "human",  "Parts": [{"Text": "..."}]},
+    {"Role": "ai",     "Parts": [{"Text": "..."}]},
+    {"Role": "tool",   "Parts": [{"Text": "..."}]}
+  ]
+}
+` + "```" + `
+The first message is always a large boilerplate ` + "`system`" + ` prompt — **ignore it**. For user modeling you mainly care about ` + "`human`" + ` turns (what they asked, how they phrased it, what they pushed back on) and the ` + "`ai`" + ` turns only where they provide context for a user correction.
+
+**CRITICAL — file sizes**: individual conversation.json files range from ~19 KB up to ~900 KB. Shell output is capped at ~25 000 chars, so a plain ` + "`cat conversation.json`" + ` WILL be truncated for most files. Always parse the JSON first and strip system/tool content — never ` + "`cat`" + ` the raw file.
+
+**CRITICAL — one session at a time.** No ` + "`for`" + ` loops over sessions, no glob ` + "`cat`" + `, no ` + "`find -exec cat`" + `. One session per shell call, save insights for that session before moving to the next.
+
+1. List sessions that NEED processing — skip ones already enriched (marker ` + "`.enriched`" + ` inside the session folder) whose conversation.json hasn't grown since:
+   execute_shell_command(command: "for sid in $(ls ` + chatHistoryFolder + `/ 2>/dev/null); do conv=\"` + chatHistoryFolder + `/$sid/conversation.json\"; mark=\"` + chatHistoryFolder + `/$sid/.enriched\"; [ -f \"$conv\" ] || continue; if [ ! -f \"$mark\" ] || [ \"$conv\" -nt \"$mark\" ]; then echo \"$sid\"; fi; done > /tmp/enrich_sessions.txt; wc -l /tmp/enrich_sessions.txt")
+   If the file is empty, skip to Phase 1 — nothing new to enrich.
+2. Initialize today's date folder once: execute_shell_command(command: "mkdir -p ` + dateDir + `")
+3. Write the session parser script ONCE (used for every session below):
+   execute_shell_command(command: "cat > /tmp/enrich_parse_session.py << 'PYEOF'\nimport json, sys\nsid = sys.argv[1]\npath = '` + chatHistoryFolder + `/' + sid + '/conversation.json'\nd = json.load(open(path))\nprint('session:', sid)\nprint('mode:', d.get('agent_mode'), 'updated:', d.get('updated_at'))\nfor m in d.get('conversation_history', []):\n    r = m.get('Role')\n    if r not in ('human', 'ai'):\n        continue\n    parts = m.get('Parts', [])\n    txt = ''.join(p.get('Text','') for p in parts if isinstance(p, dict))\n    if not txt.strip():\n        continue\n    print('[' + r + ']', txt[:2000].replace(chr(10), ' '))\n    print('---')\nPYEOF")
+
+4. For EACH session-id listed in /tmp/enrich_sessions.txt (one at a time):
+   a. Parse the session (human/ai turns only, per-message cap 2000 chars, newlines flattened — safely under the 25 KB cap even for ~900 KB files):
+      execute_shell_command(command: "python3 /tmp/enrich_parse_session.py <session-id>")
+      Substitute the actual UUID for <session-id>. You must pick one UUID from /tmp/enrich_sessions.txt per tool call.
+   b. Extract user-model insights for THAT session (see criteria below).
+   c. Immediately append the insights to the right category file in ` + dateDir + `/ and update any relevant entity files. Do not accumulate a buffer of unsaved insights across sessions — flush per session.
+   d. After the write succeeds, mark the session as enriched so it's skipped on future runs (unless the conversation grows):
+      execute_shell_command(command: "touch ` + chatHistoryFolder + `/<session-id>/.enriched")
+   e. Move to the next session. Repeat until every line in /tmp/enrich_sessions.txt has been processed.
+5. **What to extract per session** (the step 4b criteria) — the user model — things that help the agent understand and talk to this user better next time. Prioritize:
+   - **Preferences**: what the user likes, dislikes, actively corrects ("don't do X", "I prefer Y", "stop doing Z")
+   - **Communication style**: how the user talks — terse vs. verbose, formal vs. casual, direct vs. exploratory, language quirks, typical phrasing
+   - **What the user uses chat for**: recurring task types (debugging Go? writing copy? planning trips? reviewing PRs?) — what they keep coming back for
+   - **Patterns**: how they approach problems, what they usually ask follow-ups about, what they tend to skip or push back on
+   - **Decisions and reasoning** (with alternatives considered) that have future relevance
+   - **Project/goals/constraints context** that persists across sessions
+   - **Entities** the user keeps referring to (systems, people, services, features)
+
+   **Do NOT save facts that can be looked up live** from workflows, MCP servers, or APIs. E.g. current PR status, Slack channel list, live metrics, GitHub issue state, calendar events, file contents — these are queryable, so they don't belong in memory and will go stale. Memory is for things that can't be rediscovered from live data.
+
+   Skip: greetings, trivial one-off lookups, transient debugging noise, ephemeral task state, and anything a live tool call could answer.
+6. **Phase 0 has TWO required outputs per session — never skip either:**
+
+   **(a) Date-folder entry** — append to the right category file under ` + dateDir + `/ (general.md / decisions.md / preferences.md / {custom}.md). Each entry starts with ` + "`## YYYY-MM-DD HH:MM`" + ` and mentions the source session-id.
+   Use heredoc append: execute_shell_command(command: "cat >> ` + dateDir + `/general.md << 'MEMEOF'\n...\nMEMEOF")
+
+   **(b) Entity updates** — never skip this step. Apply judgment on *what* qualifies as an entity:
+   - Proper nouns and named things (systems, services, people, features, projects) — not generic terms like "workflow", "bug", "issue"
+   - Referenced 2+ times in this session, OR something the user would plausibly return to
+   - One-off mentions → skip. Recurring named things → create/update the entity file.
+
+   For each qualifying entity:
+   - Normalize: lowercase, spaces → hyphens (e.g. "Genomes V2" → "genomes-v2")
+   - Append to ` + memoryFolder + `/entities/{entity}.md with the same timestamp heading and a self-contained excerpt (not just a pointer).
+   - Register in ` + memoryFolder + `/entities.md if missing:
+     execute_shell_command(command: "grep -qF '{entity}' ` + memoryFolder + `/entities.md 2>/dev/null || echo '- {entity}' >> ` + memoryFolder + `/entities.md")
+
+   If a session has zero entity-worthy mentions, that's fine — just note it mentally and move on. The *step* is mandatory; the *number of entities* is judgment-based.
+7. After ALL sessions in /tmp/enrich_sessions.txt have been extracted, delete chat sessions that are BOTH old AND already enriched:
+`)
+	if deleteOlderThanDays > 0 {
+		sb.WriteString(`   Gate: conversation.json must be older than ` + fmt.Sprintf("%d", deleteOlderThanDays) + ` days AND the ` + "`.enriched`" + ` marker must exist. Never delete a session whose insights were not persisted.
+   execute_shell_command(command: "find ` + chatHistoryFolder + ` -maxdepth 2 -name conversation.json -mtime +` + fmt.Sprintf("%d", deleteOlderThanDays) + ` -print0 2>/dev/null | xargs -0 -I{} sh -c 'd=$(dirname \"$1\"); [ -f \"$d/.enriched\" ] && rm -rf \"$d\"' _ {} ; echo done")
+`)
+	} else {
+		sb.WriteString(`   Skipped — delete_older_than_days is 0, keeping all chat sessions.
+`)
+	}
+	sb.WriteString(`
+---
+
+**DO NOT STOP HERE.** Phase 0 is only the first half of your task. Writing date-folder entries is not "done" — you must now run Phases 1–4 to consolidate, prune stale entries across dates, and regenerate ` + "`index.md`" + `. The task is incomplete until ` + "`index.md`" + ` reflects the post-enrichment state. Continue immediately.
 
 ### Phase 1 — Inventory
 1. List all date folders: execute_shell_command(command: "ls -d ` + memoryFolder + `/[0-9]*/ 2>/dev/null | sort || echo 'no date memories'")
@@ -478,6 +583,18 @@ Last updated: {current timestamp}
 - **Keep entities.md registry in sync** — if you add/remove entity files, update the registry
 - **Always regenerate index.md as the final step** — it must reflect the post-compression state
 - After all changes, provide a summary of what was compressed/merged/removed and what's now in index.md
+
+### Before You Return — Self-Check Checklist
+Before ending your turn, verify each item. If any fails, go back and fix it.
+
+1. ` + "`ls ` + dateDir + `/`" + ` shows at least one entry written for this run.
+2. Every session you parsed has a ` + "`.enriched`" + ` marker: execute_shell_command(command: "ls ` + chatHistoryFolder + `/*/.enriched 2>/dev/null | wc -l") — the count should match the number of sessions processed in Phase 0 step 4.
+3. ` + "`ls ` + memoryFolder + `/entities/`" + ` contains entity files for the recurring named things you saw (don't force entities for one-off mentions, but obvious recurring ones MUST have files).
+4. ` + "`head -3 ` + memoryFolder + `/index.md`" + ` shows today's date in the "Last updated" line. If index.md is older, Phase 4 did not run — go back and run it.
+5. ` + "`wc -l ` + memoryFolder + `/entities.md`" + ` matches the number of files in ` + memoryFolder + `/entities/ (every entity file is registered).
+6. Your final message to the user names: (a) how many sessions were processed, (b) how many new/updated entity files, (c) what was merged/removed in Phases 2–3, (d) that index.md was regenerated.
+
+Only after all six pass do you return control.
 `)
 
 	// Use background delegate for async execution
@@ -489,25 +606,25 @@ Last updated: {current timestamp}
 	// Use medium reasoning level — compression requires judgment about what to keep/merge
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
 
-	agentName := "Compress Memory"
+	agentName := "Enrich Memory"
 	if focus != "" {
-		agentName = fmt.Sprintf("Compress Memory (%s)", truncateString(focus, 40))
+		agentName = fmt.Sprintf("Enrich Memory (%s)", truncateString(focus, 40))
 	}
-	log.Printf("[MEMORY] Starting background compress_memory agent (focus: %s)", focus)
+	log.Printf("[MEMORY] Starting background enrich_memory agent (focus: %s, delete_older_than_days: %d)", focus, deleteOlderThanDays)
 
 	agentID, err := bgDelegate(bgCtx, agentName, sb.String())
 	if err != nil {
-		return "", fmt.Errorf("failed to start memory compression agent: %w", err)
+		return "", fmt.Errorf("failed to start memory enrichment agent: %w", err)
 	}
 
-	log.Printf("[MEMORY] Started background compress_memory agent (ID: %s)", agentID)
+	log.Printf("[MEMORY] Started background enrich_memory agent (ID: %s)", agentID)
 
 	result := map[string]interface{}{
 		"async":    true,
 		"agent_id": agentID,
 		"name":     agentName,
 		"status":   "running",
-		"message":  "Memory compression agent started in background. You'll be notified when it completes.",
+		"message":  "Memory enrichment agent started in background. You'll be notified when it completes.",
 	}
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
@@ -522,11 +639,11 @@ func GetMemoryInstructions(memoryFolder string) string {
 	return `
 ## Memory System
 
-Persistent memory across sessions. All memory tools run in the background — you will be notified when they complete.
+Persistent memory across sessions. The goal is to build a **user model** — preferences, communication style, common use cases, dislikes, recurring patterns — so that in future sessions the agent understands how this user works, talks, and thinks. All memory tools run in the background — you will be notified when they complete.
 
-- **save_memory(content, context?)** — Save decisions, learnings, user preferences, debugging insights. Be detailed: include WHY, what alternatives were considered, and relevant context.
+- **save_memory(content, context?)** — Save user preferences, communication style, recurring use cases, dislikes, patterns, decisions (with reasoning), and project context. Be detailed: include WHY and alternatives.
 - **recall_memory(query)** — Search and retrieve relevant memories. Start with recall_memory(query: "index") to read the high-level snapshot, then recall specific topics for depth.
-- **compress_memory(focus?)** — Consolidate and deduplicate memories. Use when entries have accumulated over multiple sessions.
+- **enrich_memory(focus?, delete_older_than_days?)** — Distil recent chat sessions into memories, consolidate/deduplicate all memory files, and delete chat sessions older than the threshold (default 7 days). Use to keep the user model current from conversations and to prune accumulated entries.
 
 ### Storage
 ` + "```" + `
@@ -542,31 +659,29 @@ Persistent memory across sessions. All memory tools run in the background — yo
 - Use recall_memory for deeper lookups when the index references something relevant.
 - **When user references past work** ("like before", "as we discussed", "continue with"): always recall first.
 
+### What to Save (and NOT save)
+Memory is a **user model** — optimize for understanding the user in future sessions.
+
+**Save:**
+- Preferences and dislikes ("I prefer X", "don't do Y", stylistic corrections)
+- Communication style (terse/verbose, formal/casual, language quirks)
+- What the user uses chat for most often (recurring task types, common workflows)
+- Patterns (how they approach problems, what they push back on, where they need more vs. less detail)
+- Decisions + reasoning (with alternatives considered) that matter across sessions
+- Project/goal/constraint context that persists
+
+**Do NOT save** facts that can be looked up live from workflows, MCP servers, or APIs (PR status, channel lists, live metrics, calendar events, file contents). These go stale and belong to live tool calls, not memory.
+
 ### Save Rules
-- **Only save when the user explicitly asks** ("remember this", "save to memory", "note this down").
-- Do NOT proactively save during normal conversations — the user will separately review chats and create memories when needed.
+- **Only save when the user explicitly asks** ("remember this", "save to memory", "note this down"), OR when running enrich_memory over chat history.
+- Do NOT proactively save during normal conversations.
 - When saving, be **detailed and thorough**: include WHY, alternatives considered, what worked/failed, and relevant context.
 - Write as if explaining to a future self with no session context.
 
-### Compression
-- Use compress_memory when memories have accumulated over multiple sessions. It merges related entries, removes outdated ones, and rewrites files cleanly.
-
-### Building Memories from Chat History
-
-When asked to read past conversations and create memories, follow this process:
-
-1. **List sessions:** ` + "`execute_shell_command(command: \"ls " + memoryFolder + "/../chat_history/\")`" + `
-2. **Read each conversation:** ` + "`execute_shell_command(command: \"cat " + memoryFolder + "/../chat_history/<session-id>/conversation.json\")`" + `
-3. **Extract what matters from each conversation:**
-   - User preferences and corrections ("don't do X", "I prefer Y")
-   - Decisions made and their reasoning
-   - What worked vs what failed (tool calls, approaches)
-   - Project context (what the user is working on, goals, constraints)
-   - Recurring patterns (user frequently asks about X, common workflows)
-   - Key facts learned (system architecture, credentials, endpoints)
-4. **Save each extracted memory** via save_memory with detailed context about which conversation it came from.
-5. **After processing all conversations**, run compress_memory to consolidate.
-
-**What to skip:** Greetings, trivial questions with no lasting value, one-off lookups with no reusable insight.
+### Enrichment
+- Use enrich_memory to distil recent chat history into memories and consolidate existing ones in one shot.
+  It reads every session in ` + "`" + memoryFolder + `/../chat_history/` + "`" + `, extracts insights into today's date folder and entity files, deletes chat sessions older than the threshold (default 7 days), and then dedupes/merges and regenerates ` + "`index.md`" + `.
+- Pass ` + "`focus`" + ` to limit consolidation to a topic. Pass ` + "`delete_older_than_days: 0`" + ` to skip deletion.
+- The agent only saves things with lasting value (preferences, decisions, what worked/failed, project context, recurring patterns, key facts). It skips greetings and trivial one-off lookups.
 `
 }

@@ -19,10 +19,6 @@ type Section = 'slack' | 'simulate'
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 interface ChatMessage { id: string; text: string; is_bot: boolean; timestamp: string }
 
-function isVisibleSimulatorMessage(text: string): boolean {
-  return text.trim() !== 'Session completed.'
-}
-
 export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModalProps) {
   const [activeSection, setActiveSection] = useState<Section>('slack')
 
@@ -50,6 +46,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [workflows, setWorkflows] = useState<DiscoveredWorkflow[]>([])
   const [newChannelID, setNewChannelID] = useState('')
   const [newWorkflowID, setNewWorkflowID] = useState('')
+  const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'ask' | 'run'>('')
 
   // ── Simulate ──────────────────────────────────────────────────────────────
   const { delegationTierConfig } = useLLMStore()
@@ -165,7 +162,6 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
         if (cancelled) return
         if (data.messages && data.messages.length > 0) {
           const newMsgs: ChatMessage[] = data.messages
-            .filter(m => isVisibleSimulatorMessage(m.text))
             .map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp }))
           setMessages(prev => {
             const existingIds = new Set(prev.map(m => m.id))
@@ -286,7 +282,6 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       if (data.messages?.length > 0) {
         setMessages(
           data.messages
-            .filter(m => isVisibleSimulatorMessage(m.text))
             .map(m => ({ id: m.id, text: m.text, is_bot: m.is_bot, timestamp: m.timestamp }))
         )
       }
@@ -479,12 +474,33 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                 {Object.entries(slackConfig.channel_routing || {}).length > 0 && (
                                   <div className="flex flex-col gap-1.5">
                                     {Object.entries(slackConfig.channel_routing || {}).map(([chId, route]) => {
-                                      const wf = workflows.find(w => w.manifest.id === (route as ChannelRoute).workflow_id)
+                                      const r = route as ChannelRoute
+                                      const wf = workflows.find(w => w.manifest.id === r.workflow_id)
                                       return (
                                         <div key={chId} className="flex items-center gap-2">
                                           <code className="flex-shrink-0 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono w-36 truncate">{chId}</code>
                                           <span className="text-xs text-muted-foreground flex-shrink-0">→</span>
-                                          <span className="flex-1 text-xs truncate text-foreground">{wf ? wf.manifest.label : <span className="text-yellow-500">{(route as ChannelRoute).workflow_id} (not found)</span>}</span>
+                                          <span className="flex-1 text-xs truncate text-foreground">{wf ? wf.manifest.label : <span className="text-yellow-500">{r.workflow_id} (not found)</span>}</span>
+                                          <select
+                                            value={r.workshop_mode || ''}
+                                            onChange={e => {
+                                              const mode = e.target.value as '' | 'builder' | 'optimizer' | 'ask' | 'run'
+                                              const updated = { ...slackConfig.channel_routing }
+                                              const nextRoute: ChannelRoute = { ...r }
+                                              if (mode) nextRoute.workshop_mode = mode
+                                              else delete nextRoute.workshop_mode
+                                              updated[chId] = nextRoute
+                                              setSlackConfig({ ...slackConfig, channel_routing: updated })
+                                            }}
+                                            className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                            title="Override workshop mode for this channel. 'Default' uses whatever the workflow manifest specifies."
+                                          >
+                                            <option value="">Default</option>
+                                            <option value="run">Run</option>
+                                            <option value="ask">Ask</option>
+                                            <option value="optimizer">Optimize</option>
+                                            <option value="builder">Builder</option>
+                                          </select>
                                           <button
                                             onClick={() => {
                                               const updated = { ...slackConfig.channel_routing }
@@ -520,6 +536,18 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                       <option key={w.manifest.id} value={w.manifest.id}>{w.manifest.label}</option>
                                     ))}
                                   </select>
+                                  <select
+                                    value={newWorkshopMode}
+                                    onChange={e => setNewWorkshopMode(e.target.value as '' | 'builder' | 'optimizer' | 'ask' | 'run')}
+                                    className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                    title="Override workshop mode for this channel. 'Default' uses the workflow manifest value."
+                                  >
+                                    <option value="">Default</option>
+                                    <option value="run">Run</option>
+                                    <option value="ask">Ask</option>
+                                    <option value="optimizer">Optimize</option>
+                                    <option value="builder">Builder</option>
+                                  </select>
                                   <button
                                     onClick={() => {
                                       if (!newChannelID.trim() || !newWorkflowID) return
@@ -528,12 +556,14 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                         workflow_id: newWorkflowID,
                                         workspace_path: selectedWf?.workspace_path || '',
                                       }
+                                      if (newWorkshopMode) route.workshop_mode = newWorkshopMode
                                       setSlackConfig({
                                         ...slackConfig,
                                         channel_routing: { ...(slackConfig.channel_routing || {}), [newChannelID.trim()]: route },
                                       })
                                       setNewChannelID('')
                                       setNewWorkflowID('')
+                                      setNewWorkshopMode('')
                                     }}
                                     disabled={!newChannelID.trim() || !newWorkflowID}
                                     className="p-1.5 text-primary hover:bg-primary/10 disabled:opacity-40 rounded transition-colors flex-shrink-0"
@@ -562,6 +592,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                     <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mentions:read</code></li>
                                     <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">channels:history</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">groups:history</code></li>
                                     <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write.public</code></li>
+                                    <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">reactions:write</code> (for the hourglass "bot is working" indicator)</li>
                                     <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read.email</code> (required for per-user memory)</li>
                                     <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:write</code> (optional, for attachments)</li>
                                   </ul>
@@ -766,7 +797,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                           return (
                             <div className="flex gap-2">
                               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0"><Loader2 className="w-3.5 h-3.5 text-primary animate-spin" /></div>
-                              <div className="px-3 py-2 rounded-lg bg-muted text-muted-foreground text-sm">{simStatus === 'sending' ? 'Starting session...' : 'Agent is working...'}</div>
+                              <div className="px-3 py-2 rounded-lg bg-muted text-muted-foreground text-sm">Agent is working...</div>
                             </div>
                           )
                         }

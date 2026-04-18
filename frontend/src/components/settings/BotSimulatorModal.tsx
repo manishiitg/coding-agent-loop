@@ -20,10 +20,6 @@ interface ChatMessage {
 
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 
-function isVisibleSimulatorMessage(text: string): boolean {
-  return text.trim() !== 'Session completed.'
-}
-
 export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModalProps) {
   const { delegationTierConfig } = useLLMStore()
   const [input, setInput] = useState('')
@@ -129,8 +125,7 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
         if (cancelled) return
         if (data.messages && data.messages.length > 0) {
           const newMsgs: ChatMessage[] = data.messages
-            .filter(m => isVisibleSimulatorMessage(m.text))
-            .map(m => ({
+              .map(m => ({
               id: m.id,
               text: m.text,
               is_bot: m.is_bot,
@@ -232,7 +227,6 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
       const data = await agentApi.getSimulatorMessages(threadId, 0)
       if (data.messages && data.messages.length > 0) {
         setMessages(data.messages
-          .filter(m => isVisibleSimulatorMessage(m.text))
           .map(m => ({
             id: m.id,
             text: m.text,
@@ -470,7 +464,7 @@ export default function BotSimulatorModal({ isOpen, onClose }: BotSimulatorModal
                         <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
                       </div>
                       <div className="px-3 py-2 rounded-lg bg-muted text-muted-foreground text-sm">
-                        {status === 'sending' ? 'Starting session...' : 'Agent is working...'}
+                        Agent is working...
                       </div>
                     </div>
                   )

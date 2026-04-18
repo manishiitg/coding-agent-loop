@@ -65,24 +65,27 @@ func cleanupDir(dir string) {
 		return
 	}
 
-	// Find all .pid files (default.pid, rts.pid, etc.)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		log.Printf("[BROWSER_CLEANUP] Could not read %s: %v", dir, err)
 		return
 	}
 
+	// Pass 1: iterate .pid files (daemon PIDs). Remove each session's state if
+	// the daemon PID is dead or the PID file is corrupt.
+	seenBase := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".pid") {
+		if !strings.HasSuffix(name, ".pid") || strings.HasSuffix(name, ".chrome-pid") {
 			continue
 		}
 
 		pidFile := filepath.Join(dir, name)
 		baseName := strings.TrimSuffix(name, ".pid")
+		seenBase[baseName] = true
 		sockFile := filepath.Join(dir, baseName+".sock")
 
 		pidBytes, err := os.ReadFile(pidFile)
@@ -92,29 +95,61 @@ func cleanupDir(dir string) {
 
 		pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
 		if err != nil {
-			// Corrupt PID file — remove it
 			log.Printf("[BROWSER_CLEANUP] Removing corrupt PID file: %s", pidFile)
 			os.Remove(pidFile)
 			os.Remove(sockFile)
 			continue
 		}
 
-		// Check if the process is alive
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			// Can't find process — stale
-			removeStalePair(pidFile, sockFile, pid, "process not found")
-			continue
-		}
-
-		// On Unix, FindProcess always succeeds. Use signal 0 to check if alive.
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
-			removeStalePair(pidFile, sockFile, pid, err.Error())
+		if !isProcessAlive(pid) {
+			removeStalePair(pidFile, sockFile, pid, "process not found or dead")
 			continue
 		}
 
 		log.Printf("[BROWSER_CLEANUP] Runtime %s (PID %d) is alive — keeping", baseName, pid)
 	}
+
+	// Pass 2: sweep orphan .chrome-pid files — sessions that crashed without
+	// leaving a .pid behind. Without this sweep, .chrome-pid files accumulate
+	// indefinitely from crashed sessions.
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".chrome-pid") {
+			continue
+		}
+		baseName := strings.TrimSuffix(name, ".chrome-pid")
+		if seenBase[baseName] {
+			continue // pass 1 handled this session's files
+		}
+
+		chromePIDFile := filepath.Join(dir, name)
+		pidBytes, err := os.ReadFile(chromePIDFile)
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+		if err != nil || !isProcessAlive(pid) {
+			log.Printf("[BROWSER_CLEANUP] Removing orphan chrome-pid file: %s", chromePIDFile)
+			os.Remove(chromePIDFile)
+			// Best-effort sweep of any other extras left by this session.
+			for _, ext := range []string{".stream", ".engine", ".version", ".sock"} {
+				os.Remove(filepath.Join(dir, baseName+ext))
+			}
+		}
+	}
+}
+
+// isProcessAlive returns true if the PID refers to a live process.
+// On Unix, FindProcess always succeeds, so we probe with signal 0.
+func isProcessAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 func removeStalePair(pidFile, sockFile string, pid int, reason string) {

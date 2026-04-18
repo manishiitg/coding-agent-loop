@@ -22,7 +22,7 @@ func sanitizeUserIDForPath(userID string) string {
 
 // perUserMemoryFolderFor returns the workspace-relative memory folder path for a given user,
 // e.g. "_users/alice/memories". This is the canonical location where save_memory / recall_memory /
-// compress_memory read and write data — replacing the older global "memories/" folder.
+// enrich_memory read and write data — replacing the older global "memories/" folder.
 func perUserMemoryFolderFor(userID string) string {
 	return fmt.Sprintf("_users/%s/memories", sanitizeUserIDForPath(userID))
 }

@@ -111,6 +111,16 @@ func (w *WebSimulatorConnector) StopListening() {
 	close(w.stopCleanup)
 }
 
+// AddReaction is a no-op for the web simulator — it has no emoji reactions.
+func (w *WebSimulatorConnector) AddReaction(ctx context.Context, channelID, messageTS, emoji string) error {
+	return nil
+}
+
+// RemoveReaction is a no-op for the web simulator — it has no emoji reactions.
+func (w *WebSimulatorConnector) RemoveReaction(ctx context.Context, channelID, messageTS, emoji string) error {
+	return nil
+}
+
 func (w *WebSimulatorConnector) SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error) {
 	thread := w.getOrCreateThread(threadID.ThreadTS)
 	msgID := uuid.New().String()

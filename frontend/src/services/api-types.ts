@@ -285,6 +285,8 @@ export interface CompactContextResponse {
 export interface ChannelRoute {
   workflow_id: string
   workspace_path: string
+  // Override the manifest's workshop_mode for this channel. Empty = use manifest.
+  workshop_mode?: 'builder' | 'optimizer' | 'ask' | 'run'
 }
 
 export interface SlackConfig {

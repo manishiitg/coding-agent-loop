@@ -782,7 +782,7 @@ Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, 
 The following tools are NOT available as direct function calls — call them via curl through ` + "`mcp__api-bridge__execute_shell_command`" + `:
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
-- **Memory tools**: save_memory, recall_memory, compress_memory
+- **Memory tools**: save_memory, recall_memory, enrich_memory
 
 **Pattern:**
 ` + "```" + `bash

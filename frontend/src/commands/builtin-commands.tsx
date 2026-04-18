@@ -724,15 +724,15 @@ After the tool returns, tell me:
     }
   },
   {
-    command: 'compress-memory',
-    description: 'Compress and clean up agent memories',
+    command: 'enrich-memory',
+    description: 'Distil recent chats into memory and consolidate (deletes chats older than 7 days)',
     icon: <Minimize2 className="w-4 h-4" />,
     modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
       const msg = ctx.beforeSlash
-        ? `Compress and consolidate my memories, focusing on: ${ctx.beforeSlash}. Use compress_memory.`
-        : 'Compress and consolidate all my memories. Use compress_memory to read all files, merge related entries, remove superseded info, and reduce verbosity.'
+        ? `Enrich my memory, focusing on: ${ctx.beforeSlash}. Use enrich_memory — extract insights from chat_history into memories, then consolidate. Delete chat sessions older than 7 days.`
+        : 'Enrich my memory. Use enrich_memory to extract insights from every session in chat_history into today\u2019s date folder + entity files, then consolidate all memories and regenerate index.md. Delete chat sessions older than 7 days.'
       ctx.onSubmit(msg)
     }
   }

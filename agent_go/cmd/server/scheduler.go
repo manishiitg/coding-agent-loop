@@ -147,7 +147,7 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 		}
 
 		for _, ma := range maScheds {
-			for _, sched := range ma.ScheduleFile.Schedules {
+			for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
 				if !sched.Enabled {
 					continue
 				}
@@ -201,7 +201,7 @@ func (s *SchedulerService) rescanMultiAgentSchedules(ctx context.Context) {
 	discovered := make(map[string]bool)
 
 	for _, ma := range maScheds {
-		for _, sched := range ma.ScheduleFile.Schedules {
+		for _, sched := range MergeBuiltinSchedules(ma.ScheduleFile.Schedules) {
 			discovered[sched.ID] = true
 
 			// Check if already loaded with same enabled state
@@ -661,6 +661,15 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		}
 
 		freshCtx = buildScheduleContext(sctx.WorkspacePath, manifest, *currentSched)
+	}
+
+	// Built-in pre-fire check: if the built-in registered a gating function and
+	// it returns false, skip this tick entirely. No LLM session is spawned.
+	if check, ok := PreFireChecks[freshCtx.Schedule.ID]; ok {
+		if !check(freshCtx.UserID) {
+			scheduleLogf("[SCHEDULER] ⏭️ Pre-fire check returned false for %s (user %s) — skipping", freshCtx.Schedule.ID, freshCtx.UserID)
+			return
+		}
 	}
 
 	// Prevent concurrent runs — check and mark atomically under the write lock

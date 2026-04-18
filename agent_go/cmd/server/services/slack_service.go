@@ -344,71 +344,130 @@ func (s *SlackService) SendFeedbackNotification(
 	return timestamp, nil
 }
 
-// convertMarkdownToSlackMrkdwn converts common markdown patterns to Slack's mrkdwn format
-// Slack mrkdwn supports: *bold*, _italic_, ~strikethrough~, `code`, > quotes, lists
-// It does NOT support: headers (#), tables, complex nested structures
+// convertMarkdownToSlackMrkdwn converts common markdown patterns to Slack's mrkdwn format.
+// Slack mrkdwn supports: *bold*, _italic_, ~strike~, `code`, ```code blocks```, > quotes.
+// It does NOT natively support: headers, tables, images, task list checkboxes.
+// We approximate those so output looks reasonable.
+//
+// Order matters here: code is protected via placeholders first so later regexes
+// can't mangle its contents, then structural (tables, headers) runs before
+// inline (bold, italic, strike).
 func convertMarkdownToSlackMrkdwn(text string) string {
 	if text == "" {
 		return text
 	}
-
 	result := text
 
-	// Convert headers to bold (## Header -> *Header*)
-	// Match headers with 1-6 # symbols
-	headerRegex := regexp.MustCompile(`(?m)^(#{1,6})\s+(.+)$`)
-	result = headerRegex.ReplaceAllStringFunc(result, func(match string) string {
-		parts := headerRegex.FindStringSubmatch(match)
-		if len(parts) == 3 {
-			// Convert header to bold
-			return fmt.Sprintf("*%s*", strings.TrimSpace(parts[2]))
+	// Step 1: protect fenced code blocks and inline code from every other regex.
+	var codeStore []string
+	saveCode := func(s string) string {
+		codeStore = append(codeStore, s)
+		return fmt.Sprintf("\x00C%d\x00", len(codeStore)-1)
+	}
+	codeBlockRegex := regexp.MustCompile("(?s)```(?:[a-zA-Z0-9_+-]+)?\\n?(.*?)```")
+	result = codeBlockRegex.ReplaceAllStringFunc(result, func(m string) string {
+		parts := codeBlockRegex.FindStringSubmatch(m)
+		if len(parts) == 2 {
+			return saveCode("```\n" + strings.TrimSpace(parts[1]) + "\n```")
 		}
-		return match
+		return saveCode(m)
+	})
+	inlineCodeRegex := regexp.MustCompile("`([^`\\n]+)`")
+	result = inlineCodeRegex.ReplaceAllStringFunc(result, saveCode)
+
+	// Step 2: convert tables to fenced code blocks so alignment is preserved.
+	// A table is a header row |…|, separator |---|---|, then one or more body rows.
+	result = convertMarkdownTables(result, saveCode)
+
+	// Step 3: headers → bold (Slack has no headers).
+	headerRegex := regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	result = headerRegex.ReplaceAllString(result, "*$1*")
+
+	// Step 4: images → link. Must run BEFORE the link regex so ![alt](url) isn't
+	// left with a stray leading "!".
+	imgRegex := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	result = imgRegex.ReplaceAllStringFunc(result, func(m string) string {
+		parts := imgRegex.FindStringSubmatch(m)
+		alt := parts[1]
+		if alt == "" {
+			alt = "image"
+		}
+		return fmt.Sprintf("<%s|%s>", parts[2], alt)
 	})
 
-	// Convert code blocks (```language\ncode\n```) to ```code```
-	// Slack supports code blocks with triple backticks
-	codeBlockRegex := regexp.MustCompile("(?s)```(?:[a-zA-Z]+)?\\n(.*?)```")
-	result = codeBlockRegex.ReplaceAllStringFunc(result, func(match string) string {
-		// Extract code content
-		codeContent := codeBlockRegex.FindStringSubmatch(match)
-		if len(codeContent) == 2 {
-			return fmt.Sprintf("```\n%s\n```", strings.TrimSpace(codeContent[1]))
-		}
-		return match
-	})
-
-	// Convert markdown links [text](url) to Slack format <url|text>
+	// Step 5: links [text](url) → <url|text>.
 	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
-	result = linkRegex.ReplaceAllStringFunc(result, func(match string) string {
-		parts := linkRegex.FindStringSubmatch(match)
-		if len(parts) == 3 {
-			// Slack format: <url|text>
-			return fmt.Sprintf("<%s|%s>", parts[2], parts[1])
-		}
-		return match
-	})
+	result = linkRegex.ReplaceAllString(result, "<$2|$1>")
 
-	// Convert bold: **text** -> *text* (Slack uses single * for bold)
-	// Use non-greedy .+? to handle nested formatting and multi-word bold
+	// Step 6: bold **text** → *text*. Non-greedy to keep each pair tight.
 	boldRegex := regexp.MustCompile(`\*\*(.+?)\*\*`)
 	result = boldRegex.ReplaceAllString(result, "*$1*")
 
-	// Convert italic: _text_ is the same in both formats, no change needed
-	// Markdown *text* (single asterisk italic) conflicts with Slack bold *text*,
-	// so we leave single asterisks as-is (they render as bold in Slack, which is close enough)
+	// Step 7: strikethrough ~~text~~ → ~text~.
+	strikeRegex := regexp.MustCompile(`~~(.+?)~~`)
+	result = strikeRegex.ReplaceAllString(result, "~$1~")
 
-	// Convert bullet lists: "* item" or "- item" -> "• item"
+	// Step 8: task list checkboxes. "- [ ] item" → "☐ item", "- [x] item" → "☑ item".
+	// Run before the generic bullet regex, which would otherwise swallow the "[ ]".
+	taskOpenRegex := regexp.MustCompile(`(?m)^(\s*)[*\-]\s+\[\s\]\s+`)
+	result = taskOpenRegex.ReplaceAllString(result, "${1}☐ ")
+	taskDoneRegex := regexp.MustCompile(`(?m)^(\s*)[*\-]\s+\[[xX]\]\s+`)
+	result = taskDoneRegex.ReplaceAllString(result, "${1}☑ ")
+
+	// Step 9: bullet lists "* item" / "- item" → "• item".
 	bulletRegex := regexp.MustCompile(`(?m)^(\s*)[*\-]\s+`)
 	result = bulletRegex.ReplaceAllString(result, "${1}• ")
 
-	// Convert markdown horizontal rules (---) to a simple separator
-	result = regexp.MustCompile(`(?m)^---+$`).ReplaceAllString(result, "---")
+	// Step 10: horizontal rule to a visible em-dash run (Slack renders "---" as text).
+	result = regexp.MustCompile(`(?m)^\s*(-{3,}|_{3,}|\*{3,})\s*$`).ReplaceAllString(result, "————————")
 
-	// Note: Other markdown features like tables are not supported by Slack
-	// They will be displayed as plain text, which is acceptable
-
+	// Step 11: restore code.
+	for i, c := range codeStore {
+		result = strings.ReplaceAll(result, fmt.Sprintf("\x00C%d\x00", i), c)
+	}
 	return result
+}
+
+// convertMarkdownTables wraps contiguous markdown-table regions in a ``` fence
+// so Slack renders them in a monospace block with preserved column alignment.
+// saveCode is called to protect the resulting block from subsequent regexes.
+func convertMarkdownTables(text string, saveCode func(string) string) string {
+	lines := strings.Split(text, "\n")
+	isTableRow := func(s string) bool {
+		s = strings.TrimSpace(s)
+		return strings.HasPrefix(s, "|") && strings.HasSuffix(s, "|") && strings.Count(s, "|") >= 2
+	}
+	isSeparator := func(s string) bool {
+		s = strings.TrimSpace(s)
+		if !isTableRow(s) {
+			return false
+		}
+		inner := strings.Trim(s, "|")
+		for _, cell := range strings.Split(inner, "|") {
+			c := strings.TrimSpace(cell)
+			c = strings.Trim(c, ":")
+			if c == "" || strings.Trim(c, "-") != "" {
+				return false
+			}
+		}
+		return true
+	}
+
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		if isTableRow(lines[i]) && i+1 < len(lines) && isSeparator(lines[i+1]) {
+			j := i + 2
+			for j < len(lines) && isTableRow(lines[j]) {
+				j++
+			}
+			block := "```\n" + strings.Join(lines[i:j], "\n") + "\n```"
+			out = append(out, saveCode(block))
+			i = j - 1
+			continue
+		}
+		out = append(out, lines[i])
+	}
+	return strings.Join(out, "\n")
 }
 
 // formatSlackMessage formats a feedback request as Slack blocks
@@ -805,10 +864,28 @@ func (s *SlackService) TestConnection(ctx context.Context) error {
 	return nil
 }
 
+// isMaskedToken returns true when the string is a display-only placeholder
+// produced by GetConfig (e.g. "xoxb-...ABCD"). These must never be persisted
+// — when the UI round-trips them back on an unrelated Save, we want to keep
+// whatever real token is already stored instead of overwriting with garbage.
+func isMaskedToken(s string) bool {
+	return strings.Contains(s, "...")
+}
+
 // SaveConfig persists Slack configuration to the filesystem-backed config file
 // and reloads the service so Socket Mode restarts with the new settings.
+// Incoming masked tokens are treated as "no change" and replaced by the
+// currently-stored real token before writing to disk.
 func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) error {
 	slackFSMu.Lock()
+	if s.config != nil {
+		if isMaskedToken(config.BotToken) {
+			config.BotToken = s.config.BotToken
+		}
+		if isMaskedToken(config.AppToken) {
+			config.AppToken = s.config.AppToken
+		}
+	}
 	if err := saveSlackConfigToDisk(config); err != nil {
 		slackFSMu.Unlock()
 		log.Printf("[SLACK] Failed to save config: %v", err)
@@ -1026,9 +1103,16 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// Route thread replies to the bot manager (it will silently ignore if no active session).
-	// Don't add :eyes: reaction here — the bot manager decides whether to process the message.
+	// Route thread replies to the bot manager. Add :eyes: ack reaction just
+	// like @mention flow so follow-ups get the same "seen + working" feedback.
+	// If the manager ends up ignoring the message (no prior session), the
+	// reaction will linger briefly but Slack lets users read it as "noticed."
 	if s.messageHandler != nil {
+		if s.client != nil {
+			if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: ev.Channel, Timestamp: ev.TimeStamp}); err != nil {
+				log.Printf("[SLACK_BOT] Failed to add ack reaction on thread reply: %v", err)
+			}
+		}
 		s.messageHandler(BotIncomingMessage{
 			Platform:      "slack",
 			UserID:        ev.User,
@@ -1036,6 +1120,7 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 			ChannelID:     ev.Channel,
 			ThreadTS:      ev.ThreadTimeStamp,
 			Text:          ev.Text,
+			MessageTS:     ev.TimeStamp,
 			Timestamp:     time.Now(),
 			IsThreadReply: true,
 		})
@@ -1196,6 +1281,39 @@ func (s *SlackService) SetInteractionHandler(handler BotInteractionHandler) {
 // GetFormatter returns the Slack message formatter
 func (s *SlackService) GetFormatter() MessageFormatter {
 	return &SlackFormatter{}
+}
+
+// AddReaction adds a reaction emoji to a Slack message. Used by the session
+// manager to layer an "hourglass" on top of the initial "eyes" ack when a
+// session runs longer than a short threshold. "already_reacted" is non-fatal.
+func (s *SlackService) AddReaction(ctx context.Context, channelID, messageTS, emoji string) error {
+	if s.client == nil || channelID == "" || messageTS == "" || emoji == "" {
+		return nil
+	}
+	if err := s.client.AddReaction(emoji, slack.ItemRef{Channel: channelID, Timestamp: messageTS}); err != nil {
+		if strings.Contains(err.Error(), "already_reacted") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// RemoveReaction removes a reaction emoji from a Slack message. Called when
+// a session completes, so the ack reactions clear once the bot has actually
+// replied. Missing-reaction errors are treated as non-fatal.
+func (s *SlackService) RemoveReaction(ctx context.Context, channelID, messageTS, emoji string) error {
+	if s.client == nil || channelID == "" || messageTS == "" || emoji == "" {
+		return nil
+	}
+	if err := s.client.RemoveReaction(emoji, slack.ItemRef{Channel: channelID, Timestamp: messageTS}); err != nil {
+		// "no_reaction" means the reaction was already gone — ignore it.
+		if strings.Contains(err.Error(), "no_reaction") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // SendThreadMessage sends a message to a Slack thread
@@ -1412,6 +1530,7 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 		ChannelID:     ev.Channel,
 		ThreadTS:      threadTS,
 		Text:          text,
+		MessageTS:     ev.TimeStamp,
 		Timestamp:     time.Now(),
 		IsThreadReply: isThreadReply,
 		IsMention:     true,

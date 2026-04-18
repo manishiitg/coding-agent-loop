@@ -74,7 +74,7 @@ loadAndRegisterUserCommands(): Promise<void>
 | `/models` | Open LLM model configuration | All | No |
 | `/resume` | Resume a previous conversation | All | No |
 | `/workflow-builder` | Build a workflow from existing plans | Multi-Agent | No |
-| `/compress-memory` | Compress and clean up agent memories | Multi-Agent | No |
+| `/enrich-memory` | Distil recent chats into memory, consolidate, and delete chats older than 7 days | Multi-Agent | No |
 
 ## Adding a New Built-in Command
 

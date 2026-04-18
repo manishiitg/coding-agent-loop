@@ -23,6 +23,9 @@ import (
 type ChannelRoute struct {
 	WorkflowID    string `json:"workflow_id"`
 	WorkspacePath string `json:"workspace_path"`
+	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
+	// "builder" | "optimizer" | "ask" | "run". Empty means "use manifest value".
+	WorkshopMode string `json:"workshop_mode,omitempty"`
 }
 
 // ThreadID identifies a conversation thread on a platform
@@ -47,6 +50,7 @@ type BotIncomingMessage struct {
 	ChannelID       string
 	ThreadTS        string // empty = new conversation, set = existing thread
 	Text            string // @mention stripped
+	MessageTS       string // platform timestamp of the incoming message (used to add/remove reactions)
 	Timestamp       time.Time
 	IsThreadReply   bool
 	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
@@ -111,6 +115,8 @@ type BotConnector interface {
 	SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error)
 	SendThreadMessageWithBlocks(ctx context.Context, threadID ThreadID, message string, blocks []MessageBlock) (string, error)
 	UpdateMessage(ctx context.Context, threadID ThreadID, messageID string, newText string) error
+	AddReaction(ctx context.Context, channelID, messageTS, emoji string) error    // no-op for platforms without reactions
+	RemoveReaction(ctx context.Context, channelID, messageTS, emoji string) error // no-op for platforms without reactions
 	GetThreadHistory(ctx context.Context, threadID ThreadID) ([]ThreadMessage, error)
 	SetMessageHandler(handler BotMessageHandler)
 	SetInteractionHandler(handler BotInteractionHandler)
@@ -182,18 +188,46 @@ type activeBotSession struct {
 	Metadata          *chathistory.BotMetadata // platform/user info for the conversation
 	cancel            context.CancelFunc
 	eventFilter       *BotEventFilter
-	awaitingUserInput bool   // set by event filter on any blocking event
-	blockingEventType string // "blocking_human_feedback", "blocking_human_questions"
+	awaitingUserInput bool      // set by event filter on any blocking event
+	blockingEventType string    // "blocking_human_feedback", "blocking_human_questions"
+	ackChannelID      string    // channel of the message the bot reacted to (for removal)
+	ackMessageTS      string    // timestamp of the message the bot reacted to
+	LastActivity      time.Time // updated on any send/receive; used to prune stale completed sessions
 }
 
 // NewBotConversationManager creates a new manager.
 func NewBotConversationManager(chatStore chathistory.Store, mcpConfigPath, workspaceURL string) *BotConversationManager {
-	return &BotConversationManager{
+	m := &BotConversationManager{
 		connectors:    make(map[string]BotConnector),
 		sessions:      make(map[string]*activeBotSession),
 		chatStore:     chatStore,
 		mcpConfigPath: mcpConfigPath,
 		workspaceURL:  workspaceURL,
+	}
+	go m.runSessionJanitor()
+	return m
+}
+
+// runSessionJanitor prunes completed/failed sessions older than 7 days. Running
+// sessions are never pruned from here — they clean up via runSession's exit.
+func (m *BotConversationManager) runSessionJanitor() {
+	const maxAge = 7 * 24 * time.Hour
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		cutoff := time.Now().Add(-maxAge)
+		m.mu.Lock()
+		for key, active := range m.sessions {
+			active.mu.Lock()
+			prune := (active.Status == chathistory.BotSessionStatusCompleted ||
+				active.Status == chathistory.BotSessionStatusFailed) &&
+				active.LastActivity.Before(cutoff)
+			active.mu.Unlock()
+			if prune {
+				delete(m.sessions, key)
+			}
+		}
+		m.mu.Unlock()
 	}
 }
 
@@ -298,16 +332,19 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	// Non-mention messages should only be processed if there's an active session in the thread.
 	// Skip access checks and don't reply with "no access" for messages that didn't tag the bot.
 	if !msg.IsMention {
-		// Quick check: is there even an active session for this thread?
-		threadKey := msg.ChannelID + ":" + msg.ThreadTS
-		if msg.ThreadTS == "" {
-			threadKey = msg.ChannelID + ":" + msg.ChannelID
+		// Quick check: is there even a session entry for this thread? The key
+		// must match ThreadID.Key() format (platform-prefixed) — not just
+		// channel:ts — otherwise the lookup always misses and non-mention
+		// replies are dropped even when a prior session exists.
+		probeThreadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
+		if probeThreadID.ThreadTS == "" {
+			probeThreadID.ThreadTS = msg.ChannelID
 		}
 		m.mu.Lock()
-		_, hasSession := m.sessions[threadKey]
+		_, hasSession := m.sessions[probeThreadID.Key()]
 		m.mu.Unlock()
 		if !hasSession {
-			// No active session and not a mention — silently ignore
+			// No session entry and not a mention — silently ignore
 			return
 		}
 	}
@@ -762,15 +799,38 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	// Track active session — bot sessions are in-memory only.
 	m.mu.Lock()
 	active := &activeBotSession{
-		SessionID: sessionID,
-		UserID:    workspaceUserID,
-		Status:    chathistory.BotSessionStatusRunning,
-		Platform:  msg.Platform,
-		ThreadID:  threadID,
-		Metadata:  botMeta,
+		SessionID:    sessionID,
+		UserID:       workspaceUserID,
+		Status:       chathistory.BotSessionStatusRunning,
+		Platform:     msg.Platform,
+		ThreadID:     threadID,
+		Metadata:     botMeta,
+		ackChannelID: msg.ChannelID,
+		ackMessageTS: msg.MessageTS,
+		LastActivity: time.Now(),
 	}
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
+
+	// Long-running indicator: if the agent hasn't replied within ~10s, layer an
+	// hourglass reaction on top of the "eyes" ack so the user knows the bot is
+	// still thinking, not stuck. Quick responses never see the hourglass.
+	if msg.ChannelID != "" && msg.MessageTS != "" {
+		go func(channelID, messageTS, platform string) {
+			time.Sleep(10 * time.Second)
+			active.mu.Lock()
+			stillRunning := active.Status == chathistory.BotSessionStatusRunning
+			active.mu.Unlock()
+			if !stillRunning {
+				return
+			}
+			if connector := m.GetConnector(platform); connector != nil {
+				if err := connector.AddReaction(context.Background(), channelID, messageTS, "hourglass_flowing_sand"); err != nil {
+					log.Printf("[BOT_MANAGER] Failed to add hourglass reaction: %v", err)
+				}
+			}
+		}(msg.ChannelID, msg.MessageTS, msg.Platform)
+	}
 
 	// No "Starting session..." announcement — the agent's first streamed
 	// response appears quickly enough that a status preamble is just noise.
@@ -847,12 +907,31 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	if !alreadyFailed {
 		active.Status = chathistory.BotSessionStatusCompleted
 	}
+	ackChannel := active.ackChannelID
+	ackTS := active.ackMessageTS
 	active.mu.Unlock()
 
-	// Remove from active sessions map so a subsequent message starts a fresh session.
-	m.mu.Lock()
-	delete(m.sessions, active.ThreadID.Key())
-	m.mu.Unlock()
+	// Clear both ack reactions: "eyes" (immediate) and "hourglass_flowing_sand"
+	// (added only if the session ran past the long-running threshold). Missing
+	// reactions are treated as non-fatal by the connector impl.
+	if ackChannel != "" && ackTS != "" {
+		connector := m.GetConnector(active.Platform)
+		if connector != nil {
+			for _, emoji := range []string{"eyes", "hourglass_flowing_sand"} {
+				if err := connector.RemoveReaction(ctx, ackChannel, ackTS, emoji); err != nil {
+					log.Printf("[BOT_MANAGER] Failed to remove %s reaction: %v", emoji, err)
+				}
+			}
+		}
+	}
+
+	// Keep the session entry in the map with Completed status so a subsequent
+	// non-mention reply in the same thread flows through handleExistingSession
+	// and auto-starts a new session (rather than being silently ignored).
+	// Entries are pruned by the background janitor after 7 days of inactivity.
+	active.mu.Lock()
+	active.LastActivity = time.Now()
+	active.mu.Unlock()
 }
 
 // cancelSession cancels a bot session
@@ -1007,13 +1086,24 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		if route := m.resolveChannelWorkflow(channelID); route != nil {
 			req["preset_query_id"] = route.WorkflowID
 
-			// Read workshop_mode from the workflow manifest (persisted by the frontend when user changes mode).
-			workshopMode := m.readManifestWorkshopMode(route.WorkspacePath)
+			// Prefer a per-channel override on the route; fall back to the
+			// workflow manifest's workshop_mode when the route doesn't pin one.
+			workshopMode := route.WorkshopMode
+			if workshopMode == "" {
+				workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
+			}
 			if workshopMode != "" {
-				// Workshop builder mode — use the conversational Workflow Builder agent
+				// Workshop builder mode — use the conversational Workflow Builder agent.
+				// workshop_mode must live inside execution_options so the workshop
+				// session picks it up via SetWorkshopModeOverride (server.go:4409);
+				// a top-level req["workshop_mode"] is ignored and the agent falls
+				// back to auto-detection from step-optimization state.
 				req["agent_mode"] = "workflow_phase"
 				req["phase_id"] = "workflow-builder"
 				req["workshop_mode"] = workshopMode
+				req["execution_options"] = map[string]interface{}{
+					"workshop_mode": workshopMode,
+				}
 				log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s (workshop_mode=%s)", channelID, route.WorkflowID, workshopMode)
 			} else {
 				// No workshop mode — use the full step-based orchestrator (Execution mode)

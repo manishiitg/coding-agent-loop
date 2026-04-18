@@ -17,7 +17,11 @@ NAMESPACE="prod-mcpagent"
 # Configuration
 ECR_REGISTRY="414085459896.dkr.ecr.ap-south-1.amazonaws.com"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-BUILDER_NAME="k8s-mcpagent-builder-${RANDOM}"
+# Stable builder name (no ${RANDOM}). Reusing one buildkit deployment across runs
+# prevents the leak-on-failure pattern where every aborted build orphaned a separate
+# buildkit pod in prod-mcpagent. Override with BUILDER_NAME env if you need parallel
+# builds.
+BUILDER_NAME="${BUILDER_NAME:-k8s-mcpagent-builder}"
 # AWS EKS context to use (script will switch to this before deploy). Override with KUBE_CONTEXT env if needed.
 KUBE_CONTEXT="${KUBE_CONTEXT:-arn:aws:eks:ap-south-1:414085459896:cluster/app-services}"
 
@@ -604,9 +608,8 @@ echo ""
 echo -e "${GREEN}=== Deployment Complete ===${NC}"
 if [ "$BUILD" = true ]; then
     echo -e "Images built and pushed with tag: ${YELLOW}${IMAGE_TAG}${NC}"
-    echo -e "${BLUE}Cleaning up Kubernetes builder ($BUILDER_NAME)...${NC}"
-    docker buildx rm "$BUILDER_NAME" 2>/dev/null || true
-    echo -e "${GREEN}✓ Builder removed${NC}"
+    echo -e "${BLUE}Reusing buildx builder '${BUILDER_NAME}' across runs (no auto-cleanup).${NC}"
+    echo -e "${BLUE}To remove manually: ${YELLOW}docker buildx rm ${BUILDER_NAME}${NC}"
 fi
 echo -e "View logs: ${YELLOW}kubectl logs -f deployment/<service-name> -n $NAMESPACE${NC}"
 echo -e "Check status: ${YELLOW}kubectl get pods -n $NAMESPACE${NC}"

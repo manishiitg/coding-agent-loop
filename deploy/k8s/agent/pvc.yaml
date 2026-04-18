@@ -12,3 +12,21 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+# Workspace projects volume — referenced by deployment.yaml as a read-only mount at
+# /app/workspace-projects-host. Used as the bind-mount source for code-prototype
+# containers spawned by the agent (so generated code can read project files).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-projects-pvc
+  namespace: prod-mcpagent
+  labels:
+    app.kubernetes.io/name: cs
+    app.kubernetes.io/instance: mcpagent-agent
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi

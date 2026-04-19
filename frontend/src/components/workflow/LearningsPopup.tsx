@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Terminal } from 'lucide-react'
+import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Globe, Hash, RefreshCw, Eye, Edit2, Save, Ban } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import { useActiveWorkflowPreset } from '../../hooks/useActiveWorkflowPreset'
 import type { PlannerFile } from '../../services/api-types'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
 
@@ -15,18 +14,32 @@ interface LearningsPopupProps {
   plan: PlanningResponse | null
 }
 
+// LearningMetadata — fields read from learnings/{stepId}/.learning_metadata.json,
+// merged with step_config.json entries by the backend API. Field names mirror the
+// Go LearningMetadata struct and the AgentConfigs struct (snake_case in JSON).
+type LearningsAccess = 'read' | 'read-write' | 'none'
+
 interface LearningMetadata {
   step_id?: string
   successful_runs?: number
   last_turn_count?: number
+  total_iterations?: number
+
+  // Auto-lock lifecycle (description-hash scoped)
   auto_locked_at?: string
   auto_lock_reason?: string
-  total_iterations?: number
-  // Fields from step_config.json (merged by backend API)
+  auto_unlocked_at?: string
+  auto_unlock_reason?: string
+  last_description_hash?: string
+  description_hash_runs?: number
+
+  // Step-config fields merged in by the backend
   use_code_execution_mode?: boolean
-  learning_detail_level?: string
   lock_learnings?: boolean
-  // Global learning: per-step contribution counts
+  learnings_access?: LearningsAccess
+  learning_objective?: string
+
+  // Global learning only: per-step contribution counts
   step_contributions?: Record<string, number>
 }
 
@@ -141,9 +154,39 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   // Search state
   const [searchTerm, setSearchTerm] = useState('')
 
-  // Get preset default for code execution mode (fallback when step doesn't have explicit setting)
-  const activePreset = useActiveWorkflowPreset()
-  const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
+  // Global skill state: SKILL.md content + the full file tree under _global/.
+  // Displayed as a featured card at the top (global skill is the primary artifact
+  // under the current architecture — per-step learnings are secondary).
+  const [globalSkillContent, setGlobalSkillContent] = useState<string>('')
+  // globalFiles holds EVERY file under _global/ (references/, scripts/, assets/,
+  // root-level markdown, etc.) except the already-rendered SKILL.md. Each entry is
+  // keyed by its relative path (e.g. "references/selectors.md") so grouping by dir
+  // is trivial.
+  const [globalFiles, setGlobalFiles] = useState<Array<{ name: string; relPath: string; absPath: string; dir: string }>>([])
+  const [globalLoading, setGlobalLoading] = useState(false)
+  const [globalError, setGlobalError] = useState<string | null>(null)
+  const [globalExpanded, setGlobalExpanded] = useState(true)
+  const [expandedFilePaths, setExpandedFilePaths] = useState<Set<string>>(new Set())
+  const [fileContentCache, setFileContentCache] = useState<Record<string, string>>({})
+
+  // Per-step inline editors for the new access/objective controls.
+  const [editingAccessStepId, setEditingAccessStepId] = useState<string | null>(null)
+  const [editingObjectiveStepId, setEditingObjectiveStepId] = useState<string | null>(null)
+  const [objectiveDraft, setObjectiveDraft] = useState<string>('')
+  const [savingConfigStepIds, setSavingConfigStepIds] = useState<Set<string>>(new Set())
+
+  // Effective learnings_access applies the auto-migration rule mirrored from the
+  // backend's resolveLearningsAccess: if unset, infer from learning_objective.
+  const effectiveAccess = useCallback((metadata: LearningMetadata | null): LearningsAccess => {
+    if (!metadata) return 'read'
+    if (metadata.learnings_access === 'read' || metadata.learnings_access === 'read-write' || metadata.learnings_access === 'none') {
+      return metadata.learnings_access
+    }
+    if (metadata.learning_objective && metadata.learning_objective.trim() !== '') {
+      return 'read-write'
+    }
+    return 'read'
+  }, [])
 
   // Fetch learnings when popup opens (API now includes step config data merged in)
   useEffect(() => {
@@ -172,6 +215,196 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         setIsLoading(false)
       })
   }, [isOpen, workspacePath])
+
+  // Fetch everything under _global/ on open: SKILL.md content + the full file
+  // tree (references/, scripts/, assets/, any other artifacts the learning agent
+  // decided to write). Per-file content is lazy-loaded on click.
+  useEffect(() => {
+    if (!isOpen || !workspacePath) return
+    let cancelled = false
+    setGlobalLoading(true)
+    setGlobalError(null)
+    setGlobalSkillContent('')
+    setGlobalFiles([])
+    setFileContentCache({})
+    setExpandedFilePaths(new Set())
+
+    const globalPath = `${workspacePath}/learnings/_global`
+    const resolveAbs = (raw: string): string => {
+      let p = raw
+      if (!p.startsWith(workspacePath)) {
+        const clean = p.startsWith('/') ? p.slice(1) : p
+        p = `${workspacePath}/${clean}`
+      }
+      if (!p.includes('/learnings/')) {
+        p = `${globalPath}/${p}`
+      }
+      return p
+    }
+    const relFromGlobal = (absOrRel: string): string => {
+      // Strip everything up to and including "/_global/" so the display key is stable.
+      const idx = absOrRel.indexOf('/_global/')
+      if (idx !== -1) return absOrRel.slice(idx + '/_global/'.length)
+      // Already relative
+      return absOrRel.replace(/^\/+/, '')
+    }
+
+    ;(async () => {
+      try {
+        const filesResponse = await agentApi.getPlannerFiles(globalPath, 500)
+        const files: PlannerFile[] = Array.isArray(filesResponse)
+          ? filesResponse as PlannerFile[]
+          : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data as PlannerFile[] : [])
+
+        // The planner API returns a tree: folders have children. Flatten recursively,
+        // keeping only leaf file entries. Directory entries come back with
+        // type === 'folder' (or with a non-empty children array) and must NOT be
+        // passed to getPlannerFileContent — that's what caused "_(failed to load)_".
+        const flatFiles: PlannerFile[] = []
+        const walk = (nodes: PlannerFile[]) => {
+          for (const node of nodes) {
+            const isFolder = node.type === 'folder' || (Array.isArray(node.children) && node.children.length > 0)
+            if (isFolder) {
+              if (Array.isArray(node.children)) walk(node.children)
+              continue
+            }
+            flatFiles.push(node)
+          }
+        }
+        walk(files)
+
+        // Pull SKILL.md first for the featured markdown view.
+        const skill = flatFiles.find(f => {
+          const rel = relFromGlobal(f.filepath || '')
+          return rel === 'SKILL.md'
+        })
+        if (skill) {
+          const skillPath = resolveAbs(skill.filepath || '')
+          const contentResp = await agentApi.getPlannerFileContent(skillPath)
+          if (!cancelled && contentResp.success && contentResp.data?.content) {
+            let text = contentResp.data.content
+            if (text.startsWith('---')) {
+              const endIdx = text.indexOf('\n---', 3)
+              if (endIdx !== -1) text = text.slice(endIdx + 4).trim()
+            }
+            setGlobalSkillContent(text)
+          }
+        }
+
+        // Every other file (excluding SKILL.md + .learning_metadata.json + anything
+        // that somehow resolved outside _global/). Grouped by directory for display;
+        // content fetched on demand.
+        const tree = flatFiles
+          .map(f => {
+            const rawPath = f.filepath || ''
+            const relPath = relFromGlobal(rawPath)
+            return { relPath, rawPath }
+          })
+          .filter(({ relPath, rawPath }) => {
+            if (!relPath || relPath === 'SKILL.md') return false
+            if (relPath.endsWith('.learning_metadata.json')) return false
+            if (relPath.endsWith('/')) return false
+            // Safety: only include files we can place under _global/. If relFromGlobal
+            // didn't strip a /_global/ prefix AND the raw path doesn't look relative
+            // (e.g. it's a sibling workflow folder), skip it — the listing probably
+            // included a parent's content because _global/ is empty.
+            if (!rawPath.includes('/_global/') && rawPath.includes('/')) {
+              // Raw path has directory separators but none of them are under _global.
+              // Likely outside the target folder. Exclude to avoid confusing UI rows.
+              return false
+            }
+            return true
+          })
+          .map(({ relPath, rawPath }) => {
+            const name = relPath.split('/').pop() || relPath
+            const dirPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : ''
+            return { name, relPath, absPath: resolveAbs(rawPath), dir: dirPath }
+          })
+          .sort((a, b) => {
+            if (a.dir === b.dir) return a.name.localeCompare(b.name)
+            if (a.dir === '') return -1
+            if (b.dir === '') return 1
+            return a.dir.localeCompare(b.dir)
+          })
+
+        if (!cancelled) setGlobalFiles(tree)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        const isMissing = /not found|no such|doesn't exist|does not exist/i.test(msg)
+        if (!cancelled && !isMissing) {
+          console.error('[LearningsPopup] Error loading global skill:', err)
+          setGlobalError('Failed to load global skill: ' + msg)
+        }
+      } finally {
+        if (!cancelled) setGlobalLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [isOpen, workspacePath])
+
+  // Lazy-load a single file under _global/ when its row is expanded.
+  const toggleGlobalFile = async (relPath: string, absPath: string) => {
+    setExpandedFilePaths(prev => {
+      const next = new Set(prev)
+      if (next.has(relPath)) {
+        next.delete(relPath)
+      } else {
+        next.add(relPath)
+        if (!fileContentCache[relPath]) {
+          agentApi.getPlannerFileContent(absPath).then(resp => {
+            if (resp.success && resp.data?.content !== undefined) {
+              setFileContentCache(prevC => ({ ...prevC, [relPath]: resp.data.content }))
+            } else {
+              setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(empty or unreadable)_' }))
+            }
+          }).catch(() => {
+            setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(failed to load)_' }))
+          })
+        }
+      }
+      return next
+    })
+  }
+
+  // Update a step's learnings_access + learning_objective through the same
+  // update_step_config endpoint. Validation (read-write requires objective) is
+  // enforced server-side; we just surface errors.
+  const handleUpdateStepConfig = async (
+    stepId: string,
+    patch: Partial<{ learnings_access: LearningsAccess; learning_objective: string; lock_learnings: boolean }>
+  ) => {
+    if (!workspacePath || savingConfigStepIds.has(stepId)) return
+    setSavingConfigStepIds(prev => new Set(prev).add(stepId))
+    try {
+      const step = plan?.steps?.find(s => s.id === stepId)
+      const current = step?.agent_configs || {}
+      const metadata = learnings[stepId]
+      // Preserve any existing fields we track locally so we don't clobber them.
+      const merged: Record<string, unknown> = {
+        ...current,
+        learnings_access: current.learnings_access ?? metadata?.learnings_access,
+        learning_objective: current.learning_objective ?? metadata?.learning_objective,
+        lock_learnings: current.lock_learnings ?? metadata?.lock_learnings,
+        ...patch,
+      }
+      await agentApi.updateStepConfig(workspacePath, stepId, merged)
+      const response = await agentApi.getAllStepLearnings(workspacePath)
+      if (response.success) setLearnings(parseLearningsResponse(response.learnings || {}))
+      setEditingAccessStepId(null)
+      setEditingObjectiveStepId(null)
+      setObjectiveDraft('')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[LearningsPopup] Error updating step config:', err)
+      setError('Failed to update step config: ' + msg)
+    } finally {
+      setSavingConfigStepIds(prev => {
+        const next = new Set(prev)
+        next.delete(stepId)
+        return next
+      })
+    }
+  }
 
   const toggleLock = async (stepId: string, isCurrentlyLocked: boolean) => {
     if (!workspacePath || updatingLockStepIds.has(stepId)) return
@@ -489,14 +722,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
   if (!isOpen) return null
 
-  // Get steps in execution order and filter to only those with learnings
+  // Steps in execution order. _global is rendered separately as a featured card
+  // above — no longer prepended into this list.
   const allStepsInOrder = getStepsInExecutionOrder()
-  // Prepend global learning entry if it exists
-  const hasGlobalLearning = '_global' in learnings && learnings['_global'] !== null
-  if (hasGlobalLearning) {
-    allStepsInOrder.unshift({ stepId: '_global', stepNumber: 0, stepType: 'global', branchType: undefined })
-  }
-  let stepsWithLearnings = allStepsInOrder.filter(step => step.stepId in learnings)
+  let stepsWithLearnings = allStepsInOrder.filter(step => step.stepId in learnings && step.stepId !== '_global')
   
   // Apply unlocked filter if enabled
   if (showOnlyUnlocked) {
@@ -545,80 +774,27 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" style={{ zIndex: 50 }}>
-      <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="flex flex-col border-b border-border flex-shrink-0">
-          <div className="flex items-center justify-between p-4 pb-2">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-semibold">Step Learnings</h2>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onClose}
-                className="p-1 rounded-md hover:bg-muted transition-colors"
-                title="Close (Esc)"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" style={{ zIndex: 50 }}>
+      <div className="bg-background text-foreground border border-border rounded-lg shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[92vh] flex flex-col">
+        {/* Header — title + close only. Step search / filter / expand controls
+            moved to sit above the step list so they're visually adjacent to what
+            they operate on (the per-step section, not the global skill). */}
+        <div className="flex items-center justify-between border-b border-border flex-shrink-0 p-4">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">Workflow Learnings</h2>
           </div>
-          
-          <div className="flex items-center gap-3 px-4 pb-4">
-             {/* Search Bar */}
-             <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search steps..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-sm bg-muted/50 border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 top-2.5 p-0.5 rounded-full hover:bg-muted transition-colors"
-                >
-                  <X className="w-3 h-3 text-muted-foreground" />
-                </button>
-              )}
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleExpandAll}
-                className="px-3 py-2 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
-              >
-                Expand All
-              </button>
-              <button
-                onClick={handleCollapseAll}
-                className="px-3 py-2 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
-              >
-                Collapse All
-              </button>
-              {/* Filter: Show only unlocked steps */}
-              <button
-                onClick={() => setShowOnlyUnlocked(!showOnlyUnlocked)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  showOnlyUnlocked
-                    ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
-                    : 'bg-muted hover:bg-muted/80 text-foreground'
-                }`}
-                title={showOnlyUnlocked ? 'Show all steps' : 'Show only unlocked steps'}
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Unlocked Only</span>
-              </button>
-            </div>
-          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md hover:bg-muted transition-colors"
+            title="Close (Esc)"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -633,25 +809,243 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
             </div>
           )}
 
+          {/* Global Skill — primary artifact, rendered as a featured card. */}
+          {!isLoading && !error && (
+            <div className="border border-border rounded-md bg-muted/20">
+              <div
+                className="p-3 cursor-pointer flex items-center justify-between hover:bg-muted/40 transition-colors rounded-md"
+                onClick={() => setGlobalExpanded(!globalExpanded)}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-medium text-sm">Global Workflow Skill</h3>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        learnings/_global/
+                      </span>
+                      {globalFiles.length > 0 && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {globalFiles.length} file{globalFiles.length === 1 ? '' : 's'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                      Shared HOW-knowledge — every step with <code className="text-[10px]">read-write</code> access contributes.
+                    </div>
+                  </div>
+                </div>
+                <button className="p-0.5 hover:bg-muted rounded transition-colors shrink-0" aria-label={globalExpanded ? 'Collapse global skill' : 'Expand global skill'}>
+                  {globalExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                  )}
+                </button>
+              </div>
+
+              {globalExpanded && (
+                <div className="border-t border-border px-4 py-3">
+                  {globalLoading && (
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading global skill...
+                    </div>
+                  )}
+                  {!globalLoading && globalError && (
+                    <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>{globalError}</span>
+                    </div>
+                  )}
+                  {!globalLoading && !globalError && !globalSkillContent && globalFiles.length === 0 && (
+                    <div className="text-sm text-muted-foreground italic py-4">
+                      Global skill is empty. It will be generated as steps with <code>learnings_access: "read-write"</code> complete successful runs.
+                    </div>
+                  )}
+                  {!globalLoading && !globalError && globalSkillContent && (
+                    <div className="prose prose-sm max-w-none dark:prose-invert mb-3">
+                      <MarkdownRenderer content={globalSkillContent} maxHeight="500px" showScrollbar={true} />
+                    </div>
+                  )}
+                  {!globalLoading && !globalError && globalFiles.length > 0 && (() => {
+                    // Group files by directory for display. "" = root-level files.
+                    const grouped = new Map<string, typeof globalFiles>()
+                    globalFiles.forEach(f => {
+                      const arr = grouped.get(f.dir) || []
+                      arr.push(f)
+                      grouped.set(f.dir, arr)
+                    })
+                    const sortedDirs = Array.from(grouped.keys()).sort((a, b) => {
+                      if (a === '') return -1
+                      if (b === '') return 1
+                      return a.localeCompare(b)
+                    })
+                    return (
+                      <div className="mt-2 pt-3 border-t border-border space-y-3">
+                        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                          Files ({globalFiles.length})
+                        </div>
+                        {sortedDirs.map(dir => {
+                          const entries = grouped.get(dir)!
+                          return (
+                            <div key={dir || 'root'}>
+                              {dir && (
+                                <div className="text-[10px] font-mono text-muted-foreground mb-1 flex items-center gap-1">
+                                  <FileText className="w-2.5 h-2.5" />
+                                  {dir}/
+                                </div>
+                              )}
+                              <div className="space-y-1">
+                                {entries.map(file => {
+                                  const isExpanded = expandedFilePaths.has(file.relPath)
+                                  const isMarkdown = file.name.endsWith('.md')
+                                  const cached = fileContentCache[file.relPath]
+                                  return (
+                                    <div key={file.relPath} className="border border-border rounded">
+                                      <button
+                                        onClick={() => toggleGlobalFile(file.relPath, file.absPath)}
+                                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-muted/40 transition-colors"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
+                                        ) : (
+                                          <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                                        )}
+                                        {isMarkdown ? (
+                                          <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                                        ) : (
+                                          <Code className="w-3 h-3 text-muted-foreground shrink-0" />
+                                        )}
+                                        <span className="text-[11px] font-mono truncate flex-1">{file.name}</span>
+                                        {!dir && (
+                                          <span className="text-[9px] text-muted-foreground shrink-0">/</span>
+                                        )}
+                                      </button>
+                                      {isExpanded && (
+                                        <div className="border-t border-border px-2 py-2 bg-muted/10">
+                                          {cached === undefined ? (
+                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                              <Loader2 className="w-3 h-3 animate-spin" />
+                                              Loading...
+                                            </div>
+                                          ) : isMarkdown ? (
+                                            <div className="prose prose-sm max-w-none dark:prose-invert">
+                                              <MarkdownRenderer content={cached} maxHeight="300px" showScrollbar={true} />
+                                            </div>
+                                          ) : (
+                                            <div className="relative rounded bg-slate-900 dark:bg-slate-950 overflow-hidden">
+                                              <div className="max-h-[300px] overflow-auto">
+                                                <pre className="p-3 text-[11px] font-mono text-slate-100 whitespace-pre-wrap break-words">
+                                                  <code>{cached}</code>
+                                                </pre>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step toolbar — search + expand/collapse/unlocked controls.
+              Placed here (after the global skill card) because these actions
+              only apply to the per-step section below. */}
+          {!isLoading && !error && (
+            <div className="flex items-center gap-2 pt-1">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search steps..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-1.5 text-sm bg-muted/40 border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2 top-1.5 p-0.5 rounded-full hover:bg-muted transition-colors"
+                  >
+                    <X className="w-3 h-3 text-muted-foreground" />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleExpandAll}
+                  className="px-2.5 py-1.5 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
+                >
+                  Expand All
+                </button>
+                <button
+                  onClick={handleCollapseAll}
+                  className="px-2.5 py-1.5 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
+                >
+                  Collapse All
+                </button>
+                <button
+                  onClick={() => setShowOnlyUnlocked(!showOnlyUnlocked)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                    showOnlyUnlocked
+                      ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
+                      : 'bg-muted hover:bg-muted/80 text-foreground'
+                  }`}
+                  title={showOnlyUnlocked ? 'Show all steps' : 'Show only unlocked steps'}
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Unlocked Only</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Per-step list — secondary, metadata + main.py + inline controls. */}
           {!isLoading && !error && stepsWithLearnings.length === 0 && (
             <div className="text-center py-8 text-muted-foreground flex flex-col items-center gap-2">
               <BookOpen className="w-10 h-10 opacity-20" />
-              <p>No steps with learnings found</p>
+              <p>No per-step learning metadata yet</p>
               {searchTerm && <p className="text-sm">Try adjusting your search query</p>}
               {showOnlyUnlocked && <p className="text-sm">Try disabling the "Unlocked Only" filter</p>}
             </div>
           )}
 
           {!isLoading && !error && stepsWithLearnings.length > 0 && (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
                 const metadata = learnings[stepId]
-                // Check lock status from both sources: auto_locked_at (metadata) OR lock_learnings (from step config via API)
+                // Lock state: auto_locked_at is the authoritative auto-lock signal;
+                // lock_learnings is the step_config switch (manual or auto-written).
+                // An auto-unlock clears auto_locked_at and writes auto_unlocked_at.
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
-                const isManuallyLocked = metadata?.lock_learnings === true
-                const isLocked = isAutoLocked || isManuallyLocked
+                const isManuallyLocked = metadata?.lock_learnings === true && !isAutoLocked
+                const isLocked = isAutoLocked || metadata?.lock_learnings === true
+                const wasRecentlyAutoUnlocked = !!metadata?.auto_unlocked_at &&
+                  (!metadata.auto_locked_at || (metadata.auto_unlocked_at > metadata.auto_locked_at))
+
+                // Hash-scoped run counter drives auto-lock. Falls back to legacy
+                // successful_runs while .learning_metadata.json hasn't been rewritten.
+                const hashRuns = metadata?.description_hash_runs ?? 0
                 const successfulRuns = getSuccessfulRuns(metadata)
-                const progress = (successfulRuns / 3) * 100
+                const progressRuns = hashRuns > 0 ? hashRuns : successfulRuns
+                const progress = (progressRuns / 3) * 100
+                const access = effectiveAccess(metadata || null)
+                const accessExplicit = metadata?.learnings_access === 'read' ||
+                  metadata?.learnings_access === 'read-write' ||
+                  metadata?.learnings_access === 'none'
+                const objective = (metadata?.learning_objective || '').trim()
+                const isSavingConfig = savingConfigStepIds.has(stepId)
                 const stepTitle = getStepTitle(plan, stepId)
 
                 const isExpanded = expandedStepIds.has(stepId)
@@ -685,56 +1079,102 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 // Check if this is a sub-agent (should be indented)
                 const isSubAgent = stepType === 'sub_agent' || stepType === 'todo_sub_agent'
 
-                // Determine effective modes: step config > preset default
-                const effectiveUseCodeExecutionMode = metadata?.use_code_execution_mode !== undefined
-                  ? metadata.use_code_execution_mode
-                  : presetUseCodeExecutionMode
-                
                 return (
                   <div
                     key={stepId}
-                    className={`border border-border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors ${
-                      isSubAgent ? 'ml-6 border-l-4 border-l-orange-400 dark:border-l-orange-500' : ''
+                    className={`border border-border rounded-md bg-muted/20 hover:bg-muted/40 transition-colors ${
+                      isSubAgent ? 'ml-4 border-l-4 border-l-orange-400 dark:border-l-orange-500' : ''
                     }`}
                   >
-                    <div 
-                      className="p-5 cursor-pointer"
+                    <div
+                      className="p-3 cursor-pointer"
                       onClick={() => toggleExpand(stepId)}
                     >
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-start gap-3 mb-2">
+                          <div className="flex items-center gap-2 mb-1.5">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
                                 toggleExpand(stepId)
                               }}
-                              className="mt-0.5 p-1 hover:bg-muted rounded-md transition-colors shrink-0"
+                              className="p-0.5 hover:bg-muted rounded transition-colors shrink-0"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
                               {isExpanded ? (
-                                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                               ) : (
-                                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                               )}
                             </button>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <span className="text-xs font-mono font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
-                                  #{stepNumber}
-                                </span>
-                                <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${getStepTypeBadgeColor()}`}>
-                                  {getStepTypeLabel()}
-                                </span>
-                                <h3 className="font-medium truncate" title={stepTitle}>{stepTitle}</h3>
-                              </div>
-                              <div className="text-xs text-muted-foreground font-mono truncate" title={stepId}>{stepId}</div>
-                            </div>
+                            <span className="text-[10px] font-mono font-semibold text-primary bg-primary/10 px-1 py-0.5 rounded shrink-0">
+                              #{stepNumber}
+                            </span>
+                            <span className={`text-[10px] px-1 py-0.5 rounded font-medium shrink-0 ${getStepTypeBadgeColor()}`}>
+                              {getStepTypeLabel()}
+                            </span>
+                            <h3 className="font-medium text-sm truncate" title={stepTitle}>{stepTitle}</h3>
+                            <span className="text-[10px] text-muted-foreground font-mono truncate ml-auto" title={stepId}>{stepId}</span>
                           </div>
 
-                          <div className="flex flex-col gap-3 ml-8">
-                            {/* Metadata Row 1: Lock Status & Complexity */}
-                            <div className="flex items-center gap-4 flex-wrap text-sm">
+                          <div className="flex flex-col gap-1 ml-5">
+                            {/* Single-line metadata: access, lock status, lock button, auto-unlock badge, turns, iterations.
+                                All badges share one flex-wrap row so the card stays compact. */}
+                            <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                              {/* learnings_access badge + inline editor */}
+                              {editingAccessStepId === stepId ? (
+                                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                  <select
+                                    className="text-xs px-2 py-0.5 rounded border border-input bg-background"
+                                    defaultValue={access}
+                                    disabled={isSavingConfig}
+                                    onChange={(e) => {
+                                      const next = e.target.value as LearningsAccess
+                                      handleUpdateStepConfig(stepId, { learnings_access: next })
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <option value="read">read</option>
+                                    <option value="read-write">read-write</option>
+                                    <option value="none">none</option>
+                                  </select>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setEditingAccessStepId(null) }}
+                                    className="p-1 rounded hover:bg-muted transition-colors"
+                                    title="Cancel"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditingAccessStepId(stepId) }}
+                                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                                    access === 'read-write'
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                                      : access === 'read'
+                                      ? 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+                                      : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                  }`}
+                                  title={`learnings_access = ${access}${accessExplicit ? ' (explicit)' : ' (inferred from learning_objective)'} — click to change`}
+                                >
+                                  {access === 'none' ? <Ban className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  <span>{access}</span>
+                                  {!accessExplicit && <span className="opacity-60">(auto)</span>}
+                                </button>
+                              )}
+
+                              {/* Auto-unlocked indicator (description changed on a previously auto-locked step) */}
+                              {wasRecentlyAutoUnlocked && (
+                                <div
+                                  className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                                  title={metadata?.auto_unlock_reason || 'Description changed — previous auto-lock invalidated'}
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  <span>Auto-unlocked (description changed)</span>
+                                </div>
+                              )}
+
                               {metadata && (
                                 <>
                                   <div className="flex items-center gap-2">
@@ -742,8 +1182,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                       <>
                                         <Lock className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                                         <span className="text-green-600 dark:text-green-400 font-medium text-xs">
-                                          {isAutoLocked && isManuallyLocked ? 'Locked (Auto + Manual)' :
+                                          {isAutoLocked && metadata?.lock_learnings === true ? 'Locked (Auto)' :
                                            isAutoLocked ? 'Locked (Auto)' :
+                                           isManuallyLocked ? 'Locked (Manual)' :
                                            'Locked'}
                                         </span>
                                       </>
@@ -786,50 +1227,25 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                   </button>
                                 </>
                               )}
-                            </div>
 
-                            {/* Metadata Row 2: Badges */}
-                            {metadata && (
-                              <div className="flex items-center gap-3 flex-wrap">
-                                {metadata.last_turn_count !== undefined && metadata.last_turn_count > 0 && (
-                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border">
-                                    <span>Turn Count:</span>
-                                    <span className="font-medium text-foreground">{metadata.last_turn_count}</span>
-                                  </div>
-                                )}
-                                
-
-                                <span className={`text-xs px-2 py-1 rounded font-medium border flex items-center gap-1.5 ${
-                                  effectiveUseCodeExecutionMode
-                                    ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800'
-                                    : 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700'
-                                }`}>
-                                  {effectiveUseCodeExecutionMode ? (
-                                    <>
-                                      <Terminal className="w-3.5 h-3.5" />
-                                      Agent Mode
-                                    </>
-                                  ) : (
-                                    <>
-                                      <FileText className="w-3.5 h-3.5" />
-                                      Simple Mode
-                                    </>
+                              {/* Turns + Iter badges sharing the same row as access/lock. */}
+                              {metadata && metadata.last_turn_count !== undefined && metadata.last_turn_count > 0 && (
+                                <span className="text-[10px] text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded">
+                                  Turns: <span className="font-medium text-foreground">{metadata.last_turn_count}</span>
+                                </span>
+                              )}
+                              {metadata && metadata.total_iterations !== undefined && (
+                                <span className="text-[10px] text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded ml-auto">
+                                  Iter: <span className="font-mono font-medium text-foreground">{metadata.total_iterations}</span>
+                                  {metadata.auto_lock_reason && (
+                                    <span className="text-amber-600 dark:text-amber-500 ml-1.5 truncate max-w-[120px] inline-block align-bottom" title={metadata.auto_lock_reason}>
+                                      · {metadata.auto_lock_reason.replace('threshold_reached_', '').replace(/_/g, ' ').slice(0, 30)}
+                                    </span>
                                   )}
                                 </span>
+                              )}
+                            </div>
 
-                                {metadata.total_iterations !== undefined && (
-                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border ml-auto">
-                                    <span>Iterations:</span>
-                                    <span className="font-mono font-medium text-foreground">{metadata.total_iterations}</span>
-                                    {metadata.auto_lock_reason && (
-                                      <span className="text-amber-600 dark:text-amber-500 border-l border-border pl-1.5 ml-0.5 truncate max-w-[150px]" title={metadata.auto_lock_reason}>
-                                        {metadata.auto_lock_reason.replace('threshold_reached_', '').replace(/_/g, ' ')}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
                         </div>
 
@@ -841,59 +1257,57 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                               setDeleteConfirmStepId(stepId)
                             }}
                             disabled={deletingStepIds.has(stepId)}
-                            className="p-2 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-2 shrink-0 self-start"
+                            className="p-1 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0 self-start"
                             title="Delete learnings"
                           >
                             {deletingStepIds.has(stepId) ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             )}
                           </button>
                         )}
                       </div>
 
-                      {metadata && successfulRuns >= 0 && (
-                          <div className="mt-3">
-                            <div className="flex items-center justify-between text-sm mb-1">
-                              <span className="text-muted-foreground">
-                                Progress to lock: {successfulRuns}/3 successful runs
+                      {metadata && (
+                          <div className="mt-1.5">
+                            <div className="flex items-center justify-between text-[10px] mb-0.5">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <Hash className="w-2.5 h-2.5" />
+                                {progressRuns}/3 runs on current description
                               </span>
-                              <span className="text-muted-foreground">{Math.round(progress)}%</span>
+                              <div className="flex items-center gap-1.5">
+                                {metadata.last_description_hash && (
+                                  <span className="font-mono text-[9px] bg-muted/40 px-1 py-0.5 rounded text-muted-foreground" title={`Description hash: ${metadata.last_description_hash}`}>
+                                    {metadata.last_description_hash.slice(0, 8)}
+                                  </span>
+                                )}
+                                {isAutoLocked && (
+                                  <span className="text-[9px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-1 py-0.5 rounded" title="Editing step description will auto-unlock">
+                                    Auto-unlocks on edit
+                                  </span>
+                                )}
+                                <span className="text-muted-foreground">{Math.round(Math.min(progress, 100))}%</span>
+                              </div>
                             </div>
-                            <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                            <div className="w-full bg-muted rounded-full h-1 overflow-hidden">
                               <div
                                 className={`h-full transition-all ${
                                   isLocked
                                     ? 'bg-green-600 dark:bg-green-400'
-                                    : progress >= 50
+                                    : progress >= 66
                                     ? 'bg-yellow-600 dark:bg-yellow-400'
                                     : 'bg-blue-600 dark:bg-blue-400'
                                 }`}
                                 style={{ width: `${Math.min(progress, 100)}%` }}
                               />
                             </div>
-                            
-                            {/* Learning Caps Info */}
-                            <div className="flex items-center gap-4 mt-1.5 text-[10px] text-muted-foreground">
-                              <div className="flex items-center gap-1">
-                                <span className={successfulRuns >= 3 ? "text-amber-600 dark:text-amber-500 font-medium" : ""}>
-                                  Success Cap: 3 runs
-                                </span>
-                                {successfulRuns >= 3 && !isLocked && (
-                                  <span className="text-[9px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-1 rounded">
-                                    Capped (Skipping)
-                                  </span>
-                                )}
-                              </div>
-                              <div>Failure Cap: Max 2/run</div>
-                            </div>
                           </div>
                         )}
 
                         {!metadata && (
-                          <div className="text-sm text-muted-foreground mt-2">
-                            No learning metadata available
+                          <div className="text-xs text-muted-foreground italic ml-5 mt-1">
+                            No learning metadata yet
                           </div>
                         )}
                       </div>
@@ -901,6 +1315,71 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                       {/* Expanded Learning Content */}
                     {isExpanded && (
                       <div className="border-t border-border px-4 py-4 bg-background/50">
+                      {/* learning_objective inline editor */}
+                      <div className="mb-4 p-3 bg-muted/30 border border-border rounded-md">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                            <BookOpen className="w-3 h-3" />
+                            Learning Objective
+                          </div>
+                          {editingObjectiveStepId !== stepId ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setObjectiveDraft(objective)
+                                setEditingObjectiveStepId(stepId)
+                              }}
+                              className="flex items-center gap-1 text-xs px-2 py-0.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                              title="Edit objective"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                              Edit
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleUpdateStepConfig(stepId, { learning_objective: objectiveDraft.trim() })
+                                }}
+                                disabled={isSavingConfig}
+                                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
+                              >
+                                {isSavingConfig ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                                Save
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditingObjectiveStepId(null)
+                                  setObjectiveDraft('')
+                                }}
+                                className="text-xs px-2 py-0.5 rounded hover:bg-muted transition-colors text-muted-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {editingObjectiveStepId === stepId ? (
+                          <textarea
+                            value={objectiveDraft}
+                            onChange={(e) => setObjectiveDraft(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder={'Describe what SKILL.md should capture from this step. Required when learnings_access="read-write".'}
+                            className="w-full min-h-[80px] p-2 text-sm bg-background border border-input rounded focus:outline-none focus:ring-1 focus:ring-primary resize-y font-mono"
+                          />
+                        ) : objective ? (
+                          <div className="text-xs text-foreground whitespace-pre-wrap">{objective}</div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground italic">
+                            {access === 'read-write'
+                              ? 'MISSING — learnings_access is "read-write" but objective is empty. Learning writes are gated until both are set.'
+                              : 'Empty. Not required when learnings_access is "read" or "none".'}
+                          </div>
+                        )}
+                      </div>
+
                       {isLoadingContent && (
                         <div className="flex items-center justify-center py-4">
                           <Loader2 className="w-5 h-5 animate-spin text-primary" />

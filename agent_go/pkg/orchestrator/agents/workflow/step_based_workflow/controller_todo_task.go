@@ -125,8 +125,114 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	stepConfig := getAgentConfigs(todoTaskStep)
 
-	// Learning config — opt-in via non-empty learning_objective (matches KB pattern).
-	isLearningDisabled := stepConfig == nil || strings.TrimSpace(stepConfig.LearningObjective) == ""
+	// Orchestrator learn_code fast path — builder-authored main.py runs before any LLM work.
+	// Runs only when the step is learn_code-eligible (declared_execution_mode=learn_code plus
+	// at least one predefined route) AND learnings/{stepID}/main.py exists.
+	// Success → step done with zero LLM tokens. Any failure → fall through to normal LLM
+	// orchestrator path with a fresh start (no state carryover). Unlike regular-step learn_code,
+	// there is no repair loop and no save-back: the builder owns main.py, runtime just runs it.
+	//
+	// declared_execution_mode often lives only in step_config.json (not in plan.json's embedded
+	// AgentConfigs). Mirror controller_execution.go's fallback: if the embedded config doesn't
+	// declare learn_code, scan step_config.json for a matching step ID before deciding.
+	fastPathConfig := stepConfig
+	embeddedMode := ""
+	if stepConfig != nil {
+		embeddedMode = stepConfig.DeclaredExecutionMode
+	}
+	if (fastPathConfig == nil || !isScriptedExecutionModeConfig(fastPathConfig)) && stepID != "" {
+		stepConfigs, cfgErr := hcpo.ReadStepConfigs(ctx)
+		if cfgErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("🐍 [orchestrator_learn_code] ReadStepConfigs failed for step %s: %v", stepID, cfgErr))
+		} else {
+			found := false
+			for _, sc := range stepConfigs {
+				if sc.ID == stepID {
+					found = true
+					fileMode := ""
+					if sc.AgentConfigs != nil {
+						fileMode = sc.AgentConfigs.DeclaredExecutionMode
+					}
+					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] step_config.json scan hit for %s: declared_execution_mode=%q", stepID, fileMode))
+					if isScriptedExecutionModeConfig(sc.AgentConfigs) {
+						fastPathConfig = sc.AgentConfigs
+					}
+					break
+				}
+			}
+			if !found {
+				hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] step_config.json scan miss for %s (scanned %d entries)", stepID, len(stepConfigs)))
+			}
+		}
+	}
+	mergedMode := ""
+	if fastPathConfig != nil {
+		mergedMode = fastPathConfig.DeclaredExecutionMode
+	}
+	scriptExists := hcpo.hasValidLearnedScriptAPI(ctx, stepID)
+	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] eligibility check for %s: embedded_mode=%q merged_mode=%q routes=%d script_exists=%v",
+		stepID, embeddedMode, mergedMode, len(todoTaskStep.PredefinedRoutes), scriptExists))
+	if isOrchestratorLearnCodeEligible(todoTaskStep, fastPathConfig) && scriptExists {
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [orchestrator_learn_code] Attempting builder-authored main.py for step %d (%s)", stepIndex+1, stepID))
+
+		// Register sub-agent executors in the session-scoped tool registry so main.py
+		// can reach /tools/custom/call_sub_agent. Mirror the SubAgentExecutionContext
+		// that executeTodoTaskOrchestratorAgent builds so routes, tier selection, and
+		// LLM overrides all behave identically to the LLM path.
+		workshopCorrelationID := ""
+		if forcedID, ok := ctx.Value(events.ForceCorrelationIDKey).(string); ok {
+			workshopCorrelationID = forcedID
+		}
+		fastPathExecCtx := &SubAgentExecutionContext{
+			TodoTaskStep:          todoTaskStep,
+			StepIndex:             stepIndex,
+			StepPath:              todoTaskStepPath,
+			AllSteps:              allSteps,
+			Progress:              progress,
+			StepConfig:            stepConfig,
+			WorkshopCorrelationID: workshopCorrelationID,
+		}
+		hcpo.restoreSubAgentToolExecutors(fastPathExecCtx)
+
+		stepExecutionRelPath := hcpo.getTodoTaskStepExecutionPath(stepID, todoTaskStepPath)
+		fastResult := hcpo.tryRunSavedLearnCodeScript(ctx, step, stepIndex, todoTaskStepPath, allSteps,
+			stepExecutionRelPath, executionWorkspacePath)
+
+		if fastResult.RanScript {
+			savedScriptPath := getLearnCodeScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), stepID, hcpo.isEvaluationMode)
+			hcpo.emitLearnCodeScriptExecutionEvent(ctx, step, stepIndex, todoTaskStepPath,
+				savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
+			hcpo.saveLearnCodeFastPathLog(ctx, stepIndex, stepID, todoTaskStepPath, savedScriptPath, fastResult)
+		}
+
+		if fastResult.RanScript && fastResult.Success {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ [orchestrator_learn_code] Fast path succeeded for step %d — 0 LLM tokens", stepIndex+1))
+			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, 1, nil, "learn_code: builder-authored script executed and validated", todoTaskStep.NextStepID)
+			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+			return true, todoTaskStep.NextStepID, nil
+		}
+
+		if fastResult.RanScript {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [orchestrator_learn_code] Builder-authored script failed for step %d — falling back to LLM orchestrator (fresh start)", stepIndex+1))
+		}
+
+		// fast_path_only=true (SavedScriptOnly) — workshop-level debug mode that forbids any
+		// LLM fallback. Mirror controller_execution.go's behavior for regular learn_code steps.
+		if execCtx != nil && execCtx.SavedScriptOnly {
+			if fastResult.RanScript {
+				return false, "", fmt.Errorf("saved main.py failed for orchestrator step %q:\n%s", stepID, fastResult.Error)
+			}
+			return false, "", fmt.Errorf("no saved main.py found for orchestrator step %q in learnings/%s/main.py", stepID, stepID)
+		}
+	} else if execCtx != nil && execCtx.SavedScriptOnly {
+		// fast_path_only was requested but this step isn't learn_code-eligible — fail loudly
+		// rather than silently running the LLM orchestrator (caller expected zero-LLM execution).
+		return false, "", fmt.Errorf("orchestrator step %q is not in learn_code mode (requires declared_execution_mode=\"learn_code\" and ≥1 predefined route)", stepID)
+	}
+
+	// Learnings read gate — default-on unless learnings_access="none" or routing/eval.
+	// Todo-task agents benefit from seeing _global/SKILL.md to reuse cross-step knowledge.
+	isLearningDisabled := !canReadLearnings(stepConfig, todoTaskStep, hcpo.isEvaluationMode)
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
@@ -340,8 +446,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"StepExecutionPath":     filepath.Join(docsRoot, executionPath),
 		"ShellWorkingDirectory": shellWorkingDirectory,
 		"PredefinedRoutes":      routesBuilder.String(),
-		"EnableGenericAgent":    fmt.Sprintf("%t", step.EnableGenericAgent),
-		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.GetBrowserMode() != "" && hcpo.GetBrowserMode() != "none"),
+		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.HasBrowserCapability()),
 		// Add code execution mode and knowledgebase flags
 		"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode),
 		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
@@ -364,21 +469,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
-	// EnableDynamicTierSelection (prompt template var): on when a tier resolver
-	// exists AND the parent todo-task step does not pin an ExecutionLLM.
-	// When an ExecutionLLM is pinned, the parent LLM propagates to sub-agents
-	// and the orchestrator no longer picks tiers per call.
-	enableDynamicTier := hcpo.tierResolver != nil
-	if enableDynamicTier {
-		if stepConfig := getAgentConfigs(step); stepConfig != nil &&
-			stepConfig.ExecutionLLM != nil &&
-			stepConfig.ExecutionLLM.Provider != "" &&
-			stepConfig.ExecutionLLM.ModelID != "" {
-			enableDynamicTier = false
-		}
-	}
-	templateVars["EnableDynamicTierSelection"] = fmt.Sprintf("%t", enableDynamicTier)
-
 	// Add variable names and values (like orchestration step)
 	if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
 		templateVars["VariableNames"] = variableNames
@@ -390,6 +480,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Add orchestrator learning history if available
 	if orchestratorLearningHistory != "" {
 		templateVars["LearningHistory"] = orchestratorLearningHistory
+	}
+
+	// Surface the pre-validation schema in the prompt so the orchestrator knows
+	// which output files must exist on the first attempt — otherwise it only
+	// learns the requirements via ValidationFeedback after a failed attempt.
+	if validationSchema := step.GetValidationSchema(); validationSchema != nil {
+		if schemaJSON, err := json.MarshalIndent(validationSchema, "", "  "); err == nil {
+			templateVars["ValidationSchema"] = string(schemaJSON)
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal validation schema for todo task step %d: %v", stepIndex+1, err))
+		}
 	}
 
 	return templateVars

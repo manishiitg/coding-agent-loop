@@ -15,25 +15,44 @@ export interface AgentConfigs {
   validation_max_turns?: number;
   learning_max_turns?: number;
   orchestration_max_iterations?: number;
-  disable_learning?: boolean;
   lock_learnings?: boolean;
-  learning_after_loop_iteration?: boolean;
+  lock_code?: boolean;                        // Freeze main.py against LLM rewrites; independent of lock_learnings
+  // DEPRECATED: backend removed these fields (replaced by learnings_access).
+  // Kept on the interface only so legacy node-display code compiles; the backend
+  // never reads them. New frontend code should consult learnings_access directly.
+  disable_learning?: boolean;
   learning_detail_level?: string;
+  learning_after_loop_iteration?: boolean;
+  keep_learning_full?: boolean;
+  // Primary gate for learnings_/_global/ access. "read" (default when unset) —
+  // step sees global SKILL.md in its prompt; "read-write" — also contributes
+  // (requires non-empty learning_objective); "none" — no read, no write.
+  // Mirrors knowledgebase_access. Auto-inferred to "read-write" on save when
+  // learning_objective is non-empty and this field is unset (backend migration).
+  learnings_access?: 'read' | 'read-write' | 'none';
+  learning_objective?: string;                // Extraction instruction for the post-step learning agent; required when learnings_access="read-write"
   selected_servers?: string[];
   selected_tools?: string[];
   enabled_custom_tools?: string[];
   enabled_custom_tool_categories?: string[];  // Legacy format kept for transitional frontend compatibility
+  enabled_skills?: string[];
   enable_context_offloading?: boolean;
   use_code_execution_mode?: boolean;
   use_tool_search_mode?: boolean;             // Legacy field still cleaned up by older editor flows
   pre_discovered_tools?: string[];            // Legacy field still cleaned up by older editor flows
-  keep_learning_full?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
   disable_tier_optimization?: boolean;        // If true, execution/conditional agents always use Tier 1 (high reasoning)
   global_skill_objective?: string;            // Objective for the global skill — what domain knowledge should it capture
+  knowledgebase_access?: 'read' | 'write' | 'read-write' | 'none';
+  knowledgebase_contribution?: string;
+  optimized?: boolean;                        // UI/reporting flag set alongside lock_learnings after auto-lock; cleared on auto-unlock
+  description_reviewed?: boolean;
+  review_notes?: string;
+  declared_execution_mode?: string;           // "learn_code" | "code_exec" | "tool_calling" — authoring hint; resolution in backend
+  declared_execution_mode_reason?: string;
 }
 
 // Extended TodoStep with agent_configs

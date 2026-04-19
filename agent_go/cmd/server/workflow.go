@@ -84,6 +84,86 @@ func getWorkspaceDocsAbsPath() string {
 	return fsutil.WorkspaceDocsRoot()
 }
 
+// listGroupSubdirs returns the names of immediate subdirectories under a workspace
+// folder path, used to discover per-group folders inside an iteration (e.g. the
+// "xspaces" / "excellence" / etc. dirs under runs/iteration-N/). Returns nil on
+// any error or when the folder is empty.
+func listGroupSubdirs(ctx context.Context, folderPath string) []string {
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil
+	}
+	q := req.URL.Query()
+	q.Add("folder", folderPath)
+	q.Add("max_depth", "1")
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var listing struct {
+		Success bool                                `json:"success"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+	if err := json.Unmarshal(body, &listing); err != nil || !listing.Success {
+		return nil
+	}
+	var groups []string
+	for _, item := range listing.Data {
+		if item.Type != "folder" {
+			continue
+		}
+		name := filepath.Base(item.FilePath)
+		groups = append(groups, name)
+	}
+	return groups
+}
+
+// workspacePathExists reports whether a workspace folder path resolves to a
+// listing. Used to detect whether the old flat "runs/{iter}/logs" layout exists
+// before falling back to the newer "runs/{iter}/{group}/logs" nesting.
+func workspacePathExists(ctx context.Context, folderPath string) bool {
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return false
+	}
+	q := req.URL.Query()
+	q.Add("folder", folderPath)
+	q.Add("max_depth", "1")
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false
+	}
+	var listing struct {
+		Success bool `json:"success"`
+	}
+	if err := json.Unmarshal(body, &listing); err != nil {
+		return false
+	}
+	return listing.Success
+}
+
 // readFileFromWorkspace reads a file from the workspace API and returns its content as a string
 // Returns (content, true, nil) if file exists, (empty, false, nil) if file doesn't exist (404), or (empty, false, error) on error
 func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, error) {
@@ -1865,8 +1945,7 @@ type PlanStepUpdate struct {
 	NextStepID *string `json:"next_step_id,omitempty"`
 
 	// TodoTask step fields
-	PredefinedRoutes   *[]todo_creation_human.PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
-	EnableGenericAgent *bool                                         `json:"enable_generic_agent,omitempty"`
+	PredefinedRoutes *[]todo_creation_human.PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
 }
 
 // PlanUpdateRequest represents a request to update a plan step
@@ -2338,9 +2417,6 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 		}
 		if updates.PredefinedRoutes != nil {
 			updated.PredefinedRoutes = *updates.PredefinedRoutes
-		}
-		if updates.EnableGenericAgent != nil {
-			updated.EnableGenericAgent = *updates.EnableGenericAgent
 		}
 		updatedStep = &updated
 
@@ -3235,15 +3311,39 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 		runFolder = cleanedRunFolder
 	}
 
+	// Run folder layout used by the workflow runtime:
+	//   runs/{iteration}/{group}/logs/        ← logs per group, e.g. runs/iteration-0/xspaces/logs/
+	//   runs/{iteration}/{group}/execution/   ← output artifacts per group
+	//
+	// Callers today typically pass runFolder as just "iteration-N"; older single-group
+	// workflows used to write directly under "runs/{iteration}/logs" and "runs/{iteration}/execution".
+	// Support both: if runFolder points at an iteration and the naive paths don't exist,
+	// pick the first group subdir automatically so iteration-0 / latest queries Just Work.
+	// Callers that want a specific group can pass runFolder="iteration-N/{group}".
 	var logsBasePath string
 	var executionBasePath string
+	resolvedGroup := ""
 	if runFolder != "" && runFolder != "new" {
 		logsBasePath = fmt.Sprintf("%s/runs/%s/logs", cleanedWorkspacePath, runFolder)
 		executionBasePath = fmt.Sprintf("%s/runs/%s/execution", cleanedWorkspacePath, runFolder)
+
+		// If the naive per-iteration paths don't exist but group subdirs do,
+		// transparently resolve to the first group under this iteration.
+		if !strings.Contains(runFolder, "/") {
+			if !workspacePathExists(r.Context(), logsBasePath) && !workspacePathExists(r.Context(), executionBasePath) {
+				iterationRoot := fmt.Sprintf("%s/runs/%s", cleanedWorkspacePath, runFolder)
+				if groups := listGroupSubdirs(r.Context(), iterationRoot); len(groups) > 0 {
+					resolvedGroup = groups[0]
+					logsBasePath = fmt.Sprintf("%s/%s/logs", iterationRoot, resolvedGroup)
+					executionBasePath = fmt.Sprintf("%s/%s/execution", iterationRoot, resolvedGroup)
+				}
+			}
+		}
 	} else {
 		logsBasePath = fmt.Sprintf("%s/logs", cleanedWorkspacePath)
 		executionBasePath = fmt.Sprintf("%s/execution", cleanedWorkspacePath)
 	}
+	_ = resolvedGroup // reserved for future multi-group response shape
 
 	// Fetch workflow definition to get step titles and descriptions
 	// We try to read planning/plan.json to map step IDs to human-readable titles
@@ -3662,6 +3762,50 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 											"file_path":         execPath,
 											"conversation_path": "", // No separate conversation file for decision steps usually
 											"content":           execData,
+										})
+
+										entry["executions"] = executions
+									} else if execName == "learn_code_fast_path.json" {
+										// Learn-code fast-path run: saved main.py executed directly without
+										// invoking the LLM. Content shape is documented in
+										// controller_learn_code.go:saveLearnCodeFastPathLog — includes
+										// success/exit_code/output/error + mode marker "learn_code_fast_path".
+										// Surface as a synthetic execution entry so the UI can render it
+										// alongside LLM attempts; fast_path flag lets the frontend pick a
+										// minimal renderer (no conversation file, no fix loop).
+										execPath := execChild.FilePath
+										if processedPaths[execPath] {
+											continue
+										}
+										processedPaths[execPath] = true
+
+										entry := getStepEntry(stepId)
+										executions, _ := entry["executions"].([]map[string]interface{})
+
+										content, exists, _ := readFileFromWorkspace(r.Context(), execPath)
+										var fastPathData map[string]interface{}
+										if exists {
+											if err := json.Unmarshal([]byte(content), &fastPathData); err != nil {
+												fmt.Printf("Error unmarshalling fast-path log for %s: %v\n", execPath, err)
+											}
+										}
+
+										executions = append(executions, map[string]interface{}{
+											"attempt":           0, // 0 signals "no LLM attempt" — saved script ran directly
+											"iteration":         0,
+											"fast_path":         true,
+											"file_path":         execPath,
+											"conversation_path": "",
+											"content":           fastPathData,
+										})
+
+										sort.Slice(executions, func(i, j int) bool {
+											a1, ok1 := executions[i]["attempt"].(int)
+											a2, ok2 := executions[j]["attempt"].(int)
+											if !ok1 || !ok2 {
+												return false
+											}
+											return a1 < a2
 										})
 
 										entry["executions"] = executions
@@ -4159,15 +4303,13 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	}
 
 	type EvaluationStepScore struct {
-		StepID          string             `json:"step_id"`
-		StepTitle       string             `json:"step_title"`
-		Score           int                `json:"score"`
-		MaxScore        int                `json:"max_score"`
-		Reasoning       string             `json:"reasoning"`
-		Evidence        string             `json:"evidence"`
-		SuccessCriteria string             `json:"success_criteria"`
-		ContextOutput   string             `json:"context_output,omitempty"`
-		OutputContent   *StepOutputContent `json:"output_content,omitempty"`
+		StepID        string             `json:"step_id"`
+		Score         int                `json:"score"`
+		MaxScore      int                `json:"max_score"`
+		Reasoning     string             `json:"reasoning"`
+		Evidence      string             `json:"evidence"`
+		ContextOutput string             `json:"context_output,omitempty"`
+		OutputContent *StepOutputContent `json:"output_content,omitempty"`
 	}
 
 	type EvaluationReport struct {
@@ -4177,7 +4319,6 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 		MaxPossibleScore int                   `json:"max_possible_score"`
 		ScorePercentage  float64               `json:"score_percentage"`
 		StepScores       []EvaluationStepScore `json:"step_scores"`
-		Summary          string                `json:"summary"`
 	}
 
 	type EvaluationReportEntry struct {

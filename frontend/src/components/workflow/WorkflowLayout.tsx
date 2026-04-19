@@ -267,7 +267,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
+  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
@@ -309,6 +309,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
   const lastWorkspaceRunExpansionKeyRef = useRef<string | null>(null)
   const reportAutoMinimizedWorkspaceRef = useRef(false)
+  const prevWorkflowWorkspaceViewRef = useRef<string | null>(null)
 
   // Get active workflow preset (file-backed manifests, not DB presets)
   const { getActivePreset } = useGlobalPresetStore()
@@ -502,14 +503,26 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [activeTab?.sessionId])
 
-  // Keep the workspace sidebar hidden while Report is active. Reopen it on exit
-  // only if Report was the reason it got hidden. Gated on workflow mode — this
-  // component stays mounted in multiagent mode via `hidden` CSS, and without
-  // the guard the Report-minimize would leak into multiagent's workspace.
+  // Auto-minimize the workspace sidebar when the user *enters* Report, and
+  // restore it when they leave, if Report was the reason it got hidden.
+  //
+  // Act only on workflowWorkspaceView transitions. While Report is active the
+  // user is free to manually reopen the workspace — re-running this effect on
+  // workspaceMinimized changes must not fight them and re-close it.
+  //
+  // Gated on workflow mode — this component stays mounted in multiagent mode
+  // via `hidden` CSS, and without the guard the Report-minimize would leak
+  // into multiagent's workspace.
   useEffect(() => {
-    if (selectedModeCategory !== 'workflow') return
+    if (selectedModeCategory !== 'workflow') {
+      prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
+      return
+    }
 
-    if (canvasViewMode === 'report') {
+    const prev = prevWorkflowWorkspaceViewRef.current
+    prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
+
+    if (workflowWorkspaceView === 'report' && prev !== 'report') {
       if (!workspaceMinimized) {
         reportAutoMinimizedWorkspaceRef.current = true
         setWorkspaceMinimized(true)
@@ -517,11 +530,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return
     }
 
-    if (reportAutoMinimizedWorkspaceRef.current) {
+    if (
+      workflowWorkspaceView !== 'report' &&
+      prev === 'report' &&
+      reportAutoMinimizedWorkspaceRef.current
+    ) {
       reportAutoMinimizedWorkspaceRef.current = false
       setWorkspaceMinimized(false)
     }
-  }, [selectedModeCategory, canvasViewMode, workspaceMinimized, setWorkspaceMinimized])
+  }, [selectedModeCategory, workflowWorkspaceView, workspaceMinimized, setWorkspaceMinimized])
 
   useEffect(() => {
     return () => {
@@ -667,26 +684,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Add active sessions that belong to this preset. We read the
         // running-workflow registry (workflow-owned storage) instead of
         // reaching into the chat session metadata.
-        // If the registry returns a preset, only include the session when it matches
-        // the active preset. If the lookup fails (404 = pure chat session in the
-        // builder, never registered as a workflow execution), default to including
-        // it — those are legitimate workflow_phase chats that the user expects to
-        // see. Schedule-spawned sessions ARE registered, so a non-matching preset
-        // correctly excludes them on this preset.
+        // Strict match: the session must have a matching preset_query_id in the
+        // registry. Unknown/missing preset → exclude. Previously this defaulted
+        // to "attach to current preset", which silently leaked scheduled runs
+        // and orphaned workflow_phase sessions across workflows whenever the
+        // in-memory registry didn't know about them (server restart, older
+        // sessions, missing preset field).
+        // Fallback: if no registry lookup resolved a preset, allow the session
+        // through only when its persisted chat tab already binds it to the
+        // current preset (so reload doesn't drop a tab the user has been using).
+        const chatTabsById = useChatStore.getState().chatTabs
         for (const s of activeWorkflowSessions) {
-          let belongsToPreset = true
+          let belongsToPreset = false
           try {
             const running = await agentApi.getRunningWorkflow(s.session_id)
             if (running.preset_query_id) {
               belongsToPreset = running.preset_query_id === activePresetId
             }
           } catch {
-            // Scheduled runs should always resolve through the running-workflow registry.
-            // If lookup fails, do not guess and attach them to the currently open workflow.
-            if (s.session_id.startsWith('sched_')) {
-              belongsToPreset = false
+            /* registry miss — fall through to persisted-tab check below */
+          }
+          if (!belongsToPreset) {
+            const persistedTab = Object.values(chatTabsById).find(
+              t => t.sessionId === s.session_id && t.metadata?.mode === 'workflow'
+            )
+            if (persistedTab?.metadata?.presetQueryId === activePresetId) {
+              belongsToPreset = true
             }
-            /* otherwise treat as builder chat for current preset */
           }
           if (!belongsToPreset) continue
           sessionsToRestore.push({
@@ -732,23 +756,48 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           return
         }
 
-        // 3. Deduplicate: skip sessions that already have a tab in the store
+        // 3. Split sessions into (a) those we need to create a tab for and
+        //    (b) those whose tab is already persisted in localStorage but whose
+        //    events were never hydrated (workflow events live only in the
+        //    in-memory EventStore, not in DB/localStorage, so a page refresh
+        //    leaves persisted tabs looking empty until we pull them back).
         const { chatTabs } = useChatStore.getState()
-        const existingSessionIds = new Set(
-          Object.values(chatTabs)
-            .filter(t => t.metadata?.mode === 'workflow' && t.sessionId)
-            .map(t => t.sessionId!)
-        )
-        const newSessions = sessionsToRestore.filter(s => !existingSessionIds.has(s.sessionId))
+        const existingTabsBySession = new Map<string, string>()
+        Object.values(chatTabs).forEach(t => {
+          if (t.metadata?.mode === 'workflow' && t.sessionId) {
+            existingTabsBySession.set(t.sessionId, t.tabId)
+          }
+        })
+        const newSessions = sessionsToRestore.filter(s => !existingTabsBySession.has(s.sessionId))
+        const rehydrateSessions = sessionsToRestore.filter(s => {
+          const tabId = existingTabsBySession.get(s.sessionId)
+          if (!tabId) return false
+          return getTabEvents(s.sessionId).length === 0
+        })
 
-        if (newSessions.length === 0) {
+        if (newSessions.length === 0 && rehydrateSessions.length === 0) {
           return
         }
         // Only restore sessions that don't have tabs yet
         const sessionsToActuallyRestore = newSessions
 
-        if (sessionsToActuallyRestore.length > 0) {
+        if (sessionsToActuallyRestore.length > 0 || rehydrateSessions.length > 0) {
           setIsRestoringWorkflowSessions(true)
+        }
+
+        // 3a. Rehydrate events for persisted tabs whose events were dropped on refresh.
+        for (const session of rehydrateSessions) {
+          const tabId = existingTabsBySession.get(session.sessionId)!
+          try {
+            await restoreWorkflowStateFromEvents(session.sessionId)
+            if (session.isActive || session.status === 'running') {
+              setTabStreaming(tabId, true)
+            }
+            const loadedEvents = getTabEvents(session.sessionId)
+            console.log('[WorkflowReconnect] Rehydrated', loadedEvents.length, 'events for persisted tab', session.sessionId)
+          } catch (err) {
+            console.warn('[WorkflowReconnect] Failed to rehydrate events for persisted tab', session.sessionId, err)
+          }
         }
 
         // 4. Create tabs and load events for new sessions only

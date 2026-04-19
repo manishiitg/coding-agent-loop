@@ -1040,7 +1040,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 			if sctx.Schedule.WorkshopMode != "" {
 				return sctx.Schedule.WorkshopMode
 			}
-			return "runner"
+			return "run"
 		}(),
 	}
 	if len(sctx.Schedule.GroupNames) > 0 {

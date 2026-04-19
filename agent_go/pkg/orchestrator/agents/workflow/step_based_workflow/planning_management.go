@@ -318,15 +318,16 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 
 	case *HumanInputPlanStep:
 		// Human input step: no execution, validation, or learning - just asks question and blocks.
-		// With learning now opt-in via non-empty LearningObjective, no explicit disable
-		// is needed — empty objective (the default) means learning never runs. We still
-		// clear any accidentally-set objective so the opt-in rule is enforced for this
-		// step type regardless of what the builder configured.
+		// Force learnings_access="none" + empty objective so this step is never included
+		// in the read or write path regardless of defaults. Under the learnings_access
+		// split, the default is "read" (step sees _global/ SKILL.md) — which is
+		// meaningless for a human-input step since it has no LLM prompt.
 		if agentConfigs == nil {
-			agentConfigs = &AgentConfigs{}
-		} else if strings.TrimSpace(agentConfigs.LearningObjective) != "" {
+			agentConfigs = &AgentConfigs{LearningsAccess: LearningsAccessNone}
+		} else if strings.TrimSpace(agentConfigs.LearningObjective) != "" || agentConfigs.LearningsAccess != LearningsAccessNone {
 			cleared := *agentConfigs
 			cleared.LearningObjective = ""
+			cleared.LearningsAccess = LearningsAccessNone
 			agentConfigs = &cleared
 		}
 
@@ -485,8 +486,7 @@ func IsPlanModificationTool(name string) bool {
 	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_routing_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_routing_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
 		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" ||
-		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
-		name == "migrate_todo_route_ids"
+		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route"
 }
 
 // IsStepConfigModificationTool checks if a tool name is a step_config modification tool

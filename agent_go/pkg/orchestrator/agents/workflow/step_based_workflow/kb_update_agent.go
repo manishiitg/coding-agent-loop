@@ -132,11 +132,15 @@ Topic ID conventions:
 
 ### A. Always read first
 
-Before writing anything, run:
+Before writing anything:
 - `+"`"+`cat '{{.GraphFilePath}}'`+"`"+` — current entities/relationships
 - `+"`"+`cat '{{.IndexFilePath}}'`+"`"+` — current graph summary
 - `+"`"+`cat '{{.NotesIndexPath}}'`+"`"+` — current notes/ topic registry (gatekeeper)
-- `+"`"+`ls '{{.StepOutputPath}}'`+"`"+` then read relevant output files
+- Read from the step — two folders are available to you, listed in the user message (do NOT `+"`"+`ls`+"`"+` either, the listings are inlined):
+  1. **Step output folder** `+"`"+`{{.StepOutputPath}}`+"`"+` — the declared artifacts the step wrote. Start here.{{if .StepContextOutput}} The primary file is the declared context_output: `+"`"+`{{.StepContextOutput}}`+"`"+`.{{end}}
+  2. **Execution logs folder** `+"`"+`{{.ExecutionLogsPath}}`+"`"+` — the full run trace: agent conversation JSON, tool-call records, result summary. Use this as a secondary source when the contribution instruction asks for facts that aren't in the context_output file (e.g. intermediate findings surfaced mid-conversation, entities mentioned in tool results that didn't make it into the final output). For large conversation JSONs use `+"`"+`tail -c 30000`+"`"+` or `+"`"+`jq`+"`"+` to pull targeted slices — don't `+"`"+`cat`+"`"+` whole files. **Read end-first**: the final turns hold the agent's settled, successful findings; earlier turns are usually noisier exploration that got refined or discarded. Tail first, then `+"`"+`jq`+"`"+` backward if you need earlier context.
+
+Read only what the contribution instruction needs. Skipping files unrelated to the instruction is correct behavior, not laziness.
 
 ### B. Atomic facts → graph.json + index.json
 
@@ -185,10 +189,18 @@ Prefer `+"`"+`diff_patch_workspace_file`+"`"+` for small appends/updates (one se
 If the contribution instruction says to extract something you cannot find in the step output, skip it — do NOT invent entities or fabricate narrative. Partial output is fine; hallucinated output is not.
 
 ## Final action
-After your writes, print exactly one summary line in this form:
+After your writes, print exactly one summary line.
+{{if eq .KBShape "notes-only"}}
+Form:
+` + "`" + `KB updated (notes-only): notes touched: [<topic-id>, ...]; sections added: <N>; new topics: [<topic-id>, ...]` + "`" + `
+
+Omit `+"`"+`new topics`+"`"+` if none were created. If no notes were touched at all (e.g. shape-mismatch no-op), print `+"`"+`KB updated (notes-only): no-op; reason: <short reason>`+"`"+`.
+{{else}}
+Form:
 ` + "`" + `KB updated: +<N> entities, +<M> relationships; total now <E>/<R>; types: [<entity_types>] / [<relationship_types>]; notes touched: [<topic-id>, ...]` + "`" + `
 
 If no notes were written, end the summary at `+"`"+`relationship_types`+"`"+` and omit the `+"`"+`notes touched`+"`"+` clause.
+{{end}}
 `)
 
 var kbUpdateUserMessageTemplate = MustRegisterTemplate("kbUpdateUserMessage", `# Knowledgebase update request
@@ -199,13 +211,24 @@ var kbUpdateUserMessageTemplate = MustRegisterTemplate("kbUpdateUserMessage", `#
 - **Step description**: {{.StepDescription}}
 - **Run folder**: {{.RunFolder}}
 - **Step output path**: {{.StepOutputPath}}
+- **Execution logs path**: {{.ExecutionLogsPath}}
+{{if .StepContextOutput}}- **Declared context_output** (the step's primary output spec — start here):
+  > {{.StepContextOutput}}
+{{end}}
+## Step output files (pre-enumerated — do NOT `+"`"+`ls`+"`"+` again)
+{{.StepOutputFilesListing}}
+
+## Execution logs files (pre-enumerated — do NOT `+"`"+`ls`+"`"+` again)
+Full run trace: agent conversation, tool calls, result summary. Consult when the context_output doesn't contain what the contribution instruction asks for. Use `+"`"+`tail -c 30000`+"`"+` or `+"`"+`jq`+"`"+` on large files — don't `+"`"+`cat`+"`"+` them whole.
+
+{{.ExecutionLogsFilesListing}}
 
 ## User's contribution instruction (what to extract)
 {{.ContributionInstruction}}
 
 ## Your task
 Apply the merge rules from the system prompt:
-1. Read `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and `+"`"+`{{.NotesIndexPath}}`+"`"+`, plus the step output files under `+"`"+`{{.StepOutputPath}}`+"`"+`.
+1. Read `+"`"+`{{.GraphFilePath}}`+"`"+`, `+"`"+`{{.IndexFilePath}}`+"`"+`, and `+"`"+`{{.NotesIndexPath}}`+"`"+`. Then read step artifacts: start with the declared context_output file; fall back to execution logs (conversation/tool-call files) if facts the instruction needs aren't there. Skip files whose names clearly don't relate to the contribution instruction.
 2. Extract atomic facts (entities/relationships) per the contribution instruction above and merge into `+"`"+`{{.GraphFilePath}}`+"`"+` (match by id, preserve prior data, stamp source).
 3. **If the instruction asks for narrative analysis**, also write per-topic markdown to `+"`"+`{{.NotesFolderPath}}/<topic-id>.md`+"`"+`. Decide topic ids using the registry; append a dated section; compact if the file is over 20KB or has 30+ sections. If the instruction is purely fact-extraction, skip notes entirely.
 4. Sync `+"`"+`{{.IndexFilePath}}`+"`"+` for any graph change. Sync `+"`"+`{{.NotesIndexPath}}`+"`"+` for any notes change.
@@ -246,14 +269,16 @@ func (agent *KBUpdateAgent) Execute(ctx context.Context, templateVars map[string
 func renderKBUpdateSystemPrompt(templateVars map[string]string) string {
 	var result strings.Builder
 	err := kbUpdateSystemPromptTemplate.Execute(&result, map[string]interface{}{
-		"StepID":          templateVars["StepID"],
-		"RunFolder":       templateVars["RunFolder"],
-		"GraphFilePath":   templateVars["GraphFilePath"],
-		"IndexFilePath":   templateVars["IndexFilePath"],
-		"StepOutputPath":  templateVars["StepOutputPath"],
-		"NotesFolderPath": templateVars["NotesFolderPath"],
-		"NotesIndexPath":  templateVars["NotesIndexPath"],
-		"KBShape":         templateVars["KBShape"],
+		"StepID":            templateVars["StepID"],
+		"RunFolder":         templateVars["RunFolder"],
+		"GraphFilePath":     templateVars["GraphFilePath"],
+		"IndexFilePath":     templateVars["IndexFilePath"],
+		"StepOutputPath":    templateVars["StepOutputPath"],
+		"StepContextOutput": templateVars["StepContextOutput"],
+		"ExecutionLogsPath": templateVars["ExecutionLogsPath"],
+		"NotesFolderPath":   templateVars["NotesFolderPath"],
+		"NotesIndexPath":    templateVars["NotesIndexPath"],
+		"KBShape":           templateVars["KBShape"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update system prompt template execution failed: %v", err))
@@ -397,10 +422,18 @@ Notes operations the user may ask for:
 - **diff_patch_workspace_file** — for small targeted edits.
 
 ## Final action
-Print exactly one summary line:
+Print exactly one summary line.
+{{if eq .KBShape "notes-only"}}
+Form:
+` + "`" + `KB reorganized (notes-only): <short description of what changed>; notes touched: [<topic-id>, ...]` + "`" + `
+
+If no notes were touched (e.g. graph-only instruction with no notes-side analogue), print `+"`"+`KB reorganized (notes-only): no-op; reason: <short reason>`+"`"+`.
+{{else}}
+Form:
 ` + "`" + `KB reorganized: <short description of what changed>; entities <before>→<after>, relationships <before>→<after>; notes touched: [<topic-id>, ...]` + "`" + `
 
 If no notes were touched, omit the `+"`"+`notes touched`+"`"+` clause entirely.
+{{end}}
 `)
 
 var kbReorganizeUserMessageTemplate = MustRegisterTemplate("kbReorganizeUserMessage", `# Knowledgebase reorganization request
@@ -471,16 +504,20 @@ func renderKBReorganizeUserMessage(templateVars map[string]string) string {
 func renderKBUpdateUserMessage(templateVars map[string]string) string {
 	var result strings.Builder
 	err := kbUpdateUserMessageTemplate.Execute(&result, map[string]interface{}{
-		"StepID":                  templateVars["StepID"],
-		"StepTitle":               templateVars["StepTitle"],
-		"StepDescription":         templateVars["StepDescription"],
-		"RunFolder":               templateVars["RunFolder"],
-		"StepOutputPath":          templateVars["StepOutputPath"],
-		"ContributionInstruction": templateVars["ContributionInstruction"],
-		"GraphFilePath":           templateVars["GraphFilePath"],
-		"IndexFilePath":           templateVars["IndexFilePath"],
-		"NotesFolderPath":         templateVars["NotesFolderPath"],
-		"NotesIndexPath":          templateVars["NotesIndexPath"],
+		"StepID":                    templateVars["StepID"],
+		"StepTitle":                 templateVars["StepTitle"],
+		"StepDescription":           templateVars["StepDescription"],
+		"RunFolder":                 templateVars["RunFolder"],
+		"StepOutputPath":            templateVars["StepOutputPath"],
+		"StepContextOutput":         templateVars["StepContextOutput"],
+		"StepOutputFilesListing":    templateVars["StepOutputFilesListing"],
+		"ExecutionLogsPath":         templateVars["ExecutionLogsPath"],
+		"ExecutionLogsFilesListing": templateVars["ExecutionLogsFilesListing"],
+		"ContributionInstruction":   templateVars["ContributionInstruction"],
+		"GraphFilePath":             templateVars["GraphFilePath"],
+		"IndexFilePath":             templateVars["IndexFilePath"],
+		"NotesFolderPath":           templateVars["NotesFolderPath"],
+		"NotesIndexPath":            templateVars["NotesIndexPath"],
 	})
 	if err != nil {
 		panic(fmt.Sprintf("kb update user message template execution failed: %v", err))
@@ -565,9 +602,16 @@ This workflow's KB shape is **{{.KBShape}}**.
 - Apply changes incrementally. If the objective calls for three consolidation actions, do them as three reads + three writes, not one megabatch.
 - When renaming an entity ` + "`" + `type` + "`" + `, scan notes bodies for literal mentions of the old type and rewrite them too — otherwise cross-references drift.
 - If you cannot confidently resolve a consolidation action (ambiguous type mapping, unclear canonical label), SKIP it and include it in the summary as "deferred: <reason>" — do not guess.
-- Print ONE summary line at the end:
+- Print ONE summary line at the end.
+{{if eq .KBShape "notes-only"}}
+Form:
+` + "`" + `KB consolidated (notes-only): <short description>; pattern notes written: [<topic-id>, ...]; topics merged: [<old>→<new>, ...]; deferred: [<reason>, ...]` + "`" + `
+Omit any clause whose list is empty.
+{{else}}
+Form:
 ` + "`" + `KB consolidated: <short description>; entity types merged: [<old>→<new>, ...]; properties merged: [<old>→<new>, ...]; pattern notes written: [<topic-id>, ...]; contested surfaced: <count>; deferred: [<reason>, ...]` + "`" + `
 Omit any clause whose count is zero.
+{{end}}
 `)
 
 var kbConsolidateUserMessageTemplate = MustRegisterTemplate("kbConsolidateUserMessage", `# Knowledgebase consolidation request

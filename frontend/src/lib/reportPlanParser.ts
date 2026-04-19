@@ -21,10 +21,12 @@
 
 import type {
   ParsedReportPlan,
+  ReportAlertSeverity,
   ReportChartType,
   ReportDefaultSort,
   ReportEntry,
   ReportFormatterName,
+  ReportPivotAggregate,
   ReportSection,
   ReportSortDirection,
   ReportWidget,
@@ -40,6 +42,21 @@ const KNOWN_FORMATTERS: ReportFormatterName[] = [
 const KNOWN_FORMATTER_SET = new Set<string>(KNOWN_FORMATTERS)
 const KNOWN_CHART_TYPES: ReportChartType[] = ['bar', 'line', 'area', 'pie']
 const KNOWN_CHART_TYPE_SET = new Set<string>(KNOWN_CHART_TYPES)
+const KNOWN_ALERT_SEVERITIES: ReportAlertSeverity[] = ['info', 'warning', 'error', 'success']
+const KNOWN_ALERT_SEVERITY_SET = new Set<string>(KNOWN_ALERT_SEVERITIES)
+const KNOWN_PIVOT_AGGREGATES: ReportPivotAggregate[] = ['sum', 'avg', 'count', 'min', 'max', 'first']
+const KNOWN_PIVOT_AGGREGATE_SET = new Set<string>(KNOWN_PIVOT_AGGREGATES)
+
+// Parses a comma-separated list of field names into a trimmed non-empty array.
+// Returns undefined when the resulting list is empty so callers can drop the key.
+function parseFieldList(raw: string): string[] | undefined {
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const p = part.trim()
+    if (p) out.push(p)
+  }
+  return out.length > 0 ? out : undefined
+}
 
 // Parses `formats` value: comma-separated `field=preset` pairs.
 // Example: `balance=currency-inr, eval_score=percent-1dp, updated=datetime`
@@ -172,7 +189,14 @@ function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {
 }
 
 function isWidgetKind(kind: string): kind is ReportWidgetKind {
-  return kind === 'text' || kind === 'chart' || kind === 'table'
+  return (
+    kind === 'text' ||
+    kind === 'chart' ||
+    kind === 'table' ||
+    kind === 'stat' ||
+    kind === 'alert' ||
+    kind === 'pivot'
+  )
 }
 
 // Parses `key: value` lines inside a widget block. Unknown keys are ignored. `source` is
@@ -200,6 +224,7 @@ function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidg
   if (!fields.source) return null
   const widget: ReportWidget = { kind, source: fields.source, path: normalizePath(fields.path) }
   if (fields.filter) widget.filter = fields.filter
+  if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
   applyOptionalFields(widget, fields)
   return widget
 }
@@ -260,6 +285,60 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
     if (fields.show_values || fields.showvalues) {
       const b = parseBool(fields.show_values || fields.showvalues)
       if (b !== undefined) widget.showValues = b
+    }
+    // Multi-series: `series: a, b, c` becomes [a, b, c]. When set, each field
+    // is plotted as its own series using x_axis as the shared category key.
+    if (fields.series) {
+      const list = parseFieldList(fields.series)
+      if (list) widget.series = list
+    }
+    if (fields.series_colors || fields.seriescolors) {
+      const list = parseColorsField(fields.series_colors || fields.seriescolors)
+      if (list) widget.seriesColors = list
+    }
+    if (fields.stacked) {
+      const b = parseBool(fields.stacked)
+      if (b !== undefined) widget.stacked = b
+    }
+  } else if (widget.kind === 'stat') {
+    if (fields.label) widget.label = fields.label
+    if (fields.prefix) widget.prefix = fields.prefix
+    if (fields.suffix) widget.suffix = fields.suffix
+    if (fields.format) {
+      const f = fields.format
+      if (KNOWN_FORMATTER_SET.has(f)) widget.format = f as ReportFormatterName
+    }
+    if (fields.delta_path || fields.deltapath) widget.deltaPath = fields.delta_path || fields.deltapath
+    if (fields.delta_format || fields.deltaformat) {
+      const f = fields.delta_format || fields.deltaformat
+      if (KNOWN_FORMATTER_SET.has(f)) widget.deltaFormat = f as ReportFormatterName
+    }
+    if (fields.trend_path || fields.trendpath) widget.trendPath = fields.trend_path || fields.trendpath
+  } else if (widget.kind === 'alert') {
+    if (fields.severity) {
+      const s = fields.severity.toLowerCase()
+      if (KNOWN_ALERT_SEVERITY_SET.has(s)) widget.severity = s as ReportAlertSeverity
+    }
+    if (fields.message) widget.message = fields.message
+  } else if (widget.kind === 'pivot') {
+    if (fields.rows) widget.rowsField = fields.rows
+    if (fields.columns) widget.columnsField = fields.columns
+    if (fields.values) widget.valuesField = fields.values
+    if (fields.aggregate) {
+      const a = fields.aggregate.toLowerCase()
+      if (KNOWN_PIVOT_AGGREGATE_SET.has(a)) widget.aggregate = a as ReportPivotAggregate
+    }
+    if (fields.format) {
+      const f = fields.format
+      if (KNOWN_FORMATTER_SET.has(f)) widget.format = f as ReportFormatterName
+    }
+    if (fields.heatmap) {
+      const b = parseBool(fields.heatmap)
+      if (b !== undefined) widget.heatmap = b
+    }
+    if (fields.heatmap_colors || fields.heatmapcolors) {
+      const list = parseColorsField(fields.heatmap_colors || fields.heatmapcolors)
+      if (list && list.length >= 2) widget.heatmapColors = [list[0], list[1]]
     }
   }
 
@@ -329,6 +408,7 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
     if (!fields.source) continue
     const widget: ReportWidget = { kind, source: fields.source, path: normalizePath(fields.path) }
     if (fields.filter) widget.filter = fields.filter
+    if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
     widgets.push(widget)
   }
   return { widgets }
@@ -361,6 +441,57 @@ export function resolveJSONPath(data: unknown, path: string): unknown {
     return undefined
   }
   return current
+}
+
+// Evaluates a `show_if:` expression against a source JSON value. Grammar:
+//   <path>                  → truthy check on resolved value
+//   !<path>                 → falsy check
+//   <path> <op> <rhs>       → compare; op ∈ { >, <, >=, <=, ==, != }
+// rhs is numeric if it parses as a finite number; otherwise treated as a string
+// (quotes optional — `"yes"` and `yes` compare identically). Missing paths are
+// treated as `null` for comparisons and `false` for truthy checks. Malformed
+// expressions evaluate to `true` so a typo doesn't accidentally hide a whole
+// section silently — validate_report_plan surfaces them as warnings.
+const SHOW_IF_RE = /^\s*(!)?\s*([^\s!<>=]+)\s*(?:(>=|<=|==|!=|>|<)\s*(.+))?\s*$/
+export function evaluateShowIf(data: unknown, expr: string | undefined): boolean {
+  if (!expr) return true
+  const match = SHOW_IF_RE.exec(expr)
+  if (!match) return true
+  const negate = match[1] === '!'
+  const path = match[2]
+  const op = match[3]
+  const rhsRaw = match[4]
+  const resolved = resolveJSONPath(data, path)
+  if (!op) {
+    const truthy = resolved !== undefined && resolved !== null && resolved !== false && resolved !== 0 && resolved !== ''
+    return negate ? !truthy : truthy
+  }
+  const rhs = rhsRaw?.trim() ?? ''
+  const rhsUnquoted = rhs.replace(/^['"]|['"]$/g, '')
+  const rhsNum = Number(rhsUnquoted)
+  const lhsNum = typeof resolved === 'number' ? resolved : Number(resolved)
+  const numeric = Number.isFinite(rhsNum) && Number.isFinite(lhsNum)
+  if (numeric) {
+    switch (op) {
+      case '>': return lhsNum > rhsNum
+      case '<': return lhsNum < rhsNum
+      case '>=': return lhsNum >= rhsNum
+      case '<=': return lhsNum <= rhsNum
+      case '==': return lhsNum === rhsNum
+      case '!=': return lhsNum !== rhsNum
+    }
+  }
+  // String compare — coerce resolved to string for equality/ordering.
+  const lhsStr = resolved == null ? '' : String(resolved)
+  switch (op) {
+    case '==': return lhsStr === rhsUnquoted
+    case '!=': return lhsStr !== rhsUnquoted
+    case '>': return lhsStr > rhsUnquoted
+    case '<': return lhsStr < rhsUnquoted
+    case '>=': return lhsStr >= rhsUnquoted
+    case '<=': return lhsStr <= rhsUnquoted
+  }
+  return true
 }
 
 // Applies a `key=value` filter to an array value. Non-arrays pass through untouched

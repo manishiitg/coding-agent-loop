@@ -62,8 +62,8 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 		ac.DescriptionReviewed = nil
 
 	// String fields (empty string + omitempty drops the key)
-	case "learning_mode":
-		ac.LearningMode = ""
+	case "learnings_access":
+		ac.LearningsAccess = ""
 	case "knowledgebase_access":
 		ac.KnowledgebaseAccess = ""
 	case "knowledgebase_contribution":

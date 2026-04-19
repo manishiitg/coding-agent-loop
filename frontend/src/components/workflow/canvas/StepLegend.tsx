@@ -359,8 +359,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
               // Check lock_learnings in step config
               const lockLearningsConfig = stepConfigs?.lock_learnings
 
-              // Check disable_learning in step config
-              const isLearningDisabled = stepConfigs?.disable_learning === true
+              // Disabled when learnings_access explicitly "none" (new semantics;
+              // old disable_learning field was removed from the backend).
+              const isLearningDisabled = stepConfigs?.learnings_access === 'none'
 
               // Show lock icon if lock_learnings is true and learning is not disabled (matching StepNode behavior)
               const lockLearnings = lockLearningsConfig === true && !isLearningDisabled

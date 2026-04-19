@@ -523,7 +523,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
    * 
    * ❌ DO NOT USE THIS METHOD FOR:
    *   - Normal bulk operations (use batchUpdateSteps API instead)
-   *   - BulkStepConfigModal operations (now uses batchUpdateSteps API)
    *   - Any operation that should be validated by the backend
    * 
    * The backend API (batchUpdateSteps) provides:

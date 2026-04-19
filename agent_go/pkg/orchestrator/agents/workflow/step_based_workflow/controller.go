@@ -521,6 +521,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 	return hcpo.browserMode
 }
 
+// HasBrowserCapability reports whether this workflow has any browser MCP available —
+// a registered browser server (playwright or camofox), the agent-browser skill, a
+// configured CDP port, or an explicit non-"none" browserMode. Use this (not
+// GetBrowserMode directly) when deciding whether to emit browser-specific prompt
+// content — an empty browserMode means "auto-detect", NOT "no browser".
+//
+// Real signals (see controller_agent_factory.go): browser MCP servers are
+// "playwright" and "camofox"; agent-browser ships as a skill registered via
+// GetSelectedSkills; CDP attach is driven by CdpPort.
+func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
+	if mode := hcpo.browserMode; mode != "" && mode != "none" {
+		return true
+	}
+	if hcpo.GetCdpPort() > 0 {
+		return true
+	}
+	for _, s := range hcpo.GetSelectedServers() {
+		if s == "playwright" || s == "camofox" {
+			return true
+		}
+	}
+	for _, s := range hcpo.GetSelectedSkills() {
+		if s == "agent-browser" {
+			return true
+		}
+	}
+	return false
+}
+
 // getConditionalAgentForStep returns the conditional agent to use for a specific step.
 // The LLM is selected by the tier resolver (default Tier 1); there is no step-level
 // LLM override for the conditional evaluator.

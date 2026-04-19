@@ -100,12 +100,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// No auto-limit on learning — human decides when to lock via lock_learnings
 
-	// Skip learning if the step hasn't opted in — i.e. learning_objective is empty.
-	// CODE EXECUTION MODE is a special case: code-exec steps need fresh learnings to
-	// maintain the main.py loop, so learning runs even without an explicit objective.
-	learningOptedIn := agentConfigs != nil && strings.TrimSpace(agentConfigs.LearningObjective) != ""
-	if !learningOptedIn && !isCodeExecutionMode {
-		_ = updateMetadataWhenSkipped("learning not opted in (learning_objective empty)")
+	// Skip learning unless the step has learnings_access="read-write" AND a non-empty
+	// learning_objective. No more code-exec force-enable — with the split read/write
+	// gates, writing is explicit opt-in; reading (default) is separate.
+	if !canWriteLearnings(agentConfigs, step, hcpo.isEvaluationMode) {
+		reason := fmt.Sprintf("learnings_access=%s", resolveLearningsAccess(agentConfigs))
+		if agentConfigs != nil && strings.TrimSpace(agentConfigs.LearningObjective) == "" {
+			reason += ", learning_objective empty"
+		}
+		_ = updateMetadataWhenSkipped("write gated (" + reason + ")")
 		return nil
 	}
 
@@ -185,6 +188,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"LearningTrigger":     "success",
 		"IsScriptedCodeMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"AllowedTools":        strings.Join(effectiveTools, ", "),
+		// Gates the browser-specific learnings shape (site profile, selectors, intents)
+		// in the learning-agent prompt so non-browser workflows don't see it.
+		// Uses HasBrowserCapability (not GetBrowserMode) because empty mode = auto-detect,
+		// not "no browser" — the real signal is the registered MCPs/skills.
+		"HasBrowserAccess": fmt.Sprintf("%t", hcpo.HasBrowserCapability()),
 	}
 
 	// Global learning: pass contributing step info and skill objective
@@ -222,6 +230,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, learningPathIdentifier, stepPath))
 	successLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
+	successLearningTemplateVars["ExecutionLogsFilesListing"] = BuildStepFilesListing(executionLogsPath)
 
 	// Ensure skill writing guide exists and pass its path
 	if guidePath, err := hcpo.ensureSkillCreator(ctx); err == nil {
@@ -331,8 +340,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
-	// Update metadata and check if auto-lock should be triggered
-	shouldAutoLock, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+	// Update metadata and check if auto-lock/unlock should be triggered
+	result, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 		ctx,
 		stepIndex,
 		stepPath,
@@ -346,15 +355,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		executionLLM,
 		learningLLM,
 	)
-	if metadataErr == nil && shouldAutoLock {
-		// Auto-lock learnings in step_config.json
-		if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), reasoning); lockErr != nil {
+	if metadataErr != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
+		return nil
+	}
+	if result.ShouldAutoLock {
+		if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), result.AutoLockReason); lockErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock learnings for step %s: %v", step.GetID(), lockErr))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (threshold reached: %s)", step.GetID(), reasoning))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (%s)", step.GetID(), result.AutoLockReason))
 		}
-	} else if metadataErr != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
+	} else if result.ShouldAutoUnlock {
+		if unlockErr := hcpo.autoUnlockStepLearningsInConfig(ctx, step.GetID(), result.AutoUnlockReason); unlockErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
+		}
 	}
 	return nil
 }

@@ -46,7 +46,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [workflows, setWorkflows] = useState<DiscoveredWorkflow[]>([])
   const [newChannelID, setNewChannelID] = useState('')
   const [newWorkflowID, setNewWorkflowID] = useState('')
-  const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'ask' | 'run'>('')
+  const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'run'>('')
 
   // ── Simulate ──────────────────────────────────────────────────────────────
   const { delegationTierConfig } = useLLMStore()
@@ -484,7 +484,7 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                           <select
                                             value={r.workshop_mode || ''}
                                             onChange={e => {
-                                              const mode = e.target.value as '' | 'builder' | 'optimizer' | 'ask' | 'run'
+                                              const mode = e.target.value as '' | 'builder' | 'optimizer' | 'run'
                                               const updated = { ...slackConfig.channel_routing }
                                               const nextRoute: ChannelRoute = { ...r }
                                               if (mode) nextRoute.workshop_mode = mode
@@ -497,7 +497,6 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                           >
                                             <option value="">Default</option>
                                             <option value="run">Run</option>
-                                            <option value="ask">Ask</option>
                                             <option value="optimizer">Optimize</option>
                                             <option value="builder">Builder</option>
                                           </select>
@@ -538,13 +537,12 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                                   </select>
                                   <select
                                     value={newWorkshopMode}
-                                    onChange={e => setNewWorkshopMode(e.target.value as '' | 'builder' | 'optimizer' | 'ask' | 'run')}
+                                    onChange={e => setNewWorkshopMode(e.target.value as '' | 'builder' | 'optimizer' | 'run')}
                                     className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
                                     title="Override workshop mode for this channel. 'Default' uses the workflow manifest value."
                                   >
                                     <option value="">Default</option>
                                     <option value="run">Run</option>
-                                    <option value="ask">Ask</option>
                                     <option value="optimizer">Optimize</option>
                                     <option value="builder">Builder</option>
                                   </select>

@@ -116,7 +116,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   return (
     <div
       ref={dialogRef}
-      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[300px] max-w-[400px]"
+      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[420px] max-w-[640px]"
       style={{
         bottom: `${position.bottom}px`,
         left: `${position.left}px`

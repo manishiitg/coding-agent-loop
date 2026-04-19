@@ -400,22 +400,40 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 {stepLogs.executions.filter(matchesSearch).map((exec: any, idx: number) => {
                   const execId = `${stepId}-exec-${exec.attempt}-${exec.iteration}`
                   const isExecExpanded = expandedExecutions.has(execId)
-                  const result = exec.content?.execution_result
-                  const model = exec.content?.model
-                  
+                  const isFastPath = exec.fast_path === true
+                  // Fast-path entries carry LearnCodeFastPathLog shape: success/exit_code/output/error.
+                  // LLM-attempt entries carry ExecutionResult shape with execution_result/model.
+                  const result = isFastPath
+                    ? (exec.content?.success ? (exec.content?.output || '') : (exec.content?.error || exec.content?.output || ''))
+                    : exec.content?.execution_result
+                  const model = isFastPath ? null : exec.content?.model
+                  const fpSuccess = isFastPath ? exec.content?.success === true : null
+                  const fpExit = isFastPath ? exec.content?.exit_code : null
+
                   return (
-                    <div key={idx} className="bg-background rounded border border-border overflow-hidden">
+                    <div key={idx} className={`bg-background rounded border overflow-hidden ${isFastPath ? 'border-indigo-200 dark:border-indigo-800' : 'border-border'}`}>
                       <button
                         onClick={() => toggleExecution(execId)}
                         className="w-full flex items-start gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
                       >
-                        <Terminal className="w-4 h-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+                        <Terminal className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isFastPath ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground'}`} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-medium text-foreground">
-                                Attempt {exec.attempt} {exec.iteration > 0 && `(Iteration ${exec.iteration})`}
+                                {isFastPath
+                                  ? 'Saved main.py (fast path)'
+                                  : <>Attempt {exec.attempt} {exec.iteration > 0 && `(Iteration ${exec.iteration})`}</>}
                               </span>
+                              {isFastPath && (
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
+                                  fpSuccess
+                                    ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800'
+                                    : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800'
+                                }`}>
+                                  {fpSuccess ? 'ok' : 'fail'}{fpExit !== undefined ? ` · exit=${fpExit}` : ''}
+                                </span>
+                              )}
                               {model && (
                                 <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
                                   {model}
@@ -425,7 +443,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                             {isExecExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
                           </div>
                           {result && (
-                            <p className="text-xs text-muted-foreground line-clamp-2">
+                            <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap">
                               {result}
                             </p>
                           )}
@@ -434,44 +452,85 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       
                       {isExecExpanded && exec.content && (
                         <div className="p-3 border-t border-border bg-muted/30 text-xs font-mono">
-                          <div className="flex justify-end mb-2">
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    toggleFileExpansion(exec.conversation_path)
-                                }}
-                                disabled={loadingFiles.has(exec.conversation_path)}
-                                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded transition-colors"
-                            >
-                                {loadingFiles.has(exec.conversation_path) ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
-                                {expandedFiles.has(exec.conversation_path) ? 'Hide Conversation' : 'View Full Conversation'}
-                            </button>
-                          </div>
-                          
-                          {expandedFiles.has(exec.conversation_path) && (
-                            <div className="mb-4 bg-background rounded border border-border p-3">
-                              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b border-border pb-1">
-                                Conversation History
-                              </div>
-                              {fileContents[exec.conversation_path] ? (
-                                <ConversationViewer content={fileContents[exec.conversation_path]} searchQuery={searchQuery} />
-                              ) : (
-                                <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                  Loading conversation...
+                          {isFastPath ? (
+                            // Fast-path: no LLM conversation, just main.py stdout/error.
+                            // Render a compact script header + output block.
+                            <div>
+                              {exec.content.script_path && (
+                                <div className="mb-2 text-[10px]">
+                                  <span className="text-muted-foreground">Script: </span>
+                                  <span className="text-foreground font-semibold">{exec.content.script_path}</span>
                                 </div>
                               )}
+                              {exec.content.timestamp && (
+                                <div className="mb-2 text-[10px] text-muted-foreground">
+                                  Ran at {exec.content.timestamp}
+                                </div>
+                              )}
+                              {exec.content.output && (
+                                <>
+                                  <div className="font-semibold text-foreground mb-1">stdout:</div>
+                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[40vh] overflow-y-auto bg-background border border-border rounded p-2 mb-3">
+                                    {exec.content.output}
+                                  </pre>
+                                </>
+                              )}
+                              {exec.content.error && exec.content.error !== exec.content.output && (
+                                <>
+                                  <div className="font-semibold text-red-600 dark:text-red-400 mb-1">error:</div>
+                                  <pre className="whitespace-pre-wrap overflow-x-auto text-red-700 dark:text-red-300 max-h-[40vh] overflow-y-auto bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded p-2 mb-3">
+                                    {exec.content.error}
+                                  </pre>
+                                </>
+                              )}
+                              <div className="font-semibold text-foreground mb-1">Full JSON:</div>
+                              <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[40vh] overflow-y-auto">
+                                {JSON.stringify(exec.content, null, 2)}
+                              </pre>
                             </div>
-                          )}
+                          ) : (
+                            // LLM attempt: conversation viewer + execution_result + full JSON.
+                            <>
+                              <div className="flex justify-end mb-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    toggleFileExpansion(exec.conversation_path)
+                                  }}
+                                  disabled={loadingFiles.has(exec.conversation_path)}
+                                  className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded transition-colors"
+                                >
+                                  {loadingFiles.has(exec.conversation_path) ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                                  {expandedFiles.has(exec.conversation_path) ? 'Hide Conversation' : 'View Full Conversation'}
+                                </button>
+                              </div>
 
-                          <div className="font-semibold text-foreground mb-1">Execution Result:</div>
-                          <div className="max-h-[60vh] overflow-y-auto mb-3">
-                            <MarkdownRenderer content={result || ''} className="!text-[11px] [&_p]:!text-[11px] [&_li]:!text-[11px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_code]:!text-[10px]" />
-                          </div>
-                          <div className="font-semibold text-foreground mb-1">Full JSON:</div>
-                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto">
-                            {JSON.stringify(exec.content, null, 2)}
-                          </pre>
+                              {expandedFiles.has(exec.conversation_path) && (
+                                <div className="mb-4 bg-background rounded border border-border p-3">
+                                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b border-border pb-1">
+                                    Conversation History
+                                  </div>
+                                  {fileContents[exec.conversation_path] ? (
+                                    <ConversationViewer content={fileContents[exec.conversation_path]} searchQuery={searchQuery} />
+                                  ) : (
+                                    <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                      Loading conversation...
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="font-semibold text-foreground mb-1">Execution Result:</div>
+                              <div className="max-h-[60vh] overflow-y-auto mb-3">
+                                <MarkdownRenderer content={result || ''} className="!text-[11px] [&_p]:!text-[11px] [&_li]:!text-[11px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_code]:!text-[10px]" />
+                              </div>
+                              <div className="font-semibold text-foreground mb-1">Full JSON:</div>
+                              <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto">
+                                {JSON.stringify(exec.content, null, 2)}
+                              </pre>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

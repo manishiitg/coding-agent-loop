@@ -505,18 +505,6 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                       {/* Expanded Content */}
                       {isExpanded && (
                         <div className="border-t border-border">
-                          {/* Summary */}
-                          {report.summary && (
-                            <div className="px-4 py-3 bg-muted/30 border-b border-border">
-                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                                Summary
-                              </h4>
-                              <p className="text-sm text-foreground whitespace-pre-wrap">
-                                {report.summary}
-                              </p>
-                            </div>
-                          )}
-
                           {/* Step Scores */}
                           <div className="p-4">
                             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
@@ -549,7 +537,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                                             #{idx + 1}
                                           </span>
                                           <span className="text-sm font-medium text-foreground truncate">
-                                            {step.step_title || step.step_id}
+                                            {step.step_id}
                                           </span>
                                         </div>
 
@@ -591,18 +579,6 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                                             </h5>
                                             <pre className="text-xs bg-background border border-border rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
                                               {step.evidence}
-                                            </pre>
-                                          </div>
-                                        )}
-
-                                        {/* Success Criteria */}
-                                        {step.success_criteria && (
-                                          <div>
-                                            <h5 className="text-xs font-semibold text-muted-foreground mb-1">
-                                              Success Criteria
-                                            </h5>
-                                            <pre className="text-xs bg-background border border-border rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
-                                              {step.success_criteria}
                                             </pre>
                                           </div>
                                         )}

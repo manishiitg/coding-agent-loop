@@ -191,11 +191,12 @@ This means `learn_code` is not only a fast path. It is also the persistent scrip
 
 ### Lock code vs lock learnings
 
-There are two separate locks:
+There are two separate locks plus the access-level gate:
 
 | Setting | Controls | Effect |
 |---|---|---|
-| `lock_learnings: true` | SKILL.md | Prevents the learning agent from running. Existing SKILL.md is still used by execution agents. |
+| `learnings_access` (`"read"\|"read-write"\|"none"`) | SKILL.md read/write at a coarse level | Default `"read"` — step sees `_global/SKILL.md` but doesn't contribute. `"read-write"` (+ non-empty `learning_objective`) opts into contribution. `"none"` opts out of both. Mirrors `knowledgebase_access`. |
+| `lock_learnings: true` | SKILL.md writes | Freezes the learning agent for this step. Existing SKILL.md still flows into execution prompts. **Auto-set after 3 successful runs against the same step-description hash; auto-cleared on description change** for steps that were auto-locked (manual locks stay put). |
 | `lock_code: true` | main.py | Prevents LLM-rewritten scripts from being saved back to learnings. Skips the fix loop entirely (falls back directly to code_exec mode). |
 
 When `lock_code: true` is set on a step:
@@ -283,8 +284,19 @@ Choose `code_exec` when:
 | `agent_go/cmd/server/server.go` | Per-tool HTTP endpoints and bridge env setup |
 | `agent_go/pkg/workspace/execute_shell_command.go` | Shell execution guardrails and tool-routing constraints |
 
+## Orchestrator (todo_task) learn_code
+
+This doc covers regular-step learn_code. Todo-task orchestrators also have a learn_code fast path with different semantics:
+
+- **Read-only at runtime** — builder writes `main.py` once; no repair loop, no save-back, no fix iterations
+- Eligibility: `declared_execution_mode="learn_code"` + `len(predefined_routes) >= 1`
+- Script calls sub-agents via `POST ${MCP_API_URL}/tools/custom/call_sub_agent`
+- Fallback is fresh — LLM orchestrator starts from zero, no script state carried over
+- See [todo-task-step-type.md](todo-task-step-type.md#orchestrator-learn_code-mode-fast-path) for full details
+
 ## Related Docs
 
 - [Step Config Specification](step_config_format_specification.md)
 - [Tool Search Mode](../core/tool_search_mode.md)
 - [Learning Architecture](learning_architecture.md)
+- [Todo-Task Step Type](todo-task-step-type.md)

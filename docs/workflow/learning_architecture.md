@@ -92,32 +92,52 @@ Important current details:
 - learning detection via a separate LLM-based “did we learn something new?” phase has been removed
 - metadata is updated using a rule-based path instead
 
-### Auto-locking
+### Auto-locking (description-hash scoped)
 
-Auto-locking still exists, but the old complexity-based thresholds in the deleted architecture doc are no longer accurate.
+Auto-locking is driven by a **description-hash-scoped counter**, not a raw total-runs counter.
 
 Current metadata logic in [`controller_learning_detection.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_learning_detection.go):
 
-- per-step learnings auto-lock after **3 successful runs**
+- the step description is hashed (SHA256 of trimmed `step.GetDescription()`) on every successful run
+- if the hash matches the previously-stored `last_description_hash`, `description_hash_runs` increments
+- if the hash differs, `description_hash_runs` resets to 1 and the stored hash is updated
+- per-step learnings auto-lock when `description_hash_runs` reaches **3** — i.e. three successful runs in a row against the *same* description
 - fallback safety lock at **15 total iterations**
 - global learning (`_global`) does **not** auto-lock
 
-So the current rule is much simpler than the older “simple/medium/complex with 3/5/10 thresholds” model.
+Editing the step description invalidates the "converged" signal: the next run resets the counter, and the step must accumulate 3 fresh successful runs against the new description before re-locking.
+
+### Auto-unlock on description change
+
+If a step was **auto-locked** (metadata has `auto_locked_at`) and its description later changes, the next successful run will:
+
+- detect the hash change
+- clear `auto_locked_at` in metadata, set `auto_unlocked_at`
+- clear `lock_learnings` and `optimized` in `step_config.json` (the two flags always move together)
+- emit a step-config-updated event so the frontend reflects the unlock
+
+Manual locks — steps where `lock_learnings: true` was set by a human without an `auto_locked_at` record — are **never** auto-unlocked. Auto-unlock is strictly the inverse of auto-lock.
 
 ### Locking and disabling learning
 
-The important current controls are:
+The important current controls on `AgentConfigs`:
 
-- `disable_learning`
-- `lock_learnings`
-- `learning_detail_level`
-- `global_skill_objective`
+- `learnings_access` (string enum: `"read" | "read-write" | "none"`) — primary gate. Mirrors `knowledgebase_access`.
+  - `"read"` (default) — step sees `_global/SKILL.md` in its prompt; does NOT contribute.
+  - `"read-write"` — step reads AND contributes. Requires `learning_objective` to be non-empty.
+  - `"none"` — step neither reads nor contributes. The true disable.
+- `learning_objective` (string) — the **extraction instruction** for the post-step learning agent. Required when access is `"read-write"`. No longer a gate.
+- `lock_learnings` (bool) — freezes the learning agent for this step even while access is `"read-write"`. Existing `SKILL.md` still flows into execution prompts. Auto-unlock clears this when the description changes (for auto-locked steps only).
+- `global_skill_objective` (workflow-level, not per-step) — describes what domain knowledge the global skill should accumulate.
 
-Recommended usage from workshop guidance:
+Auto-migration for legacy configs (runtime-only, no file rewrites): if `learnings_access` is unset, `learning_objective` non-empty infers `"read-write"`; empty infers `"read"`.
 
-- disable learning for steps that do not contribute useful domain knowledge
-- lock learnings for mature steps after reviewing the global skill
-- keep learning enabled for steps that interact directly with the target system
+Recommended usage:
+
+- leave `learnings_access` unset (defaults to `"read"`) for most steps — they benefit from cross-step context.
+- set `learnings_access: "read-write"` + a non-empty `learning_objective` on steps that produce durable HOW-knowledge about the target system.
+- set `learnings_access: "none"` for steps that are truly throwaway or whose context would pollute the global skill (e.g. pure file moves, human-input steps — the latter is forced to `"none"` automatically).
+- let auto-lock + auto-unlock handle the lifecycle of `lock_learnings` — manual locks are for curated SKILL.md content the human wants frozen regardless of description changes.
 
 ### Failure learning
 
@@ -183,8 +203,9 @@ Not every step uses every file. The important distinction is:
 When editing related workflow docs, keep these rules consistent:
 
 - describe learning as global-skill-first
-- describe `lock_learnings` as a per-step contribution control, not as a switch for an older per-step learning world
+- gate read access and write contribution through `learnings_access` — `lock_learnings` is a freeze switch, not the enable/disable mechanism
 - for scripted steps, describe `main.py` as the executable source of truth
+- auto-lock is scoped to the **description hash**; editing the description invalidates the lock countdown and auto-unlocks previously-auto-locked steps
 - leave validation details to the dedicated pre-validation docs
 
 ## Code references

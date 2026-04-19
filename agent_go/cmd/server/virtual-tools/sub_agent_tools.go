@@ -74,9 +74,12 @@ type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, in
 type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions string) (string, error)
 
 // CreateSubAgentTools creates the sub-agent calling virtual tools.
-// When enableTierSelection is true, preferred_tier is a REQUIRED parameter on both
-// sub-agent tools — the orchestrator must explicitly choose a tier per call.
-func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
+// preferred_tier is always a REQUIRED parameter on both sub-agent tools — the
+// orchestrator must explicitly reason about task difficulty on every delegation.
+// When the workflow has no tier resolver or the step pins an ExecutionLLM, the
+// tier value is informational (inherited/pinned LLM is used regardless), but the
+// parameter remains required for prompt discipline.
+func CreateSubAgentTools() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
 	// call_sub_agent tool - Execute a predefined sub-agent
@@ -97,16 +100,13 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			"type":        "boolean",
 			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
-	}
-	callSubAgentRequired := []string{"route_id", "todo_id", "instructions"}
-	if enableTierSelection {
-		callSubAgentProperties["preferred_tier"] = map[string]interface{}{
+		"preferred_tier": map[string]interface{}{
 			"type":        "integer",
 			"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
 			"enum":        []int{1, 2, 3},
-		}
-		callSubAgentRequired = append(callSubAgentRequired, "preferred_tier")
+		},
 	}
+	callSubAgentRequired := []string{"route_id", "todo_id", "instructions", "preferred_tier"}
 	callSubAgentTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
@@ -136,15 +136,12 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 	}
-	callGenericAgentRequired := []string{"todo_id", "instructions"}
-	if enableTierSelection {
-		callGenericAgentProperties["preferred_tier"] = map[string]interface{}{
-			"type":        "integer",
-			"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
-			"enum":        []int{1, 2, 3},
-		}
-		callGenericAgentRequired = append(callGenericAgentRequired, "preferred_tier")
+	callGenericAgentProperties["preferred_tier"] = map[string]interface{}{
+		"type":        "integer",
+		"description": "REQUIRED. LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). You must pick a tier for every call based on the task's difficulty.",
+		"enum":        []int{1, 2, 3},
 	}
+	callGenericAgentRequired := []string{"todo_id", "instructions", "preferred_tier"}
 	callGenericAgentTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{

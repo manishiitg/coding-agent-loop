@@ -43,8 +43,6 @@ As of 2026-04-02, `TodoTaskPlanStep` uses a **flat format** — all fields (desc
   "context_dependencies": ["previous_step_output.json"],
   "context_output": "final_status.json",
   "validation_schema": { "files": [{ "file_name": "final_status.json", "must_exist": true }] },
-  "has_loop": false,
-  "loop_condition": "",
   "predefined_routes": [
     {
       "route_id": "fetch-data",
@@ -120,12 +118,10 @@ def migrate_step(step):
     if inner is None:
         return step  # already flat
     for field in ['description', 'success_criteria', 'context_dependencies',
-                  'context_output', 'validation_schema', 'has_loop', 'loop_condition']:
+                  'context_output', 'validation_schema']:
         if not step.get(field) and field in inner:
             step[field] = inner[field]
     del step['todo_task_step']
-    step.setdefault('has_loop', False)
-    step.setdefault('loop_condition', '')
     # Recurse into nested todo_task sub-agents in routes
     for route in step.get('predefined_routes', []):
         if route.get('sub_agent_step'):
@@ -507,8 +503,40 @@ The `ExecutionLogsPopup` component displays todo task logs in a similar format t
 ### TodoTaskNode
 - Purple badge with ListTodo icon
 - Shows predefined routes count
-- Shows "Generic agent enabled" indicator
 - Context inputs/outputs from step fields directly
+
+## Orchestrator learn_code mode (fast path)
+
+A todo_task step can be put into **learn_code mode** — the builder authors a Python `main.py` at `learnings/{step-id}/main.py` that drives the orchestration deterministically. At runtime, if eligibility holds, the script runs first and returns success with **zero LLM tokens**. Any failure falls through to the normal LLM orchestrator with a **fresh start** (no state carried over from the script).
+
+### Eligibility
+
+Both conditions required — checked at the start of `executeTodoTaskStep`:
+
+1. `declared_execution_mode = "learn_code"` set on the step (via `update_step_config(step_id, declared_execution_mode="learn_code")`) — lives in `planning/step_config.json`, not plan.json
+2. `len(predefined_routes) >= 1` — the script needs routes to call
+
+Either missing → script never attempted, step runs as normal LLM orchestrator.
+
+### Contract
+
+- Read-only at runtime: builder writes `main.py` once; runtime never repairs or rewrites it (no fix loop, no save-back — distinct from regular-step learn_code)
+- Script calls sub-agents via HTTP: `POST ${MCP_API_URL}/tools/custom/call_sub_agent` with body `{ "route_id": "...", "todo_id": "...", "instructions": "..." }`
+- Pre-validation runs after the script exits (same `RunPreValidation` path as LLM orchestrator). Success requires exit=0 **and** validation pass. Without a `validation_schema` on the step, any exit-zero script counts as success — strongly recommend setting one.
+- Fallback is fresh: LLM orchestrator starts from zero, re-plans from step description + predefined routes. No `complete_todo`-style state handoff.
+- `fast_path_only=true` on `execute_step` is honored — no LLM fallback, hard error if script missing/fails.
+
+### When to use
+
+- Flow is stable and deterministic (call route A → route B → route C, or loop over items calling one route per item)
+- Branching is only success/failure, not semantic inspection of sub-agent output
+
+### When NOT to use
+
+- Orchestrator must decide per item whether to delegate based on inspecting prior results
+- Only one predefined route and a single call — make it a regular learn_code step instead
+
+See also: `docs/workflow/learn_code_flow.md` for the regular-step learn_code flow.
 
 ### Sub-Agent Nodes (in StepNode)
 - Bot icon instead of step number

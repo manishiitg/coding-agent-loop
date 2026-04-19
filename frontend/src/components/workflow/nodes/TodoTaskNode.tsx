@@ -128,9 +128,9 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
-    disable_learning?: boolean
+    learnings_access?: 'read' | 'read-write' | 'none'
+    learning_objective?: string
     lock_learnings?: boolean
-    learning_detail_level?: string
     execution_max_turns?: number
     selected_servers?: string[]
     selected_tools?: string[]
@@ -163,11 +163,11 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepOverride?.execution_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning disabled: override > step config
+  // Disabled = learnings_access explicitly "none". Default and "read"/"read-write"
+  // both imply the step participates in learnings.
   const learningDisabled = useMemo(() => {
-    if (stepOverride?.disable_learning !== undefined) return stepOverride.disable_learning === true
-    return stepConfig?.agent_configs?.disable_learning === true
-  }, [stepOverride?.disable_learning, stepConfig?.agent_configs?.disable_learning])
+    return stepConfig?.agent_configs?.learnings_access === 'none'
+  }, [stepConfig?.agent_configs?.learnings_access])
 
   // Learning LLM: override > step config > preset learning_llm > preset default
   const learningLLM = useMemo(() => {

@@ -488,6 +488,24 @@ func reviewMainPyScript(script string, declaredEnvVars ...string) []string {
 		}
 	}
 
+	// Check 10: Ephemeral browser refs saved into main.py. Refs like @e1, e68, "ref": "abc123"
+	// only exist within a single snapshot — they change every session, so baking them into
+	// main.py guarantees the replay will fail. Fire only when the script looks browser-ish.
+	reBrowserSignal := regexp.MustCompile(`browser_(?:click|type|snapshot|evaluate|navigate|select|fill|hover)|agent[_-]browser`)
+	if reBrowserSignal.MatchString(script) {
+		reEphemeralRef := regexp.MustCompile(`['"]@e\d+['"]|['"]\bref['"]\s*:\s*['"][a-zA-Z0-9]{4,}['"]`)
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			if reEphemeralRef.MatchString(line) {
+				issues = append(issues, fmt.Sprintf(
+					"Line %d: Ephemeral browser ref (e.g. @e1, {\"ref\": \"abc123\"}) saved into main.py. Refs change every snapshot/session — the replay will fail. Replace with a durable locator: data-testid > hand-written #id > aria-label > role+name > get_by_label/placeholder/text. Found: %s",
+					i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+
 	return issues
 }
 
@@ -1344,7 +1362,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
 // stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
 // inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
 // envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
-func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string) string {
+func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser bool) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Code Execution Mode\n\n")
 	sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
@@ -1364,13 +1382,21 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 	// review main.py agree on what "compliant" means.
 	sb.WriteString(BuildMainPyAuthoringRules())
 
-	// Browser automation — execution-mode-specific examples for Playwright + Agent Browser.
-	// Kept here (not in the shared block) because these concrete tool-call examples are most
-	// useful when actively generating new code; review/harden agents don't need them.
-	sb.WriteString("**Browser automation — execution-mode tool call examples:**\n")
-	sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
-	sb.WriteString("- Click: `call_mcp('playwright', 'browser_click', {'ref': 'abc123'})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': ['@e1'], 'session': 'main'})`\n")
-	sb.WriteString("- Always `get_api_spec` first to see exact parameter schemas. Do NOT guess parameter names.\n\n")
+	// Browser authoring rules are no longer emitted here — the execution_only
+	// template now injects them directly via {{.BrowserAuthoringRules}} (populated
+	// from HasBrowserAccess) so both learn-code and pure code-exec browser steps
+	// see the refs/selectors/probe guidance. Emitting them a second time here
+	// would duplicate ~60 lines. Keep the execution-mode call-examples here since
+	// they're learn-code-specific (they demonstrate the call_mcp Python wrapper
+	// the learn-code prompt teaches).
+	if hasBrowser {
+		sb.WriteString("**Browser automation — execution-mode tool call examples (Python):**\n")
+		sb.WriteString("- Snapshot: `call_mcp('playwright', 'browser_snapshot', {})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})`\n")
+		sb.WriteString("- Click (via runtime-parsed ref — the literal `'abc123'` / `'@e1'` below are PLACEHOLDERS; the actual value must be parsed from the snapshot variable each run, NEVER hardcoded): `call_mcp('playwright', 'browser_click', {'ref': ref_parsed_from_snapshot})` or `call_mcp('workspace_browser', 'agent_browser', {'command': 'click', 'args': [ref_parsed_from_snapshot], 'session': 'main'})`\n")
+		sb.WriteString("- Click (via durable selector — preferred for readability when the tool accepts it): `call_mcp('playwright', 'browser_click', {'selector': '#panAdhaarUserId'})` or `agent_browser` `args=['[aria-label=\"Sign in\"]']`\n")
+		sb.WriteString("- Click (via Playwright locator API — most durable for multi-step flows): `call_mcp('playwright', 'browser_run_code', {'code': \"await page.getByRole('button', { name: 'Continue' }).click()\"})`\n")
+		sb.WriteString("- Always `get_api_spec` first to see exact parameter schemas. Do NOT guess parameter names.\n\n")
+	}
 
 	// Show workflow variable → env var mapping so LLM knows exactly how to access each one
 	if len(varMappingLines) > 0 {

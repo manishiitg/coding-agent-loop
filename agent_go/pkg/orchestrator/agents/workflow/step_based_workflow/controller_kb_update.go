@@ -49,6 +49,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 	stepID := step.GetID()
 	stepTitle := step.GetTitle()
 	stepDescription := step.GetDescription()
+	stepContextOutput := strings.TrimSpace(step.GetContextOutput().String())
 	runFolder := hcpo.selectedRunFolder
 	stepLabel := strings.TrimSpace(stepTitle)
 	if stepLabel == "" {
@@ -99,7 +100,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 				hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, resultMsg, nil, execErr)
 			}
 		}()
-		execErr = hcpo.runKBUpdatePhase(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution)
+		execErr = hcpo.runKBUpdatePhase(execCtx, stepIndex, stepPath, stepID, stepTitle, stepDescription, runFolder, contribution, stepContextOutput)
 		if execErr != nil {
 			resultMsg = fmt.Sprintf("KB update failed for %s: %v", stepLabel, execErr)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB update phase failed for %s: %v", stepLabel, execErr))
@@ -120,6 +121,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	stepDescription string,
 	runFolder string,
 	contribution string,
+	stepContextOutput string,
 ) error {
 	hcpo.GetLogger().Info(fmt.Sprintf("📚 Starting KB update for step %s/%s", stepID, stepPath))
 
@@ -144,6 +146,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 		runWorkspacePath = baseWorkspacePath
 	}
 	stepOutputPath := filepath.Join(docsRoot, runWorkspacePath, "execution", stepID)
+	// Execution logs folder (agent conversation + tool calls + result summary). Distinct
+	// from stepOutputPath above: that folder holds declared context_output artifacts,
+	// while this folder holds the full run trace. KB extraction sometimes needs facts
+	// that only appear in the conversation — e.g. intermediate findings the step
+	// surfaced but didn't write to its final output file.
+	executionLogsPath := filepath.Join(docsRoot, getExecutionFolderPathForLogs(runWorkspacePath, stepID, stepPath))
 
 	var agentConfigs *AgentConfigs
 	if plan := hcpo.approvedPlan; plan != nil {
@@ -165,17 +173,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	}
 
 	templateVars := map[string]string{
-		"StepID":                  stepID,
-		"StepTitle":               stepTitle,
-		"StepDescription":         stepDescription,
-		"RunFolder":               runFolder,
-		"StepOutputPath":          stepOutputPath,
-		"ContributionInstruction": contribution,
-		"GraphFilePath":           graphFilePath,
-		"IndexFilePath":           indexFilePath,
-		"NotesFolderPath":         notesFolderPath,
-		"NotesIndexPath":          notesIndexPath,
-		"KBShape":                 workflowtypes.ResolveKBShape(hcpo.KBShape()),
+		"StepID":                    stepID,
+		"StepTitle":                 stepTitle,
+		"StepDescription":           stepDescription,
+		"RunFolder":                 runFolder,
+		"StepOutputPath":            stepOutputPath,
+		"StepContextOutput":         stepContextOutput,
+		"StepOutputFilesListing":    BuildStepFilesListing(stepOutputPath),
+		"ExecutionLogsPath":         executionLogsPath,
+		"ExecutionLogsFilesListing": BuildStepFilesListing(executionLogsPath),
+		"ContributionInstruction":   contribution,
+		"GraphFilePath":             graphFilePath,
+		"IndexFilePath":             indexFilePath,
+		"NotesFolderPath":           notesFolderPath,
+		"NotesIndexPath":            notesIndexPath,
+		"KBShape":                   workflowtypes.ResolveKBShape(hcpo.KBShape()),
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})

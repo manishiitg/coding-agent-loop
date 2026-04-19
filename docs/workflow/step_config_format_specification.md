@@ -68,11 +68,9 @@ Both frontend and backend **read and write** only the object format with `steps`
         "use_code_execution_mode": true,
         "disable_validation": false,
         "llm_validation_mode": "skip",
-        "disable_learning": false,
+        "learnings_access": "read-write",
+        "learning_objective": "Capture target-system selectors, auth flow quirks, and session-expiry signals",
         "lock_learnings": false,
-        "learning_after_loop_iteration": false,
-        "learning_detail_level": "exact",
-        "keep_learning_full": false,
         "enable_context_offloading": true,
         "enable_prerequisite_detection": true,
         "prerequisite_rules": [
@@ -197,12 +195,9 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `disable_learning` | `boolean` | `false` (nil = enabled) | Disable learning capture for this step |
-| `lock_learnings` | `boolean` | `false` (nil = unlocked) | Lock learnings - prevents learning agent from running but still uses existing learnings |
-| `learning_after_loop_iteration` | `boolean` | `false` | Run learning after each loop iteration (for loop steps) |
-| `learning_detail_level` | `"exact"\|"general"\|"none"` | `"exact"` | Level of detail in learnings (`"exact"` = full content, `"general"` = summary, `"none"` = disabled) |
-| `keep_learning_full` | `boolean` | `false` | Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (can be overridden by `KEEP_LEARNING_FULL` env var) |
-| `use_global_learning` | `boolean` | `false` (nil = per-step) | Workflow-level: all steps contribute to and read from a single shared skill at `learnings/_global/SKILL.md` instead of per-step skills. Each step contributes max 2 times. Set in `workflow.json` `execution_defaults`. |
+| `learnings_access` | `"read"\|"read-write"\|"none"` | `"read"` (auto-migrated from `learning_objective` if unset) | Primary gate for the global learnings store. `"read"` — step sees `learnings/_global/SKILL.md` in its prompt; `"read-write"` — step also contributes (requires non-empty `learning_objective`); `"none"` — step neither reads nor contributes. Mirrors `knowledgebase_access`. |
+| `learning_objective` | `string` | `""` | Extraction instruction for the post-step learning agent — describes what patterns/selectors/recipes should land in `SKILL.md`. Required when `learnings_access="read-write"`; the validator rejects the combination of write access with an empty objective. |
+| `lock_learnings` | `boolean` | `false` (nil = unlocked) | Freeze the learning agent for this step. Existing `SKILL.md` still flows into execution prompts, but no new writes. Auto-set to `true` after **3 successful runs with the same step-description hash** (see `description_hash_runs` in `.learning_metadata.json`). Auto-cleared on description change for auto-locked steps; manual locks (no `auto_locked_at` in metadata) are preserved. |
 
 ### Execution Mode Configuration
 

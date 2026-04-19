@@ -31,6 +31,36 @@ Every piece of knowledge you capture should contribute toward this objective. As
 2. **NEVER Store Secrets or Sensitive Data**: Do NOT save passwords, API keys, tokens, credentials, financial data (account numbers, balances, transactions), PII (names, emails, phone numbers), or any other sensitive information in skill files. Use {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders instead. If execution logs contain such data, extract only the structural patterns — never the actual values.
 3. **Accumulate & Merge**: Each step contributes new knowledge. Merge with existing content. Never discard previous knowledge unless proven wrong.
 4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
+
+{{if .HasBrowserAccess}}## BROWSER-AUTOMATION STEPS — REQUIRED LEARNINGS SHAPE
+This workflow has a browser MCP configured (playwright / agent_browser / camoufox). For steps that used a browser tool, the skill MUST include — typically as ` + "`" + `references/site-profile.md` + "`" + ` and ` + "`" + `references/selectors.md` + "`" + `:
+
+1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks Playwright-launched browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
+
+2. **Stable-hook inventory (once per site)**: One-time profile of what durable attributes exist site-wide. Example shape:
+   ` + "```" + `
+   Site: eportal.incometax.gov.in — Angular Material app
+   data-testid: 0    aria-label: 38    hand-written ids: yes (panAdhaarUserId, loginPasswordField, ...)
+   Avoid: mat-mdc-* auto-generated ids — rotate across rebuilds.
+   Strategy: prefer hand-written id → aria-label → role+name.
+   ` + "```" + `
+   This tells every future step on this site which locator priority to use without re-probing.
+
+3. **Per-action intents, not raw selectors alone**: For each significant interaction, record the *semantic identity* plus 1-2 alternates, so a fix loop can re-derive the locator if the primary rots. Example:
+   ` + "```" + `
+   Step [login.fill_user_id]
+     intent: {by: "id", value: "panAdhaarUserId"}
+     alt:    {by: "placeholder", value: "PAN/ Aadhaar/ Other User ID"}
+     alt:    {by: "role+name_contains", role: "textbox", name: "User ID"}
+     notes:  Continue button stays disabled until input has a value.
+   ` + "```" + `
+
+4. **Behavioral quirks**: Multi-step flows (User ID → Continue → Password), cross-domain redirects (e-Filing → TRACES), disabled-until-valid gates, secondary confirmation modals, OTP/captcha branches, phantom controls (a ` + "`" + `#btn` + "`" + ` that looks like Proceed but does nothing — the real action is a link below). These are the highest-value learnings because they are not derivable from the DOM.
+
+5. **Known-bad selector patterns**: Explicit "do NOT use" list for this site — auto-generated id shapes, dynamic class chains, any selector that seemed to work but broke on the next run. Future steps consult this list before picking a locator.
+
+**Never save ephemeral refs (` + "`" + `@e1` + "`" + `, ` + "`" + `e68` + "`" + `, etc.) into learnings.** They are session-local and useless across runs.
+{{end}}
 {{if .SkillCreatorPath}}
 ## SKILL WRITING GUIDE (CRITICAL — READ FIRST)
 Before writing or updating anything, read the skill creator guide at '{{.SkillCreatorPath}}'.
@@ -56,9 +86,11 @@ Use this block to drive CROSS-STEP consolidation that a single step's learning a
 - If the current SKILL.md has sections that no declared objective covers, decide: is it stale (from a removed step) or genuinely shared? Stale → remove; shared → move to a ` + "`" + `references/` + "`" + ` file with a clear scope note.
 {{end}}
 3. **Read Execution Logs**: The execution logs at '{{.ExecutionLogsPath}}' show what step "{{.ContributingStepTitle}}" just did.
-   - List files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
-   - Start with result summary (small file) to understand what happened.
-   - Read conversation JSON if needed for domain details (use ` + "`" + `tail -c 30000` + "`" + ` for large files).
+{{if .ExecutionLogsFilesListing}}   - Files available (pre-enumerated — do NOT run ` + "`" + `ls` + "`" + ` again):
+{{.ExecutionLogsFilesListing}}
+{{else}}   - List files: ` + "`" + `ls '{{.ExecutionLogsPath}}'` + "`" + `
+{{end}}   - Start with the smallest summary file in the listing to understand what happened.
+   - Read the conversation JSON (largest file) only if you need domain details. **Read end-first**: the final turns hold the refined, working pattern (selectors that ended up succeeding, the winning tool sequence); earlier turns are exploration and recoveries. Use ` + "`" + `tail -c 30000` + "`" + ` to pull the tail, then ` + "`" + `jq` + "`" + ` backward if you need earlier context.
 4. **Merge & Consolidate**:
 {{if .IsSuccess}}
    - Extract domain knowledge discovered by step "{{.ContributingStepTitle}}".
@@ -182,8 +214,11 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 		"LearningTrigger":          templateVars["LearningTrigger"],
 	}
 
-	// Forward additional template vars from caller
-	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective", "StepScriptsPath", "LearningObjectivesBlock"} {
+	// Forward additional template vars from caller. ExecutionLogsPath + its
+	// pre-enumerated file listing drive the system prompt's "Read Execution
+	// Logs" step — without them, the prompt renders `at '' ... ls ''` and the
+	// agent has no idea where to look. Both are set by runSuccessLearningPhase.
+	for _, key := range []string{"StepExecutionPath", "StepNumber", "SkillCreatorPath", "AllowedTools", "IsScriptedCodeMode", "UseGlobalLearning", "ContributingStepID", "ContributingStepTitle", "GlobalSkillObjective", "StepScriptsPath", "LearningObjectivesBlock", "HasBrowserAccess", "ExecutionLogsPath", "ExecutionLogsFilesListing"} {
 		if v, ok := templateVars[key]; ok {
 			learningTemplateVars[key] = v
 		}
@@ -228,6 +263,7 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 	isSuccess := learningTrigger == "success"
 
 	executionLogsPath := templateVars["ExecutionLogsPath"]
+	executionLogsFilesListing := templateVars["ExecutionLogsFilesListing"]
 	existingLearningsContent := templateVars["ExistingLearningsContent"]
 
 	// Always use global learning template
@@ -239,13 +275,15 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 		"WritePath":                writePath,
 		"ContributingStepTitle":    templateVars["ContributingStepTitle"],
 		"WorkflowName":             "Workflow Knowledge",
-		"ExecutionLogsPath":        executionLogsPath,
-		"ExistingLearningsContent": existingLearningsContent,
+		"ExecutionLogsPath":         executionLogsPath,
+		"ExecutionLogsFilesListing": executionLogsFilesListing,
+		"ExistingLearningsContent":  existingLearningsContent,
 		"SkillCreatorPath":         templateVars["SkillCreatorPath"],
 		"GlobalSkillObjective":     templateVars["GlobalSkillObjective"],
 		"IsScriptedCodeMode":       templateVars["IsScriptedCodeMode"] == "true",
 		"StepScriptsPath":          templateVars["StepScriptsPath"],
 		"LearningObjectivesBlock":  templateVars["LearningObjectivesBlock"],
+		"HasBrowserAccess":         templateVars["HasBrowserAccess"] == "true",
 	}); err != nil {
 		panic(fmt.Sprintf("learning system prompt template execution failed: %v", err))
 	}

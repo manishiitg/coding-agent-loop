@@ -156,6 +156,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 // that scores all steps at once with holistic analysis.
 func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string) (*EvaluationReport, error) {
 	evalExecutionPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "execution")
+	// The scoring agent will write its raw report to this folder via submit_report. We
+	// then re-marshal with totals/timestamps and publish to the target run folder too.
+	evalReportFolder := filepath.Join("evaluation", "runs", internalEvalRunFolder)
 
 	// Collect all step outputs
 	var stepInputs []EvaluationStepInput
@@ -174,7 +177,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 			ID:              step.ID,
 			Title:           step.Title,
 			Description:     step.Description,
-			SuccessCriteria: step.SuccessCriteria,
 			ExecutionOutput: executionOutput,
 		})
 	}
@@ -188,14 +190,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	scoringCtx = context.WithValue(scoringCtx, orchevents.ForceCorrelationIDKey, scoringSessionID)
 	scoringCtx = context.WithValue(scoringCtx, orchevents.IsSubAgentContextKey, true)
 
-	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder)
+	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder, evalReportFolder)
 	if err != nil {
 		return nil, fmt.Errorf("scoring agent failed: %w", err)
 	}
 
-	// Save report
-	internalReportPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "evaluation_report.json")
-	publishedReportPath := filepath.Join("evaluation", "runs", targetRunFolder, "evaluation_report.json")
+	// The scoring tool wrote a minimal validated JSON to internalReportPath. We now
+	// re-marshal with computed totals/timestamps so the on-disk file matches what
+	// scoreAllSteps returned. Then publish a copy next to the target run folder.
+	internalReportPath := filepath.Join(evalReportFolder, EvaluationReportFileName)
+	publishedReportPath := filepath.Join("evaluation", "runs", targetRunFolder, EvaluationReportFileName)
 	reportJSON, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return report, fmt.Errorf("failed to marshal evaluation report: %w", err)
@@ -287,8 +291,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.C
 }
 
 // scoreAllSteps runs a single scoring agent that scores all evaluation steps at once.
-func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string) (*EvaluationReport, error) {
-	report, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs)
+func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string, evalReportFolder string) (*EvaluationReport, error) {
+	report, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs, evalReportFolder)
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +310,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, ev
 		if !scoredStepIDs[step.ID] {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent did not score step %s — adding zero score", step.ID))
 			report.StepScores = append(report.StepScores, &EvaluationStepScore{
-				StepID:          step.ID,
-				StepTitle:       step.Title,
-				Score:           0,
-				MaxScore:        10,
-				Reasoning:       "Scoring agent did not provide a score for this step",
-				SuccessCriteria: step.SuccessCriteria,
+				StepID:    step.ID,
+				Score:     0,
+				MaxScore:  10,
+				Reasoning: "Scoring agent did not provide a score for this step",
+				Evidence:  "n/a — step missing from agent's submitted report",
 			})
 		}
 	}

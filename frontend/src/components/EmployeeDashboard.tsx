@@ -801,17 +801,11 @@ export const EmployeeDashboard: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <div className="rounded-xl border border-border px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Summary</div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
-                          {reviewState.evaluation.report.summary}
-                        </p>
-                      </div>
                       <div className="space-y-3">
                         {reviewState.evaluation.report.step_scores.map(step => (
                           <div key={step.step_id} className="rounded-xl border border-border px-4 py-3">
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-medium text-foreground">{step.step_title}</div>
+                              <div className="text-sm font-medium text-foreground">{step.step_id}</div>
                               <div className="text-xs font-semibold text-muted-foreground">
                                 {step.max_score > 0 ? Math.round((step.score / step.max_score) * 100) : 0}%
                               </div>

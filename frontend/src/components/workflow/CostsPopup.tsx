@@ -69,9 +69,11 @@ interface RunCosts {
     totalReasoningTokens: number
     stageCosts: {
       execution: number
-      validation: number
       learning: number
       evaluation: number
+      knowledgebase: number   // kb_update / kb_reorganize / kb_consolidate
+      routing: number         // conditional_evaluation / todo_task orchestration
+      workshop: number        // harden_workflow / review_step_code / replan_workflow_from_results
       other: number
     }
     stepCosts: Array<{
@@ -79,9 +81,11 @@ interface RunCosts {
       stepTitle: string     // Display title
       stepNum: number       // Step number (for sorting, 0 for non-step entries)
       execution: number
-      validation: number
       learning: number
       evaluation: number
+      knowledgebase: number
+      routing: number
+      workshop: number
       totalCost: number
       inputTokens: number
       outputTokens: number
@@ -144,8 +148,31 @@ const formatPhaseTitle = (phaseID: string) => {
 }
 
 const getRunFolderDisplayName = (runFolder: string) => {
+  // Show "iteration-N · group" so both dimensions are visible. Single-segment
+  // values (legacy layout, or iteration-only) fall through unchanged.
   const parts = runFolder.split('/').filter(Boolean)
+  if (parts.length >= 2) {
+    return `${parts[0]} · ${parts.slice(1).join('/')}`
+  }
   return parts[parts.length - 1] || runFolder
+}
+
+// classifyPhase maps a backend phase name to one of the UI stage buckets.
+// Order matters: check specific prefixes before falling through to includes().
+// Known phases (see comment in calculateCostSummary):
+//   execution_only, success_learning, failure_learning,
+//   conditional_evaluation, todo_task, kb_update, kb_reorganize,
+//   kb_consolidate, harden_workflow, review_step_code,
+//   replan_workflow_from_results, evaluation_scoring.
+type StageBucket = 'execution' | 'learning' | 'evaluation' | 'knowledgebase' | 'routing' | 'workshop' | 'other'
+const classifyPhase = (phase: string): StageBucket => {
+  if (phase === 'execution_only') return 'execution'
+  if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) return 'learning'
+  if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
+  if (phase.startsWith('kb_')) return 'knowledgebase'
+  if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
+  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') return 'workshop'
+  return 'other'
 }
 
 const getRunTimestamp = (runCost: Pick<RunCosts, 'tokenUsage' | 'evaluationTokenUsage'>) => {
@@ -264,9 +291,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
     const stageCosts = {
       execution: 0,
-      validation: 0,
       learning: 0,
       evaluation: 0,
+      knowledgebase: 0,
+      routing: 0,
+      workshop: 0,
       other: 0
     }
 
@@ -275,9 +304,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       stepNum: number
       stepTitle: string
       execution: number
-      validation: number
       learning: number
       evaluation: number
+      knowledgebase: number
+      routing: number
+      workshop: number
       totalCost: number
       inputTokens: number
       outputTokens: number
@@ -332,16 +363,14 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
           llmCalls += u.llm_call_count || 0
         })
 
-        // Stage costs
-        if (phase === 'execution_only') {
-          stageCosts.execution += cost
-        } else if (phase === 'validation') {
-          stageCosts.validation += cost
-        } else if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) {
-          stageCosts.learning += cost
-        } else {
-          stageCosts.other += cost
-        }
+        // Stage dispatch — must stay in sync with the Go phases that actually emit
+        // token usage. See controller_execution.go (execution_only), controller_learning.go
+        // (success_learning/failure_learning), controller_conditional.go (conditional_evaluation),
+        // controller_todo_task.go (todo_task), controller_kb_update.go (kb_*),
+        // interactive_workshop_manager.go (harden_workflow / review_step_code /
+        // replan_workflow_from_results), evaluation_scoring agents.
+        const stageBucket = classifyPhase(phase)
+        stageCosts[stageBucket] += cost
 
         // Step-wise costs - group by stepID
         const { stepNum, stepTitle } = findStepInfo(stepID)
@@ -353,9 +382,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             stepNum,
             stepTitle,
             execution: 0,
-            validation: 0,
             learning: 0,
             evaluation: 0,
+            knowledgebase: 0,
+            routing: 0,
+            workshop: 0,
             totalCost: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -366,13 +397,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         stepCosts[stepKey].inputTokens += inputTokens
         stepCosts[stepKey].outputTokens += outputTokens
         stepCosts[stepKey].llmCalls += llmCalls
-
-        if (phase === 'execution_only') {
-          stepCosts[stepKey].execution += cost
-        } else if (phase === 'validation') {
-          stepCosts[stepKey].validation += cost
-        } else if (phase.includes('learning')) {
-          stepCosts[stepKey].learning += cost
+        if (stageBucket !== 'other') {
+          stepCosts[stepKey][stageBucket] += cost
         }
       })
     }
@@ -419,9 +445,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             stepNum: stepNum > 0 ? stepNum + 1000 : 0, // Put eval steps after regular steps
             stepTitle: `[Eval] ${stepTitle}`,
             execution: 0,
-            validation: 0,
             learning: 0,
             evaluation: 0,
+            knowledgebase: 0,
+            routing: 0,
+            workshop: 0,
             totalCost: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -590,9 +618,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         .filter((entry): entry is PhaseDailyCostSummaryEntry => entry !== null)
         .sort((a, b) => b.date.localeCompare(a.date))
       
+      // Costs are stored keyed by "{iteration}/{group}" (e.g. "iteration-0/xspaces") —
+      // multi-group workflows produce one entry per iteration-group pair. The
+      // runFolders prop passed by parents is iteration-only (no group info), so
+      // using it as an index into costEntriesByRunFolder would miss everything.
+      // Always load every key present in the cost map; prop-supplied iteration
+      // filtering is applied below via startsWith when we need to restrict the
+      // view.
+      const allCostKeys = Array.from(costEntriesByRunFolder.keys())
       const foldersToLoad = runFolders.length > 0
-        ? runFolders
-        : Array.from(costEntriesByRunFolder.keys())
+        ? allCostKeys.filter(key => runFolders.some(it => key === it || key.startsWith(it + '/')))
+        : allCostKeys
 
       for (const runFolder of foldersToLoad) {
         try {
@@ -684,9 +720,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     let totalReasoningTokens = 0
     const stageCosts = {
       execution: 0,
-      validation: 0,
       learning: 0,
       evaluation: 0,
+      knowledgebase: 0,
+      routing: 0,
+      workshop: 0,
       other: 0
     }
     let highestCost = 0
@@ -702,9 +740,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         totalCacheWriteTokens += runCost.costSummary.totalCacheWriteTokens
         totalReasoningTokens += runCost.costSummary.totalReasoningTokens
         stageCosts.execution += runCost.costSummary.stageCosts.execution
-        stageCosts.validation += runCost.costSummary.stageCosts.validation
         stageCosts.learning += runCost.costSummary.stageCosts.learning
         stageCosts.evaluation += runCost.costSummary.stageCosts.evaluation
+        stageCosts.knowledgebase += runCost.costSummary.stageCosts.knowledgebase
+        stageCosts.routing += runCost.costSummary.stageCosts.routing
+        stageCosts.workshop += runCost.costSummary.stageCosts.workshop
         stageCosts.other += runCost.costSummary.stageCosts.other
         
         if (runCost.costSummary.totalCost > highestCost) {
@@ -1059,18 +1099,26 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                   </div>
 
                   {/* Stage Costs Summary */}
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
                     <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
                       <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.execution)}</div>
                     </div>
                     <div className="bg-card border border-border rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
-                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.validation)}</div>
-                    </div>
-                    <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
                       <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.learning)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Knowledgebase</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.knowledgebase)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Routing</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.routing)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Workshop</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.workshop)}</div>
                     </div>
                     <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Evaluation</div>
@@ -1164,18 +1212,26 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                       {isExpanded && (
                         <div className="border-t border-border p-4 space-y-4">
                           {/* Stage Summary Cards */}
-                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
                             <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
                               <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
                               <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.execution)}</div>
                             </div>
                             <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
-                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
-                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.validation)}</div>
-                            </div>
-                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
                               <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
                               <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.learning)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Knowledgebase</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.knowledgebase)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Routing</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.routing)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Workshop</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.workshop)}</div>
                             </div>
                             <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
                               <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Evaluation</div>
@@ -1230,8 +1286,10 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                         <th className="text-right font-medium pb-2">Calls</th>
                                         <th className="text-right font-medium pb-2">Tokens</th>
                                         <th className="text-right font-medium pb-2 text-blue-500">Execution</th>
-                                        <th className="text-right font-medium pb-2 text-green-500">Validation</th>
                                         <th className="text-right font-medium pb-2 text-purple-500">Learning</th>
+                                        <th className="text-right font-medium pb-2 text-teal-500">KB</th>
+                                        <th className="text-right font-medium pb-2 text-cyan-500">Routing</th>
+                                        <th className="text-right font-medium pb-2 text-pink-500">Workshop</th>
                                         <th className="text-right font-medium pb-2 text-amber-500">Evaluation</th>
                                         <th className="text-right font-medium pb-2">Total Cost</th>
                                       </tr>
@@ -1270,11 +1328,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                           <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
                                             {formatUSD(step.execution)}
                                           </td>
-                                          <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
-                                            {formatUSD(step.validation)}
-                                          </td>
                                           <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
                                             {formatUSD(step.learning)}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-teal-600 dark:text-teal-400">
+                                            {formatUSD(step.knowledgebase)}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-cyan-600 dark:text-cyan-400">
+                                            {formatUSD(step.routing)}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-pink-600 dark:text-pink-400">
+                                            {formatUSD(step.workshop)}
                                           </td>
                                           <td className="py-2 text-right font-mono text-amber-600 dark:text-amber-400">
                                             {formatUSD(step.evaluation)}
@@ -1296,11 +1360,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                         <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
                                           {formatUSD(costSummary.stageCosts.execution)}
                                         </td>
-                                        <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
-                                          {formatUSD(costSummary.stageCosts.validation)}
-                                        </td>
                                         <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
                                           {formatUSD(costSummary.stageCosts.learning)}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-teal-600 dark:text-teal-400">
+                                          {formatUSD(costSummary.stageCosts.knowledgebase)}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-cyan-600 dark:text-cyan-400">
+                                          {formatUSD(costSummary.stageCosts.routing)}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-pink-600 dark:text-pink-400">
+                                          {formatUSD(costSummary.stageCosts.workshop)}
                                         </td>
                                         <td className="py-2 text-right font-mono text-amber-600 dark:text-amber-400">
                                           {formatUSD(costSummary.stageCosts.evaluation)}
@@ -1353,8 +1423,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
                                                 let phaseLabel = ''
                                                 if (phase === 'execution_only') { phaseLabel = 'Execution' }
-                                                else if (phase === 'validation') { phaseLabel = 'Validation' }
                                                 else if (phase.includes('learning')) { phaseLabel = 'Learning' }
+                                                else if (phase.startsWith('kb_')) { phaseLabel = 'Knowledgebase' }
+                                                else if (phase === 'conditional_evaluation' || phase === 'todo_task') { phaseLabel = 'Routing' }
+                                                else if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') { phaseLabel = 'Workshop' }
+                                                else if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) { phaseLabel = 'Evaluation' }
                                                 else { phaseLabel = phase }
 
                                                 // Try to find step info from stepID

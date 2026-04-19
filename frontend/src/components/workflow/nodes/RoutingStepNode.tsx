@@ -59,7 +59,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     lock_learnings?: boolean
-    disable_learning?: boolean
+    learnings_access?: 'read' | 'read-write' | 'none'
   }
   const outerStep = step as { agent_configs?: AgentConfigsType }
   const stepConfig = outerStep
@@ -89,14 +89,14 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.conditional_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Lock learnings
+  // Lock learnings — visible only when learnings aren't fully disabled for the step.
   const lockLearnings = useMemo(() => {
     const locked = stepOverride?.lock_learnings !== undefined
       ? stepOverride.lock_learnings === true
       : stepConfig?.agent_configs?.lock_learnings === true
-    const learningDisabled = stepConfig?.agent_configs?.disable_learning === true
+    const learningDisabled = stepConfig?.agent_configs?.learnings_access === 'none'
     return locked && !learningDisabled
-  }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
+  }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.learnings_access])
 
   // Handle run from step
   const handleRunClick = useCallback((e: MouseEvent) => {

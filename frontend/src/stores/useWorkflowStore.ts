@@ -3,21 +3,21 @@ import type { WorkflowPhase, ExecutionOptions, VariablesManifest, EvaluationPlan
 import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
-// Migrate any persisted legacy workshop mode values from the 6-mode era to the
-// new 4-mode set: 'eval' / 'output' fold into 'builder', 'debugger' → 'ask',
-// 'runner' → 'run'. Returns the input unchanged if it's already a valid 4-mode value.
+// Migrate any persisted legacy workshop mode values from prior eras to the
+// current 3-mode set: 'eval' / 'output' fold into 'builder';
+// 'ask' / 'debugger' / 'runner' all fold into 'run' (inspect + execute combined).
+// Returns the input unchanged if it's already a valid 3-mode value.
 function migrateWorkshopMode(raw: unknown): WorkshopMode {
   switch (raw) {
     case 'builder':
     case 'optimizer':
-    case 'ask':
     case 'run':
       return raw
     case 'eval':
     case 'output':
       return 'builder'
+    case 'ask':
     case 'debugger':
-      return 'ask'
     case 'runner':
       return 'run'
     default:

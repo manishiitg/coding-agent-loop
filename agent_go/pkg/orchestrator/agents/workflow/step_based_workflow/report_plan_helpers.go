@@ -27,10 +27,20 @@ var (
 		"number": {}, "number-1dp": {}, "number-2dp": {},
 		"bytes": {}, "boolean-icon": {},
 	}
+	reportPlanKnownAlertSeverities = map[string]struct{}{
+		"info": {}, "warning": {}, "error": {}, "success": {},
+	}
+	reportPlanKnownPivotAggregates = map[string]struct{}{
+		"sum": {}, "avg": {}, "count": {}, "min": {}, "max": {}, "first": {},
+	}
 	reportPlanValidSourceRE = regexp.MustCompile(`^(db/[^/]+\.json|knowledgebase/graph\.json|knowledgebase/index\.json)$`)
 	reportPlanFenceRE       = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
 	reportPlanHexColorRE    = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 	reportPlanCSSNamedRE    = regexp.MustCompile(`^[a-zA-Z]+$`)
+	// Mirrors evaluateShowIf in reportPlanParser.ts. Intentionally permissive —
+	// we flag malformed expressions as warnings, not errors, so the report
+	// still renders while the builder fixes them.
+	reportPlanShowIfRE = regexp.MustCompile(`^\s*(!)?\s*([^\s!<>=]+)\s*(?:(>=|<=|==|!=|>|<)\s*(.+))?\s*$`)
 )
 
 func reportPlanIsPlausibleColor(v string) bool {
@@ -75,6 +85,32 @@ type reportPlanValidationResult struct {
 	Errors      []reportPlanDiagnostic `json:"errors,omitempty"`
 	Warnings    []reportPlanDiagnostic `json:"warnings,omitempty"`
 	Suggestions []string               `json:"suggestions,omitempty"`
+	// Parsed shows what the parser actually extracted from the markdown. Useful
+	// for debugging silent-blank widgets: if a widget isn't here, the fence tag
+	// didn't match or the block was missing `source:`. Dumped even when
+	// validation succeeds so the LLM can verify "what the parser saw" matches
+	// intent without re-reading the markdown.
+	Parsed []reportPlanParsedSection `json:"parsed,omitempty"`
+}
+
+type reportPlanParsedSection struct {
+	Heading string                   `json:"heading"`
+	Widgets []reportPlanParsedWidget `json:"widgets"`
+}
+
+type reportPlanParsedWidget struct {
+	Kind     string            `json:"kind"`
+	Source   string            `json:"source"`
+	Path     string            `json:"path,omitempty"`
+	Filter   string            `json:"filter,omitempty"`
+	ShowIf   string            `json:"show_if,omitempty"`
+	Line     int               `json:"line,omitempty"`
+	InRow    bool              `json:"in_row,omitempty"`
+	RowIndex int               `json:"row_index,omitempty"`
+	// Options captures all non-standard fields the parser saw — so the builder
+	// can spot e.g. `type: stat_row` (unrecognised key) or `chrt_type: bar`
+	// (typo) being silently ignored.
+	Options map[string]string `json:"options,omitempty"`
 }
 
 // parseReportPlan walks the markdown and returns sections+widgets. Intentionally
@@ -128,7 +164,8 @@ func parseReportPlan(markdown string) []reportPlanSection {
 				}
 				continue
 			}
-			if kind != "text" && kind != "table" && kind != "chart" {
+			if kind != "text" && kind != "table" && kind != "chart" &&
+				kind != "stat" && kind != "alert" && kind != "pivot" {
 				continue
 			}
 			w := parseReportPlanKeyValue(kind, body)
@@ -198,7 +235,8 @@ func parseReportPlanRow(body []string) []*reportPlanWidget {
 			continue
 		}
 		kind := strings.ToLower(cleaned[0])
-		if kind != "text" && kind != "table" && kind != "chart" {
+		if kind != "text" && kind != "table" && kind != "chart" &&
+			kind != "stat" && kind != "alert" && kind != "pivot" {
 			continue
 		}
 		fields := map[string]string{}
@@ -424,12 +462,37 @@ func validateReportPlanMarkdown(
 				validateReportPlanChartShape(w, resolved, section.Heading, locator, result)
 			case "text":
 				// text widgets accept scalars, objects, arrays — nothing to enforce.
+			case "stat":
+				validateReportPlanStatShape(w, data, section.Heading, locator, result)
+			case "alert":
+				validateReportPlanAlertShape(w, data, section.Heading, locator, result)
+			case "pivot":
+				validateReportPlanPivotShape(w, resolved, section.Heading, locator, result)
+			}
+
+			// 5b. show_if expression syntax — warn only. Same grammar as
+			// evaluateShowIf in reportPlanParser.ts. Resolved against `data`
+			// (raw source), not the post-path value.
+			if rawShowIf := reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]); rawShowIf != "" {
+				if !reportPlanShowIfRE.MatchString(rawShowIf) {
+					result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+						Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
+						Message: fmt.Sprintf("show_if %q does not match the supported grammar; widget will always render.", rawShowIf),
+						Hint:    "Use `<path>` (truthy), `!<path>` (falsy), or `<path> <op> <value>` where op is >, <, >=, <=, ==, !=.",
+					})
+				}
 			}
 
 			// 6. Option-key sanity (warn, never fatal).
 			validateReportPlanOptions(w, section.Heading, locator, result)
 		}
 	}
+
+	// Dump the parsed plan so the LLM sees exactly what the parser extracted —
+	// surfaces the common failure mode where a widget block "looks right" but
+	// the fence tag didn't match and every field silently lands in `options`
+	// instead of the recognised keys.
+	result.Parsed = buildReportPlanParsedDump(sections)
 
 	// Global advice for builder on how to read the result.
 	if len(result.Errors) == 0 && len(result.Warnings) == 0 && result.Widgets > 0 {
@@ -558,6 +621,206 @@ func validateReportPlanChartShape(
 			})
 		}
 	}
+	// Multi-series: every field in `series` must exist on the first row. When
+	// series is set, x_axis is the label key; its presence was already checked
+	// above. Stacked requires a compatible chart_type (bar/area only).
+	if rawSeries := w.Fields["series"]; rawSeries != "" {
+		seriesFields := []string{}
+		for _, part := range strings.Split(rawSeries, ",") {
+			p := strings.TrimSpace(part)
+			if p != "" {
+				seriesFields = append(seriesFields, p)
+			}
+		}
+		if len(seriesFields) == 0 {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: "series is set but parses to an empty list — multi-series is off.",
+			})
+		}
+		for _, f := range seriesFields {
+			if _, ok := first[f]; !ok {
+				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+					Message: fmt.Sprintf("series field %q not found on first row of data.", f),
+				})
+			}
+		}
+		if stacked := parseReportPlanBool(reportPlanFirstNonEmpty(w.Fields["stacked"])); stacked {
+			ct := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["chart_type"], w.Fields["charttype"]))
+			if ct != "" && ct != "bar" && ct != "area" {
+				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+					Message: fmt.Sprintf("stacked has no effect on chart_type=%q — only bar and area stack.", ct),
+				})
+			}
+		}
+	}
+}
+
+// widget:stat — `path:` must resolve to a scalar (string or number). delta_path
+// and trend_path are optional; when present they must also resolve.
+func validateReportPlanStatShape(
+	w *reportPlanWidget, data interface{},
+	section, locator string, result *reportPlanValidationResult,
+) {
+	v, ok := resolveReportPlanPath(data, w.Path)
+	if !ok {
+		result.Valid = false
+		pathLabel := w.Path
+		if pathLabel == "" {
+			pathLabel = "(root)"
+		}
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: fmt.Sprintf("stat `path:` %q does not resolve in %s.", pathLabel, w.Source),
+			Hint:    "Point `path:` at a scalar field (number or short string).",
+		})
+		return
+	}
+	switch v.(type) {
+	case nil, bool, float64, string:
+		// acceptable scalars (json.Unmarshal uses float64 for numbers)
+	default:
+		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "stat `path:` resolves to an object or array — stat renders scalars best.",
+			Hint:    "Pick a leaf field; nested values get JSON.stringify'd, which reads poorly in a KPI tile.",
+		})
+	}
+	if dp := reportPlanFirstNonEmpty(w.Fields["delta_path"], w.Fields["deltapath"]); dp != "" {
+		if _, ok := resolveReportPlanPath(data, dp); !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("delta_path %q does not resolve in %s — the delta arrow won't render.", dp, w.Source),
+			})
+		}
+	}
+	if tp := reportPlanFirstNonEmpty(w.Fields["trend_path"], w.Fields["trendpath"]); tp != "" {
+		resolved, okTP := resolveReportPlanPath(data, tp)
+		if !okTP {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("trend_path %q does not resolve in %s — sparkline won't render.", tp, w.Source),
+			})
+		} else if _, isArr := resolved.([]interface{}); !isArr {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: "trend_path resolves to a non-array — sparkline needs an array of numbers.",
+			})
+		}
+	}
+}
+
+// widget:alert — severity must be known; either title/message should be set
+// (otherwise the banner renders only the raw value). show_if is strongly
+// recommended on alerts but not required.
+func validateReportPlanAlertShape(
+	w *reportPlanWidget, data interface{},
+	section, locator string, result *reportPlanValidationResult,
+) {
+	if sev := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["severity"])); sev != "" {
+		if _, ok := reportPlanKnownAlertSeverities[sev]; !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown severity %q — defaulting to info.", sev),
+				Hint:    "Use one of: info, warning, error, success.",
+			})
+		}
+	}
+	if w.Fields["title"] == "" && w.Fields["message"] == "" {
+		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "alert has no title or message — it will render just the resolved value.",
+			Hint:    "Add `title:` or `message:`. Use `{value}` in message to interpolate the resolved path.",
+		})
+	}
+	if showIf := reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]); showIf == "" {
+		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "alert without show_if renders unconditionally — usually alerts should only show when a condition is true.",
+			Hint:    "Add `show_if: <path> > 0` (or similar) so the banner appears only when relevant.",
+		})
+	}
+	// Validate that path resolves when set (used for {value} interpolation).
+	if w.Path != "" {
+		if _, ok := resolveReportPlanPath(data, w.Path); !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("alert path %q does not resolve — {value} interpolation will render empty.", w.Path),
+			})
+		}
+	}
+}
+
+// widget:pivot — rows/columns/values are required; resolved must be array of
+// objects; aggregate must be known; first row must have all three fields.
+func validateReportPlanPivotShape(
+	w *reportPlanWidget, resolved interface{},
+	section, locator string, result *reportPlanValidationResult,
+) {
+	rows := reportPlanFirstNonEmpty(w.Fields["rows"])
+	cols := reportPlanFirstNonEmpty(w.Fields["columns"])
+	vals := reportPlanFirstNonEmpty(w.Fields["values"])
+	if rows == "" || cols == "" || vals == "" {
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "pivot requires `rows:`, `columns:`, and `values:` fields.",
+			Hint:    "Example: `rows: team`, `columns: month`, `values: net_salary`, `aggregate: sum`.",
+		})
+		return
+	}
+	if agg := strings.ToLower(reportPlanFirstNonEmpty(w.Fields["aggregate"])); agg != "" {
+		if _, ok := reportPlanKnownPivotAggregates[agg]; !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown aggregate %q — defaulting to sum.", agg),
+				Hint:    "Use one of: sum, avg, count, min, max, first.",
+			})
+		}
+	}
+	arr, ok := resolved.([]interface{})
+	if !ok {
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "pivot needs an array of objects — resolved value is not an array.",
+			Hint:    "Point `path:` at an array (e.g. records).",
+		})
+		return
+	}
+	if len(arr) == 0 {
+		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "pivot resolves to an empty array — the grid will render blank until the source is populated.",
+		})
+		return
+	}
+	first, ok := arr[0].(map[string]interface{})
+	if !ok {
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "pivot array must contain objects (got scalars).",
+		})
+		return
+	}
+	for _, f := range []string{rows, cols, vals} {
+		if _, ok := first[f]; !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("pivot field %q not found on first row of data.", f),
+			})
+		}
+	}
+}
+
+// Small helper mirroring parseBool in reportPlanParser.ts. Only treats 'true'
+// / 'yes' / '1' as true; everything else is false.
+func parseReportPlanBool(v string) bool {
+	s := strings.ToLower(strings.TrimSpace(v))
+	return s == "true" || s == "yes" || s == "1"
 }
 
 func validateReportPlanOptions(
@@ -669,6 +932,59 @@ func validateReportPlanColorList(
 	}
 }
 
+// Converts parsed sections into the JSON-friendly dump returned as
+// `result.parsed`. Fields captured in the dump mirror the parser's recognised
+// keys; anything else the builder wrote in the block lands in `options` so
+// typos like `chrt_type` or `show-if` surface visibly.
+func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedSection {
+	if len(sections) == 0 {
+		return nil
+	}
+	// Keys the parser consumes into named widget fields. Everything outside this
+	// set is surfaced under `options` — that's where typos and unrecognised
+	// keys become visible.
+	recognised := map[string]struct{}{
+		"source": {}, "path": {}, "filter": {}, "show_if": {}, "showif": {},
+	}
+	out := make([]reportPlanParsedSection, 0, len(sections))
+	for _, s := range sections {
+		ps := reportPlanParsedSection{Heading: s.Heading}
+		for _, w := range s.Widgets {
+			pw := reportPlanParsedWidget{
+				Kind:     w.Kind,
+				Source:   w.Source,
+				Path:     w.Path,
+				Filter:   w.Filter,
+				ShowIf:   reportPlanFirstNonEmpty(w.Fields["show_if"], w.Fields["showif"]),
+				Line:     w.LineNum,
+				InRow:    w.InRow,
+				RowIndex: w.RowIndex,
+			}
+			// Everything else in w.Fields — the kind-specific options the parser
+			// read but didn't promote to a named struct field.
+			var opts map[string]string
+			for k, v := range w.Fields {
+				if _, known := recognised[k]; known {
+					continue
+				}
+				if v == "" {
+					continue
+				}
+				if opts == nil {
+					opts = map[string]string{}
+				}
+				opts[k] = v
+			}
+			if len(opts) > 0 {
+				pw.Options = opts
+			}
+			ps.Widgets = append(ps.Widgets, pw)
+		}
+		out = append(out, ps)
+	}
+	return out
+}
+
 func reportPlanFirstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -695,7 +1011,7 @@ func registerReportPlanValidationTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_plan",
-		"Validate reports/report_plan.md after editing it. Parses every widget block, reads the JSON sources they point to, and checks: source path is allowed (db/*.json or knowledgebase/{graph,index}.json), source file exists and is valid JSON, the dot-path resolves, the resolved shape matches the widget kind (array-of-objects for table/chart), and options like chart_type/formats/sort are known values. Returns structured per-widget errors + warnings + suggestions. Run this every time you edit report_plan.md — the renderer drops bad widgets silently, so without this tool the user sees a blank Report tab with no indication why.",
+		"Validate reports/report_plan.md after editing it. Parses every widget block, reads the JSON sources they point to, and checks: source path is allowed (db/*.json or knowledgebase/{graph,index}.json), source file exists and is valid JSON, the dot-path resolves, the resolved shape matches the widget kind (array-of-objects for table/chart/pivot; scalar for stat), and options like chart_type/formats/sort/aggregate/severity are known values. Returns structured per-widget errors + warnings + suggestions AND a `parsed` dump showing exactly what the parser saw (so you can spot silent-drop bugs: widgets missing from `parsed` had a malformed fence tag; unknown keys land in the per-widget `options` bag where typos like `chrt_type` are visible). Run this every time you edit report_plan.md — the renderer drops bad widgets silently, so without this tool the user sees a blank Report tab with no indication why.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			res, err := validateReportPlanMarkdown(ctx, workspacePath, readFile)

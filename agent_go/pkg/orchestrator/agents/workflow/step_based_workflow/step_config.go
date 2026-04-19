@@ -289,6 +289,9 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.LearningObjective != "" {
 		target.LearningObjective = source.LearningObjective
 	}
+	if source.LearningsAccess != "" {
+		target.LearningsAccess = source.LearningsAccess
+	}
 	if source.ExecutionLLM != nil {
 		target.ExecutionLLM = source.ExecutionLLM
 	}

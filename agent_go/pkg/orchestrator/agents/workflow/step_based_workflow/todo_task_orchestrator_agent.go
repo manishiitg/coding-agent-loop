@@ -36,8 +36,8 @@ You are a **task orchestrator** in a multi-step workflow.
 ## Execution Guidelines
 
 - Use **predefined routes** for tasks that match a known sub-agent — these are optimized for their specific purpose
-{{if .EnableGenericAgent}}- Use **call_generic_agent** for ad-hoc tasks that need sub-agent tool access and don't fit a predefined route
-{{end}}- **Direct execution**: If you have the tools and knowledge to complete a task directly (shell, code, file operations), prefer doing it yourself over unnecessary delegation
+- Use **call_generic_agent** for ad-hoc tasks that need sub-agent tool access and don't fit a predefined route
+- **Direct execution**: If you have the tools and knowledge to complete a task directly (shell, code, file operations), prefer doing it yourself over unnecessary delegation
 - **After sub-agent failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
 - **Validated route outputs are authoritative**: If a predefined route succeeds and its declared output passes validation, treat that output file as the source of truth. Do NOT call a generic agent to rewrite, normalize, or "clean up" that route's output file.
 - **Evidence before diagnosis**: Never claim that a tool is pointed at the wrong workflow or that a path belongs to a different project unless you verified it with exact evidence.
@@ -58,8 +58,20 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 {{if ne .KbAccess "none"}}| Knowledgebase (PERSISTENT, {{.KbAccessLabel}}) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | {{.KbAccessLabel}} |
 {{end}}
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
-- **Output validation**: Your step's output files may be validated after execution. If validation fails, you'll receive feedback and must fix the issues.
+- **Output validation**: Your step's output files are validated after execution. If validation fails, you'll receive feedback and must fix the issues.
 - Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
+
+{{if .ValidationSchema}}
+### Required Output Files (Pre-Validation Schema)
+
+The following files MUST exist under ` + "`" + `{{.StepExecutionPath}}/` + "`" + ` and match this structure. Pre-validation runs these checks after execution — produce them on the first attempt to avoid a retry:
+
+` + "```json" + `
+{{printf "%s" .ValidationSchema}}
+` + "```" + `
+
+When delegating to a sub-agent, pass the exact output file paths and required structure in the ` + "`" + `instructions` + "`" + ` field. Sub-agents cannot see this schema directly.
+{{end}}
 
 **Three persistent stores — keep them separate when instructing sub-agents:**
 - **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale.
@@ -73,20 +85,17 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 
 ## Sub-Agent Tools
 
-### call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+### call_sub_agent(route_id, todo_id, instructions, success_criteria, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
 Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session (separate Playwright/Camofox connection AND separate agent-browser process), preventing them from interfering with each other.
 **Browser session limits:** Max **{{.MaxBrowserSessionsPerWorkflow}}** concurrent isolated browser sessions per workflow (applies to all browser types — agent-browser, Playwright, Camofox). If you need more than {{.MaxBrowserSessionsPerWorkflow}} parallel browser sub-agents, run them in batches — wait for the first batch to finish before dispatching the next. Sub-agents with share_browser=true (default) reuse the parent browser and do NOT count toward this limit.{{end}}
 
-{{if .EnableGenericAgent}}
-### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+### call_generic_agent(todo_id, instructions, success_criteria, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
 Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Same browser session limits apply: max {{.MaxBrowserSessionsPerWorkflow}} concurrent isolated sessions.{{end}}
 
 Do NOT use call_generic_agent to patch or normalize the declared output file of a predefined route that already succeeded and validated. Generic agents are for genuinely ad-hoc work outside an existing route contract.
-{{end}}
 
 **CRITICAL**: Before calling any sub-agent, check LEARNING HISTORY for relevant system_behavior entries. Include them in the instructions field — sub-agents have no memory of previous runs.
 
-{{if .EnableDynamicTierSelection}}
 **Tier Selection** (REQUIRED preferred_tier parameter — you must pick a tier for every sub-agent call):
 - 1 (High): Complex, novel, critical tasks
 - 2 (Medium): Routine, well-defined tasks
@@ -95,7 +104,6 @@ Do NOT use call_generic_agent to patch or normalize the declared output file of 
 **How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section and use those when available. Otherwise, judge from the route's description and the task difficulty: favour tier 1 for first attempts on novel/complex work, tier 2 for routine work with an established recipe, tier 3 for purely mechanical/validation sub-tasks. There is no automatic fallback — calls without preferred_tier are rejected.
 
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
-{{end}}
 
 ### get_route_description(route_id)
 Get the full description and instructions for a predefined route. Call this before delegating to understand what the sub-agent does.
@@ -110,10 +118,8 @@ Inspect a sub-agent's internal tool calls and reasoning. MANDATORY when a sub-ag
 ### Predefined Routes (use get_route_description for details)
 {{.PredefinedRoutes}}
 
-{{if .EnableGenericAgent}}
 ### Generic Agent
 Full tool access, handles any task. Best for ad-hoc work that doesn't match predefined routes.
-{{end}}
 
 ---
 
@@ -194,9 +200,9 @@ Structure: ` + "`" + `_global/SKILL.md` + "`" + ` (global skill){{if .IsCodeExec
 
 {{if .ShowToolsSection}}
 ## Tools Reference (CLI Provider)
-- call_sub_agent(route_id, todo_id, instructions{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
-{{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
-{{end}}- get_route_description(route_id)
+- call_sub_agent(route_id, todo_id, instructions, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
+- call_generic_agent(todo_id, instructions, preferred_tier{{if .HasBrowserAccess}}, share_browser{{end}})
+- get_route_description(route_id)
 - get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 - execute_shell_command(command)
 {{end}}
@@ -258,7 +264,6 @@ type TodoTaskOrchestratorTemplate struct {
 	StepExecutionPath       string
 	PreviousStepsSummary    string
 	PredefinedRoutes        string // Description of predefined sub-agents
-	EnableGenericAgent      bool   // Whether generic agent is available
 	VariableNames           string
 	VariableValues          string
 	IsCodeExecutionMode     bool
@@ -301,15 +306,12 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) Execute(
 // todoTaskOrchestratorSystemPromptProcessor generates the system prompt for todo task orchestrator agent
 func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPromptProcessor(templateVars map[string]string) string {
 	now := time.Now()
-	enableGenericAgent := templateVars["EnableGenericAgent"] == "true"
 
 	templateData := map[string]interface{}{
 		"CurrentDate":                now.Format("2006-01-02"),
 		"CurrentTime":                now.Format("15:04:05"),
-		"PredefinedRoutes":           templateVars["PredefinedRoutes"],
-		"EnableGenericAgent":         enableGenericAgent,
-		"EnableDynamicTierSelection": templateVars["EnableDynamicTierSelection"] == "true",
-		"VariableNames":              templateVars["VariableNames"],
+		"PredefinedRoutes": templateVars["PredefinedRoutes"],
+		"VariableNames":    templateVars["VariableNames"],
 		"VariableValues":             templateVars["VariableValues"],
 		"LearningHistory":            templateVars["LearningHistory"],
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
@@ -330,6 +332,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepTitle":                  templateVars["StepTitle"],
 		"StepDescription":            templateVars["StepDescription"],
 		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
+		"ValidationSchema":              templateVars["ValidationSchema"],
 		"HasBrowserAccess":              templateVars["HasBrowserAccess"] == "true",
 		"MaxBrowserSessionsPerWorkflow": browser.MaxBrowserSessionsPerWorkflow,
 		"LearningsPath":                 templateVars["LearningsPath"],

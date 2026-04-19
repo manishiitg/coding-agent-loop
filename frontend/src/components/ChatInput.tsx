@@ -42,14 +42,13 @@ function WorkshopModeToggle() {
     })
   }
 
-  // Four consolidated modes (was 6: builder/optimizer/debugger/runner/eval/output).
-  // Designing eval plans + report widgets folded into Builder; debugger renamed to Ask;
-  // runner renamed to Run.
+  // Three consolidated modes (was 6: builder/optimizer/debugger/runner/eval/output).
+  // Designing eval plans + report widgets folded into Builder; Ask (formerly debugger)
+  // folded into Run — one mode handles both executing and inspecting the finished workflow.
   const builderModes = [
     { id: 'builder' as const, label: 'Builder', title: 'Builder', description: 'Design everything — workflow plan, step config, evaluation plan, and report widgets. The single design surface.' },
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Harden existing steps — run, evaluate, fix, repeat until reliable.' },
-    { id: 'ask' as const, label: 'Ask', title: 'Ask', description: 'Read-only investigate — inspect prior runs, eval reports, KB, and learnings without modifying anything.' },
-    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Execute the finished workflow and report results.' },
+    { id: 'run' as const, label: 'Run', title: 'Run', description: 'Execute the finished workflow or inspect prior runs, eval reports, KB, and learnings. No plan/config changes.' },
   ]
 
   return (
@@ -1974,6 +1973,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!activeTabId) return null
     const effectiveModes = getEffectiveWorkflowModes()
 
+    const setInputText = (text: string) => {
+      setLocalInputText(text)
+      setTabConfig(activeTabId, { inputText: text })
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus()
+          textareaRef.current.setSelectionRange(text.length, text.length)
+        }
+      }, 0)
+    }
+
     return {
       beforeSlash,
       activeTabId,
@@ -1982,6 +1992,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       isSummarizing,
       isStreaming,
       onSubmit,
+      setInputText,
       openDialog,
       setTabConfig,
       addToast,

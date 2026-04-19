@@ -32,6 +32,10 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.PythonBestPractices}}
 {{end}}
 
+{{if .BrowserAuthoringRules}}
+{{.BrowserAuthoringRules}}
+{{end}}
+
 {{if .VariableNames}}
 ## Variables
 {{.VariableNames}}
@@ -47,7 +51,7 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 
 | Path | Location |
 |------|----------|
-| Base | `+"`"+`/app/workspace-docs/`+"`"+` |
+| Base | `+"`"+`{{.DocsRoot}}/`+"`"+` |
 | Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` |
 | Execution folder | `+"`"+`{{.WorkspacePath}}/`+"`"+` |
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` |
@@ -220,10 +224,13 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 	return hctpeoa.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, nil, systemPrompt, true)
 }
 
-// buildCodeExecBestPractices returns the Python best practices section for code_exec mode.
-// Returns "" when not in code execution mode or no variables/inputs present.
+// buildCodeExecBestPractices returns the Python best practices section — only for
+// learn-code mode, where main.py is the mandated output and a canonical call_mcp
+// helper is worth embedding. Pure code-exec mode is shell-first (curl/jq/etc.);
+// it doesn't need the 35-line Python helper and should avoid pinning agents to
+// any one language.
 func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
-	if !isCodeExec || templateVars["IsLearnCodeMode"] == "true" {
+	if !isCodeExec || templateVars["IsLearnCodeMode"] != "true" {
 		return ""
 	}
 	var varMappingLines []string
@@ -312,7 +319,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		}
 
 		validationSchemaJSON := templateVars["ValidationSchema"]
-		codeExecutionSection += GetLearnCodeModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON)
+		hasBrowser := templateVars["HasBrowserAccess"] == "true"
+		codeExecutionSection += GetLearnCodeModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser)
 	}
 
 	// Get variable names and values for system prompt
@@ -352,6 +360,12 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag
 		"IsLearnCodeMode":            templateVars["IsLearnCodeMode"],      // Learn code mode flag (validation schema shown in learn_code section instead)
 		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display
+		"DocsRoot":                   GetPromptDocsRoot(),                  // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
+		// Browser authoring rules (refs-are-ephemeral + durable-selector priority
+		// + canonical DOM probe) apply to every browser step — code-exec throwaway
+		// scripts AND learn-code saved main.py. Only the final-artifact permanence
+		// differs between modes; the discovery/selector discipline is identical.
+		"BrowserAuthoringRules":      BrowserAuthoringRulesFromTemplateVars(templateVars),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("execution-only system prompt template execution failed (missing variable?): %v", err))

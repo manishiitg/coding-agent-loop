@@ -1,6 +1,6 @@
 4. chain builder? / 34. workspace builder -> expose via api and explore something like temporal but much simpler
 
-41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS
+41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS... i think for now just remove camoflux
 
 48. add minimax coding plan and explore alibaba plan also also glm5  -- PROGRESS
 
@@ -31,3 +31,13 @@
 75. i think we should make human inputs steps in workflow more tighly integrated with workflow builder and maybe not have in direct execute at all
 
 76. combine ask/run into same for now 
+
+77. on validation failed should we resume a step or do a full restart like right now 
+
+78. orchestrato to have lean code for simple execution
+
+79. need to fix learning popup from workspace toolbar
+
+80.. should knowledge base update in step instead of a seperate step we run in background 
+
+81. also a workflow should be completed only when learnings / knowledgebase are done right now it doesnt wait for them

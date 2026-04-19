@@ -286,7 +286,7 @@ export interface ChannelRoute {
   workflow_id: string
   workspace_path: string
   // Override the manifest's workshop_mode for this channel. Empty = use manifest.
-  workshop_mode?: 'builder' | 'optimizer' | 'ask' | 'run'
+  workshop_mode?: 'builder' | 'optimizer' | 'run'
 }
 
 export interface SlackConfig {
@@ -462,7 +462,7 @@ export interface PlannerFile {
   content?: string;
   last_modified?: string;
   folder?: string;
-  type?: 'folder';
+  type?: 'folder' | 'file';
   children?: PlannerFile[];
   depth?: number;
   is_image?: boolean;
@@ -912,8 +912,8 @@ export interface ExecutionOptions {
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
-  // Workshop mode override — four consolidated modes after the 6→4 refactor.
-  workshop_mode?: 'builder' | 'optimizer' | 'ask' | 'run';
+  // Workshop mode override — three consolidated modes (ask merged into run).
+  workshop_mode?: 'builder' | 'optimizer' | 'run';
 }
 
 // Execution strategy constants (matching backend)
@@ -988,6 +988,10 @@ export interface ExecutionAttemptLog {
   iteration: number;
   file_path: string;
   conversation_path: string;
+  // True when this entry came from a learn-code fast-path run (saved main.py
+  // executed directly, no LLM involved). attempt=0 + fast_path=true signal this.
+  // Content shape then follows LearnCodeFastPathLog (success/exit_code/output/...).
+  fast_path?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   content?: any; // Full JSON content of execution result
 }
@@ -1206,14 +1210,15 @@ export interface BatchExecutionCanceledEvent {
 }
 
 // Evaluation Report types
+// step_title and success_criteria are intentionally absent — UI consumers look
+// them up by step_id from the evaluation_plan returned alongside reports.
+// summary is also absent — per-step reasoning + evidence is the entire output.
 export interface EvaluationStepScore {
   step_id: string;
-  step_title: string;
   score: number;
   max_score: number;
   reasoning: string;
   evidence: string;
-  success_criteria: string;
   context_output?: string;
   output_content?: StepOutputContent;
 }
@@ -1225,7 +1230,6 @@ export interface EvaluationReport {
   max_possible_score: number;
   score_percentage: number;
   step_scores: EvaluationStepScore[];
-  summary: string;
 }
 
 // Evaluation reports response for aggregate view
@@ -1260,7 +1264,11 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 
 // Widget types supported by report_plan.md. See section 2 of the design doc.
-export type ReportWidgetKind = 'text' | 'chart' | 'table';
+export type ReportWidgetKind = 'text' | 'chart' | 'table' | 'stat' | 'alert' | 'pivot';
+
+export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
+
+export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
 
 // Named formatter presets for table cells. Maps to functions in reportFormatters.ts.
 // Used in `formats:` block of widget:table definitions.
@@ -1326,6 +1334,37 @@ export interface ReportWidget {
   // the renderer cycles `colors` (or default palette) across distinct values.
   colorBy?: string;
   colorMap?: Record<string, string>;
+  // Universal conditional rendering. Evaluated against the raw source (before
+  // `path:` / `filter:`). Grammar: `<path> [op] [value]` where op ∈ { >, <, >=,
+  // <=, ==, != }. Bare `<path>` is truthy; `!<path>` is falsy. Numeric rhs is
+  // parsed as number; otherwise compared as string. Widgets whose show_if
+  // evaluates to false are skipped entirely (row peers re-flow around them).
+  showIf?: string;
+  // Stat-specific options (ignored for non-stat widgets). `path:` still points
+  // at the scalar to render; stat fields decorate it.
+  label?: string;             // Headline above the value (often redundant with title — label sits inline with the number)
+  prefix?: string;            // Rendered immediately before the value (e.g. "₹")
+  suffix?: string;            // Rendered immediately after the value (e.g. " active")
+  format?: ReportFormatterName; // Single-value formatter (stat + pivot). Table uses `formats` (plural) per-column.
+  deltaPath?: string;         // Optional path to a signed-number delta; renders arrow + colored value
+  deltaFormat?: ReportFormatterName;
+  trendPath?: string;         // Optional path to an array of numbers rendered as a sparkline
+  // Alert-specific options
+  severity?: ReportAlertSeverity; // default 'info'
+  message?: string;           // Body text; supports {value} interpolation (resolved path value)
+  // Pivot-specific options. `path:` points at an array of records; rows/columns/values
+  // declare which fields form the 2-D grid.
+  rowsField?: string;         // Field grouping rows (y-axis of the pivot)
+  columnsField?: string;      // Field grouping columns (x-axis of the pivot)
+  valuesField?: string;       // Field being aggregated into each cell
+  aggregate?: ReportPivotAggregate; // default 'sum'
+  heatmap?: boolean;          // When true, cells tinted by magnitude
+  heatmapColors?: [string, string]; // [low, high] gradient override; defaults to accent tint
+  // Multi-series chart options — when `series` is set, it overrides single `y_axis`.
+  // Each field in `series` becomes one plotted series using the x_axis key.
+  series?: string[];
+  seriesColors?: string[];    // Per-series colors (parallel to `series`); falls back to `colors`
+  stacked?: boolean;          // For bar/area charts, stack series instead of grouping
 }
 
 // `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`
@@ -1733,7 +1772,7 @@ export interface WorkflowExecutionDefaults {
   disable_parallel_tool_execution?: boolean
   execution_max_turns?: number
   enabled_custom_tools?: string[]
-  workshop_mode?: string // Workshop builder mode: "builder", "optimizer", "ask", or "run"
+  workshop_mode?: string // Workshop builder mode: "builder", "optimizer", or "run"
 }
 
 export interface WorkflowOwnership {
@@ -1805,4 +1844,21 @@ export interface MigrateWorkflowsResponse {
   skipped: number
   errors: number
   total: number
+}
+
+// --- Output plan (planning/output_plan.json) ---
+
+export interface WorkflowOutputPlanStep {
+  id?: string
+  title?: string
+  description?: string
+  instructions?: string
+  output_filename?: string
+  enabled?: boolean
+  context_dependencies?: string[]
+  context_output?: string
+}
+
+export interface WorkflowOutputPlan {
+  step: WorkflowOutputPlanStep | null
 }

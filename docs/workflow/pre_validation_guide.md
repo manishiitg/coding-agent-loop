@@ -33,6 +33,8 @@ Current workflow execution behavior:
 3. Convert that result into `ValidationResponse`.
 4. Pass means `COMPLETED`; fail means `FAILED`.
 
+On `FAILED` the retry loop runs up to 3 attempts per step. Attempt 2+ **continues the existing execution agent** — the validation errors are sent as a follow-up user message on the same agent, preserving its system prompt, tool state, and prior tool calls. The loop falls back to creating a fresh agent when there's nothing to continue from (attempt 1, an empty prior conversation, or a `learn_code` step whose own fix loop owns conversation shape).
+
 See:
 
 - [`controller_execution.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go)

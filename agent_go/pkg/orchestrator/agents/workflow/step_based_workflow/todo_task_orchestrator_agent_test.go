@@ -9,8 +9,6 @@ func TestTodoTaskOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing
 	agent := &WorkflowTodoTaskOrchestratorAgent{}
 
 	prompt := agent.todoTaskOrchestratorSystemPromptProcessor(map[string]string{
-		"EnableGenericAgent":         "true",
-		"EnableDynamicTierSelection": "false",
 		"CurrentTodos":               "",
 		"ProgressSummary":            "",
 		"VariableNames":              "",

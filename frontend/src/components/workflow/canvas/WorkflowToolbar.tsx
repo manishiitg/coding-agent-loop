@@ -15,7 +15,6 @@ import {
   BookOpen,
   Trash2,
   Settings,
-  SlidersHorizontal,
   Circle,
   CheckSquare,
   Save,
@@ -37,7 +36,6 @@ import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
-import BulkStepConfigModal from '../BulkStepConfigModal'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
 import KBPopup from '../KBPopup'
@@ -230,8 +228,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return folders.map(rf => rf.name)
   }, [folders])
   
-  // Bulk Step Config modal state
-  const [showBulkStepConfigModal, setShowBulkStepConfigModal] = useState(false)
   
   // Learnings popup state
   const [showLearningsPopup, setShowLearningsPopup] = useState(false)
@@ -1082,23 +1078,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         </div>
 
         <>
-            {/* Global Overrides Button */}
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setShowBulkStepConfigModal(true)}
-                    className="flex items-center justify-center w-7 h-7 rounded-md transition-all bg-muted text-foreground hover:bg-accent"
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Global overrides</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
@@ -1447,13 +1426,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       cancelText="Cancel"
       type="danger"
       isLoading={deleteDialog.isLoading}
-    />
-    
-    {/* Global Overrides Modal */}
-    <BulkStepConfigModal
-      isOpen={showBulkStepConfigModal}
-      onClose={() => setShowBulkStepConfigModal(false)}
-      workspacePath={workspacePath ?? null}
     />
 
     {/* Learnings Popup */}

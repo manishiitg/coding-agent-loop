@@ -109,26 +109,50 @@ This is the correct way to reference original execution outputs in eval steps.
 
 ## Scoring Phase
 
-After eval steps finish, the system runs a scoring phase.
+After eval steps finish, the system runs a scoring phase that produces a single `evaluation_report.json` covering every eval step.
 
-Current behavior:
-- reads all eval step outputs from the internal eval execution folder
-- builds a holistic scoring input
-- runs a scoring agent across all eval steps
-- creates a report object with:
-  - total score
-  - max possible score
-  - percentage
-  - per-step scores
-  - reasoning
-  - evidence
-  - summary
+### Report shape
 
-The report is written to:
+The on-disk report contains:
+- `target_run_folder`, `generated_at`
+- `total_score`, `max_possible_score`, `score_percentage` (computed in Go after validation)
+- `step_scores[]`, one entry per eval step:
+  - `step_id`, `score` (0-10), `max_score`, `reasoning` (≥20 chars), `evidence` (≥10 chars)
+
+There is intentionally **no `summary`, `step_title`, or `success_criteria` field on the score**. UI consumers look those up by `step_id` from `evaluation_plan.json`, which is returned alongside reports by the same API endpoint.
+
+### Two scoring paths
+
+The scoring phase has two paths, controlled by an optional `__evaluation_scoring__` entry in `evaluation/step_config.json`:
+
+**LLM scoring (default)**
+- The runtime spins up a single scoring agent (one LLM call covering all eval steps)
+- The agent receives every eval step's id/title/description/execution_output in its user prompt
+- The agent uses standard workspace tools (`execute_shell_command`, `diff_patch_workspace_file`) to write the report file directly to an absolute path provided in the user prompt
+- After the agent's turn loop ends, Go runs the fixed pre-validation schema against the produced file. On failure the runtime feeds the error list back to the same agent as a follow-up user message and lets it fix `evaluation_report.json` in place; this repeats up to 3 attempts before the eval fails.
+
+**learn_code fast path (opt-in)**
+- Builder sets `{ "id": "__evaluation_scoring__", "agent_configs": { "declared_execution_mode": "learn_code" } }` in `evaluation/step_config.json`
+- On every eval run, the runtime checks for `learnings/__evaluation_scoring__/main.py`
+  - If present: writes `scoring_inputs.json` (with all step inputs + resolved `target_run_path`) and execs `python3 main.py <inputs> <output>`. The script writes `evaluation_report.json` deterministically; Go validates it against the same fixed schema. **No LLM call.**
+  - If missing or the script fails or the output fails validation: falls back to the LLM scoring path. The LLM is also instructed to author/refine `main.py` so future runs hit the fast path.
+- One `main.py` works across all groups — the runtime resolves all per-group paths into `scoring_inputs.json` so the script never hardcodes anything.
+
+### Where the report lands
+
+Whichever path produces it, the runtime writes the report to:
 - internal path: `evaluation/runs/{internalEvalRunFolder}/evaluation_report.json`
 - published path: `evaluation/runs/{targetRunFolder}/evaluation_report.json`
 
-That publish step is what makes evaluation reports line up with the execution run the user asked about.
+The publish step is what makes evaluation reports line up with the execution run the user asked about.
+
+### Scoring agent overrides
+
+The reserved `__evaluation_scoring__` step config entry accepts the same `agent_configs` shape as a regular step:
+- `use_code_execution_mode` (`*bool`) — overrides the auto-detected code-exec mode (default: provider-based; CLI providers force true)
+- `declared_execution_mode` (`"learn_code"`) — opts into the fast-path described above
+
+Implementation lives in [evaluation_scoring_agent.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_agent.go), [evaluation_scoring_learn_code.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_scoring_learn_code.go), and `createEvaluationScoringAgent` in [controller_agent_factory.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go).
 
 ## Auto-Evaluation
 

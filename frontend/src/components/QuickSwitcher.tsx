@@ -3,6 +3,7 @@ import { Layers, MessageSquare, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
+import type { ChatTab } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 
@@ -31,6 +32,8 @@ interface ChatTabItem {
 
 type QuickSwitcherItem = WorkflowItem | ChatTabItem
 
+const EMPTY_CHAT_TABS: Record<string, ChatTab> = {}
+
 export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   isOpen,
   onClose
@@ -44,8 +47,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const isChatMode = selectedModeCategory === 'multi-agent'
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const activeTabId = useChatStore(state => state.activeTabId)
-  const chatTabs = useChatStore(state => state.chatTabs)
+  // Scope chat-store subscriptions to chat mode — chatTabs gets a new
+  // reference on every streaming event, which would otherwise re-render this
+  // component (and recompute filteredItems) many times per second in
+  // workflow mode.
+  const activeTabId = useChatStore(state => (isChatMode ? state.activeTabId : null))
+  const chatTabs = useChatStore(state => (isChatMode ? state.chatTabs : EMPTY_CHAT_TABS))
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -144,22 +151,33 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     return filtered
   }, [query, allItems])
 
-  // Reset index when results change — in chat mode, default to the first
-  // non-active tab so Ctrl+K → Enter immediately switches to the next chat.
+  // Read filteredItems via a ref so this effect does NOT fire on every new
+  // array reference — only on real user intent changes (query, mode, open).
+  // Otherwise streaming re-renders would snap the selection back on each tick.
+  const filteredItemsRef = useRef(filteredItems)
+  filteredItemsRef.current = filteredItems
   useEffect(() => {
-    if (isChatMode && !query.trim()) {
-      const firstNonActive = filteredItems.findIndex(item => !item.isActive)
+    if (!query.trim() && (isChatMode || isWorkflowMode)) {
+      const firstNonActive = filteredItemsRef.current.findIndex(item => !item.isActive)
       setSelectedIndex(firstNonActive >= 0 ? firstNonActive : 0)
     } else {
       setSelectedIndex(0)
     }
-  }, [filteredItems, isChatMode, query])
+  }, [isOpen, isChatMode, isWorkflowMode, query])
 
-  // Scroll selected item into view
+  // Clamp (don't reset) when the list length changes so a narrowing filter
+  // keeps a valid index without discarding the user's position.
+  useEffect(() => {
+    setSelectedIndex(prev => {
+      if (filteredItems.length === 0) return 0
+      return Math.min(prev, filteredItems.length - 1)
+    })
+  }, [filteredItems.length])
+
   useEffect(() => {
     if (listRef.current && selectedIndex >= 0) {
       const el = listRef.current.children[selectedIndex] as HTMLElement
-      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      el?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
     }
   }, [selectedIndex])
 

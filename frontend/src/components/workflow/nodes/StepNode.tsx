@@ -129,9 +129,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     execution_llm?: { provider?: string; model_id?: string }
     execution_max_turns?: number
     learning_llm?: { provider?: string; model_id?: string }
-    disable_learning?: boolean
+    learnings_access?: 'read' | 'read-write' | 'none'
+    learning_objective?: string
     lock_learnings?: boolean
-    learning_detail_level?: string
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
@@ -189,11 +189,14 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return null
   }, [stepOverride?.execution_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs, workflowPrimaryConfig, primaryConfig])
 
-  // Learning disabled: override > step config
+  // Learning disabled: true only when learnings_access is explicitly "none".
+  // Under the new access-split semantics, empty learnings_access means "read"
+  // (step reads _global/SKILL.md but doesn't contribute) — not disabled. Write
+  // contribution requires "read-write" but that's a separate axis, not the
+  // "step is silent on learnings" signal shown on this node.
   const learningDisabled = useMemo(() => {
-    if (stepOverride?.disable_learning !== undefined) return stepOverride.disable_learning === true
-    return stepConfig?.agent_configs?.disable_learning === true
-  }, [stepOverride?.disable_learning, stepConfig?.agent_configs?.disable_learning])
+    return stepConfig?.agent_configs?.learnings_access === 'none'
+  }, [stepConfig?.agent_configs?.learnings_access])
 
   // Learning LLM: override > step config > preset learning_llm > preset default
   const learningLLM = useMemo(() => {

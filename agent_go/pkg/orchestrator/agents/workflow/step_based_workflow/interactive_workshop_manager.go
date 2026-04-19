@@ -150,6 +150,23 @@ func isScriptedExecutionModeConfig(cfg *AgentConfigs) bool {
 	return cfg.DeclaredExecutionMode == "learn_code"
 }
 
+// isOrchestratorLearnCodeEligible gates the todo_task fast path: the builder-authored
+// main.py is only run when the step declares learn_code and has at least one
+// predefined route for the script to call. If either check fails the step runs as a
+// normal LLM orchestrator — the script is never attempted.
+// The orchestrator learn_code path is read-only at runtime: the builder writes
+// main.py at design time, the runtime only runs it. There is no repair loop and no
+// save-back; any script failure falls back to the LLM orchestrator with a fresh start.
+func isOrchestratorLearnCodeEligible(step *TodoTaskPlanStep, cfg *AgentConfigs) bool {
+	if step == nil || !isScriptedExecutionModeConfig(cfg) {
+		return false
+	}
+	if len(step.PredefinedRoutes) == 0 {
+		return false
+	}
+	return true
+}
+
 func syncDeclaredExecutionModeConfig(cfg *AgentConfigs) {
 	if cfg == nil {
 		return
@@ -813,6 +830,13 @@ func GetToolsForWorkshopMode(mode string) []string {
 	stepConfig := []string{
 		"update_step_config", "organize_global_learnings",
 		"replan_workflow_from_results", "harden_workflow", "review_step_code",
+		"analyze_step",
+	}
+
+	// LLM config tools — inspect published/available models and save tiered LLM
+	// configuration directly to workflow.json capabilities.llm_config.
+	llmConfig := []string{
+		"list_published_llms", "list_provider_models", "test_llm", "set_workflow_llm_config",
 	}
 
 	// Plan modification tools
@@ -849,9 +873,16 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Report tools — validate reports/report_plan.md against real db/ + KB sources.
-	// Builder-only; the other modes never edit the report plan.
+	// Available in builder and optimizer modes; run mode never edits the report plan.
 	report := []string{
 		"validate_report_plan",
+	}
+
+	// Knowledgebase write tools — explicit graph/notes mutations. Registered only
+	// in the workflow-builder phase (server.go) and kept out of run mode because
+	// run == read-only.
+	kb := []string{
+		"reorganize_knowledgebase", "consolidate_knowledgebase",
 	}
 
 	var tools []string
@@ -863,48 +894,51 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// BUILDER: design everything — workflow plan, step config, evaluation plan, report widgets.
 		// Absorbs the legacy 'eval' and 'output' modes' tool sets.
 		tools = append(tools, execution...)
+		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
+		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
+		tools = append(tools, llmConfig...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
-		tools = append(tools, "update_step_config")
-		tools = append(tools, "review_step_code")
 		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
+		tools = append(tools, kb...)
 		tools = append(tools, "optimize_step")
+		tools = append(tools, "optimize_workflow")
 		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_step).
 		// From legacy 'output' mode — report widget editing happens via raw shell write to reports/report_plan.md;
 		// validate_report_plan closes the feedback loop so the builder doesn't ship broken widgets silently.
 
 	case "optimizer":
-		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable
+		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable.
+		// Report widgets often need touching up during hardening (schema drifts in
+		// db/, new KB entity types surface) so validate_report_plan rides along.
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
 		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
+		tools = append(tools, llmConfig...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_plan")
 		tools = append(tools, eval...)
+		tools = append(tools, report...)
+		tools = append(tools, kb...)
 		tools = append(tools, "optimize_step")
-
-	case "ask":
-		// ASK: read-only investigate — inspect prior runs, eval reports, KB, learnings.
-		// Renamed from legacy 'debugger'. NO mutating tools — strict read-only.
-		// debug_step is read-only inspection; harden_workflow is intentionally NOT here
-		// because it modifies plan/config (use Optimize for that).
-		tools = append(tools, "debug_step")
-		tools = append(tools, "query_step", "list_executions")
+		tools = append(tools, "optimize_workflow")
 
 	case "run":
-		// RUN: execute the finished workflow and report results.
-		// Renamed from legacy 'runner'. No plan changes, no optimization, no config changes.
+		// RUN: execute the finished workflow, inspect results, and report outcomes.
+		// Merged mode (absorbs legacy 'ask'/'debugger' read-only inspection). No plan
+		// changes, no optimization, no config changes, no harden — that's Optimize.
 		tools = append(tools, execution...)
 		tools = append(tools, "run_full_workflow")
+		tools = append(tools, "debug_step")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -914,9 +948,12 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, variableConfig...)
 		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
+		tools = append(tools, llmConfig...)
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
+		tools = append(tools, kb...)
 		tools = append(tools, "debug_step")
+		tools = append(tools, "optimize_workflow")
 	}
 
 	return tools
@@ -949,8 +986,9 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 }
 
 // detectWorkshopMode determines the current workshop mode based on step optimization state.
-// Returns the mode ("builder", "optimizer", "ask", "run") and a comma-separated list of
-// unoptimized step IDs. After the 6→4 mode consolidation only those four values are valid.
+// Returns the mode ("builder", "optimizer", "run") and a comma-separated list of
+// unoptimized step IDs. After the 6→3 mode consolidation only those three values are valid
+// ('ask' was merged into 'run'; legacy 'debugger'/'runner'/'eval'/'output' are migrated elsewhere).
 func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) (string, string) {
 	if plan == nil || len(plan.Steps) == 0 {
 		return "builder", ""
@@ -1113,7 +1151,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"AbsWorkspacePath":                  GetPromptDocsRoot() + "/" + workspacePath,
 		"AbsDocsRoot":                       GetPromptDocsRoot(),
 		"SpecialWorkspaceToolsInstructions": instructions.GetSpecialWorkspaceToolsInstructions(),
-		"MainPyAuthoringRules":              BuildMainPyAuthoringRules(),
+		"MainPyAuthoringRules":              BuildMainPyAuthoringRules() + browserAuthoringRulesIfBrowserEnabled(iwm.controller),
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -1257,7 +1295,7 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
-## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILDER{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "ask"}}ASK{{else}}RUN{{end}}
+## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILDER{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else}}RUN{{end}}
 {{.SpecialWorkspaceToolsInstructions}}
 
 ## Execution policy — run ONE group at a time by default
@@ -1298,11 +1336,292 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 - Do NOT write Python that produces a dashboard file. The React frontend already does this from the markdown.
 - If the user wants a NEW kind of visualization the widget grammar can't express, say so explicitly and propose either (a) a new widget type to add to the renderer, or (b) reshaping the underlying `+"`db/`"+` data to fit existing widget types. Don't silently fall back to "I'll write a Python script that makes HTML."
 
-**When the report shows "No report yet":** it means `+"`reports/report_plan.md`"+` is missing or contains zero parseable widgets. Fix by writing/editing that file. (If you're in BUILD mode, see the full `+"`report_plan.md`"+` grammar reference further down.)
+**When the report shows "No report yet":** it means `+"`reports/report_plan.md`"+` is missing or contains zero parseable widgets. Fix by writing/editing that file. See the `+"`report_plan.md`"+` grammar reference below (rendered in builder and optimizer modes).
 
 **When the report renders but is empty/missing widgets the user expects:** the markdown widgets parsed correctly but their `+"`source`"+` JSON is missing or has no rows yet. Either a step hasn't run, or the widget points at the wrong path. Inspect `+"`reports/report_plan.md`"+` and the actual `+"`db/`"+` files to diagnose.
 
 **Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent edits `+"`report_plan.md`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
+
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
+### Report plan — reports/report_plan.md
+
+The workflow's live report is defined by `+"`reports/report_plan.md`"+`. The frontend renders it on demand — there is no "report" phase that runs after execution. You write and maintain this file. Widgets bind to JSON sources that real step execution populates, so the report reflects current state every time it is opened.
+
+**When to write/update `+"`report_plan.md`"+`:**
+- After the user confirms what they want to see in the report (ask if unclear)
+- When you add a step that writes a new `+"`db/`"+` file the user wants surfaced
+- When the KB starts accumulating a new entity type the user wants listed
+- When the user says "add X to the report" or similar
+- In optimizer mode: when a hardening pass changes a db/ schema (renamed fields, new columns) that existing widgets reference — update the widget paths/formats so the report doesn't go silently stale.
+
+**Syntax (strict — malformed widgets silently don't render):**
+- `+"`## Heading`"+` — starts a new section (H1 and H3+ are ignored)
+- Fenced blocks with a `+"`widget:`"+` language tag define widgets
+
+Example:
+` + "```" + `markdown
+## Overview
+
+` + "`" + `` + "`" + `` + "`" + `widget:text
+source: db/summary.json
+path: description
+` + "`" + `` + "`" + `` + "`" + `
+
+## Companies
+
+` + "`" + `` + "`" + `` + "`" + `widget:table
+source: knowledgebase/graph.json
+path: entities
+filter: type=company
+` + "`" + `` + "`" + `` + "`" + `
+` + "```" + `
+
+**Widget types:**
+- `+"`widget:text`"+` — string / number / JSON rendered as text
+- `+"`widget:table`"+` — array of objects (columns derived from object keys)
+- `+"`widget:chart`"+` — array of objects rendered as bar/line/area/pie chart. Supports multi-series + stacked.
+- `+"`widget:stat`"+` — KPI tile: big number with label, optional prefix/suffix/delta/sparkline
+- `+"`widget:alert`"+` — conditional callout banner (info / warning / error / success). Pair with `+"`show_if:`"+`.
+- `+"`widget:pivot`"+` — 2-D aggregated grid (rows × columns × sum/avg/count/min/max/first)
+- `+"`widget:row`"+` — layout wrapper; each line `+"`- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ] [ | show_if: <expr> ]`"+`
+
+**Valid `+"`source`"+` paths:** `+"`db/<file>.json`"+`, `+"`knowledgebase/graph.json`"+`, `+"`knowledgebase/index.json`"+`. Anything else is rejected.
+
+**Required fields on every widget:**
+- `+"`source:`"+` — workspace-relative JSON file path
+- `+"`path:`"+` — dot-notation key into the JSON. For root-level arrays/values use `+"`$`"+`, `+"`$[*]`"+`, `+"`.`"+`, or `+"`*`"+` (all normalize to "the whole source").
+
+**Optional fields — common to all widget kinds:**
+- `+"`title:`"+` — header label rendered above the widget
+- `+"`description:`"+` — small subtitle (one line) below the title
+- `+"`height:`"+` — pixel height (mostly useful for charts; default ~288)
+- `+"`filter:`"+` — `+"`key=value`"+` to filter array sources (e.g. `+"`filter: type=company`"+`)
+- `+"`show_if:`"+` — universal conditional rendering. The widget is skipped entirely when the expression is false. Grammar:
+  - `+"`<path>`"+` → truthy check on the resolved value (e.g. `+"`show_if: records.0.alert_active`"+`)
+  - `+"`!<path>`"+` → falsy check (e.g. `+"`show_if: !done`"+`)
+  - `+"`<path> <op> <value>`"+` where op is `+"`>`"+`, `+"`<`"+`, `+"`>=`"+`, `+"`<=`"+`, `+"`==`"+`, `+"`!=`"+` (numeric or string compare; quotes optional)
+  - Paths resolve against the RAW source JSON (before `+"`path:`"+`/`+"`filter:`"+`). Missing paths are null/false.
+  - Example: `+"`show_if: records.0.unassigned_count > 0`"+` (only renders when there's something to show)
+
+**Optional fields for `+"`widget:table`"+`:**
+- `+"`formats:`"+` — comma-separated `+"`field=preset`"+` pairs to render cells with proper formatting. Supported presets:
+  - `+"`currency-inr`"+` (₹12,75,166.08), `+"`currency-usd`"+`
+  - `+"`percent`"+` (42%), `+"`percent-1dp`"+` (42.5%) — fractional values ≤1 are scaled (0.42 → 42%); values >1 treated as already-percent
+  - `+"`short-date`"+` (Apr 16, 2026), `+"`long-date`"+`, `+"`datetime`"+` (Apr 16, 2026, 7:30 PM)
+  - `+"`number`"+` (12,345), `+"`number-1dp`"+`, `+"`number-2dp`"+`
+  - `+"`bytes`"+` (4.2 KB), `+"`boolean-icon`"+` (✓ / ✗)
+- `+"`page_size:`"+` — rows per page (default 25). Set higher for short tables, lower for very wide ones.
+- `+"`enable_search:`"+` — `+"`true`"+` (default) / `+"`false`"+` to hide the search box.
+- `+"`default_sort:`"+` — initial sort. Format: `+"`field:asc`"+` or `+"`field:desc`"+` (e.g. `+"`balance:desc`"+`).
+- `+"`hide_columns:`"+` — comma-separated list of columns present in data but suppressed in the rendered table (e.g. `+"`hide_columns: created_at, internal_id`"+`).
+
+**Optional fields for `+"`widget:chart`"+`:**
+- `+"`chart_type:`"+` — `+"`bar`"+` (default), `+"`line`"+`, `+"`area`"+`, `+"`pie`"+`.
+- `+"`x_axis:`"+` / `+"`y_axis:`"+` — field names when data isn't in canonical `+"`{label, value}`"+` shape (e.g. `+"`x_axis: month, y_axis: revenue`"+`).
+- `+"`top_n:`"+` — cap rendered points to top N (use with `+"`sort: desc`"+` for "top 10 by value").
+- `+"`sort:`"+` — `+"`asc`"+` / `+"`desc`"+` / `+"`none`"+` (default). Sorts points by y-value.
+- `+"`show_values:`"+` — `+"`true`"+` to render value labels on bars/lines/pie slices (default false).
+- `+"`series:`"+` — comma-separated field names for multi-series charts (e.g. `+"`series: net_salary, gross_salary, deductions`"+`). Each field becomes its own plotted series sharing `+"`x_axis`"+` as the category key. When set, `+"`y_axis`"+` is ignored.
+- `+"`series_colors:`"+` — comma-separated hex/named colors, one per series (parallel to `+"`series`"+`). Falls back to `+"`colors`"+` / default palette.
+- `+"`stacked:`"+` — `+"`true`"+` to stack series. Only applies to `+"`chart_type: bar`"+` and `+"`chart_type: area`"+`; ignored for line/pie.
+
+**Required fields for `+"`widget:stat`"+`:**
+- `+"`source:`"+` + `+"`path:`"+` — point to a scalar (number or short string).
+
+**Optional fields for `+"`widget:stat`"+`:**
+- `+"`label:`"+` — caption under the big number (e.g. "since yesterday").
+- `+"`prefix:`"+` / `+"`suffix:`"+` — strings appended immediately before/after the value (no auto-spacing; include a leading space yourself if needed, e.g. `+"`suffix: \" active\"`"+`).
+- `+"`format:`"+` — singular formatter preset (same names as `+"`widget:table`"+`'s formats, just one value — e.g. `+"`format: currency-inr`"+`).
+- `+"`delta_path:`"+` — path to a signed-number delta; renders `+"`▲`"+`/`+"`▼`"+` arrow, green/red tone, and the formatted delta next to the value.
+- `+"`delta_format:`"+` — optional formatter for the delta (default: auto).
+- `+"`trend_path:`"+` — path to an array of numbers; rendered as an inline sparkline under the value.
+
+**Required fields for `+"`widget:alert`"+`:**
+- `+"`source:`"+` (required by the widget grammar); `+"`path:`"+` is optional but enables `+"`{value}`"+` interpolation.
+
+**Optional fields for `+"`widget:alert`"+`:**
+- `+"`severity:`"+` — `+"`info`"+` (default), `+"`warning`"+`, `+"`error`"+`, `+"`success`"+`. Picks the color band + icon.
+- `+"`title:`"+` — bold top line. Supports `+"`{value}`"+` interpolation.
+- `+"`message:`"+` — body text. Supports `+"`{value}`"+` interpolation (resolves to the value at `+"`path:`"+`).
+- `+"`format:`"+` — formatter for the interpolated `+"`{value}`"+`.
+- **Nearly always use with `+"`show_if:`"+`** — an alert that renders unconditionally is just a styled text widget. Example: `+"`show_if: records.0.unassigned_count > 0`"+`.
+
+**Required fields for `+"`widget:pivot`"+`:**
+- `+"`source:`"+` + `+"`path:`"+` — point at an array of records.
+- `+"`rows:`"+` — field name that buckets rows (y-axis of the pivot).
+- `+"`columns:`"+` — field name that buckets columns (x-axis of the pivot).
+- `+"`values:`"+` — field name being aggregated into each cell.
+
+**Optional fields for `+"`widget:pivot`"+`:**
+- `+"`aggregate:`"+` — `+"`sum`"+` (default), `+"`avg`"+`, `+"`count`"+`, `+"`min`"+`, `+"`max`"+`, `+"`first`"+`.
+- `+"`format:`"+` — formatter applied to each cell.
+- `+"`heatmap:`"+` — `+"`true`"+` to tint cells by magnitude (default low→high = light→dark blue; dark theme adjusted automatically).
+- `+"`heatmap_colors:`"+` — two-color override: `+"`heatmap_colors: #f1f5f9, #0ea5e9`"+` (low, high).
+
+**Color controls (optional, chart + table):** hex (`+"`#rrggbb`"+`, `+"`#rgb`"+`) or CSS color names.
+- `+"`colors:`"+` — comma-separated palette. Chart: cycled across bars/pie slices. Table: only used alongside `+"`color_by`"+`.
+- `+"`colors_dark:`"+` — theme override; used when the app is in dark mode (falls back to `+"`colors`"+` when unset). Use brighter tones for dark bg.
+- `+"`color_by:`"+` — field name in each row. With `+"`color_map`"+`: look up per-row color; without: cycle `+"`colors`"+` across distinct values.
+- `+"`color_map:`"+` — `+"`value=color`"+` pairs (e.g. `+"`ok=#10b981, failed=#ef4444`"+`). Used with `+"`color_by`"+` for semantic coloring — the canonical pattern for status/severity visuals.
+Invalid colors are silently skipped by the renderer; `+"`validate_report_plan`"+` surfaces them as warnings.
+
+**Examples — pick the simplest widget that conveys the idea, then layer options as needed:**
+` + "```" + `markdown
+## Key Metrics
+
+` + "`" + `` + "`" + `` + "`" + `widget:row
+- stat | source: db/sync_runs.json | path: runs.0.employee_sync.total
+- stat | source: db/sync_runs.json | path: runs.0.payslip_sync.total_records
+- stat | source: db/monthly_summary.json | path: records.0.grand_total
+` + "`" + `` + "`" + `` + "`" + `
+
+## Alerts
+
+` + "`" + `` + "`" + `` + "`" + `widget:alert
+source: db/unassigned_payslips.json
+path: records.0.unassigned_count
+severity: warning
+title: {value} unassigned employees
+message: Payslips exist but no team has claimed these employees.
+show_if: records.0.unassigned_count > 0
+` + "`" + `` + "`" + `` + "`" + `
+
+## Per-Account Status
+
+` + "`" + `` + "`" + `` + "`" + `widget:table
+title: Account snapshot
+description: Latest balance + last eval score per group, sorted by balance.
+source: db/account_status.json
+path: $[*]
+formats: balance=currency-inr, eval_score=percent-1dp, balance_updated_at=datetime
+default_sort: balance:desc
+page_size: 50
+hide_columns: created_at, internal_id
+` + "`" + `` + "`" + `` + "`" + `
+
+## Salary Backfill (team × month)
+
+` + "`" + `` + "`" + `` + "`" + `widget:pivot
+title: Net salary by team × month
+source: db/salary_sync_status.json
+path: records
+rows: team
+columns: month
+values: net_salary
+aggregate: sum
+format: currency-inr
+heatmap: true
+` + "`" + `` + "`" + `` + "`" + `
+
+## Monthly Trend (multi-series)
+
+` + "`" + `` + "`" + `` + "`" + `widget:chart
+title: Net vs gross vs deductions, by month
+chart_type: bar
+source: db/monthly_summary.json
+path: records
+x_axis: month
+series: net_salary, gross_salary, deductions
+stacked: false
+height: 320
+` + "`" + `` + "`" + `` + "`" + `
+
+## Top Strategies
+
+` + "`" + `` + "`" + `` + "`" + `widget:chart
+title: Top 10 strategies by Sharpe ratio
+chart_type: bar
+source: knowledgebase/graph.json
+path: entities
+filter: type=live-strategy
+x_axis: label
+y_axis: properties.sharpe
+sort: desc
+top_n: 10
+show_values: true
+height: 360
+` + "`" + `` + "`" + `` + "`" + `
+
+## KPI with Trend
+
+` + "`" + `` + "`" + `` + "`" + `widget:stat
+title: Total employees
+source: db/sync_runs.json
+path: runs.0.employee_sync.total
+format: number
+delta_path: runs.0.employee_sync.delta
+trend_path: runs.0.employee_sync.history
+suffix: " active"
+` + "`" + `` + "`" + `` + "`" + `
+` + "```" + `
+
+**Asking the user before writing widgets** — this is the LLM-driven part. When the user says "add a report widget" or similar, ask clarifying questions before writing the markdown:
+- "Which data should it bind to — `+"`db/<file>`"+` or KB entities of a specific type?"
+- "Table, chart, stat, alert, or pivot? (If chart, bar/line/area/pie? If pivot, rows × columns × what aggregate?)"
+- "Any columns/values to format specially (currency, percent, dates)?"
+- "Sort by what initially?"
+- "Should I cap to top N rows or show everything?"
+- "Want a title above it?"
+Then write the widget block honoring their answers. Don't dump generic widgets — the choice of widget kind, formatter, sort, and top_n is what makes the report read well.
+
+**Picking the right widget kind:**
+- **stat** → one scalar matters (totals, counts, latest value). Group 3–4 stats in a `+"`widget:row`"+` for a KPI strip.
+- **alert** → something is wrong or unusual (`+"`unassigned_count > 0`"+`, `+"`days_since_last_sync > 7`"+`). Always pair with `+"`show_if:`"+`. Put alerts at the top of the report.
+- **table** → rows with many fields per row, user needs to scan and sort.
+- **chart** → shape/trend of a set of numbers. Multi-series when comparing metrics over the same x-axis.
+- **pivot** → two-dimensional summary (team × month, group × status). Much denser than a flat table for the same data.
+- **text** → narrative / free-form (description, notes, long strings). Default when nothing else fits, not before.
+
+**Choosing a chart type:**
+- `+"`bar`"+` — categorical comparisons (top-N strategies, counts per group, revenue by channel). Default — use this when unsure.
+- `+"`line`"+` — time series and trends (daily/weekly/monthly metrics). Requires an ordered x-axis.
+- `+"`area`"+` — time series where the magnitude matters more than precise values; good for cumulative totals.
+- `+"`pie`"+` — composition of a whole, ≤6 slices only. Skip pie when the number of categories is large or values are close — a bar chart reads faster.
+
+**Section & layout guidance:**
+- **Order sections top-to-bottom by importance.** First section = the headline the user would screenshot (summary counts, top KPIs). Detail tables go lower.
+- **One H2 per logical grouping**, not per widget. A section can hold several widgets.
+- **Use `+"`widget:row`"+` sparingly** — only when 2-3 widgets are genuinely paired (e.g. a KPI text widget + a sparkline chart, or two small charts that compare). Full-width is the default; stacking is easier to read than cramming.
+- **Keep charts to ≤10 visible points.** Use `+"`top_n:`"+` + `+"`sort: desc`"+` for "top N" views rather than plotting hundreds.
+- **Titles are the subheader.** If the H2 already says "Top Strategies", don't repeat "Top strategies by Sharpe" as the title — use the title line for the extra qualifier ("Last 30 days") or drop it entirely.
+
+**After every edit, call `+"`validate_report_plan`"+`.** The renderer silently drops bad widgets, so without validation the user sees a blank Report tab and cannot tell you why. The validator checks: source path allowed, source file exists and is valid JSON, dot-path resolves, shape matches widget kind (array-of-objects for table/chart), options are known values. Fix errors; warnings are advisory. Run it again until it reports `+"`valid=true`"+` with 0 errors.
+
+**Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed. Write `+"`report_plan.md`"+` with shell (`+"`cat > '{{.AbsWorkspacePath}}/reports/report_plan.md' <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`, then validate.
+
+### Evaluation plan — evaluation/evaluation_plan.json
+
+You write and maintain the eval plan — design in builder mode, keep it sharp as you harden in optimizer mode.
+
+**Evaluation workflow:**
+1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
+2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
+3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
+4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
+5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
+6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. For eval steps this writes to `+"`evaluation/step_config.json`"+`. Each eval step should store: `+"`declared_execution_mode`"+`, `+"`description_reviewed`"+`, and `+"`review_notes`"+`. Re-review (clear `+"`description_reviewed`"+`) whenever you meaningfully change the description — there is no automatic staleness signal.
+7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g. `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run.
+9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
+
+   **{{"{{TARGET_RUN_PATH}}"}}**: At runtime, this variable resolves to the absolute path of the original execution folder. Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers.
+10. Use **optimize_step(step_id, iteration?, group_name?)** for a read-only optimization report on one eval step. The tool auto-detects that the step lives in evaluation_plan.json and focuses on scoring quality, determinism, pre_validation, redundancy, and mode choice.
+11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+12. **Configure the scoring agent (optional).** A single LLM scoring agent runs after all eval steps complete and produces `+"`evaluation_report.json`"+` via one validated `+"`submit_report`"+` call. To control its execution mode, add a reserved entry to `+"`evaluation/step_config.json`"+` using id `+"`__evaluation_scoring__`"+` — same `+"`agent_configs`"+` shape as a regular step:
+    `+"`{ \"id\": \"__evaluation_scoring__\", \"agent_configs\": { \"use_code_execution_mode\": false } }`"+`
+    Set `+"`use_code_execution_mode: false`"+` to keep scoring in lean tool-call mode (cheaper, faster, fewer round-trips — recommended default since scoring only calls one tool). Set it to `+"`true`"+` to force code-exec on a non-CLI provider. CLI providers (claude-code/gemini-cli/codex-cli) ignore `+"`false`"+` because they need code-exec to access tools at all. Omit the entry to accept the auto-detected default.
+
+    **Deterministic scoring via learn_code (optional).** If the success criteria can be expressed as code (regex, JSONPath, exact string checks, row counts, etc.), opt the scoring agent into learn_code mode so future eval runs score deterministically with no LLM cost:
+    `+"`{ \"id\": \"__evaluation_scoring__\", \"agent_configs\": { \"declared_execution_mode\": \"learn_code\" } }`"+`
+    On the FIRST run after this is set, the LLM scoring agent runs as usual AND is instructed to author a deterministic Python script at `+"`learnings/__evaluation_scoring__/main.py`"+`. The script reads `+"`scoring_inputs.json`"+` from argv[1] and writes `+"`evaluation_report.json`"+` (same submit_report schema) to argv[2]. On every subsequent run the controller executes that script directly via `+"`python3`"+`, validates its output against the same fixed schema, and only falls back to the LLM if the script is missing, errors, or produces invalid output. Don't choose this if scoring needs fuzzy LLM judgment — the script must NOT call any LLM API. Delete `+"`learnings/__evaluation_scoring__/main.py`"+` to force regeneration if the scoring criteria change.
+
+**Evaluation files:**
+- Plan: `+"`evaluation/evaluation_plan.json`"+`
+- Step config: `+"`evaluation/step_config.json`"+` (regular eval steps + optional `+"`__evaluation_scoring__`"+` entry for the scoring agent)
+- Eval run sandbox + report: `+"`evaluation/runs/iteration-0[/group]/`"+` (paired with workflow's `+"`runs/iteration-0`"+`)
+- Historical eval reports: `+"`evaluation/runs/iteration-N/`"+` — created by paired rotation; `+"`evaluation/runs/iteration-N`"+` corresponds 1:1 to `+"`runs/iteration-N`"+`.
+- Eval-step learnings live under the shared `+"`learnings/{stepID}/`"+` namespace (same as execution steps); step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time.
+{{end}}
 
 ## Three persistent stores — skill vs knowledgebase vs db
 
@@ -1410,7 +1729,7 @@ Both learning and knowledgebase are **off by default** for every step. Running t
 
 **For each step, ask yourself three questions:**
 
-1. **Should this step build up SKILL.md?** — Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set ` + "`" + `learning_objective` + "`" + ` to a concrete instruction naming exactly what SKILL.md should capture (e.g. *"Selectors for the ICICI login form, OTP field timing, and the 'clearing fingerprint' banner that indicates session expiry"*). Leave empty for plumbing steps (send email, generate PDF, upload to S3) whose "how" is boring and generic.
+1. **Should this step build up SKILL.md?** — Every step by default READS ` + "`" + `learnings/_global/SKILL.md` + "`" + ` into its prompt (learnings_access defaults to ` + "`\"read\"`" + `). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set ` + "`learnings_access: \"read-write\"`" + ` AND ` + "`" + `learning_objective` + "`" + ` to a concrete instruction naming exactly what SKILL.md should capture (e.g. *"Selectors for the ICICI login form, OTP field timing, and the 'clearing fingerprint' banner that indicates session expiry"*). For plumbing steps (send email, generate PDF, upload to S3), leave ` + "`" + `learnings_access` + "`" + ` at the default ` + "`\"read\"`" + ` — they still benefit from shared context but don't contribute noise. For steps that should be fully invisible to learnings, set ` + "`learnings_access: \"none\"`" + `.
 2. **Should this step contribute to knowledgebase/graph.json?** — Only if the step produces durable facts about the subject matter of the workflow: entities discovered, relationships, decisions, cross-run strategies. If yes, set ` + "`" + `knowledgebase_access` + "`" + ` to ` + "`" + `write` + "`" + ` or ` + "`" + `read-write` + "`" + ` AND set ` + "`" + `knowledgebase_contribution` + "`" + ` to a concrete extraction instruction (e.g. *"Extract each company mentioned as an entity with type=company + size/industry properties; link to its parent group via parent-of relationships"*). Access without a contribution is a validation error.
 3. **Should this step write to ` + "`" + `db/` + "`" + `?** — Only if the step produces rows the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure ` + "`" + `db/README.md` + "`" + ` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use ` + "`" + `context_output` + "`" + ` instead. KB ≠ db: facts about the subject go through ` + "`" + `knowledgebase_contribution` + "`" + `, not ` + "`" + `db/` + "`" + `.
 
@@ -1456,166 +1775,6 @@ Before moving to optimization, ensure the foundation is solid:
 5. Evaluation plan exists with at least one eval step.
 6. When the plan is working and eval is set up, suggest the user switch to **Optimizer mode** to harden it.
 
-### Report plan — reports/report_plan.md
-
-The workflow's live report is defined by `+"`reports/report_plan.md`"+`. The frontend renders it on demand — there is no "report" phase that runs after execution. You (the builder) write and maintain this file. Widgets bind to JSON sources that real step execution populates, so the report reflects current state every time it is opened.
-
-**When to write/update `+"`report_plan.md`"+`:**
-- After the user confirms what they want to see in the report (ask if unclear)
-- When you add a step that writes a new `+"`db/`"+` file the user wants surfaced
-- When the KB starts accumulating a new entity type the user wants listed
-- When the user says "add X to the report" or similar
-
-**Syntax (strict — malformed widgets silently don't render):**
-- `+"`## Heading`"+` — starts a new section (H1 and H3+ are ignored)
-- Fenced blocks with a `+"`widget:`"+` language tag define widgets
-
-Example:
-` + "```" + `markdown
-## Overview
-
-` + "`" + `` + "`" + `` + "`" + `widget:text
-source: db/summary.json
-path: description
-` + "`" + `` + "`" + `` + "`" + `
-
-## Companies
-
-` + "`" + `` + "`" + `` + "`" + `widget:table
-source: knowledgebase/graph.json
-path: entities
-filter: type=company
-` + "`" + `` + "`" + `` + "`" + `
-` + "```" + `
-
-**Widget types:**
-- `+"`widget:text`"+` — string / number / JSON rendered as text
-- `+"`widget:table`"+` — array of objects (columns derived from object keys)
-- `+"`widget:chart`"+` — array of objects rendered as bar/line/area/pie chart
-- `+"`widget:row`"+` — layout wrapper; each line `+"`- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ]`"+`
-
-**Valid `+"`source`"+` paths:** `+"`db/<file>.json`"+`, `+"`knowledgebase/graph.json`"+`, `+"`knowledgebase/index.json`"+`. Anything else is rejected.
-
-**Required fields on every widget:**
-- `+"`source:`"+` — workspace-relative JSON file path
-- `+"`path:`"+` — dot-notation key into the JSON. For root-level arrays/values use `+"`$`"+`, `+"`$[*]`"+`, `+"`.`"+`, or `+"`*`"+` (all normalize to "the whole source").
-
-**Optional fields — common to all widget kinds:**
-- `+"`title:`"+` — header label rendered above the widget
-- `+"`description:`"+` — small subtitle (one line) below the title
-- `+"`height:`"+` — pixel height (mostly useful for charts; default ~288)
-- `+"`filter:`"+` — `+"`key=value`"+` to filter array sources (e.g. `+"`filter: type=company`"+`)
-
-**Optional fields for `+"`widget:table`"+`:**
-- `+"`formats:`"+` — comma-separated `+"`field=preset`"+` pairs to render cells with proper formatting. Supported presets:
-  - `+"`currency-inr`"+` (₹12,75,166.08), `+"`currency-usd`"+`
-  - `+"`percent`"+` (42%), `+"`percent-1dp`"+` (42.5%) — fractional values ≤1 are scaled (0.42 → 42%); values >1 treated as already-percent
-  - `+"`short-date`"+` (Apr 16, 2026), `+"`long-date`"+`, `+"`datetime`"+` (Apr 16, 2026, 7:30 PM)
-  - `+"`number`"+` (12,345), `+"`number-1dp`"+`, `+"`number-2dp`"+`
-  - `+"`bytes`"+` (4.2 KB), `+"`boolean-icon`"+` (✓ / ✗)
-- `+"`page_size:`"+` — rows per page (default 25). Set higher for short tables, lower for very wide ones.
-- `+"`enable_search:`"+` — `+"`true`"+` (default) / `+"`false`"+` to hide the search box.
-- `+"`default_sort:`"+` — initial sort. Format: `+"`field:asc`"+` or `+"`field:desc`"+` (e.g. `+"`balance:desc`"+`).
-- `+"`hide_columns:`"+` — comma-separated list of columns present in data but suppressed in the rendered table (e.g. `+"`hide_columns: created_at, internal_id`"+`).
-
-**Optional fields for `+"`widget:chart`"+`:**
-- `+"`chart_type:`"+` — `+"`bar`"+` (default), `+"`line`"+`, `+"`area`"+`, `+"`pie`"+`.
-- `+"`x_axis:`"+` / `+"`y_axis:`"+` — field names when data isn't in canonical `+"`{label, value}`"+` shape (e.g. `+"`x_axis: month, y_axis: revenue`"+`).
-- `+"`top_n:`"+` — cap rendered points to top N (use with `+"`sort: desc`"+` for "top 10 by value").
-- `+"`sort:`"+` — `+"`asc`"+` / `+"`desc`"+` / `+"`none`"+` (default). Sorts points by y-value.
-- `+"`show_values:`"+` — `+"`true`"+` to render value labels on bars/lines/pie slices (default false).
-
-**Color controls (optional, chart + table):** hex (`+"`#rrggbb`"+`, `+"`#rgb`"+`) or CSS color names.
-- `+"`colors:`"+` — comma-separated palette. Chart: cycled across bars/pie slices. Table: only used alongside `+"`color_by`"+`.
-- `+"`colors_dark:`"+` — theme override; used when the app is in dark mode (falls back to `+"`colors`"+` when unset). Use brighter tones for dark bg.
-- `+"`color_by:`"+` — field name in each row. With `+"`color_map`"+`: look up per-row color; without: cycle `+"`colors`"+` across distinct values.
-- `+"`color_map:`"+` — `+"`value=color`"+` pairs (e.g. `+"`ok=#10b981, failed=#ef4444`"+`). Used with `+"`color_by`"+` for semantic coloring — the canonical pattern for status/severity visuals.
-Invalid colors are silently skipped by the renderer; `+"`validate_report_plan`"+` surfaces them as warnings.
-
-**Examples — pick the simplest widget that conveys the idea, then layer options as needed:**
-` + "```" + `markdown
-## Per-Account Status
-
-` + "`" + `` + "`" + `` + "`" + `widget:table
-title: Account snapshot
-description: Latest balance + last eval score per group, sorted by balance.
-source: db/account_status.json
-path: $[*]
-formats: balance=currency-inr, eval_score=percent-1dp, balance_updated_at=datetime
-default_sort: balance:desc
-page_size: 50
-hide_columns: created_at, internal_id
-` + "`" + `` + "`" + `` + "`" + `
-
-## Top Strategies
-
-` + "`" + `` + "`" + `` + "`" + `widget:chart
-title: Top 10 strategies by Sharpe ratio
-chart_type: bar
-source: knowledgebase/graph.json
-path: entities
-filter: type=live-strategy
-x_axis: label
-y_axis: properties.sharpe
-sort: desc
-top_n: 10
-show_values: true
-height: 360
-` + "`" + `` + "`" + `` + "`" + `
-` + "```" + `
-
-**Asking the user before writing widgets** — this is the LLM-driven part. When the user says "add a report widget" or similar, ask clarifying questions before writing the markdown:
-- "Which data should it bind to — `+"`db/<file>`"+` or KB entities of a specific type?"
-- "Table or chart? If chart, bar/line/area/pie?"
-- "Any columns/values to format specially (currency, percent, dates)?"
-- "Sort by what initially?"
-- "Should I cap to top N rows or show everything?"
-- "Want a title above it?"
-Then write the widget block honoring their answers. Don't dump generic widgets — the choice of formatter, sort, and top_n is what makes the report read well.
-
-**Choosing a chart type:**
-- `+"`bar`"+` — categorical comparisons (top-N strategies, counts per group, revenue by channel). Default — use this when unsure.
-- `+"`line`"+` — time series and trends (daily/weekly/monthly metrics). Requires an ordered x-axis.
-- `+"`area`"+` — time series where the magnitude matters more than precise values; good for cumulative totals.
-- `+"`pie`"+` — composition of a whole, ≤6 slices only. Skip pie when the number of categories is large or values are close — a bar chart reads faster.
-
-**Section & layout guidance:**
-- **Order sections top-to-bottom by importance.** First section = the headline the user would screenshot (summary counts, top KPIs). Detail tables go lower.
-- **One H2 per logical grouping**, not per widget. A section can hold several widgets.
-- **Use `+"`widget:row`"+` sparingly** — only when 2-3 widgets are genuinely paired (e.g. a KPI text widget + a sparkline chart, or two small charts that compare). Full-width is the default; stacking is easier to read than cramming.
-- **Keep charts to ≤10 visible points.** Use `+"`top_n:`"+` + `+"`sort: desc`"+` for "top N" views rather than plotting hundreds.
-- **Titles are the subheader.** If the H2 already says "Top Strategies", don't repeat "Top strategies by Sharpe" as the title — use the title line for the extra qualifier ("Last 30 days") or drop it entirely.
-
-**After every edit, call `+"`validate_report_plan`"+`.** The renderer silently drops bad widgets, so without validation the user sees a blank Report tab and cannot tell you why. The validator checks: source path allowed, source file exists and is valid JSON, dot-path resolves, shape matches widget kind (array-of-objects for table/chart), options are known values. Fix errors; warnings are advisory. Run it again until it reports `+"`valid=true`"+` with 0 errors.
-
-**Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed. Write `+"`report_plan.md`"+` with shell (`+"`cat > '{{.AbsWorkspacePath}}/reports/report_plan.md' <<'EOF' ... EOF`"+`) or `+"`diff_patch_workspace_file`"+`, then validate.
-
-### Evaluation plan — evaluation/evaluation_plan.json
-
-Designing the eval plan is also a Builder responsibility (folded in from the legacy 'eval' mode in the 6→4 mode consolidation).
-
-**Evaluation workflow:**
-1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
-2. Prefer a **single eval step** when one coherent deterministic check can cover the outcome cleanly. Split into multiple eval steps only when there are truly separate concerns that should be scored or validated independently.
-3. **Focus on outcomes, not intermediate files.** Eval steps should verify the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Intermediate file checks are fragile and redundant with the workflow's own pre-validation. Evaluate what the workflow was supposed to *achieve*.
-4. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and machine-checkable `+"`pre_validation`"+` where possible.
-5. Choose the eval step mode by task shape. Prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning. See §7 Execution Modes.
-6. After changing or approving an eval step description, immediately call **update_step_config(step_id, ...)** to record the execution-mode decision and description review bookkeeping. For eval steps this writes to `+"`evaluation/step_config.json`"+`. Each eval step should store: `+"`declared_execution_mode`"+`, `+"`description_reviewed`"+`, and `+"`review_notes`"+`. Re-review (clear `+"`description_reviewed`"+`) whenever you meaningfully change the description — there is no automatic staleness signal.
-7. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
-8. Use **pre_validation** on eval steps to verify the eval step's **own output files** (e.g. `+"`context_output.json`"+`). Pre-validation checks files relative to the eval step's execution folder only — it does NOT check files in the original run.
-9. Use **run_full_evaluation(target_run_folder)** to score the current eval plan. Eval ALWAYS runs against the workflow's current run (`+"`iteration-0`"+`) — historical re-scoring is not supported because workflow + eval rotate together (`+"`runs/iteration-N`"+` is paired with `+"`evaluation/runs/iteration-N`"+` by construction). The `+"`target_run_folder`"+` parameter is normalized to `+"`iteration-0[/group]`"+` if you pass a different value.
-
-   **{{"{{TARGET_RUN_PATH}}"}}**: At runtime, this variable resolves to the absolute path of the original execution folder. Eval step descriptions MUST use {{"{{TARGET_RUN_PATH}}"}} to reference original execution artifacts — e.g. {{"{{TARGET_RUN_PATH}}/read-credentials/step_1_credentials.json"}}. Do NOT use the eval sandbox path or hardcode iteration numbers.
-10. Use **optimize_step(step_id, iteration?, group_name?)** for a read-only optimization report on one eval step. The tool auto-detects that the step lives in evaluation_plan.json and focuses on scoring quality, determinism, pre_validation, redundancy, and mode choice.
-11. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
-
-**Evaluation files:**
-- Plan: `+"`evaluation/evaluation_plan.json`"+`
-- Step config: `+"`evaluation/step_config.json`"+`
-- Eval run sandbox + report: `+"`evaluation/runs/iteration-0[/group]/`"+` (paired with workflow's `+"`runs/iteration-0`"+`)
-- Historical eval reports: `+"`evaluation/runs/iteration-N/`"+` — created by paired rotation; `+"`evaluation/runs/iteration-N`"+` corresponds 1:1 to `+"`runs/iteration-N`"+`.
-- Eval-step learnings live under the shared `+"`learnings/{stepID}/`"+` namespace (same as execution steps); step-ID uniqueness across plan.json and evaluation_plan.json is enforced at write time.
-
 {{else if eq .WorkshopMode "optimizer"}}
 **OPTIMIZE MODE** — Make existing steps reliable across all groups and runs. The plan structure should already be working.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
@@ -1654,24 +1813,23 @@ Run one group at a time so each group's failures harden the workflow before the 
 4. If any groups still failing: repeat the loop (max 2 full iterations to prevent infinite loops)
 
 For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_from_results`"+` which rewrites the plan from evidence. Use `+"`harden_workflow`"+` when the structure is right but steps need to be more reliable.
-{{else if eq .WorkshopMode "ask"}}
-**ASK MODE — read-only investigate.** Inspect prior runs, eval reports, KB, learnings, and configs. Answer the user's questions about what happened and why. **Do NOT modify any files, run any steps, or apply any fixes.** If the user wants action, tell them to switch to Builder (for design changes) or Optimize (for harden/fixes).
+{{else}}
+**RUN MODE** — Execute the finished workflow and inspect results. Two jobs, one mode.
 
-**What to do here:**
-- Use **debug_step(step_id)** for analysis of a specific step's recent execution (logs, validation, learning status).
-- Use **query_step / list_executions** to look up running or recent agent activity.
+**Executing the workflow:**
+- Run with `+"`run_full_workflow`"+` (default per-group sequential; see Execution Policy above).
+- Individual steps with `+"`execute_step`"+` when the user wants a targeted re-run.
+- Locked learnings/code mean the learning phase is a no-op for optimized steps.
+- Report results concisely; surface failures.
+
+**Inspecting prior runs (read-only investigate):**
+- **debug_step(step_id)** — analysis of a step's recent execution (logs, validation, learning status).
+- **query_step / list_executions** — look up running or recent agent activity.
 - Read files directly: `+"`cat runs/{run_folder}/execution/{step}/output.json`"+`, `+"`cat learnings/_global/SKILL.md`"+`, `+"`cat evaluation/runs/{run}/evaluation_report.json`"+`, `+"`cat knowledgebase/graph.json | jq ...`"+`.
 - Inspect step_config: `+"`jq '.steps[] | select(.id==\"X\")' planning/step_config.json`"+`.
-- Use the read-only audit slash commands (`+"`/audit-config`"+`, `+"`/audit-skills`"+`, `+"`/kb-review`"+`, `+"`/review-plan`"+`) — they're available in this mode.
+- Read-only audit slash commands (`+"`/audit-config`"+`, `+"`/audit-skills`"+`, `+"`/kb-review`"+`, `+"`/review-plan`"+`) are available.
 
-**What's blocked here:** any tool that mutates plan, config, learnings, KB, or runs steps. If you find yourself wanting one of those, prompt the user to switch modes.
-{{else}}
-**RUN MODE** — All steps are optimized. Execute the workflow and report results.
-- Run with `+"`run_full_workflow`"+` (default per-group sequential; see Execution Policy above).
-- Locked learnings/code mean the learning phase is a no-op for those steps.
-- Report results concisely; surface failures.
-- If a step fails consistently, tell the user you can reset `+"`optimized=false`"+` and switch to Optimize mode for harden — don't do it silently in Run mode.
-- Do NOT make structural plan changes in this mode.
+**What's blocked here:** plan/config/learnings/KB mutations, harden, optimize, eval design. If a step fails consistently or the user wants structural/config changes, tell them to reset `+"`optimized=false`"+` and switch to Optimize (for harden/fixes) or Builder (for design) — don't do it silently in Run.
 {{end}}
 
 ## CURRENT STATE
@@ -1875,15 +2033,17 @@ If a step needs **semantic/LLM-based validation** (e.g., "verify the summary is 
 After a step runs successfully, always check: could a stale/fake output file pass this schema? If yes, tighten it.
 
 ### 2. Learning Configuration
-- **Simple steps** (short description, straightforward task): leave `+"`learning_objective`"+` unset — learning is off by default and the overhead isn't worth it
-- **Complex steps** that have run successfully a few times: suggest **lock_learnings: true** — freezes existing learnings, skips the learning agent, but still uses accumulated knowledge
-- Only keep learning enabled + unlocked for steps that are actively being iterated on
-- **Wait for maturity**: Don't suggest locking learnings or disabling learning until the step has had several successful runs. Premature optimization can hurt quality.
-- **Global Learning**: All steps contribute to and read from a single shared skill at 'learnings/_global/' instead of per-step skills. The skill structure follows the Anthropic skill-creator guide (SKILL.md + references/ + scripts/).
-  - **Skill Objective** (`+"`global_skill_objective`"+` in execution_defaults): Always set a skill objective that describes what domain knowledge the skill should capture and why. E.g., "Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably." Every learning contribution is guided by this objective.
-  - **Locking learnings**: Use `+"`lock_learnings: true`"+` in step config to freeze learnings for a step. Review the global skill first with `+"`cat learnings/_global/SKILL.md`"+` before deciding to lock.
-  - **Keep learning off for irrelevant steps**: Review each step's description against the skill objective. Steps that cannot contribute domain knowledge (e.g., "send email notification", "generate PDF report", "upload to S3") should leave `+"`learning_objective`"+` empty (the default). Learning is opt-in — only set `+"`learning_objective`"+` on steps that interact with the target system (the subject of the skill objective). If a step currently has `+"`learning_objective`"+` set but shouldn't, clear it via `+"`update_step_config(step_id, clear_fields=[\"learning_objective\"])`"+`.
-  - **learn_code steps usually don't need `+"`learning_objective`"+`**: When `+"`declared_execution_mode == \"learn_code\"`"+`, the saved `+"`learnings/{step-id}/main.py`"+` IS the learned artifact — the HOW is encoded directly as code. Running a separate learning pass on top of it just duplicates what the script already captures and risks drift between script and SKILL.md. Default to leaving `+"`learning_objective`"+` empty for learn_code steps; only opt in when there's cross-step domain knowledge that belongs in the shared `+"`_global/`"+` skill and genuinely can't be captured in the script.
+
+The learning system has **two dimensions** per step: `+"`learnings_access`"+` controls read/write scope; `+"`lock_learnings`"+` freezes writes.
+
+- **Default access is `+"`\"read\"`"+`** (inferred when `+"`learnings_access`"+` is unset). Every step — including simple plumbing — sees `+"`_global/SKILL.md`"+` in its prompt for cross-step context. Do NOT set `+"`learnings_access: \"none\"`"+` on plumbing steps just because they don't contribute; they still benefit from reading.
+- **Opt into writing** by setting `+"`learnings_access: \"read-write\"`"+` AND a non-empty `+"`learning_objective`"+`. Required for steps that produce durable HOW-knowledge (selectors, timings, auth flows, tool-call patterns). The validator enforces the pairing.
+- **Use `+"`\"none\"`"+` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
+- **Auto-lock fires automatically** after 3 successful runs against the same step-description hash. Don't pre-emptively set `+"`lock_learnings: true`"+` — the system does it for you once learnings converge. Fallback safety cap: 15 total iterations.
+- **Auto-unlock fires automatically** when an auto-locked step's description changes. The old frozen learnings are invalidated and the counter restarts. `+"`optimized`"+` is cleared at the same time (they move together). Manual locks (set by a human without an `+"`auto_locked_at`"+` metadata record) are preserved across description edits.
+- **Global Skill Objective**: set `+"`global_skill_objective`"+` in `+"`execution_defaults`"+` to describe what domain knowledge the skill should accumulate — e.g. *\"Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably.\"* Every learning contribution is guided by this objective.
+- **learn_code steps**: usually `+"`learnings_access: \"read\"`"+` (not `+"`\"read-write\"`"+`). The saved `+"`learnings/{step-id}/main.py`"+` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step domain knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
+- **Clearing a bad setting**: if a step was miss-configured with `+"`learnings_access: \"read-write\"`"+` but shouldn't contribute, clear it via `+"`update_step_config(step_id, clear_fields=[\"learnings_access\", \"learning_objective\"])`"+`.
 
 #### The Three Locks — What They Freeze and When To Use
 
@@ -1891,17 +2051,18 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 
 | Lock | Scope | Freezes | Prevents | Use when |
 | --- | --- | --- | --- | --- |
-| `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | The HOW is stable across 2+ successful runs, OR you hand-edited SKILL.md and want edits preserved |
+| `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after 3 successful runs with the same description hash. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
 | `+"`lock_code`"+` | Per-step (learn_code only) | `+"`learnings/{step-id}/main.py`"+` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | You hand-patched main.py and want it used exactly as-is, OR the script is stable and code_exec is the declared mode |
 | `+"`lock_knowledgebase`"+` | Workflow-level | `+"`knowledgebase/graph.json`"+` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `+"`reorganize_knowledgebase`"+` for intentional curation but stop paying per-step LLM cost |
 
 **Rule of thumb after hand-editing an artifact**: always lock the matching artifact immediately. Otherwise the corresponding agent will overwrite your edit on the next run.
 
-**Unlock when the step description changes significantly**: The step description is the source of truth that both the learnings and the scripted code were generated against. If you edit `+"`description`"+` in plan.json to change what the step should do (not just reword it), the frozen learnings and frozen main.py are now stale — the agent is being forced to follow locked instructions that no longer match the current goal.
+**Description changes and lock state**: The step description is the source of truth that learnings and scripted code were generated against.
 
-- Treat any **semantic** change (different goal, different inputs/outputs, different tool set, different validation schema) as a signal to unlock: `+"`update_step_config(step_id, lock_learnings=false, lock_code=false, optimized=false)`"+`, then re-run so fresh learnings and a fresh main.py are generated.
-- Pure **rewording** (clarifying existing instructions without changing intent) does not require unlocking. If unsure, re-read the old vs new description and ask: "Could the same main.py and the same learnings still produce a correct result?" If no, unlock.
-- When you meaningfully change a step's description, clear `+"`description_reviewed`"+` and revisit the lock flags — no automatic staleness signal fires for you.
+- **`+"`lock_learnings`"+` auto-unlocks** on any description change for steps that were auto-locked. The description-hash counter resets, and the next 3 successful runs against the new description re-lock automatically. You do not need to manually unlock learnings after a description edit.
+- **`+"`lock_code`"+` does NOT auto-unlock.** If you changed the description semantically and `+"`lock_code`"+` is set, the frozen main.py may now be wrong for the new intent — clear it explicitly: `+"`update_step_config(step_id, lock_code=false, optimized=false)`"+`.
+- Pure **rewording** (clarifying existing instructions without changing intent) typically preserves the hash only if whitespace differs; any material character change flips the hash. If you want to reword without triggering the reset, minimize the edit.
+- When you meaningfully change a step's description, clear `+"`description_reviewed`"+` so future reviewers know the description needs a fresh eyeballing.
 
 **Workflow-level KB lock**: Separate from the per-step locks, the workflow as a whole can be frozen against KB drift with `+"`update_workflow_config(lock_knowledgebase=true)`"+`. This is the right move once the domain is well-understood and the post-step update agent mostly produces no-op confirmations. While locked, you can still curate `+"`knowledgebase/graph.json`"+` intentionally via the `+"`reorganize_knowledgebase`"+` tool or direct edits; only the automatic per-step updater is suppressed.
 
@@ -2110,6 +2271,65 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 **Design principle:** If you find yourself writing a step description with "First do X, then do Y, then do Z", convert it to a todo_task with sub-agents for X, Y, and Z. Each sub-agent gets its own learnings, tools, and optimization lifecycle.
 
 **Rule of thumb:** When planning a new workflow, start by identifying the distinct tasks, then group related tasks into todo_task steps with sub-agents. Only use regular steps for truly simple, single-purpose tasks.
+
+### 9a. Orchestrator learn_code mode (deterministic delegation, 0 LLM tokens)
+
+When a todo_task orchestrator's flow is **stable and deterministic** — the set of sub-agent calls is known in advance and branches only on success/failure — author a ` + "`main.py`" + ` and mark the step ` + "`declared_execution_mode=learn_code`" + `. At runtime the script runs first; any failure falls back to the normal LLM orchestrator with a fresh start.
+
+**Unlike regular-step learn_code, the orchestrator path is read-only at runtime**: you (the builder) write ` + "`learnings/{step-id}/main.py`" + ` once, and the runtime never repairs or rewrites it. There is no fix loop, no save-back. Script failures are surfaced so you can regenerate ` + "`main.py`" + ` manually if needed.
+
+**Eligibility (hard constraints, enforced at runtime):**
+- ` + "`declared_execution_mode=\"learn_code\"`" + ` on the todo_task step (set via ` + "`update_step_config(step_id, declared_execution_mode=\"learn_code\")`" + `)
+- ` + "`len(predefined_routes) >= 1`" + ` — route IDs the script may reference
+
+Either missing → the script is never attempted, even if ` + "`main.py`" + ` exists.
+
+**When to pick it:**
+- The user described the flow as a stable sequence ("for each X call route A then route B")
+- Sub-agent inputs can be built deterministically from the step's context dependencies + prior route outputs
+- Branching is limited to retry-on-failure / success-path-only — not adaptive reasoning about sub-agent results
+
+**When NOT to pick it:**
+- The orchestrator must decide per item whether to delegate or skip based on semantic inspection of prior results
+- The flow needs ad-hoc generic-agent calls — keep the step on the normal LLM path
+- Only one predefined route exists *and* the flow is a single call — make it a regular learn_code step instead; the orchestrator shell adds no value
+
+**Authoring ` + "`main.py`" + `:**
+
+Write the script to ` + "`learnings/{step-id}/main.py`" + ` using the same bridge conventions as regular learn_code steps, with one addition — sub-agent delegation goes through the workflow's custom tool endpoint:
+
+` + "```python" + `
+import os, json, requests
+
+def call_sub_agent(route_id: str, todo_id: str, instructions: str) -> dict:
+    url = os.environ['MCP_API_URL'] + '/tools/custom/call_sub_agent'
+    headers = {
+        'Authorization': f'Bearer {os.environ["MCP_API_TOKEN"]}',
+        'Content-Type': 'application/json',
+    }
+    body = {'route_id': route_id, 'todo_id': todo_id, 'instructions': instructions}
+    resp = requests.post(url, json=body, headers=headers, timeout=600)
+    resp.raise_for_status()
+    payload = resp.json()
+    if not payload.get('success'):
+        raise RuntimeError(f'sub-agent {route_id} failed: {payload.get("error", "unknown")}')
+    return json.loads(payload['result'])
+` + "```" + `
+
+Rules:
+- Only ` + "`call_sub_agent`" + ` is allowed — never call ` + "`call_generic_agent`" + `, never run arbitrary shell or MCP tools directly. If you need a different tool, add it as a new predefined route.
+- ` + "`route_id`" + ` values must match one of the step's ` + "`predefined_routes`" + ` — unknown route IDs will fail at runtime.
+- Let unhandled exceptions bubble up. A non-zero exit is the fallback signal — the runtime drops to the LLM orchestrator with no script state carried over. Do not wrap everything in ` + "`try/except`" + ` that swallows failures; that makes fallback undetectable.
+- Read context dependencies from ` + "`sys.argv`" + ` (same convention as regular learn_code). Write final outputs to ` + "`os.environ['STEP_OUTPUT_DIR']`" + ` if the step has a validation_schema.
+- Set a ` + "`validation_schema`" + ` on the orchestrator step so fast-path success is deterministically verifiable (artifact presence). Without one, any exit-zero script is treated as success.
+
+**Fallback behavior (what happens when the script fails):**
+- Script exits non-zero OR pre-validation fails → normal LLM orchestrator runs, starting fresh. It has no memory of what the script did — it will re-plan from the step description and predefined routes.
+- This means every sub-agent the script already called will likely be called again by the LLM. Design scripts so partial-work reruns are safe (idempotent route calls, or output files the LLM can pick up via ` + "`previous_steps_summary`" + `).
+
+**Not supported (yet):**
+- Mid-run state handoff to the LLM (seeded fallback) — always a fresh start
+- Auto-regeneration of ` + "`main.py`" + ` after repeated fallbacks — regenerate manually via workshop tools
 {{end}}
 
 ## TOOLS REFERENCE
@@ -2118,24 +2338,16 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 {{end}}
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "run")}}
-### Step Execution
+### Step Execution & Inspection
 - **execute_step(step_id, iteration, group_name?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
 {{if ne .WorkshopMode "run"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-{{if ne .WorkshopMode "run"}}- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths{{end}}
+- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
 - **run_in_background(name, instruction)** — Spawn independent background agent with same tools
 - **run_full_workflow(iteration?, execution_strategy?, group_name?, human_inputs?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. If the plan has human_input steps, you MUST provide human_inputs (object mapping step_id to response string) — the tool will error listing missing steps if omitted. Returns execution_id.
-{{end}}
-
-{{if eq .WorkshopMode "ask"}}
-### Step Query (Read-Only)
-- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-- **list_executions(status_filter?)** — List all background executions
-- **debug_step(step_id, iteration, group_name)** — Rich insights: learning status, validation result, log paths
-- **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
@@ -2154,9 +2366,8 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
-- **Steps**: add_regular_step, add_conditional_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
-- **Update**: update_regular_step, update_conditional_step, update_human_input_step, update_routing_step, update_todo_task_step
-- **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
+- **Steps**: add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Update**: update_regular_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
   For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
 - **Validation**: update_validation_schema
@@ -2221,27 +2432,6 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes files from workspace entirely
 
 Use `+"`get_workflow_config`"+` to see the workflow's selected skills. Use `+"`list_skills`"+` to see all installed skills.
-
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "ask")}}
-### Human-Assisted Learning
-**human_feedback tool** (runtime interaction) and **learning_mode: human_assisted** (post-execution learning) are unrelated features.
-
-When a step has learning_mode "human_assisted":
-1. Explore the task yourself first using execute_shell_command
-2. Discuss findings with the user
-3. Write SKILL.md to 'learnings/_global/SKILL.md' with YAML frontmatter:
-   `+"```"+`
-   ---
-   name: <step title>
-   description: "<summary>"
-   disable-model-invocation: true
-   user-invocable: false
-   ---
-   (learning content)
-   `+"```"+`
-4. Lock learnings: update_step_config(step_id, lock_learnings=true)
-5. Run the step via execute_step
-{{end}}
 
 ## FILE LAYOUT
 
@@ -3278,8 +3468,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if sc.AgentConfigs.LockLearnings != nil && *sc.AgentConfigs.LockLearnings {
 						lockStatus = "locked"
 					}
-					if strings.TrimSpace(sc.AgentConfigs.LearningObjective) == "" {
-						// No learning_objective = learning is off for this step.
+					// "disabled" in this summary means the step contributes NOTHING to
+					// global learnings — true only when learnings_access="none" or when
+					// the effective access is not write-capable.
+					if resolveLearningsAccess(sc.AgentConfigs) != LearningsAccessReadWrite {
 						lockStatus = "disabled"
 					}
 					break
@@ -3548,7 +3740,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, learning_mode, knowledgebase_access, knowledgebase_contribution, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, knowledgebase_access, knowledgebase_contribution, learnings_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3562,11 +3754,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"learning_objective": map[string]interface{}{
 					"type":        "string",
-					"description": "Opt-in instruction for the learning agent. Learning is OFF BY DEFAULT for every step — the learning agent runs ONLY when this field is non-empty (mirrors knowledgebase_contribution for the KB agent). Describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Leave empty to skip learning entirely. Cannot be set in combination with lock_learnings=true (locking a step with no objective means learning never ran).",
+					"description": "Extraction instruction for the post-step learning agent — describe what patterns/selectors/recipes SKILL.md should capture from successful runs, e.g. 'Capture Playwright selectors that worked for the ICICI login form; pattern of the OTP-input field appearing ~3s after PAN submit'. Required when learnings_access=\"read-write\" (the validator rejects write access with an empty objective). No longer acts as the learning gate on its own — learnings_access controls whether the step reads/writes global skill.",
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true, lock SKILL.md learnings — prevents the learning agent from running but still uses existing SKILL.md. Does NOT affect saved main.py scripts — use lock_code for that.",
+					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET after 3 successful runs against the same step-description hash; AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
 				},
 				"lock_code": map[string]interface{}{
 					"type":        "boolean",
@@ -3586,6 +3778,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"enum":        []string{"read", "write", "read-write", "none"},
 					"description": "Access mode for this step against knowledgebase/ (graph.json + index.json + per-topic notes/). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing facts and narrative (read graph via jq, read notes via index-first then selective cat); 'write' / 'read-write' — may contribute via a non-empty knowledgebase_contribution (all writes go through the post-step KB update agent — never directly); 'none' — no access. Omit to keep the default.",
+				},
+				"learnings_access": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"read", "read-write", "none"},
+					"description": "Access mode for this step against learnings/_global/ (SKILL.md + references/). Defaults to 'read' — every step sees the workflow's accumulated how-to knowledge in its prompt. 'read-write' — step also contributes: requires a non-empty learning_objective (the extraction instruction for the post-step learning agent). 'none' — step neither reads global skill nor contributes. Omit to keep the default. If unset and learning_objective is non-empty, behavior is auto-migrated to 'read-write'; if both unset, auto-migrates to 'read'.",
 				},
 				"knowledgebase_contribution": map[string]interface{}{
 					"type":        "string",
@@ -3619,11 +3816,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"review_notes": map[string]interface{}{
 					"type":        "string",
 					"description": "Free-form rationale covering both why the step is optimized AND why the description is considered reviewed. Cite concrete evidence — e.g., 'description is clear and secret-free; passed 3 groups with eval ≥ 9; learnings stable; pre-validation catches format regressions'. Persisted so later passes (harden, replan, optimize_step) see the context. Replaces the previous optimized_reason + description_optimization_reason string fields.",
-				},
-				"learning_mode": map[string]interface{}{
-					"type":        "string",
-					"enum":        []interface{}{"auto", "human_assisted"},
-					"description": "Learning mode: 'human_assisted' (default) = skip automatic learning on every run (manually re-run with execute_step(step_id, skip_learning=false) when you want fresh learnings). 'auto' = learning runs automatically after every successful execution.",
 				},
 				"execution_llm": map[string]interface{}{
 					"type":        "object",
@@ -3746,11 +3938,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 			}
-			if val, ok := args["learning_mode"]; ok && val != nil {
-				if s, ok := val.(string); ok && s != "" {
-					targetConfig.AgentConfigs.LearningMode = s
-				}
-			}
 			if val, ok := args["enabled_custom_tools"]; ok && val != nil {
 				if arr, ok := val.([]interface{}); ok {
 					customTools := make([]string, 0, len(arr))
@@ -3783,6 +3970,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.KnowledgebaseContribution = s
 				}
 			}
+			if val, ok := args["learnings_access"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.LearningsAccess = s
+				}
+			}
 			if val, ok := args["disable_parallel_tool_execution"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					targetConfig.AgentConfigs.DisableParallelToolExecution = &b
@@ -3800,14 +3992,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							// Validate optimization prerequisites before marking as optimized
 							var missing []string
 
-							// 1. Check learnings exist — skipped when learning is off for this
-							//    step (learning_objective empty = opt-out = no learning files
-							//    by design).
-							learningDisabled := targetConfig.AgentConfigs == nil ||
-								strings.TrimSpace(targetConfig.AgentConfigs.LearningObjective) == ""
+							// 1. Check learnings exist — only when the step actually WRITES
+							//    learnings (learnings_access="read-write" + objective set).
+							//    Read-only or "none" steps don't produce learning files by design.
+							stepWritesLearnings := canWriteLearnings(targetConfig.AgentConfigs, nil, iwm.controller.isEvaluationMode)
 							learningsPath := getLearningFolderPathByStepID("", stepID, "", iwm.controller.isEvaluationMode)
 							isLearnCodeStep := isScriptedExecutionModeConfig(targetConfig.AgentConfigs)
-							if !learningDisabled {
+							if stepWritesLearnings {
 								if isLearnCodeStep {
 									// For scripted code steps: check script exists and has >= 3 successful runs
 									mainPyRelPath := learningsPath + "/main.py"
@@ -4063,29 +4254,34 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// 6. Validate learning config consistency.
-			// Learning is opt-in via non-empty learning_objective. If the agent tries to
-			// lock learnings or override learning_llm without setting an objective, the
-			// step will never produce learnings — surface that mismatch as an error.
+			// Learnings access ↔ objective consistency. Mirror of the KB access ↔
+			// contribution rule below: write-capable access is meaningless without an
+			// extraction instruction for the post-step learning agent.
+			learningsAccessRaw := strings.TrimSpace(targetConfig.AgentConfigs.LearningsAccess)
+			if learningsAccessRaw != "" {
+				validLearningsModes := map[string]bool{
+					LearningsAccessRead: true, LearningsAccessReadWrite: true, LearningsAccessNone: true,
+				}
+				if !validLearningsModes[learningsAccessRaw] {
+					errors = append(errors, fmt.Sprintf("learnings_access %q is not recognized. Valid values: \"read\", \"read-write\", \"none\".", learningsAccessRaw))
+				}
+			}
 			hasObjective := strings.TrimSpace(targetConfig.AgentConfigs.LearningObjective) != ""
+			effectiveAccess := resolveLearningsAccess(targetConfig.AgentConfigs)
+			if effectiveAccess == LearningsAccessReadWrite && !hasObjective {
+				errors = append(errors, "learnings_access=\"read-write\" requires a non-empty learning_objective. The post-step learning agent needs an extraction instruction; set learning_objective or drop access to \"read\"/\"none\".")
+			}
 			isLocked := targetConfig.AgentConfigs.LockLearnings != nil && *targetConfig.AgentConfigs.LockLearnings
 			if !hasObjective {
 				if isLocked {
 					errors = append(errors, "lock_learnings=true requires a non-empty learning_objective. Locking a step with no objective means learning never ran; set learning_objective first or unlock.")
 				}
-				if targetConfig.AgentConfigs.LearningLLM != nil {
-					errors = append(errors, "learning_llm override requires a non-empty learning_objective. Learning is off by default; set learning_objective to opt in.")
+				if targetConfig.AgentConfigs.LearningLLM != nil && effectiveAccess != LearningsAccessReadWrite {
+					errors = append(errors, "learning_llm override is meaningful only for write-capable learnings_access. Set learnings_access=\"read-write\" and learning_objective to opt in to writing.")
 				}
 			}
 
-			// 7. Validate learning_mode
-			if targetConfig.AgentConfigs.LearningMode != "" {
-				validModes := map[string]bool{"auto": true, "human_assisted": true}
-				if !validModes[targetConfig.AgentConfigs.LearningMode] {
-					errors = append(errors, fmt.Sprintf("learning_mode %q is not recognized. Valid values: 'auto', 'human_assisted'.", targetConfig.AgentConfigs.LearningMode))
-				}
-			}
-
-			// 8. Validate KB access ↔ contribution consistency.
+			// 7. Validate KB access ↔ contribution consistency.
 			// When knowledgebase_access grants write, knowledgebase_contribution MUST be
 			// non-empty — otherwise the post-step KB update agent is silently skipped
 			// (controller_kb_update.go:33 gates on a non-empty contribution). Mirror of
@@ -4428,26 +4624,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			learningOptedIn := false
 			lockLearnings := false
-			if stepCfg != nil {
-				if strings.TrimSpace(stepCfg.LearningObjective) != "" {
-					learningOptedIn = true
-				}
-				if stepCfg.LockLearnings != nil && *stepCfg.LockLearnings {
-					lockLearnings = true
-				}
+			effectiveAccess := resolveLearningsAccess(stepCfg)
+			learningOptedIn = effectiveAccess == LearningsAccessReadWrite && stepCfg != nil && strings.TrimSpace(stepCfg.LearningObjective) != ""
+			if stepCfg != nil && stepCfg.LockLearnings != nil && *stepCfg.LockLearnings {
+				lockLearnings = true
 			}
 
-			if !learningOptedIn {
-				result.WriteString("✅ Learning is off (learning_objective empty — the default).\n\n")
-			} else if lockLearnings {
-				result.WriteString("✅ Learnings are locked (using existing, not generating new).\n\n")
-			} else if isSimpleStep {
+			switch {
+			case effectiveAccess == LearningsAccessNone:
+				result.WriteString("✅ Learnings disabled for this step (learnings_access=\"none\" — neither reads nor writes).\n\n")
+			case !learningOptedIn:
+				result.WriteString(fmt.Sprintf("✅ Learnings read-only (learnings_access=%q — step sees _global/SKILL.md but doesn't contribute).\n\n", effectiveAccess))
+			case lockLearnings:
+				result.WriteString("✅ Learnings are locked (using existing SKILL.md, not generating new).\n\n")
+			case isSimpleStep:
 				suggestions++
 				result.WriteString("⚠️ **Step looks simple** (short description, regular type). Consider:\n")
-				result.WriteString("   → Clear `learning_objective` if this step doesn't benefit from accumulated knowledge\n")
+				result.WriteString("   → Set `learnings_access: \"read\"` (drop the write contribution) if this step doesn't produce insights worth accumulating\n")
 				result.WriteString("   → `lock_learnings: true` after a few successful runs to freeze learnings and skip the learning agent\n\n")
-			} else {
-				result.WriteString("ℹ️ Learning is enabled (learning_objective set). After successful runs, consider `lock_learnings: true` to freeze learnings and save execution time.\n\n")
+			default:
+				result.WriteString("ℹ️ Learnings read-write (learning_objective set). After successful runs, consider `lock_learnings: true` to freeze learnings and save execution time.\n\n")
 			}
 
 			// === 3. Tool/Server Usage Analysis ===
@@ -8216,12 +8412,12 @@ For each gap in the objective that no existing step covers:
 - **Gap**: <which part of the objective is not covered>
 - **Suggested ID**: <kebab-case-id>
 - **Title**: <short title>
-- **Type**: <regular | todo_task | conditional | routing | human_input>
-- **Location**: top-level after `+"`[step-id]`"+` | new route in `+"`[parent-step-id]`"+` | `+"`if_true`"+`/`+"`if_false`"+` branch in `+"`[parent-step-id]`"+`
+- **Type**: <regular | todo_task | routing | human_input>
+- **Location**: top-level after `+"`[step-id]`"+` | new route in `+"`[parent-step-id]`"+`
 - **Description**: <1-2 sentences: what the agent should do and what it should output>
 - **Context output**: <filename>
 - **Context dependencies**: <files it needs from prior steps, or none>
-- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_conditional_step`"+` | `+"`add_todo_task_step`"+`
+- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_todo_task_step`"+`
 
 ### Redundant / Misplaced Steps
 For each step or route that duplicates work or is in the wrong position:
@@ -8371,84 +8567,99 @@ This is a **read-only review** — do not modify any files.
 5. **Check output contract**: Verify that main.py produces the exact output files, field names, and formats specified in the validation schema.
 6. **Check data authenticity**: Verify that every value written to output files traces back to a real data source (MCP tool call, API response, or input file). Flag any hardcoded/fabricated data in output construction.
 7. **Check MCP tool usage**: Verify that call_mcp() calls use consistent server/tool naming. Flag suspicious tool names that look guessed rather than discovered via get_api_spec.
-8. **Check browser automation quality**: For scripts using playwright MCP tools, verify:
+8. **Check browser automation quality**: For scripts using playwright / agent_browser tools, verify:
+   - **Selectors are DURABLE, not refs.** Hardcoded string refs like ` + "`'abc123'`" + ` or ` + "`'@e1'`" + ` in main.py are BUGS — refs are session-local. The durable alternatives are (in priority order): data-testid / hand-written id / aria-label / role+name / get_by_label|placeholder|text. Flag any ref that appears as a literal string (not a variable parsed from a current-run snapshot).
    - Uses browser_snapshot before interacting — never clicks or types blindly
-   - Uses ref-based interaction (ref= from snapshots) instead of CSS selectors or raw JavaScript injection
-   - Does NOT use browser_evaluate for interactions that have dedicated playwright tools (browser_click, browser_type, browser_select_option, browser_navigate)
+   - Ref-based interaction is acceptable ONLY when the ref value is parsed from a snapshot taken earlier in the SAME run (` + "`ref = extract_ref(snapshot, role=..., name=...)` then `browser_click({'ref': ref})`" + `). Hardcoded refs in main.py must be flagged.
+   - ` + "`browser_run_code`" + ` with Playwright's locator API (` + "`page.getByRole(...)`" + `, ` + "`page.locator('#stable-id')`" + `) is an acceptable alternative — the selector inside the JS is durable.
+   - Does NOT use ` + "`browser_evaluate`" + ` for ACTIONS when a dedicated tool exists (browser_click/browser_type/browser_select_option/browser_navigate). Read-only browser_evaluate for DISCOVERY is fine.
    - Uses wait loops that check page state via browser_snapshot, not hardcoded time.sleep()
    - Prints diagnostic snapshots/state on failure so the fix loop can debug what went wrong
-   - Does NOT inject large JavaScript blobs to fill forms, click buttons, or navigate
+   - Avoids structural CSS selectors (nth-child chains, deep descendant paths) — flag those in favor of durable hooks
 
 ## CORRECT BROWSER AUTOMATION PATTERNS
 
-There are TWO browser tools. Scripts use one or the other, never both. Flag any code that deviates from the correct patterns below.
+**The invariant, independent of tool choice:** the selectors a saved ` + "`main.py`" + ` carries must be DETERMINISTIC across future runs — i.e. on every replay they must resolve to the same element, even across browser restarts, page rebuilds, deploys that change class names / DOM shape / React keys. Refs (` + "`'abc123'`" + `, ` + "`'@e1'`" + `) are session-local — a snapshot assigns them fresh each run, so hardcoded refs are the opposite of deterministic. **Any ref value that appears as a string literal in main.py is a bug** — the replay tomorrow will click the wrong thing.
+
+Deterministic selectors that survive future runs (in descending durability): data-testid → hand-written id/name → aria-label → role+name → get_by_label / get_by_placeholder / get_by_text. Structural CSS (` + "`nth-child`" + `, deep descendant chains, auto-generated classes like ` + "`css-8xy3zb`" + `) is NOT deterministic — DOM rearrangements or style-system rebuilds break it.
+
+Refs are fine *in-session* (parse a snapshot, use the ref for the next call in the same run). They are never fine *persisted*. Flag any saved script where the ref is a hardcoded string.
 
 ### Option A: Playwright MCP (server='playwright')
 
-**Correct usage:**
+**Correct patterns — durable selectors via tool args OR Playwright's locator API:**
 `+"```"+`python
-# CORRECT: Snapshot first, then use ref-based interaction
+# CORRECT: Snapshot, parse for the element you want, use the ref THIS run only
 snapshot = call_mcp('playwright', 'browser_snapshot', {})
-# Parse snapshot to find ref= values, then:
-call_mcp('playwright', 'browser_click', {'ref': 'abc123'})
-call_mcp('playwright', 'browser_type', {'ref': 'def456', 'text': 'hello'})
-call_mcp('playwright', 'browser_select_option', {'ref': 'ghi789', 'values': ['option1']})
-call_mcp('playwright', 'browser_navigate', {'url': 'https://example.com'})
+ref = extract_ref_by_role_and_name(snapshot, role='button', name='Continue')  # your helper
+call_mcp('playwright', 'browser_click', {'ref': ref})
 
-# CORRECT: Wait by polling snapshots
+# CORRECT: Playwright's locator API via browser_run_code — durable selector expressed inline
+call_mcp('playwright', 'browser_run_code', {'code': """
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByLabel('Email').fill(email);
+    await page.locator('#panAdhaarUserId').fill(pan);
+"""})
+
+# CORRECT: Durable CSS selector (testid / hand-written id / aria-label) if the tool accepts it
+call_mcp('playwright', 'browser_click', {'selector': '[data-testid="submit-btn"]'})
+call_mcp('playwright', 'browser_click', {'selector': '[aria-label="Sign in"]'})
+
+# CORRECT: Wait by polling snapshots (state-driven, not time.sleep)
 for i in range(10):
     snapshot = call_mcp('playwright', 'browser_snapshot', {})
-    if 'expected text' in snapshot:
+    if 'Dashboard' in snapshot:
         break
     time.sleep(2)
 `+"```"+`
 
 **Anti-patterns to flag (WRONG):**
 `+"```"+`python
-# WRONG: JavaScript injection for clicking (use browser_click with ref instead)
+# WRONG: Hardcoded ref value in main.py — this ref is session-local; next run will click wrong element
+call_mcp('playwright', 'browser_click', {'ref': 'abc123'})
+call_mcp('playwright', 'browser_type', {'ref': 'def456', 'text': 'hello'})
+
+# WRONG: browser_evaluate for ACTIONS (runs JS in the page, not Playwright locators — bypasses durability)
 call_mcp('playwright', 'browser_evaluate', {'function': '() => { document.querySelector("button").click() }'})
 
-# WRONG: JavaScript injection for typing (use browser_type with ref instead)
-call_mcp('playwright', 'browser_evaluate', {'function': '() => { document.querySelector("input").value = "text" }'})
+# WRONG: Structural-CSS selector that relies on DOM shape (nth-child, deep descendant chains)
+call_mcp('playwright', 'browser_click', {'selector': 'form > div:nth-child(3) > button'})
 
-# WRONG: CSS selector-based clicking (use ref from snapshot instead)
-call_mcp('playwright', 'browser_click', {'selector': 'button.submit'})
-
-# WRONG: Blind interaction without snapshot
-call_mcp('playwright', 'browser_click', {'ref': 'abc'})  # Where did 'abc' come from?
-
-# WRONG: Hardcoded sleep instead of polling
+# WRONG: Hardcoded time.sleep instead of polling
 time.sleep(15)  # Should poll with browser_snapshot instead
 `+"```"+`
 
 ### Option B: Agent Browser (tool='agent_browser')
 
-This is a direct tool call (NOT via call_mcp). Uses command + args pattern with @ref elements.
+Direct tool call (NOT via call_mcp). Uses command + args pattern.
 
-**Correct usage:**
+**Correct patterns:**
 `+"```"+`python
-# CORRECT: Snapshot first to discover @refs
-snapshot = agent_browser(command='snapshot', args=['-i'], session='main')
-# Parse snapshot for @e1, @e2, etc., then:
-agent_browser(command='click', args=['@e1'], session='main')
-agent_browser(command='fill', args=['@e2', 'search text'], session='main')
+# CORRECT: Durable CSS selector (id / aria-label / testid) as the args target
+agent_browser(command='click', args=['#panAdhaarUserId'], session='main')
+agent_browser(command='fill', args=['[aria-label="Password"]', password], session='main')
 agent_browser(command='open', args=['https://example.com'], session='main')
-agent_browser(command='select', args=['@e3', 'option1'], session='main')
 
-# In code execution mode, called via HTTP API:
-# call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['-i'], 'session': 'main'})
+# CORRECT: Snapshot+ref derived AT RUNTIME (the @e1 is parsed from the snapshot variable)
+snapshot = agent_browser(command='snapshot', args=['-i'], session='main')
+ref = extract_ref(snapshot, role='button', name='Continue')  # your helper returns '@eN' parsed from snapshot
+agent_browser(command='click', args=[ref], session='main')
 
-# CORRECT: Wait for specific state
+# CORRECT: Wait by polling
 agent_browser(command='wait', args=['text', 'Dashboard'], session='main')
 `+"```"+`
 
 **Anti-patterns for agent_browser (WRONG):**
 `+"```"+`python
-# WRONG: Using eval for interactions (use click/fill/select commands instead)
+# WRONG: Hardcoded @e1 / @e2 ref in main.py — ref is session-local
+agent_browser(command='click', args=['@e1'], session='main')
+agent_browser(command='fill', args=['@e2', 'search text'], session='main')
+
+# WRONG: eval for actions
 agent_browser(command='eval', args=['document.querySelector("button").click()'], session='main')
 
-# WRONG: Blind interaction without snapshot
-agent_browser(command='click', args=['@e1'], session='main')  # What is @e1? Snapshot first!
+# WRONG: Structural CSS selector that will break on DOM shape change
+agent_browser(command='click', args=['.form > div:nth-child(3)'], session='main')
 `+"```"+`
 
 ## CONTEXT
@@ -8771,7 +8982,7 @@ func (agent *HardenWorkflowAgent) Execute(ctx context.Context, templateVars map[
 		return "", nil, fmt.Errorf("agent not initialized")
 	}
 	if _, has := templateVars["MainPyAuthoringRules"]; !has {
-		templateVars["MainPyAuthoringRules"] = BuildMainPyAuthoringRules()
+		templateVars["MainPyAuthoringRules"] = BuildMainPyAuthoringRules() + BrowserAuthoringRulesFromTemplateVars(templateVars)
 	}
 	var systemPrompt, userMessage strings.Builder
 	if err := hardenWorkflowAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
@@ -8924,7 +9135,7 @@ func (agent *StepCodeReviewAgent) Execute(ctx context.Context, templateVars map[
 		return "", nil, fmt.Errorf("agent not initialized")
 	}
 	if _, has := templateVars["MainPyAuthoringRules"]; !has {
-		templateVars["MainPyAuthoringRules"] = BuildMainPyAuthoringRules()
+		templateVars["MainPyAuthoringRules"] = BuildMainPyAuthoringRules() + BrowserAuthoringRulesFromTemplateVars(templateVars)
 	}
 	var systemPrompt, userMessage strings.Builder
 	if err := reviewStepCodeAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
@@ -9523,7 +9734,9 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
-				learningOptedIn = strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
+				// "opted in" = step contributes to global SKILL.md. Requires effective
+				// access "read-write" + non-empty objective.
+				learningOptedIn = resolveLearningsAccess(sc.AgentConfigs) == LearningsAccessReadWrite && strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
 				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
 				if sc.AgentConfigs.DescriptionReviewed != nil {
 					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
@@ -9635,7 +9848,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 				if sc.AgentConfigs.LockLearnings != nil {
 					lockLearnings = *sc.AgentConfigs.LockLearnings
 				}
-				learningOptedIn = strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
+				learningOptedIn = resolveLearningsAccess(sc.AgentConfigs) == LearningsAccessReadWrite && strings.TrimSpace(sc.AgentConfigs.LearningObjective) != ""
 				if sc.AgentConfigs.DescriptionReviewed != nil {
 					descriptionReviewed = *sc.AgentConfigs.DescriptionReviewed
 				}
@@ -9840,6 +10053,11 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		"WorkflowObjective": workflowObjective,
 		"StepsToReview":     stepsToReview.String(),
 		"Focus":             focus,
+		// Browser-authoring rules slot is populated inside the agent's Execute
+		// method via BrowserAuthoringRulesFromTemplateVars; without this flag
+		// the review agent is blind to the durable-selector contract it's
+		// supposed to enforce on main.py drift.
+		"HasBrowserAccess": fmt.Sprintf("%t", iwm.controller.HasBrowserCapability()),
 	}
 
 	logger.Info(fmt.Sprintf("🔍 Running review_step_code agent (%d steps, focus: %q)", reviewCount, focus))
@@ -10070,6 +10288,11 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		"Focus":                   focus,
 		"SessionID":               iwm.sessionID,
 		"WorkflowID":              iwm.workflowID,
+		// Required so BrowserAuthoringRulesFromTemplateVars (consumed inside
+		// the harden agent's Execute) emits the durable-selector rules. Without
+		// this flag the harden agent patches main.py without the ref-ephemeral
+		// / DOM-probe guidance — the very rules it should be enforcing.
+		"HasBrowserAccess": fmt.Sprintf("%t", iwm.controller.HasBrowserCapability()),
 	}
 
 	logger.Info(fmt.Sprintf("🛡️ Running harden_workflow agent (target_run_folder: %q, group_name: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, groupName, workflowObjective, workflowSuccessCriteria, focus))
@@ -10167,9 +10390,8 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 			Description:     instruction,
 			SuccessCriteria: fmt.Sprintf("Complete all tasks described in the instruction for: %s", name),
 		},
-		PredefinedRoutes:   nil, // generic agent only
-		EnableGenericAgent: true,
-		NextStepID:         "end",
+		PredefinedRoutes: nil, // generic agent only
+		NextStepID:       "end",
 	}
 
 	execCtx := &ExecutionContext{

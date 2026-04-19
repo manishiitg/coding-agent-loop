@@ -288,7 +288,7 @@ function getWorkflowFilterMeta(
   job: ScheduledJob,
   presetMap: Map<string, { label: string; workspacePath: string | null }>
 ): { value: string; label: string; workflowLabel: string } {
-  const workflowLabel = presetMap.get(job.preset_query_id)?.label || job.workflow_label || job.name
+  const workflowLabel = presetMap.get(job.preset_query_id ?? '')?.label || job.workflow_label || job.name
   const value = job.workflow_id || job.preset_query_id || job.workspace_path || workflowLabel
 
   return {
@@ -579,7 +579,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             break
         }
 
-        const preset = presetMap.get(job.preset_query_id)
+        const preset = presetMap.get(job.preset_query_id ?? '')
         const workflowMeta = getWorkflowFilterMeta(job, presetMap)
         const workflowLabel = workflowMeta.workflowLabel
 
@@ -787,7 +787,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   }
 
   const openPopup = async (job: ScheduledJob, popup: ActivePopup, selectedRunFolder?: string) => {
-    const preset = presetMap.get(job.preset_query_id)
+    const preset = presetMap.get(job.preset_query_id ?? '')
     const workspacePath = job.workspace_path || preset?.workspacePath || null
     if (!workspacePath) return
 
@@ -994,7 +994,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 ) : (
                   <div className="grid gap-2 md:grid-cols-2">
                     {upcomingJobs.map((job) => {
-                      const preset = presetMap.get(job.preset_query_id)
+                      const preset = presetMap.get(job.preset_query_id ?? '')
                       const label = localizeTimezoneLabel(
                         preset?.label || job.workflow_label || job.name,
                         job.next_run_at
@@ -1098,7 +1098,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
               {filteredJobs.map((job, index, jobsList) => {
-                const preset = presetMap.get(job.preset_query_id)
+                const preset = presetMap.get(job.preset_query_id ?? '')
                 const cronDesc = describeCron(job.cron_expression)
                 const localizedJobName = getLocalizedJobName(job)
                 const workflowDisplayLabel = preset?.label || job.workflow_label || job.name
@@ -1612,10 +1612,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
       {/* Edit schedule popup */}
       {editingJob && (() => {
-        const preset = presetMap.get(editingJob.preset_query_id)
+        const preset = presetMap.get(editingJob.preset_query_id ?? '')
         return (
           <SchedulePresetPopup
-            presetQueryId={editingJob.preset_query_id}
+            presetQueryId={editingJob.preset_query_id ?? null}
             presetLabel={preset?.label ?? editingJob.name}
             entityType="workflow"
             workspacePath={editingJob.workspace_path || preset?.workspacePath || undefined}

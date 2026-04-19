@@ -2,10 +2,11 @@ import type { ReactNode } from 'react'
 import type { ModeCategory } from '../stores/useModeStore'
 import type { ExecutionOptions } from '../services/api-types'
 
-// Four consolidated workshop modes (was 6: builder/optimizer/debugger/runner/eval/output).
+// Three consolidated workshop modes (was 6: builder/optimizer/debugger/runner/eval/output).
 // 'eval' and 'output' folded into 'builder' (designing eval plans + report widgets is design).
-// 'debugger' renamed to 'ask' (read-only investigate). 'runner' renamed to 'run'.
-export type WorkshopMode = 'builder' | 'optimizer' | 'ask' | 'run'
+// 'ask' (formerly 'debugger') merged into 'run' — one mode for both executing the workflow and
+// inspecting prior runs. 'runner' renamed to 'run'.
+export type WorkshopMode = 'builder' | 'optimizer' | 'run'
 
 export interface CommandContext {
   beforeSlash: string
@@ -15,6 +16,7 @@ export interface CommandContext {
   isSummarizing: boolean
   isStreaming: boolean
   onSubmit: (msg: string) => void
+  setInputText: (text: string) => void
   openDialog: (name: any) => void
   setTabConfig: (tabId: string, config: any) => void
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void

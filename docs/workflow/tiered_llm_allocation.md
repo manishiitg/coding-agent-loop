@@ -94,23 +94,28 @@ Current priority in `selectTodoTaskOrchestratorLLM()`:
 2. `todo_task_orchestrator_tier`
 3. Tier 1
 
-### Dynamic sub-agent tier selection
+### Sub-agent tier selection
 
-Tier selection for sub-agents is automatically controlled by whether the parent
-todo-task step pins an `execution_llm`:
+`preferred_tier` is **always a REQUIRED parameter** on `call_sub_agent` and
+`call_generic_agent`. The orchestrator must reason about task difficulty on
+every delegation — this is prompt discipline, not a conditional feature. Calls
+without `preferred_tier` are rejected by the handler.
 
-- **Parent step has no `execution_llm`** → dynamic tier selection is on:
-  - todo-task tools expose `preferred_tier` as a REQUIRED parameter
-  - the orchestrator must choose Tier 1/2/3 for every sub-agent call; calls without `preferred_tier` are rejected by the handler
-  - `preferred_tier` flows through context and is honored by `selectExecutionLLM`
+How the chosen tier translates into an actual model depends on runtime config:
 
-- **Parent step has `execution_llm` set** → dynamic tier selection is off:
-  - the parent step's `execution_llm` is propagated to every sub-agent spawned by the orchestrator via the `sub_agent_llm` context key
-  - `preferred_tier` is not exposed on the sub-agent tools
-  - all sub-agents use the pinned parent LLM
+- **Tier resolver configured + no pinned `execution_llm`** → `preferred_tier`
+  resolves to the matching Tier 1/2/3 model. Cost optimization is active.
+- **Parent step has `execution_llm` set** → `sub_agent_llm` context key wins at
+  resolution in `selectExecutionLLM`. The pinned LLM is used for all sub-agents.
+  The `preferred_tier` value is recorded in events/logs but does not change
+  model choice.
+- **No tier resolver + no pin** → falls through to the orchestrator's parent
+  LLM. `preferred_tier` is informational only.
 
-There is no separate `enable_dynamic_tier_selection` flag — the mode is derived
-directly from the presence of `execution_llm` on the parent step.
+There is no `enable_dynamic_tier_selection` flag and no way to turn tier
+selection off. If you want all sub-agents to share one model, pin
+`execution_llm` on the parent step — the tier parameter stays required but its
+value is ignored at resolution time.
 
 ## Manual vs Tiered Mode
 

@@ -18,7 +18,6 @@ import { useLLMStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
-import { useRunningWorkflows } from '../stores/useRunningWorkflowsStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
@@ -223,10 +222,6 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [showShortcuts])
 
-  const runningWorkflows = useRunningWorkflows()
-  const chatTabsForBadge = useChatStore(state => state.chatTabs)
-  const tabSessionStatusForBadge = useChatStore(state => state.tabSessionStatus)
-  const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
   const tierLines = useMemo(() => {
     const lines: string[] = []
     if (delegationTierConfig?.main) lines.push(`Main: ${shortModelName(delegationTierConfig.main.model_id)} (${delegationTierConfig.main.provider})`)
@@ -261,29 +256,6 @@ export const ModePresetBar: React.FC = () => {
     if (restoreWorkspaceAfterBotConnector) setWorkspaceMinimized(false)
     setRestoreWorkspaceAfterBotConnector(false)
   }, [restoreWorkspaceAfterBotConnector, setWorkspaceMinimized])
-
-  const runningWorkflowCount = useMemo(() => {
-    const seenSessionIds = new Set<string>()
-    let count = 0
-
-    runningWorkflows.forEach(wf => {
-      if (wf.status === 'running') count++
-      if (wf.sessionId) seenSessionIds.add(wf.sessionId)
-    })
-
-    Object.values(chatTabsForBadge).forEach(tab => {
-      if (tab.metadata?.mode !== 'workflow') return
-      if (tab.sessionId && seenSessionIds.has(tab.sessionId)) return
-      if (!tab.metadata?.presetQueryId) return
-      if (tab.isCompleted) return
-      const isStreaming = getTabStreamingStatus(tab.tabId)
-      const sessionStatus = tabSessionStatusForBadge[tab.tabId]?.status
-      const isRunningSession = sessionStatus === 'running' || sessionStatus === 'active'
-      if (isStreaming || isRunningSession) count++
-    })
-
-    return count
-  }, [runningWorkflows, chatTabsForBadge, tabSessionStatusForBadge, getTabStreamingStatus])
 
   // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
   const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
@@ -532,14 +504,6 @@ export const ModePresetBar: React.FC = () => {
                   >
                     <Icon className="w-3 h-3" />
                     <span>{mode.label}</span>
-                    {mode.key === 'workflow' && runningWorkflowCount > 0 && (
-                      <span className="relative flex items-center">
-                        <span className="flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-semibold text-white bg-green-500 rounded-full leading-none">
-                          {runningWorkflowCount}
-                        </span>
-                        <span className="absolute inset-0 min-w-[16px] h-4 bg-green-500 rounded-full animate-ping opacity-30" />
-                      </span>
-                    )}
                   </button>
                 )
               })}

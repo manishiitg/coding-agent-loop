@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -850,11 +851,55 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupKBUpdateFolderGuard(stepID strin
 	return readPaths, writePaths
 }
 
+// setupSubAgentSessionGuard creates a dedicated MCP session ID for a sub-agent
+// that should NOT share the workflow's group MCP session, and registers its
+// folder guard at that session's level so sandbox-exec enforces the correct
+// writes when the sub-agent issues shell commands.
+//
+// Why this exists: sub-agents with `ServerNames = [NoServers]` (learning agent,
+// KB update/consolidate/reorganize, eval scoring when workspace-only) don't
+// need to share the group's MCP session for browser/gmail connection reuse.
+// But if they DO share it, their folder guard is set at orchestrator level
+// (SetWorkspacePathForFolderGuard) while the group session's guard is set at
+// session level (SetSessionFolderGuard) — and session-level wins in
+// pkg/workspace/execute_shell_command.go's priority order. Result: the sub-
+// agent's writes get denied by the parent step's guard, which excludes paths
+// like learnings/_global/ and knowledgebase/.
+//
+// Returns the dedicated session ID — assign to `config.MCPSessionID` BEFORE
+// calling CreateAndSetupStandardAgentWithConfig. The caller should also call
+// `common.ClearSessionShellConfig(sessionID)` after the agent finishes
+// (typically deferred in the runXxxPhase function).
+func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind string, stepID string, readPaths []string, writePaths []string) string {
+	sessionID := fmt.Sprintf("sub-%s-%s-%d", agentKind, stepID, time.Now().UnixNano())
+	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
+
+	// Carry the parent group session's working directory onto the dedicated
+	// session so `ls learnings/_global/` style relative commands still resolve
+	// against the workspace. Without this, the shell falls back to the Go
+	// process's cwd (agent_go/), which would break every relative path the
+	// learning/KB agents use.
+	if parentSessionID := strings.TrimSpace(hcpo.GetMCPSessionID()); parentSessionID != "" {
+		if parentCfg := common.GetSessionShellConfig(parentSessionID); parentCfg != nil && parentCfg.WorkingDir != "" {
+			common.SetSessionWorkingDir(sessionID, parentCfg.WorkingDir)
+		}
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf(
+		"🔒 Sub-agent session %q (%s/%s) — folder guard set at session level Read=%v Write=%v",
+		sessionID, agentKind, stepID, readPaths, writePaths,
+	))
+	return sessionID
+}
+
 // createKBUpdateAgent builds the post-step KB update agent. Folder guard reads the
 // step's execution output + knowledgebase/, writes knowledgebase/ only. Uses the
 // learning LLM config (same cheap-post-step-analysis profile).
 func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Context, phase string, agentName string, stepConfig *AgentConfigs, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	readPaths, writePaths := hcpo.setupKBUpdateFolderGuard(stepID, stepPath)
+	// Dedicated session so the session-level folder guard wins over the parent
+	// step's guard when sandbox-exec enforces writes. See setupSubAgentSessionGuard.
+	subAgentSessionID := hcpo.setupSubAgentSessionGuard("kb-update", stepID, readPaths, writePaths)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB update agent - Read: %v, Write: %v", readPaths, writePaths))
 
@@ -867,6 +912,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBUpdateAgent(ctx context.Conte
 	maxTurns := 40
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	config.ServerNames = []string{mcpclient.NoServers}
+	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
 		Provider: config.LLMConfig.Primary.Provider,
 		ModelID:  config.LLMConfig.Primary.ModelID,
@@ -914,6 +960,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	stepPath := "builder-consolidate"
 
 	readPaths, writePaths := hcpo.setupKBUpdateFolderGuard(stepID, stepPath)
+	subAgentSessionID := hcpo.setupSubAgentSessionGuard("kb-consolidate", stepID, readPaths, writePaths)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB consolidate agent - Read: %v, Write: %v", readPaths, writePaths))
 
@@ -927,6 +974,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	config.ServerNames = []string{mcpclient.NoServers}
+	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
 		Provider: config.LLMConfig.Primary.Provider,
 		ModelID:  config.LLMConfig.Primary.ModelID,
@@ -968,6 +1016,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	stepPath := "builder-reorganize"
 
 	readPaths, writePaths := hcpo.setupKBUpdateFolderGuard(stepID, stepPath)
+	subAgentSessionID := hcpo.setupSubAgentSessionGuard("kb-reorganize", stepID, readPaths, writePaths)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB reorganize agent - Read: %v, Write: %v", readPaths, writePaths))
 
@@ -981,6 +1030,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	maxTurns := 60
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	config.ServerNames = []string{mcpclient.NoServers}
+	config.MCPSessionID = subAgentSessionID
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
 		Provider: config.LLMConfig.Primary.Provider,
 		ModelID:  config.LLMConfig.Primary.ModelID,
@@ -1309,6 +1359,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 		extraWritePaths = append(extraWritePaths, stepScriptsPath)
 	}
 	readPaths, writePaths := hcpo.setupLearningFolderGuard(GlobalLearningID, stepPath, extraWritePaths...)
+	// Dedicated MCP session so the session-level folder guard registered here
+	// is the one sandbox-exec enforces for this agent's shell commands — not
+	// the parent group session's guard, which would deny writes to _global/.
+	subAgentSessionID := hcpo.setupSubAgentSessionGuard("learn", stepID, readPaths, writePaths)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	agentType := "learning agent"
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v (includes execution logs folder)", agentType, readPaths, writePaths))
@@ -1338,6 +1392,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	// Learning agents always use NoServers (pure LLM analysis agent)
 	// Step-specific server/tool selection is only for execution agents
 	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM analysis agent
+
+	// Override the inherited group MCP session with the dedicated one set up
+	// above. See setupSubAgentSessionGuard for why this matters.
+	config.MCPSessionID = subAgentSessionID
 
 	// Code execution mode and tool search mode only apply to execution agents, not learning agents
 	// CRITICAL: Override orchestrator-level code execution mode and tool search mode setting - learning agents are pure LLM analysis agents
@@ -1793,21 +1851,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// IMPORTANT: Inject sub-agent tools for tool-based delegation
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
-		// Tier selection is on by default when a tier resolver exists. It is
-		// automatically skipped when the parent todo-task step pins an
-		// ExecutionLLM — in that case the parent LLM is propagated to all
-		// sub-agents instead of letting the orchestrator pick tiers.
-		enableTierSelection := hcpo.tierResolver != nil
-		if enableTierSelection && subAgentExecCtx.StepConfig != nil &&
-			subAgentExecCtx.StepConfig.ExecutionLLM != nil &&
-			subAgentExecCtx.StepConfig.ExecutionLLM.Provider != "" &&
-			subAgentExecCtx.StepConfig.ExecutionLLM.ModelID != "" {
-			enableTierSelection = false
-		}
-		// Mirror onto the execCtx so the wrapper can inject it into the tool-call
-		// context and the handler can enforce preferred_tier.
-		subAgentExecCtx.TierSelectionRequired = enableTierSelection
-		subAgentTools := virtualtools.CreateSubAgentTools(enableTierSelection)
+		// Tier selection is always required on every sub-agent call. The orchestrator
+		// must reason about task difficulty per delegation — this is prompt-discipline
+		// even when the workflow has no tier resolver or the step pins an ExecutionLLM.
+		// In those cases the tier value is honored by the sub-agent LLM-selection path
+		// if possible, else silently falls through to the inherited/pinned LLM.
+		subAgentExecCtx.TierSelectionRequired = true
+		subAgentTools := virtualtools.CreateSubAgentTools()
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
 		subAgentCategory := virtualtools.GetSubAgentToolCategory()
 
@@ -2218,8 +2268,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 }
 
 // createEvaluationScoringAgent creates a single scoring agent that scores ALL evaluation steps
-// at once. It registers submit_score (called per step) and submit_summary (called once at the end).
-func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput) (*EvaluationReport, error) {
+// in one shot. The agent calls submit_report exactly once with the full report; the tool
+// writes the JSON to disk and runs RunPreValidation against the fixed schema returned by
+// BuildEvaluationReportValidationSchema. On validation failure the tool returns the error
+// list so the agent retries within the same conversation.
+//
+// Code-execution mode: defaults to provider auto-detection (CLI providers force true). The
+// workflow builder can override by adding a StepConfig with id=EvaluationScoringStepID to
+// evaluation/step_config.json — same agent_configs.use_code_execution_mode field as regular
+// steps, no extra schema.
+func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, evalReportFolder string) (*EvaluationReport, error) {
 	agentName := "evaluation-scoring-agent"
 
 	// Select LLM config
@@ -2232,30 +2290,97 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	config.ServerNames = []string{mcpclient.NoServers}
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+	autoCodeExec := requiresCodeExecutionForProvider(&AgentLLMConfig{
 		Provider: config.LLMConfig.Primary.Provider,
 		ModelID:  config.LLMConfig.Primary.ModelID,
 	})
+	config.UseCodeExecutionMode = autoCodeExec
+
+	// Look up scoring overrides from evaluation/step_config.json under the reserved
+	// EvaluationScoringStepID. ReadStepConfigs already routes to the evaluation/
+	// subdir because isEvaluationMode is set by the time scoring runs.
+	stepConfigs, cfgErr := hcpo.ReadStepConfigs(ctx)
+	if cfgErr != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read evaluation/step_config.json for scoring overrides: %v", cfgErr))
+	}
+	scoringOverride := MatchStepConfigByID(EvaluationScoringStepID, stepConfigs)
+	if scoringOverride != nil && scoringOverride.UseCodeExecutionMode != nil {
+		override := *scoringOverride.UseCodeExecutionMode
+		// CLI providers can't drop code-exec mode — they have no other tool path.
+		if !override && autoCodeExec {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Eval scoring step_config requested code_exec=false but provider '%s' requires code-exec; ignoring override", config.LLMConfig.Primary.Provider))
+		} else {
+			config.UseCodeExecutionMode = override
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Eval scoring code execution mode overridden by step_config (%s): %v", EvaluationScoringStepID, override))
+		}
+	}
+
+	// Detect learn_code mode for the scoring agent. In learn_code the workflow can
+	// ship a deterministic main.py that scores without an LLM call — see the doc on
+	// tryScoringFastPath for the contract. learn_code also implies code-exec so the
+	// LLM fallback can author/refine the script via shell tools.
+	learnCodeMode := scoringOverride != nil && scoringOverride.DeclaredExecutionMode == ScoringLearnCodeMode
+
+	// Fixed validation schema: validates per-step structure (id/score/reasoning/evidence),
+	// score range 0-10, min text lengths, and pinned step_scores array length.
+	validationSchema := BuildEvaluationReportValidationSchema(len(stepInputs))
+
+	// Fast path: if learn_code is declared and a saved main.py exists, run it and
+	// skip the LLM entirely. Validation failures or exec errors fall through to the
+	// regular LLM scoring path below (which can then refine/rewrite main.py).
+	if learnCodeMode {
+		if report, attempted, fpErr := hcpo.tryScoringFastPath(ctx, stepInputs, validationSchema, evalReportFolder); attempted {
+			if fpErr == nil && report != nil {
+				return report, nil
+			}
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scoring learn_code] Fast path failed, falling back to LLM: %v", fpErr))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scoring learn_code] No saved main.py at %s/%s yet — LLM will score this run and may author one for future runs", EvaluationScoringLearningsDir, EvaluationScoringMainPyName))
+		}
+		// learn_code LLM fallback always uses code-exec so the agent has shell to write main.py
+		config.UseCodeExecutionMode = true
+	}
+
+	// Folder guard for the scoring agent's shell commands. Without this the guard
+	// falls back to client-level defaults (empty WritePaths → mkdir/cat are denied),
+	// which is why the LLM's attempt to create learnings/__evaluation_scoring__ failed
+	// with "Operation not permitted". Scoring needs:
+	//   read:  whole workspace (eval outputs + plan configs + existing learnings)
+	//   write: learnings/__evaluation_scoring__/ (for authored main.py),
+	//          evaluation/ (for scoring_inputs.json + evaluation_report.json)
+	// Narrow enough that the agent can't clobber runs/, planning/, or soul/.
+	if config.UseCodeExecutionMode {
+		workspacePath := hcpo.GetWorkspacePath()
+		scoringReadPaths := []string{workspacePath}
+		scoringWritePaths := []string{
+			fmt.Sprintf("%s/%s", workspacePath, EvaluationScoringLearningsDir),
+			fmt.Sprintf("%s/evaluation", workspacePath),
+			fmt.Sprintf("%s/Downloads", workspacePath),
+		}
+		hcpo.SetWorkspacePathForFolderGuard(scoringReadPaths, scoringWritePaths)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Scoring agent folder guard — Read: %v, Write: %v", scoringReadPaths, scoringWritePaths))
+
+		// Pre-create learnings/__evaluation_scoring__/ so the LLM doesn't need to
+		// issue mkdir at all — one less failure mode on the authoring path.
+		if err := hcpo.ensureStepLearningsFolderExists(ctx, EvaluationScoringLearningsDir); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to pre-create %s: %v (LLM will try to create it)", EvaluationScoringLearningsDir, err))
+		}
+	}
+
 	hcpo.setupBrowserDownloadsPathOverride(ctx, config, nil)
 
-	// Build step lookup for title/criteria resolution
-	stepLookup := make(map[string]*EvaluationStep)
-	for _, step := range evaluationPlan.Steps {
-		stepLookup[step.ID] = step
-	}
+	reportRelativePath := filepath.Join(evalReportFolder, EvaluationReportFileName)
+	// Absolute filesystem path the agent puts in shell commands. Relative paths are
+	// brittle here — the LLM's shell session cwd doesn't necessarily match the
+	// workspace root, so a relative path can land anywhere or be denied by the
+	// folder guard. Absolute paths just work.
+	reportAbsolutePath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), reportRelativePath)
 
-	// Captured scores and summary
-	var capturedScores []*EvaluationStepScore
-	var capturedSummary string
-	expectedScores := len(stepInputs)
-
-	// In code execution mode, the agent needs execute_shell_command so the LLM can
-	// make HTTP POST calls to /tools/custom/submit_score via the MCP bridge.
-	var shellTools []llmtypes.Tool
-	var shellExecutors map[string]interface{}
-	if config.UseCodeExecutionMode {
-		shellTools, shellExecutors = hcpo.prepareWorkspaceToolsOnly()
-	}
+	// Workspace tools the agent uses to write the report:
+	//   - execute_shell_command  → for `cat > path` / python heredoc on a fresh file
+	//   - diff_patch_workspace_file → for incremental fixes if needed
+	// (No write_workspace_file here — prepareWorkspaceToolsOnly only exposes shell + diff_patch.)
+	shellTools, shellExecutors := hcpo.prepareWorkspaceToolsOnly()
 
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
@@ -2271,68 +2396,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		return nil, fmt.Errorf("failed to create evaluation scoring agent: %w", err)
 	}
 
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil after creation")
-	}
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf("mcp agent is nil after creation")
-	}
-
-	// submit_score — called once per step
-	mcpAgent.RegisterCustomTool(
-		"submit_score",
-		"Submit the evaluation score for one step. Call this once per evaluation step.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"step_id":   map[string]interface{}{"type": "string", "description": "The ID of the evaluation step"},
-				"score":     map[string]interface{}{"type": "integer", "description": "Score (0-10 based on success criteria)"},
-				"reasoning": map[string]interface{}{"type": "string", "description": "Why this score was assigned"},
-				"evidence":  map[string]interface{}{"type": "string", "description": "Key evidence from the output"},
-			},
-			"required": []string{"step_id", "score", "reasoning", "evidence"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepID, _ := args["step_id"].(string)
-			scoreFloat, _ := args["score"].(float64)
-			score := int(scoreFloat)
-			reasoning, _ := args["reasoning"].(string)
-			evidence, _ := args["evidence"].(string)
-
-			stepTitle := stepID
-			stepCriteria := ""
-			if s, ok := stepLookup[stepID]; ok {
-				stepTitle = s.Title
-				stepCriteria = s.SuccessCriteria
-			}
-
-			capturedScores = append(capturedScores, &EvaluationStepScore{
-				StepID:          stepID,
-				StepTitle:       stepTitle,
-				Score:           score,
-				MaxScore:        10,
-				Reasoning:       reasoning,
-				Evidence:        evidence,
-				SuccessCriteria: stepCriteria,
-			})
-
-			remaining := expectedScores - len(capturedScores)
-			hcpo.GetLogger().Info(fmt.Sprintf("📊 Score captured: %s = %d/10 (%d remaining)", stepID, score, remaining))
-
-			if remaining > 0 {
-				return fmt.Sprintf("Score submitted: %d/10 for %s. %d steps remaining — continue scoring.", score, stepID, remaining), nil
-			}
-			return fmt.Sprintf("Score submitted: %d/10 for %s. All steps scored! Now call submit_summary.", score, stepID), nil
-		},
-		"structured_output",
-	)
-
-	// Rebuild code execution registry so submit_score appears in the tool index
+	// Rebuild code execution registry so workspace tools appear in the tool index
+	// when running in code-exec mode.
 	if config.UseCodeExecutionMode {
-		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for scoring agent: %v", err))
+		baseAgent := agent.GetBaseAgent()
+		if baseAgent != nil {
+			if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
+				if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for scoring agent: %v", err))
+				}
+			}
 		}
 	}
 
@@ -2342,34 +2415,135 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		return nil, fmt.Errorf("failed to cast agent to WorkflowEvaluationScoringAgent")
 	}
 
-	userPrompt := scoringAgent.GetUserPromptForAllSteps(stepInputs)
+	// TARGET_RUN_PATH value (the absolute path to the workflow run being evaluated)
+	// is exposed to the scoring agent as prompt context so it can reference original
+	// artifacts directly. Same value the eval steps see via {{TARGET_RUN_PATH}}
+	// substitution; empty if not set.
+	targetRunPath := hcpo.variableValues["TARGET_RUN_PATH"]
+	userPrompt := scoringAgent.GetUserPromptForAllSteps(stepInputs, reportAbsolutePath, targetRunPath)
 	scoringAgent.SetUserMessageProcessor(func(map[string]string) string {
 		return userPrompt
 	})
 
-	// Execute — agent's final text output becomes the summary
-	agentOutput, _, err := scoringAgent.Execute(ctx, nil, nil)
-	if err != nil {
-		// If we got some scores before the error, use them
-		if len(capturedScores) == 0 {
-			return nil, fmt.Errorf("scoring agent failed with no scores captured: %w", err)
+	// In learn_code mode the agent should also (optionally) author a deterministic
+	// main.py at learnings/__evaluation_scoring__/main.py that future runs use as
+	// the fast path. Inject the contract into the system prompt with the absolute
+	// path baked in (relative paths are unsafe in the agent's shell sessions).
+	// Flip the mode marker so the AgentStarted event is tagged "Learn Code".
+	if learnCodeMode {
+		mainPyAbsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), EvaluationScoringLearningsDir, EvaluationScoringMainPyName)
+		scoringAgent.SetExtraSystemPromptSection(scoringLearnCodePromptSection(mainPyAbsPath))
+		scoringAgent.SetLearnCodeMode(true)
+	}
+
+	// Execute with retry-on-validation-failure. The agent writes evaluation_report.json
+	// directly via workspace tools; we validate after its turn loop ends, and if the
+	// report fails pre-validation we send the errors back as a follow-up user message
+	// on the same agent rather than starting from scratch — same pattern the regular
+	// step retry loop uses in controller_execution.go.
+	const maxScoringAttempts = 3
+	var (
+		results                 *WorkspaceVerificationResult
+		valErr                  error
+		scoringConversationHist []llmtypes.MessageContent
+		scoringValidationPassed bool
+	)
+
+	for scoringAttempt := 1; scoringAttempt <= maxScoringAttempts; scoringAttempt++ {
+		var execErr error
+		if scoringAttempt == 1 {
+			_, scoringConversationHist, execErr = scoringAgent.Execute(ctx, nil, nil)
+		} else {
+			// Continuation: feed prior validation errors back as a user message on the
+			// existing agent, preserving system prompt + tool state + prior turns.
+			feedbackMsg := buildScoringValidationContinuationMessage(results, scoringAttempt)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔁 Evaluation scoring attempt %d/%d: continuing existing agent with validation feedback (history=%d turns)",
+				scoringAttempt, maxScoringAttempts, len(scoringConversationHist)))
+			ba := scoringAgent.GetBaseAgent()
+			if ba == nil {
+				return nil, fmt.Errorf("scoring agent has no base agent for continuation on attempt %d", scoringAttempt)
+			}
+			_, scoringConversationHist, execErr = ba.Execute(ctx, feedbackMsg, scoringConversationHist, "", false)
 		}
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent ended with error but captured %d/%d scores: %v", len(capturedScores), expectedScores, err))
+		if execErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent execution returned error on attempt %d (will still try to validate produced report): %v", scoringAttempt, execErr))
+		}
+
+		// Post-execution validation: read the file the agent produced and run the
+		// fixed schema against it. Same engine every step uses for pre-validation.
+		results, valErr = RunPreValidation(ctx, validationSchema, evalReportFolder, hcpo.BaseOrchestrator)
+		if valErr != nil {
+			return nil, fmt.Errorf("scoring agent finished but pre-validation engine failed reading %s: %w", reportRelativePath, valErr)
+		}
+		if results != nil && results.OverallPass {
+			scoringValidationPassed = true
+			if scoringAttempt > 1 {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring validation passed on attempt %d/%d", scoringAttempt, maxScoringAttempts))
+			}
+			break
+		}
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring validation failed on attempt %d/%d", scoringAttempt, maxScoringAttempts))
 	}
 
-	// Use agent's final text output as the evaluation summary
-	if agentOutput != "" {
-		capturedSummary = agentOutput
+	if !scoringValidationPassed {
+		return nil, fmt.Errorf("scoring agent's evaluation_report.json failed pre-validation after %d attempts:\n%s", maxScoringAttempts, formatScoringValidationErrors(results))
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring complete: %d/%d steps scored", len(capturedScores), expectedScores))
-
-	report := &EvaluationReport{
-		StepScores: capturedScores,
-		Summary:    capturedSummary,
+	reportContent, readErr := hcpo.ReadWorkspaceFile(ctx, reportRelativePath)
+	if readErr != nil {
+		return nil, fmt.Errorf("scoring report passed validation but couldn't be read back: %w", readErr)
+	}
+	parsed := &EvaluationReport{}
+	if unmarshalErr := json.Unmarshal([]byte(reportContent), parsed); unmarshalErr != nil {
+		return nil, fmt.Errorf("scoring report passed validation but failed to parse: %w", unmarshalErr)
 	}
 
-	return report, nil
+	// Enrich each step score with the runtime-owned max_score. step_title and
+	// success_criteria are no longer copied here — the report is consumed alongside
+	// evaluation_plan.json and consumers look up titles/descriptions by step_id.
+	for _, s := range parsed.StepScores {
+		if s == nil {
+			continue
+		}
+		s.MaxScore = 10
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring complete: %d step scores validated", len(parsed.StepScores)))
+	return parsed, nil
+}
+
+// buildScoringValidationContinuationMessage formats a scoring pre-validation
+// failure as a follow-up user message so the existing scoring agent can correct
+// evaluation_report.json in-place rather than start a fresh scoring turn loop.
+// Mirrors buildValidationContinuationUserMessage in controller_execution.go but
+// sources its error body from formatScoringValidationErrors.
+func buildScoringValidationContinuationMessage(results *WorkspaceVerificationResult, attempt int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Evaluation report validation failed (retry attempt %d)\n\n", attempt))
+	sb.WriteString(formatScoringValidationErrors(results))
+	sb.WriteString("\n\nFix the listed issues in `evaluation_report.json` and re-save. Preserve the step scores that already passed; only correct the failures above — do not restart scoring from scratch.")
+	return sb.String()
+}
+
+// formatScoringValidationErrors turns a pre-validation result into a human-readable
+// error list the LLM can act on. Mirrors the shape callers like the LLM see when
+// regular steps fail pre-validation.
+func formatScoringValidationErrors(results *WorkspaceVerificationResult) string {
+	if results == nil {
+		return "Validation result was nil."
+	}
+	if len(results.Summary.Errors) == 0 && len(results.Summary.SchemaWarnings) == 0 {
+		return fmt.Sprintf("Validation failed (passed=%d, failed=%d) but no error details were produced.", results.Summary.PassedChecks, results.Summary.FailedChecks)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Pre-validation: %d/%d checks failed.\n", results.Summary.FailedChecks, results.Summary.TotalChecks))
+	for i, e := range results.Summary.Errors {
+		sb.WriteString(fmt.Sprintf("  %d. file=%s path=%s check=%s expected=%s actual=%s — %s\n", i+1, e.File, e.Path, e.CheckType, e.Expected, e.Actual, e.Message))
+	}
+	for i, w := range results.Summary.SchemaWarnings {
+		sb.WriteString(fmt.Sprintf("  schema-warning %d: %s — %s\n", i+1, w.Path, w.Message))
+	}
+	return sb.String()
 }
 
 // Execute implements the Orchestrator interface

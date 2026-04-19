@@ -339,7 +339,7 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 - ` + "`conditional`" + ` — Evaluate only, no execution, branch. Needs ` + "`condition_question`" + `, ` + "`if_true_next_step_id`" + `, ` + "`if_false_next_step_id`" + `.
 - ` + "`routing`" + ` — N-way branching. Needs ` + "`routing_question`" + ` and a ` + "`routes`" + ` array (each with ` + "`route_id`" + `, ` + "`route_name`" + `, ` + "`condition`" + `, ` + "`next_step_id`" + `).
 - ` + "`human_input`" + ` — Pause for user response. Needs ` + "`question`" + `, ` + "`response_type`" + ` (` + "`text`" + `/` + "`yesno`" + `/` + "`multiple_choice`" + `), ` + "`next_step_id`" + `, and (for yesno) ` + "`if_yes_next_step_id`" + `/` + "`if_no_next_step_id`" + `.
-- ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + ` and optional ` + "`enable_generic_agent`" + ` flag.
+- ` + "`todo_task`" + ` — Dynamic task orchestrator with ` + "`predefined_routes`" + `.
 
 **Step field reference**:
 - ` + "`context_dependencies`" + ` — array of file names this step reads (produced by earlier steps)

@@ -178,6 +178,28 @@ else
 fi
 set -e
 
+# Frontend build check — only runs if any staged file is under frontend/
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+FRONTEND_CHANGES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^frontend/' || true)
+if [ -n "$FRONTEND_CHANGES" ]; then
+    echo ""
+    echo -e "${BLUE}🏗️  Building frontend (staged frontend changes detected)...${NC}"
+    if [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
+        echo -e "${RED}❌ frontend/node_modules missing — run 'npm install' in frontend/ before committing.${NC}"
+        exit 1
+    fi
+    if ! (cd "$REPO_ROOT/frontend" && npm run build >/tmp/frontend-build.log 2>&1); then
+        echo -e "${RED}❌ Frontend build failed! Commit blocked.${NC}"
+        echo ""
+        tail -60 /tmp/frontend-build.log
+        echo ""
+        echo "Full log: /tmp/frontend-build.log"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ Frontend build successful.${NC}"
+    cd "$REPO_ROOT/agent_go"
+fi
+
 if [ $LINT_EXIT -eq 0 ]; then
     echo ""
     echo -e "${GREEN}✅ Linting passed.${NC}"
@@ -305,6 +327,7 @@ echo -e "${BLUE}What happens now:${NC}"
 echo "  • Every commit will be automatically scanned for secrets (gitleaks)"
 echo "  • Every commit will run golangci-lint on Go code"
 echo "  • Every commit will run go build on agent_go and workspace"
+echo "  • Commits touching frontend/ will run 'npm run build' (tsc -b && vite build) and block on failure"
 echo "  • Errors from tool_output_folder, cache, and bin are automatically filtered"
 echo "  • Commits with secrets, critical linting issues, or build failures will be blocked"
 echo "  • You'll get clear error messages if issues are detected"

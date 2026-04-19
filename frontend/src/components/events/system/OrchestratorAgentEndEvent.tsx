@@ -232,7 +232,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
       {/* Result content - always visible with markdown rendering */}
       {event.result && (
         <div className="mt-3">
-          <div className="text-xs font-medium text-yellow-600 dark:text-yellow-400 mb-2">Result:</div>
           <ConversationMarkdownRenderer content={event.result} maxHeight="400px" />
         </div>
       )}

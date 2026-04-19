@@ -1443,6 +1443,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["MaxIterations"] = ""
 			templateVars["PreviousIterationOutput"] = ""
 
+			// Signal whether this workflow has any browser MCP available (playwright /
+			// agent_browser / camoufox / CDP). Downstream prompt builders use this to gate
+			// the browser-specific main.py authoring rules + DOM probe so non-browser workflows
+			// don't pay the prompt tax. Note: empty browserMode means "auto-detect", NOT "no
+			// browser" — HasBrowserCapability() checks registered servers+skills directly.
+			templateVars["HasBrowserAccess"] = fmt.Sprintf("%t", hcpo.HasBrowserCapability())
+
 			// Resolve variables in step title before using in agent name
 			resolvedTitle := ResolveVariables(step.GetTitle(), hcpo.variableValues)
 			sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
@@ -1459,11 +1466,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			var keepLearningFull bool
 			var keepLearningFullSource string
 
-			// Human-assisted learning mode: learnings are manually curated and treated as locked/final.
-			// Always use full learning text, skip exploration thresholds and content hash checks.
-			isHumanAssistedLearning := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
-
-			// Read metadata (needed for hash checks and threshold decisions)
+			// Read metadata (needed for hash-based exploration-reset check below)
 			learningPathIdentifier := step.GetID()
 			metadata, _ := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
 
@@ -1472,37 +1475,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			keepLearningFull = false
 			keepLearningFullSource = "always-false (paths only)"
 
-			// DISABLED: Dynamic keepLearningFull logic (was switching to full content after 2 successful runs)
-			// if isHumanAssistedLearning {
-			// 	keepLearningFull = true
-			// 	keepLearningFullSource = "human_assisted (learnings are final)"
-			// } else {
-			// 	keepLearningFull = false
-			// 	if metadata != nil {
-			// 		if metadata.SuccessfulRuns >= 2 {
-			// 			keepLearningFull = true
-			// 			keepLearningFullSource = fmt.Sprintf("dynamic (threshold met: %d successful runs)", metadata.SuccessfulRuns)
-			// 		} else {
-			// 			keepLearningFullSource = "dynamic (exploration phase)"
-			// 		}
-			// 	} else {
-			// 		keepLearningFullSource = "dynamic (initial exploration)"
-			// 	}
-			// }
-
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
-			// Check if learning is disabled - if so, skip reading learnings entirely.
-			// Learning is OPT-IN per step: the learning agent only runs when the step's
-			// learning_objective is non-empty (mirrors knowledgebase_contribution for KB).
-			// Also disabled for routing steps and evaluation-mode runs regardless.
-			isLearningDisabled := (agentConfigs == nil || strings.TrimSpace(agentConfigs.LearningObjective) == "") || isRoutingStep(step) || hcpo.isEvaluationMode
-
-			if isLearningDisabled {
-				// Learning is disabled - skip reading learnings and set empty strings
+			// Learnings READ gate — controlled by learnings_access.
+			// Default is "read": every step sees _global/SKILL.md in its prompt.
+			// Only routing/eval steps or explicit learnings_access="none" opt out.
+			// Contribution (write) is a separate gate further below.
+			if !canReadLearnings(agentConfigs, step, hcpo.isEvaluationMode) {
 				formattedLearningHistory = ""
 				learningFilePaths = ""
-				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for step %d - skipping learning history reading (no learnings will be passed to execution agent)", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learnings read disabled for step %d (learnings_access=%s) - skipping _global/ injection", stepIndex+1, resolveLearningsAccess(agentConfigs)))
 			} else {
 				// Learning is enabled - read from global learning skill
 				formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
@@ -1511,8 +1493,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				// Hash-based exploration reset: if learning content changed since last run, force exploration mode
-				// Skip for human-assisted mode — learnings are final, never force exploration
-				if !isHumanAssistedLearning && formattedLearningHistory != "" && metadata != nil {
+				if formattedLearningHistory != "" && metadata != nil {
 					h := sha256.Sum256([]byte(formattedLearningHistory))
 					currentHash := hex.EncodeToString(h[:])
 					if metadata.LearningContentHash != "" && metadata.LearningContentHash != currentHash {
@@ -1553,6 +1534,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 			// Track which LLM model was used for execution (to be stored in learning metadata)
 			var executionLLM string
+
+			// executionAgent persists across retries so retry N>1 can continue the
+			// existing conversation (sending validation feedback as a user message)
+			// instead of re-running the whole step from scratch.
+			var executionAgent agents.OrchestratorAgent
+			// If learn_code was ever active in any attempt, the conversation is polluted
+			// with main.py authoring turns — fall back to fresh agents instead of continuing.
+			learnCodeActiveInAnyAttempt := false
 
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
@@ -1607,61 +1596,101 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				default:
 				}
 
-				var executionAgent agents.OrchestratorAgent
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
 
-				// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
-				// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
-				// allSteps is already []PlanStepInterface - no conversion needed
-				executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID())
-				if err != nil {
-					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
+				// Track learn_code presence to poison continuation in future attempts.
+				if isLearnCodeMode {
+					learnCodeActiveInAnyAttempt = true
 				}
 
-				// Check for context cancellation before executing agent
-				select {
-				case <-ctx.Done():
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before agent execution for step %d", stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
-				default:
-				}
+				// Decide whether to continue the prior conversation or start fresh.
+				// Continuation reuses the existing agent + feeds validation feedback as a
+				// user message — cheaper and keeps the agent's working memory. Skip on:
+				//  - first attempt (nothing to continue from)
+				//  - missing agent / empty history
+				//  - learn_code mode (its inner fix loop owns conversation shape and
+				//    creates its own repair agents; continuing would mix authoring turns
+				//    with validation fix turns)
+				shouldContinue := retryAttempt > 1 &&
+					executionAgent != nil &&
+					len(executionConversationHistory) > 0 &&
+					!isLearnCodeMode &&
+					!learnCodeActiveInAnyAttempt
 
-				// Sync the transport-level code execution flag from the resolved agent config.
-				if executionAgent.GetConfig() != nil {
-					templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseCodeExecutionMode)
-				}
+				if !shouldContinue {
+					// Fresh-agent path: close prior (if any) and create a new execution agent.
+					if executionAgent != nil {
+						_ = executionAgent.Close()
+						executionAgent = nil
+					}
 
-				// Pre-save prompts.json so get_step_prompts works during execution (not just after)
-				// Include appended supplementary prompts (skills, browser/CDP, secrets) to match
-				// what the agent actually sees at runtime (SetSystemPrompt re-appends them).
-				if eoa, ok := executionAgent.(*WorkflowExecutionOnlyAgent); ok {
-					preSystemPrompt := eoa.executionOnlySystemPromptProcessor(templateVars)
-					if ba := executionAgent.GetBaseAgent(); ba != nil {
-						if mcpAg := ba.Agent(); mcpAg != nil {
-							preSystemPrompt = composePromptWithAppendedSystemPrompts(preSystemPrompt, mcpAg)
+					// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
+					// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
+					// allSteps is already []PlanStepInterface - no conversion needed
+					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step.GetID())
+					if err != nil {
+						return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
+					}
+
+					// Check for context cancellation before executing agent
+					select {
+					case <-ctx.Done():
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before agent execution for step %d", stepIndex+1))
+						return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
+					default:
+					}
+
+					// Sync the transport-level code execution flag from the resolved agent config.
+					if executionAgent.GetConfig() != nil {
+						templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseCodeExecutionMode)
+					}
+
+					// Pre-save prompts.json so get_step_prompts works during execution (not just after)
+					// Include appended supplementary prompts (skills, browser/CDP, secrets) to match
+					// what the agent actually sees at runtime (SetSystemPrompt re-appends them).
+					if eoa, ok := executionAgent.(*WorkflowExecutionOnlyAgent); ok {
+						preSystemPrompt := eoa.executionOnlySystemPromptProcessor(templateVars)
+						if ba := executionAgent.GetBaseAgent(); ba != nil {
+							if mcpAg := ba.Agent(); mcpAg != nil {
+								preSystemPrompt = composePromptWithAppendedSystemPrompts(preSystemPrompt, mcpAg)
+							}
+						}
+						preUserMessage := eoa.executionOnlyUserMessageProcessor(templateVars)
+						var preExecLLM string
+						if executionAgent.GetConfig() != nil && executionAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+							preExecLLM = fmt.Sprintf("%s/%s", executionAgent.GetConfig().LLMConfig.Primary.Provider, executionAgent.GetConfig().LLMConfig.Primary.ModelID)
+						}
+						fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, 0)
+						hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
+					}
+
+					// Learn code mode: ensure code/ subdirectory exists (don't clean — LLM's
+					// previous fix may be there and will be overwritten only if the LLM writes a new version).
+					if isLearnCodeMode {
+						codeDirRelPath := stepExecutionPath + "/code"
+						if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
 						}
 					}
-					preUserMessage := eoa.executionOnlyUserMessageProcessor(templateVars)
-					var preExecLLM string
-					if executionAgent.GetConfig() != nil && executionAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
-						preExecLLM = fmt.Sprintf("%s/%s", executionAgent.GetConfig().LLMConfig.Primary.Provider, executionAgent.GetConfig().LLMConfig.Primary.ModelID)
-					}
-					fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, 0)
-					hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
-				}
 
-				// Learn code mode: ensure code/ subdirectory exists (don't clean — LLM's
-				// previous fix may be there and will be overwritten only if the LLM writes a new version).
-				if isLearnCodeMode {
-					codeDirRelPath := stepExecutionPath + "/code"
-					if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
-					}
-				}
+					// Execute execution-only agent with learning history (reused from learning reading above)
+					executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+				} else {
+					// Continuation path: send validation feedback as a follow-up user
+					// message on the existing agent. The system prompt, tool state, and
+					// working memory from prior attempts are all preserved — the agent
+					// sees its own prior tool calls + outputs and can fix surgically.
+					feedbackUserMsg := buildValidationContinuationUserMessage(validationResponse, retryAttempt)
+					hcpo.GetLogger().Info(fmt.Sprintf("🔁 Step %d attempt %d/%d: continuing existing execution agent with validation feedback (history=%d turns)",
+						stepIndex+1, retryAttempt, maxRetryAttempts, len(executionConversationHistory)))
 
-				// Execute execution-only agent with learning history (reused from learning reading above)
-				executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
+					ba := executionAgent.GetBaseAgent()
+					if ba == nil {
+						return "", updatedContextFiles, fmt.Errorf("execution agent has no base agent for continuation on step %d attempt %d", stepIndex+1, retryAttempt)
+					}
+					executionResult, executionConversationHistory, err = ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
+				}
 
 				// Capture conversation history for callers that need it (e.g., get_sub_agent_conversation tool)
 				if execCtx != nil && execCtx.ConversationHistoryCapture != nil {
@@ -2066,25 +2095,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Validation being disabled does NOT prevent learning from running
 				// Learning will run if: not disabled, not locked, and not skipped due to temp LLM override
 				// LEARNING DISABLED: Skip learning agents entirely
-				// Learning is OPT-IN per step via non-empty learning_objective. Also disabled
-				// for routing steps and evaluation-mode runs (eval/report steps don't produce
-				// learnable outcomes).
+				// Learnings WRITE gate — controlled by learnings_access="read-write" AND
+				// non-empty learning_objective (the extraction target for the writer).
+				// No more code-exec force-enable — that was papering over the fact that
+				// "empty objective" used to also kill read access; with learnings_access
+				// split, write is honest opt-in and read is default-on.
 				agentConfigs = getAgentConfigs(step)
-				isLearningDisabled := (agentConfigs == nil || strings.TrimSpace(agentConfigs.LearningObjective) == "") || isRoutingStep(step) || hcpo.isEvaluationMode
-				// CODE EXECUTION MODE: Force learning enabled regardless of step config (but not in eval mode)
-				if isCodeExecutionMode && isLearningDisabled && !hcpo.isEvaluationMode {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for step %d (overriding step config)", stepIndex+1))
-					isLearningDisabled = false
-				}
-				// SCRIPTED CODE MODE: keep main.py as executable truth, but still allow SKILL.md notes
+				isLearningDisabled := !canWriteLearnings(agentConfigs, step, hcpo.isEvaluationMode)
 				if isLearnCodeMode {
-					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Keeping learning enabled for step %d — main.py remains executable truth and SKILL.md can capture edge cases", stepIndex+1))
-				}
-				// HUMAN-ASSISTED LEARNING MODE: Skip automatic learning. To generate fresh learnings, the
-				// human re-runs the step with execute_step(step_id, skip_learning=false).
-				if agentConfigs != nil && agentConfigs.LearningMode != "auto" {
-					hcpo.GetLogger().Info(fmt.Sprintf("🧑‍🏫 Human-assisted learning mode: Skipping automatic learning for step %d (re-run with skip_learning=false to learn)", stepIndex+1))
-					isLearningDisabled = true
+					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Step %d — main.py remains executable truth; SKILL.md writes gated by learnings_access=%s", stepIndex+1, resolveLearningsAccess(agentConfigs)))
 				}
 				// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 				// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
@@ -3165,4 +3184,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 	}
 
 	return formattedLearningHistory, nil
+}
+
+// buildValidationContinuationUserMessage formats a pre-validation failure as a
+// follow-up user message so the existing execution agent can fix the issues
+// in-place rather than re-running the entire step from a fresh conversation.
+// The agent already has the full task context in its system prompt + prior
+// turns, so the message only needs to carry the new failure information.
+func buildValidationContinuationUserMessage(vr *ValidationResponse, attempt int) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Pre-validation failed (retry attempt %d)\n\n", attempt))
+	if vr != nil {
+		if vr.Reasoning != "" {
+			sb.WriteString(vr.Reasoning)
+			sb.WriteString("\n\n")
+		}
+		if len(vr.Feedback) > 0 {
+			sb.WriteString("**Feedback:**\n")
+			for _, fb := range vr.Feedback {
+				sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", fb.Severity, fb.Type, fb.Description))
+			}
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("Fix the specific issues above and re-produce the required outputs. ")
+	sb.WriteString("Do not restart from scratch — your prior tool calls and outputs are still valid where they passed; only address the listed failures.")
+	return sb.String()
 }

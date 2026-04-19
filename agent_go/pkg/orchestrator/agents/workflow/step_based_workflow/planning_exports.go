@@ -107,7 +107,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
 		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
 		templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsInstructions()
-		templateData["MainPyAuthoringRules"] = BuildMainPyAuthoringRules()
+		templateData["MainPyAuthoringRules"] = BuildMainPyAuthoringRules() + BrowserAuthoringRulesFromTemplateVars(templateVars)
 		wsPath := templateVars["WorkspacePath"]
 		templateData["AbsWorkspacePath"] = GetPromptDocsRoot() + "/" + wsPath
 		templateData["AbsDocsRoot"] = GetPromptDocsRoot()
@@ -1284,6 +1284,22 @@ func RegisterRunFullWorkflowTool(
 					cfg.WorkspacePath,
 				)
 				result = firstNonEmpty(strings.TrimSpace(result), "Workflow execution completed successfully.")
+
+				// Whole-workflow completion must block until post-step side effects land:
+				// learning writes to _global/SKILL.md, KB writes to graph.json. Per-step flow
+				// is still non-blocking — only this full-workflow exit waits. Without this,
+				// "workflow done" returned before the last steps' learnings finished queuing,
+				// so the next run started against stale SKILL.md.
+				//
+				// 30-minute cap sized to observed real-world timings: serialized learning
+				// queue with ~14-min agents can take tens of minutes to drain. The cap is
+				// the safety valve for pathological hangs, not the normal path.
+				const workflowDoneQueueTimeout = 30 * time.Minute
+				if waitErr := WaitForBackgroundJobs(execCtx, workflowDoneQueueTimeout); waitErr != nil {
+					logger.Warn(fmt.Sprintf("⚠️ run_full_workflow returning with background jobs still in flight: %v", waitErr))
+					// Do not overwrite execErr — step execution itself succeeded; the
+					// post-step queue tail is an observability concern.
+				}
 			}()
 
 			groupInfo := ""

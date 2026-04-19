@@ -208,10 +208,10 @@ type AgentConfigs struct {
 	ExecutionLLM                        *AgentLLMConfig `json:"execution_llm,omitempty"`
 	LearningLLM                         *AgentLLMConfig `json:"learning_llm,omitempty"`
 	ExecutionMaxTurns                   *int            `json:"execution_max_turns,omitempty"`                    // default: 100
-	LearningObjective                   string          `json:"learning_objective,omitempty"`                     // User-authored instruction for the learning agent: what patterns/selectors/recipes should SKILL.md capture from successful runs of this step. Learning is OFF BY DEFAULT for every step — the learning agent runs ONLY when this field is non-empty (mirrors knowledgebase_contribution for the KB agent). Leave empty to skip learning entirely.
+	LearningObjective                   string          `json:"learning_objective,omitempty"`                     // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.
+	LearningsAccess                     string          `json:"learnings_access,omitempty"`                       // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't contribute. "read-write": reads and also writes — requires learning_objective to be non-empty. "none": no read, no write, no learning agent. Empty = legacy auto-migration (see resolveLearningsAccess).
 	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LockCode                            *bool           `json:"lock_code,omitempty"`                              // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningMode                        string          `json:"learning_mode,omitempty"`                          // "human_assisted" (default) or "auto". human_assisted = skip automatic learning; re-run the step with execute_step(skip_learning=false) when fresh learnings are needed. auto = learning runs automatically after every successful execution.
 	SelectedServers                     []string        `json:"selected_servers,omitempty"`                       // step-level MCP server selection (subset of preset servers)
 	SelectedTools                       []string        `json:"selected_tools,omitempty"`                         // step-level tool selection (format: "server:tool" or "server:*" for all tools)
 	EnabledCustomTools                  []string        `json:"enabled_custom_tools,omitempty"`                   // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
@@ -567,15 +567,12 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 // NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
 // Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
 type TodoTaskPlanStep struct {
-	Type               StepType                 `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
-	CommonStepFields                            // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
-	HasLoop            bool                     `json:"has_loop"`                       // DEPRECATED: loop feature removed, kept for JSON backward compatibility
-	LoopCondition      string                   `json:"loop_condition,omitempty"`       // DEPRECATED: loop feature removed
-	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
-	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
-	NextStepID         string                   `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
-	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
-	AgentConfigs       *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
+	Type             StepType                 `json:"type"`                        // Always "todo_task" - required for JSON marshaling/unmarshaling
+	CommonStepFields                          // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
+	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Predefined sub-agents (with learning/prevalidation)
+	NextStepID       string                   `json:"next_step_id,omitempty"`      // ID of step after todo task completes (or "end")
+	TodoTaskResponse *TodoTaskResponse        `json:"-"`                           // runtime: stores orchestrator decisions - not stored in plan.json
+	AgentConfigs     *AgentConfigs            `json:"-"`                           // runtime: per-agent configuration - not stored in plan.json
 }
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
@@ -637,8 +634,6 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 		ContextDependencies []string              `json:"context_dependencies"`
 		ContextOutput       FlexibleContextOutput `json:"context_output"`
 		ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"`
-		HasLoop             bool                  `json:"has_loop"`
-		LoopCondition       string                `json:"loop_condition"`
 		// Legacy nested field (backwards compatibility)
 		TodoTaskStep     json.RawMessage `json:"todo_task_step,omitempty"`
 		PredefinedRoutes []struct {
@@ -649,8 +644,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 			OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"predefined_routes,omitempty"`
-		EnableGenericAgent bool   `json:"enable_generic_agent,omitempty"`
-		NextStepID         string `json:"next_step_id,omitempty"`
+		NextStepID string `json:"next_step_id,omitempty"`
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -661,10 +655,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	t.Type = temp.Type
 	t.ID = temp.ID
 	t.Title = temp.Title
-	t.EnableGenericAgent = true // Generic agent is always enabled for todo task steps
 	t.NextStepID = temp.NextStepID
-	t.HasLoop = temp.HasLoop
-	t.LoopCondition = temp.LoopCondition
 
 	// Copy flat format fields
 	t.Description = temp.Description
@@ -1320,7 +1311,6 @@ func getAddTodoTaskStepSchema() string {
 								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
-								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {
 									"type": "object",
@@ -1424,7 +1414,6 @@ func getUpdateTodoTaskStepSchema() string {
 								"context_output": {"type": "string"},
 								"has_loop": {"type": "boolean"},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
-								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {"type": "object"}
 							}
@@ -1485,7 +1474,6 @@ func getAddTodoTaskRouteSchema() string {
 							"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
 							"todo_task_step": {"type": "object", "description": "When type='todo_task': the nested orchestrator's inner regular step metadata."},
 							"predefined_routes": {"type": "array", "description": "When type='todo_task': predefined routes for the nested orchestrator. Each route's sub_agent_step must be type='regular'."},
-							"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task': whether the nested orchestrator can use a generic agent."},
 							"validation_schema": {
 								"type": "object",
 								"description": "OPTIONAL: Validation schema for the sub-agent output"
@@ -1544,8 +1532,7 @@ func getUpdateTodoTaskRouteSchema() string {
 					"has_loop": {"type": "boolean"},
 					"todo_task_step": {"type": "object", "description": "When type='todo_task': nested orchestrator inner step metadata."},
 					"predefined_routes": {"type": "array", "description": "When type='todo_task': nested routes — each must be type='regular'."},
-					"enable_generic_agent": {"type": "boolean"},
-					"validation_schema": {"type": "object"}
+						"validation_schema": {"type": "object"}
 				},
 				"required": ["type", "id", "title"]
 			},
@@ -3557,7 +3544,7 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 	if step.NextStepID == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required next_step_id field. Please provide the ID of the step to connect to after all todos are complete, or 'end' to terminate the workflow", step.Title, step.ID)
 	}
-	// Predefined routes are optional (enable_generic_agent can be used alone)
+	// Predefined routes are optional (orchestrators can be generic-agent-only)
 	// If predefined routes exist, validate them
 	for i, route := range step.PredefinedRoutes {
 		if route.RouteID == "" {
@@ -3736,92 +3723,6 @@ func writeStepConfigsFile(ctx context.Context, writeFile func(context.Context, s
 		return fmt.Errorf("failed to write planning/step_config.json: %w", err)
 	}
 	return nil
-}
-
-func createMigrateTodoRouteIDsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		parentStepID, _ := args["parent_step_id"].(string)
-		dryRun, _ := args["dry_run"].(bool)
-
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		migrations, err := migrateTodoRouteIDsInPlan(plan, parentStepID)
-		if err != nil {
-			return "", fmt.Errorf("failed to migrate todo route IDs: %w", err)
-		}
-		if len(migrations) == 0 {
-			if parentStepID != "" {
-				return fmt.Sprintf("No todo route ID migration needed for parent_step_id %q. plan.json already uses route_id as the canonical sub-agent ID.", parentStepID), nil
-			}
-			return "No todo route ID migration needed. plan.json already uses route_id as the canonical sub-agent ID.", nil
-		}
-
-		var stepConfigs []StepConfig
-		stepConfigContent, err := readFile(ctx, filepath.Join("planning", "step_config.json"))
-		if err == nil && strings.TrimSpace(stepConfigContent) != "" {
-			stepConfigs, err = ParseStepConfigContent(stepConfigContent)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse planning/step_config.json during migration: %w", err)
-			}
-			if err := updateStepConfigIDsForTodoRouteMigration(stepConfigs, migrations); err != nil {
-				return "", err
-			}
-		} else {
-			stepConfigs = []StepConfig{}
-		}
-
-		lines := []string{"Migrating predefined todo routes to single-ID mode (route_id = sub_agent_step.id):"}
-		for _, migration := range migrations {
-			lines = append(lines, fmt.Sprintf("- parent=%s route=%s: %q -> %q", migration.ParentStepID, migration.RouteID, migration.OldStepID, migration.NewStepID))
-		}
-		if dryRun {
-			lines = append(lines, "", "Dry run only — no files were modified.")
-			return strings.Join(lines, "\n"), nil
-		}
-
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write migrated plan.json: %w", err)
-		}
-		if len(stepConfigs) > 0 {
-			if err := writeStepConfigsFile(ctx, writeFile, stepConfigs); err != nil {
-				return "", err
-			}
-		}
-
-		learningMoves := 0
-		learningWarnings := []string{}
-		seenMoves := make(map[string]bool)
-		for _, migration := range migrations {
-			if migration.OldStepID == "" || migration.OldStepID == migration.NewStepID {
-				continue
-			}
-			moveKey := migration.OldStepID + "->" + migration.NewStepID
-			if seenMoves[moveKey] {
-				continue
-			}
-			seenMoves[moveKey] = true
-			src := filepath.Join("learnings", migration.OldStepID)
-			dst := filepath.Join("learnings", migration.NewStepID)
-			if err := moveFile(ctx, src, dst); err != nil {
-				learningWarnings = append(learningWarnings, fmt.Sprintf("- could not move %s -> %s: %v", src, dst, err))
-				continue
-			}
-			learningMoves++
-		}
-
-		lines = append(lines, "")
-		lines = append(lines, fmt.Sprintf("Updated plan.json routes: %d", len(migrations)))
-		lines = append(lines, fmt.Sprintf("Updated step_config IDs: %d", len(stepConfigs)))
-		lines = append(lines, fmt.Sprintf("Moved learning folders: %d", learningMoves))
-		if len(learningWarnings) > 0 {
-			lines = append(lines, "", "Warnings:")
-			lines = append(lines, learningWarnings...)
-		}
-		return strings.Join(lines, "\n"), nil
-	}
 }
 
 func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) error {
@@ -4194,7 +4095,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_todo_task_step",
-		"Update an Orchestrator step (todo_task type) in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, enable_generic_agent, next_step_id). The plan.json file is updated immediately when this tool is called.",
+		"Update an Orchestrator step (todo_task type) in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, next_step_id). The plan.json file is updated immediately when this tool is called.",
 		todoTaskUpdateParams,
 		createUpdateTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4240,43 +4141,12 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_todo_task_route",
-		"Delete a predefined route (sub-agent) from an Orchestrator step (todo_task type). Provide parent_step_id and deleted_route_id. Unlike routing steps, Orchestrator steps can have 0 predefined routes if enable_generic_agent is true. The plan.json file is updated immediately when this tool is called.",
+		"Delete a predefined route (sub-agent) from an Orchestrator step (todo_task type). Provide parent_step_id and deleted_route_id. Unlike routing steps, Orchestrator steps may have 0 predefined routes (generic-agent-only). The plan.json file is updated immediately when this tool is called.",
 		deleteTodoTaskRouteParams,
 		createDeleteTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register delete_todo_task_route tool: %w", err)
-	}
-
-	migrateTodoRouteIDsSchema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"parent_step_id": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional todo_task parent step ID. If provided, migrate only that todo task's predefined routes. If omitted, migrate all todo task predefined routes in the plan.",
-			},
-			"dry_run": map[string]interface{}{
-				"type":        "boolean",
-				"description": "If true, show what would change without modifying plan.json, step_config.json, or learnings folders.",
-			},
-		},
-	}
-	migrateTodoRouteIDsSchemaJSON, err := json.Marshal(migrateTodoRouteIDsSchema)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_todo_route_ids schema: %w", err)
-	}
-	migrateTodoRouteIDsParams, err := parseSchemaForToolParameters(string(migrateTodoRouteIDsSchemaJSON))
-	if err != nil {
-		return fmt.Errorf("failed to parse migrate_todo_route_ids schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"migrate_todo_route_ids",
-		"Migrate older todo_task predefined routes to the single-ID model where route_id is also the canonical sub-agent step ID. This updates plan.json, rewrites matching step_config.json IDs, and attempts to rename matching learnings folders. Use this when an older workflow still has sub_agent_step.id values like task-* that differ from route_id.",
-		migrateTodoRouteIDsParams,
-		createMigrateTodoRouteIDsExecutor(workspacePath, logger, readFile, writeFile, moveFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register migrate_todo_route_ids tool: %w", err)
 	}
 
 	// Register validation schema update tool
@@ -4628,7 +4498,7 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("route with route_id '%s' not found in todo task step '%s'. Available route IDs: %v", deletedRouteID, parentStepID, availableRouteIDs)
 		}
 
-		// Note: Unlike orchestration steps, todo task steps can have 0 predefined routes if enable_generic_agent is true
+		// Note: Unlike orchestration steps, todo task steps may have 0 predefined routes (generic-agent-only)
 
 		// Remove the route
 		todoTaskStep.PredefinedRoutes = append(

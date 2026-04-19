@@ -87,7 +87,7 @@ Summary:
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -103,7 +103,7 @@ Challenge every decision: step boundaries, step types, execution modes, context 
     icon: <Lock className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -169,7 +169,7 @@ List the exact update_step_config calls the user can copy/paste to apply each re
     icon: <Lightbulb className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -249,7 +249,7 @@ List the diff_patch_workspace_file or update_step_config calls the user can copy
     icon: <Network className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -270,7 +270,7 @@ List the diff_patch_workspace_file or update_step_config calls the user can copy
       if (instruction) {
         ctx.onSubmit(`Run reorganize_knowledgebase(instruction="${instruction.replace(/"/g, '\\"')}").`)
       } else {
-        ctx.onSubmit(`I want to reorganize knowledgebase/graph.json. First read it and tell me what's in there (entity types, counts, any obvious cleanup candidates), then ask me what transformation to apply. Once I confirm, call reorganize_knowledgebase(instruction="...").`)
+        ctx.setInputText(`I want to reorganize knowledgebase/graph.json. First read it and tell me what's in there (entity types, counts, any obvious cleanup candidates), then ask me what transformation to apply. Once I confirm, call reorganize_knowledgebase(instruction="...").`)
       }
     }
   },
@@ -287,7 +287,7 @@ List the diff_patch_workspace_file or update_step_config calls the user can copy
       if (objective) {
         ctx.onSubmit(`Run consolidate_knowledgebase(objective="${objective.replace(/"/g, '\\"')}").`)
       } else {
-        ctx.onSubmit(`I want to run a cross-step knowledgebase consolidation pass — this is DIFFERENT from reorganize. Consolidation reads every step's knowledgebase_contribution plus the step output folders from the selected run, and does work only possible with the holistic view: type-name drift across steps (e.g. "company" vs "organization" for the same concept), property-name drift (e.g. "industry" vs "sector"), entity dedupe by label across step ids, cross-step pattern narratives in notes/pattern-*.md, and contested-property surfacing where two steps disagree.
+        ctx.setInputText(`I want to run a cross-step knowledgebase consolidation pass — this is DIFFERENT from reorganize. Consolidation reads every step's knowledgebase_contribution plus the step output folders from the selected run, and does work only possible with the holistic view: type-name drift across steps (e.g. "company" vs "organization" for the same concept), property-name drift (e.g. "industry" vs "sector"), entity dedupe by label across step ids, cross-step pattern narratives in notes/pattern-*.md, and contested-property surfacing where two steps disagree.
 
 First read planning/plan.json + planning/step_config.json and summarize each step's knowledgebase_contribution (group/diff them). Also jq graph.json for entity type counts and relationship type counts. Flag visible drift candidates (same concept under different type names; same property under different names; probable duplicate entities). Then propose a specific, concrete consolidation objective for me to confirm (examples: "reconcile company/organization type-name drift; canonicalize to company", "write pattern-*.md for repeating shapes across the per-account steps", "surface contested employee-count values between step-extract and step-enrich without rewriting the graph"). Once I confirm, call consolidate_knowledgebase(objective="...").
 
@@ -308,7 +308,7 @@ Avoid vague objectives like "clean up the KB" — the tool will reject them.`)
       if (guidance) {
         ctx.onSubmit(`Run organize_global_learnings(guidance="${guidance.replace(/"/g, '\\"')}").`)
       } else {
-        ctx.onSubmit(`I want to clean up learnings/_global/. The organize tool now sees every step's learning_objective as a cross-step view, so it can do BOTH targeted cleanup (split bloated files, merge small ones, dedupe) AND holistic consolidation (promote lessons implied by multiple steps' objectives into shared references/ sections; flag declared objectives whose scope has no matching content in SKILL.md — that usually means the per-step learning agent failed for that step).
+        ctx.setInputText(`I want to clean up learnings/_global/. The organize tool now sees every step's learning_objective as a cross-step view, so it can do BOTH targeted cleanup (split bloated files, merge small ones, dedupe) AND holistic consolidation (promote lessons implied by multiple steps' objectives into shared references/ sections; flag declared objectives whose scope has no matching content in SKILL.md — that usually means the per-step learning agent failed for that step).
 
 First read learnings/_global/SKILL.md + references/*.md and summarize the current structure (files, approximate sizes, main topics). Then read planning/step_config.json for every step's learning_objective and cross-check: which objectives' scope is reflected in SKILL.md? Which aren't? Any lessons that appear under multiple step-specific headings? Propose a specific guidance string for me to confirm (examples: "promote HOW-knowledge implied by multiple learning_objectives into shared references/ sections and remove step-specific duplicates", "flag any declared learning_objective whose scope has no matching content in SKILL.md", "merge the auth files into one", "split the API section by endpoint"). Once I confirm, call organize_global_learnings(guidance="...").`)
       }
@@ -480,7 +480,7 @@ Then ask the user: "Would you like me to set up a recurring schedule to keep imp
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -534,7 +534,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -552,7 +552,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <AlertTriangle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'ask'],
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

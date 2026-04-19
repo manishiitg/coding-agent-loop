@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, Square, Maximize2, Minimize2, List, ListTree, Radio } from 'lucide-react'
+import { X, ArrowDown, Square, List, ListTree, Radio } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -147,8 +147,6 @@ export const WorkflowChatTabs: React.FC = () => {
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  const chatAreaExpanded = useWorkflowStore(state => state.chatAreaExpanded)
-  const setChatAreaExpanded = useWorkflowStore(state => state.setChatAreaExpanded)
 
   // View mode for the active tab — 'summary' shows only agent outputs, 'detailed' shows everything
   const activeViewMode = useChatStore(state => {
@@ -301,47 +299,6 @@ export const WorkflowChatTabs: React.FC = () => {
             </TooltipContent>
           </Tooltip>
 
-          {/* Expand/Collapse Button */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setChatAreaExpanded(!chatAreaExpanded)
-                }}
-                className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
-                title={chatAreaExpanded ? "Restore width" : "Expand width"}
-              >
-                {chatAreaExpanded ? (
-                  <Minimize2 className="w-3.5 h-3.5" />
-                ) : (
-                  <Maximize2 className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{chatAreaExpanded ? "Restore width" : "Expand width"}</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Close Button - closes the entire chat area panel */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowChatArea(false)
-                }}
-                className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
-                title="Close chat area"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Close chat area</p>
-            </TooltipContent>
-          </Tooltip>
         </div>
       )}
     </div>

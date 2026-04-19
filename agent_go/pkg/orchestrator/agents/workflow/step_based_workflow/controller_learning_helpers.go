@@ -4,7 +4,67 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 )
+
+// Learnings access levels (mirror of knowledgebase_access).
+const (
+	LearningsAccessRead      = "read"
+	LearningsAccessReadWrite = "read-write"
+	LearningsAccessNone      = "none"
+)
+
+// resolveLearningsAccess returns the effective learnings_access for a step.
+// Explicit value wins; empty falls back to auto-migration:
+//   - learning_objective non-empty → "read-write" (preserves legacy behavior)
+//   - learning_objective empty     → "read"       (new default — all steps see _global/)
+//
+// An explicit bad value is normalized to "read" with a warning at validation time.
+func resolveLearningsAccess(agentConfigs *AgentConfigs) string {
+	if agentConfigs == nil {
+		return LearningsAccessRead
+	}
+	v := strings.TrimSpace(agentConfigs.LearningsAccess)
+	switch v {
+	case LearningsAccessRead, LearningsAccessReadWrite, LearningsAccessNone:
+		return v
+	case "":
+		if strings.TrimSpace(agentConfigs.LearningObjective) != "" {
+			return LearningsAccessReadWrite
+		}
+		return LearningsAccessRead
+	default:
+		return LearningsAccessRead
+	}
+}
+
+// canReadLearnings reports whether this step's execution prompt should include
+// the global SKILL.md content. Read is the default unless explicitly set to
+// "none"; routing steps and evaluation-mode runs always skip to keep their
+// prompts lean.
+func canReadLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
+	if isEvalMode || (step != nil && isRoutingStep(step)) {
+		return false
+	}
+	return resolveLearningsAccess(agentConfigs) != LearningsAccessNone
+}
+
+// canWriteLearnings reports whether the post-step learning agent should run
+// for this step. Requires learnings_access == "read-write" AND a non-empty
+// learning_objective (the extraction target for the writer). Routing and eval
+// mode always skip.
+func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
+	if isEvalMode || (step != nil && isRoutingStep(step)) {
+		return false
+	}
+	if agentConfigs == nil {
+		return false
+	}
+	if resolveLearningsAccess(agentConfigs) != LearningsAccessReadWrite {
+		return false
+	}
+	return strings.TrimSpace(agentConfigs.LearningObjective) != ""
+}
 
 // getEffectiveToolsForStep returns the list of effective MCP server/tool names for a step.
 // Uses step-level filtering against the workflow cap, or workflow defaults.

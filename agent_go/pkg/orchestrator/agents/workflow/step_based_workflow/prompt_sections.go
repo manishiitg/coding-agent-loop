@@ -4,10 +4,56 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	prompt "github.com/manishiitg/mcpagent/agent/prompt"
 )
+
+// BuildStepFilesListing enumerates files in a single step-associated folder (step output
+// artifacts, execution logs, etc.) and returns a markdown listing with per-file byte
+// sizes. The listing is meant to be inlined into an agent's user message so the agent can
+// pick targets without a blind `ls` call.
+//
+// Layout is flat: hidden files and subdirectories are skipped (every per-step folder in
+// this codebase is flat by convention). Returns a terse placeholder when the folder is
+// missing or empty — callers typically have fallback language in their prompts for that.
+func BuildStepFilesListing(folderPath string) string {
+	entries, err := os.ReadDir(folderPath)
+	if err != nil {
+		return fmt.Sprintf("_Folder not readable at `%s` (%v)._", folderPath, err)
+	}
+	type fileEntry struct {
+		name string
+		size int64
+	}
+	var files []fileEntry
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, infoErr := e.Info()
+		if infoErr != nil {
+			files = append(files, fileEntry{name: e.Name(), size: -1})
+			continue
+		}
+		files = append(files, fileEntry{name: e.Name(), size: info.Size()})
+	}
+	if len(files) == 0 {
+		return fmt.Sprintf("_Folder `%s` is empty — no files to read._", folderPath)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Files in `%s` (sizes in bytes):\n", folderPath))
+	for _, f := range files {
+		if f.size < 0 {
+			sb.WriteString(fmt.Sprintf("- `%s` (size unknown)\n", f.name))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- `%s` (%d bytes)\n", f.name, f.size))
+	}
+	return sb.String()
+}
 
 // PromptSections holds pre-built prompt sections that can be injected into any agent's
 // system prompt. All agent types (execution, todo task, conditional, evaluation) should
@@ -122,12 +168,9 @@ func BuildMainPyAuthoringRules() string {
 	sb.WriteString("- Every value written to output files MUST trace to a real MCP tool call, API response, or input file. No hardcoded rows, no invented records.\n")
 	sb.WriteString("- If the script writes output without making any external calls or reading real input, it will be rejected.\n\n")
 
-	sb.WriteString("**Browser automation (when the step uses playwright / agent_browser)**\n")
-	sb.WriteString("- ALWAYS `browser_snapshot` before interacting. Refs from snapshots are the only way to target elements reliably.\n")
-	sb.WriteString("- Use dedicated commands — `browser_click`, `browser_type`, `browser_select`, `browser_navigate`. NEVER inject JavaScript via `browser_evaluate` for actions (clicks, form fills, navigation).\n")
-	sb.WriteString("- Wait by polling snapshots in a loop checking for expected content. NOT `time.sleep(N)` for UI state (use short sleeps 1-2s only between polls).\n")
-	sb.WriteString("- On failure (element missing, navigation stuck), print the snapshot so the fix loop can see what the page looked like.\n")
-	sb.WriteString("- Call `get_api_spec` to discover exact parameter schemas — don't guess parameter names.\n\n")
+	// Browser-automation rules live in BuildBrowserAuthoringRules() and are appended
+	// by callers only when the step has a browser MCP available (HasBrowserAccess).
+	// Non-browser steps should not pay the ~60-line prompt tax.
 
 	sb.WriteString("**Logging**\n")
 	sb.WriteString("- `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'`. Guard debug prints with `if VERBOSE:`. Log state before and after each major action. Stdout is the ONLY debugging channel available to the fix loop.\n\n")
@@ -143,6 +186,105 @@ func BuildMainPyAuthoringRules() string {
 	sb.WriteString("- Helper files alongside main.py also live in `learnings/{step-id}/` — patch them the same way.\n")
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// BuildBrowserAuthoringRules returns the browser-automation-specific main.py rules.
+// Append to BuildMainPyAuthoringRules() ONLY when the step has a browser MCP available
+// (playwright, agent_browser, camoufox, etc.). Non-browser steps get no benefit from
+// these ~60 lines and paying the token tax on every step prompt is wasteful.
+//
+// Callers: gate with templateVars["HasBrowserAccess"] == "true" or equivalent signal.
+func BuildBrowserAuthoringRules() string {
+	var sb strings.Builder
+	sb.WriteString("## Browser automation rules (this step has playwright / agent_browser)\n\n")
+	sb.WriteString("**The ONE rule that matters: selectors persisted to main.py must be DETERMINISTIC across future runs.**\n")
+	sb.WriteString("A deterministic selector resolves to the same element on every replay — across browser restarts, page rebuilds, deploys that rename auto-generated classes, React key changes, re-hydration. **Refs (`@e1`, `e68`, `\"ref\": \"abc123\"`) are session-local identifiers** the browser tools generate per snapshot; they're reassigned on the next run, so hardcoded refs are the opposite of deterministic. **NEVER write a ref-based selector into main.py, learnings, or any other saved artifact** — the replay will silently click the wrong thing.\n\n")
+	sb.WriteString("**Finding deterministic selectors — two paths, both valid:**\n")
+	sb.WriteString("- **Path A — `browser_snapshot` then act.** Snapshot gives you role + accessible name + state. Use that to pick a deterministic locator (see priority list below), then use individual tool calls (`browser_click`, `browser_type`, `browser_select`, `browser_navigate`) or Playwright code (`browser_run_code` with `page.getByRole(...)` / `page.locator(...)`). Both tool-call styles are fine; the rule is that the SELECTOR must be deterministic.\n")
+	sb.WriteString("- **Path B — DOM probe via `browser_evaluate` / `agent-browser eval` / `browser_run_code`.** Run the canonical read-only probe (below) to get a structured inventory of the DOM, including pre-filtered deterministic `cssPath` entries (auto-generated ids are filtered out). Use the probe when the a11y snapshot is missing elements (custom `<div>` buttons, portal/popover children, form inputs the tree skips). Eval-for-DISCOVERY is allowed; eval-for-ACTIONS is fine too as long as the action uses a deterministic locator — the page.getByRole/click/fill pattern through Playwright's locator API is deterministic; `document.querySelector('.css-8xy3zb')` baked into a saved script is not.\n\n")
+	sb.WriteString("**Deterministic-selector priority for main.py** (pick the highest that uniquely identifies the element and will resolve to the same element on every future run):\n")
+	sb.WriteString("  1. `data-testid` / `data-test` / `data-cy` / `data-qa`  (ideal — rare on production sites)\n")
+	sb.WriteString("  2. Hand-written, semantic `id` or `name` attribute  (e.g. `#panAdhaarUserId`, `#loginPasswordField`). **Skip auto-generated ids**: `radix-_rN_`, `mat-mdc-*`, `:rNN:`, any UUID-shaped id — these rotate across rebuilds.\n")
+	sb.WriteString("  3. `aria-label`  (very durable when present)\n")
+	sb.WriteString("  4. Role + accessible name  (`page.get_by_role(\"button\", name=\"Sign in\")`)\n")
+	sb.WriteString("  5. `get_by_label(...)`, `get_by_placeholder(...)`, `get_by_text(...)`\n")
+	sb.WriteString("  6. Structural CSS / XPath with nth-child chains  (last resort; flag in learnings)\n")
+	sb.WriteString("- **Discovery when a11y snapshot is insufficient**: custom `<div>` buttons, dropdowns inside portals, autocomplete options, form inputs missing from the a11y tree. Run a READ-ONLY DOM probe that returns a JSON inventory of the page (role, id, aria-label, data-testid, visible text, stable `cssPath`). One probe tells you the site's hook strategy (e.g. \"38 aria-labels, 0 testids → use aria-label + role+name\"). Then act via Path A (snapshot + tool calls) or Path B (Playwright locator API via `browser_run_code`) — as long as the locator you persist is durable.\n")
+	sb.WriteString("- **Probe invocation depends on which browser tool is active** — pick the matching form:\n")
+	sb.WriteString("  - Playwright MCP: `call_mcp('playwright', 'browser_evaluate', {'function': '<JS below>'})`\n")
+	sb.WriteString("  - Camoufox MCP: same as Playwright — `browser_evaluate` tool with `function` param\n")
+	sb.WriteString("  - agent-browser CLI (shell): `agent-browser eval \"<JS below>\"` — returns JSON on stdout; pipe to a file if the payload is large\n")
+	sb.WriteString("  The JS body is identical across backends — only the invocation wrapper differs.\n")
+	sb.WriteString("- **Canonical DOM probe** — copy this verbatim. Do NOT reinvent it per step; one source of truth keeps results comparable across runs, and the auto-id filtering (radix/mat-mdc/React-useId/UUID) is already tuned:\n")
+	sb.WriteString("```javascript\n")
+	sb.WriteString("(() => {\n")
+	sb.WriteString("  const FLOATING = '[role=\"listbox\"],[role=\"menu\"],[role=\"dialog\"],[role=\"tooltip\"],[data-radix-popper-content-wrapper],[data-floating-ui-portal],[data-headlessui-portal],[data-state=\"open\"]';\n")
+	sb.WriteString("  const STABLE = ['data-testid','data-test','data-cy','data-qa','id','name','aria-label','aria-labelledby','placeholder','href','type','role','for'];\n")
+	sb.WriteString("  const vis = e => { const r=e.getBoundingClientRect(); if(r.width===0||r.height===0) return false; const s=getComputedStyle(e); return s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0'; };\n")
+	sb.WriteString("  const interactive = e => {\n")
+	sb.WriteString("    if (['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.tagName)) return true;\n")
+	sb.WriteString("    const s=getComputedStyle(e); if(s.cursor==='pointer') return true;\n")
+	sb.WriteString("    if(e.onclick||e.getAttribute('onclick')) return true;\n")
+	sb.WriteString("    const r=e.getAttribute('role'); return r && ['button','option','menuitem','tab','link','checkbox','radio','switch'].includes(r);\n")
+	sb.WriteString("  };\n")
+	sb.WriteString("  const autoId = v => v && (/^radix-_r[a-z0-9]+_/.test(v) || /^:r[a-z0-9]+:$/.test(v) || /^mat-mdc-/.test(v) || /[a-f0-9]{8}-[a-f0-9]{4}-/.test(v));\n")
+	sb.WriteString("  const describe = e => {\n")
+	sb.WriteString("    const a={}; for(const k of STABLE){ const v=e.getAttribute(k); if(v) a[k]=v; }\n")
+	sb.WriteString("    const text=(e.innerText||e.value||e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,80);\n")
+	sb.WriteString("    let css=null;\n")
+	sb.WriteString("    if(a['data-testid']) css=`[data-testid=\"${a['data-testid']}\"]`;\n")
+	sb.WriteString("    else if(a['data-test']) css=`[data-test=\"${a['data-test']}\"]`;\n")
+	sb.WriteString("    else if(a['data-cy']) css=`[data-cy=\"${a['data-cy']}\"]`;\n")
+	sb.WriteString("    else if(a.id && !autoId(a.id) && a.id.length<40) css=`#${CSS.escape(a.id)}`;\n")
+	sb.WriteString("    else if(a.name && !autoId(a.name)) css=`[name=\"${a.name}\"]`;\n")
+	sb.WriteString("    else if(a['aria-label']) css=`[aria-label=\"${a['aria-label']}\"]`;\n")
+	sb.WriteString("    return { tag:e.tagName.toLowerCase(), text, attrs:a, role:e.getAttribute('role')||null, cssPath:css };\n")
+	sb.WriteString("  };\n")
+	sb.WriteString("  const inv={}; for(const k of STABLE) inv[k]=document.querySelectorAll(`[${k}]`).length;\n")
+	sb.WriteString("  const framework = document.querySelector('[data-radix-popper-content-wrapper],[data-state]')?'radix':document.querySelector('mat-icon,mat-select,[class*=\"mat-mdc\"]')?'angular-material':document.querySelector('[data-headlessui-portal]')?'headlessui':(window.React||document.querySelector('[data-reactroot]'))?'react':'unknown';\n")
+	sb.WriteString("  const popover=[]; document.querySelectorAll(FLOATING).forEach(c=>{ if(!vis(c)) return; c.querySelectorAll('*').forEach(el=>{ if(!vis(el)||!el.innerText?.trim()) return; popover.push({source:'popover',...describe(el)}); }); });\n")
+	sb.WriteString("  const seen=new Set(popover.map(i=>i.cssPath).filter(Boolean));\n")
+	sb.WriteString("  const actionable=[]; document.querySelectorAll('body *').forEach(el=>{ if(!vis(el)||!interactive(el)) return; const d=describe(el); if(d.cssPath&&seen.has(d.cssPath)) return; if(!d.text&&!Object.keys(d.attrs).length) return; actionable.push({source:'actionable',...d}); });\n")
+	sb.WriteString("  return { url:location.href, framework, stableHookInventory:inv, popoverItems:popover.slice(0,50), actionableItems:actionable.slice(0,120), counts:{popover:popover.length,actionable:actionable.length} };\n")
+	sb.WriteString("})()\n")
+	sb.WriteString("```\n")
+	sb.WriteString("  Returns `{url, framework, stableHookInventory, popoverItems, actionableItems}`. Save `stableHookInventory` + `framework` to learnings as the site profile. Use `actionableItems[i].cssPath` directly in main.py when it's non-null (filtered against auto-generated ids). If `cssPath` is null, fall back to role+name from the a11y snapshot.\n")
+	sb.WriteString("- **Site-access resilience**: if `browser_navigate` returns \"Permission Denied\" / blank / native alert freeze, the site blocks Playwright-launched browsers. Switch to CDP attach against an existing Chrome (`agent-browser --cdp <port>` / `--auto-connect`) and document this as a preamble in learnings. Register a dialog handler before interacting if the page shows native alerts.\n")
+	sb.WriteString("- Wait by polling snapshots in a loop checking for expected content / expected widget state (e.g. disabled→enabled). NOT `time.sleep(N)` for UI state (use short sleeps 1-2s only between polls).\n")
+	sb.WriteString("- On failure (element missing, navigation stuck), print **both** the current snapshot AND the last probe result (if any) so the fix loop sees both views.\n")
+	sb.WriteString("- Call `get_api_spec` to discover exact parameter schemas — don't guess parameter names.\n")
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// browserCapabilityProvider is the minimal interface BuildBrowserAuthoringRules helpers
+// need from the orchestrator/controller to decide whether to emit browser rules.
+// We check HasBrowserCapability (not GetBrowserMode) because empty browserMode means
+// "auto-detect", not "no browser".
+type browserCapabilityProvider interface {
+	HasBrowserCapability() bool
+}
+
+// browserAuthoringRulesIfBrowserEnabled returns BuildBrowserAuthoringRules() when the
+// workflow has any browser MCP configured (playwright, camofox, workspace_browser/
+// agent-browser skill, or CDP port), else "". Use at call sites that have access to
+// the orchestrator (e.g. workshop manager, planning exports).
+func browserAuthoringRulesIfBrowserEnabled(p browserCapabilityProvider) string {
+	if p == nil || !p.HasBrowserCapability() {
+		return ""
+	}
+	return BuildBrowserAuthoringRules()
+}
+
+// BrowserAuthoringRulesFromTemplateVars returns BuildBrowserAuthoringRules() when
+// templateVars["HasBrowserAccess"] is "true", else "". Use at call sites that don't
+// have direct access to the orchestrator (e.g. agent Execute methods that receive
+// only templateVars — harden_workflow, review_step_code).
+func BrowserAuthoringRulesFromTemplateVars(templateVars map[string]string) string {
+	if templateVars["HasBrowserAccess"] == "true" {
+		return BuildBrowserAuthoringRules()
+	}
+	return ""
 }
 
 // BuildPythonBestPractices returns a "Python Best Practices" section for code execution agents.

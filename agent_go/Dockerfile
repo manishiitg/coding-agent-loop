@@ -92,6 +92,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Google Workspace CLI for GWS integration
 RUN npm install -g @googleworkspace/cli
 
+# agent-browser: CLI used by pkg/browser/executor.go to drive Playwright sessions.
+# On the workspace and dedicated-vm images this is installed alongside Chromium;
+# the agent calls workspace-api as a proxy today, but installing it here lets the
+# agent execute browser commands directly without that hop.
+RUN npm install -g agent-browser && which agent-browser
+
+# Install Google Chrome (stable, amd64). agent-browser/Playwright will use this
+# binary instead of the Chromium installed via apt above. We keep chromium too
+# so any code path that hardcodes /usr/bin/chromium still works.
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-keyring.gpg] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/* && \
+    google-chrome --version
+
+# Point Playwright + agent-browser at the real Chrome binary by default.
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/google-chrome
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome
+
+# AWS CLI v2 (single static binary, no Python deps). Pod credentials come from
+# EKS Pod Identity (AWS_CONTAINER_CREDENTIALS_FULL_URI + AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
+# auto-injected by the cluster's Pod Identity Agent for the bound ServiceAccount —
+# `default` in prod-mcpagent per agent/deployment.yaml). The CLI picks them up automatically.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip /var/lib/apt/lists/* && \
+    aws --version
+
 # Optionally install Gemini CLI (@google/gemini-cli). Enabled only by deploy targets
 # that need the `gemini-cli` LLM provider adapter (see multi-llm-provider-go/pkg/adapters/geminicli).
 # Opt-in via build arg to keep non-k8s images (azure, dedicated-vm) lean.

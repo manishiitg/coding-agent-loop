@@ -357,6 +357,19 @@ func mergeStoredProviderKeys(ctx context.Context, incoming *StoredProviderKeys) 
 		return incoming // nothing to merge with
 	}
 
+	return mergeStoredProviderKeyValues(existing, incoming)
+}
+
+// mergeStoredProviderKeyValues overlays non-empty incoming values onto existing
+// provider keys while preserving fields that were not sent by the client.
+func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *StoredProviderKeys {
+	if existing == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return existing
+	}
+
 	pick := func(existingVal, incomingVal string) string {
 		if incomingVal == "__DELETE__" {
 			return ""
@@ -371,6 +384,7 @@ func mergeStoredProviderKeys(ctx context.Context, incoming *StoredProviderKeys) 
 		OpenRouter:        pick(existing.OpenRouter, incoming.OpenRouter),
 		OpenAI:            pick(existing.OpenAI, incoming.OpenAI),
 		Anthropic:         pick(existing.Anthropic, incoming.Anthropic),
+		ZAI:               pick(existing.ZAI, incoming.ZAI),
 		Vertex:            pick(existing.Vertex, incoming.Vertex),
 		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
 		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),

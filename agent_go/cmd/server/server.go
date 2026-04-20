@@ -4594,7 +4594,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Register evaluation tools in builder-style phases (eval plan validation + run_full_evaluation)
+					// Register evaluation tools in builder-style phases. One loads the eval
+					// grammar/capabilities on demand, one validates the plan, and one executes
+					// the full evaluation against the current run.
+					if err := todo_creation_human.RegisterEvaluationCapabilitiesTool(
+						underlyingAgent,
+						api.logger,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation capabilities tool in %s: %v", workflowPhaseID, err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered evaluation capabilities tool in %s", workflowPhaseID)
+					}
+
 					if err := todo_creation_human.RegisterEvaluationValidationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4608,10 +4619,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					// Report-plan validator: lets the builder check its reports/report_plan.md edits
-					// against real db/*.json and knowledgebase/*.json sources. The renderer silently
-					// drops bad widgets, so without this tool the user sees a blank Report tab
-					// with no diagnostic — see docs/workflow/persistent_stores_design.md §2.
+					// Reporting tools: one loads the on-demand reporting grammar/capabilities,
+					// the other validates reports/report_plan.md against real db/*.json and
+					// knowledgebase/*.json sources. The renderer silently drops bad widgets, so
+					// without validation the user sees a blank Report tab with no diagnostic.
+					if err := todo_creation_human.RegisterReportingCapabilitiesTool(
+						underlyingAgent,
+						api.logger,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register reporting capabilities tool in %s: %v", workflowPhaseID, err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered reporting capabilities tool in %s", workflowPhaseID)
+					}
+
 					if err := todo_creation_human.RegisterReportPlanValidationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4621,6 +4641,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan validation tool in %s: %v", workflowPhaseID, err)
 					} else {
 						log.Printf("[WORKFLOW_PHASE] Registered report plan validation tool in %s", workflowPhaseID)
+					}
+
+					if err := todo_creation_human.RegisterReportRenderPreviewTool(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report render preview tool in %s: %v", workflowPhaseID, err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered report render preview tool in %s", workflowPhaseID)
 					}
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)

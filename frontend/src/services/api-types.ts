@@ -3,9 +3,23 @@ import type { PollingEventSchema } from '../generated/event-types'
 import type { EventTypeString } from '../generated/event-types'
 import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching'
 
+export type LLMProvider =
+  | 'openrouter'
+  | 'bedrock'
+  | 'openai'
+  | 'vertex'
+  | 'anthropic'
+  | 'azure'
+  | 'z-ai'
+  | 'claude-code'
+  | 'gemini-cli'
+  | 'codex-cli'
+  | 'minimax'
+  | 'minimax-coding-plan'
+
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider: LLMProvider
   model_id: string
 
   // Auth per model (each model carries its own credentials)
@@ -45,7 +59,7 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider: LLMProvider
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
@@ -85,7 +99,7 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider?: LLMProvider
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -179,6 +193,7 @@ export interface LLMDefaultsResponse {
   vertex_config?: ExtendedLLMConfiguration
   anthropic_config?: ExtendedLLMConfiguration
   azure_config?: ExtendedLLMConfiguration
+  zai_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
   minimax_coding_plan_config?: ExtendedLLMConfiguration
   available_models: {
@@ -188,10 +203,11 @@ export interface LLMDefaultsResponse {
     vertex?: string[]
     anthropic?: string[]
     azure?: string[]
+    'z-ai'?: string[]
     minimax?: string[]
     'minimax-coding-plan'?: string[]
   }
-  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan')[]
+  supported_providers?: LLMProvider[]
   /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
   llm_config_locked?: boolean
   /** Default published LLMs from server (e.g. one "Gemini" entry); when locked, list is read-only */
@@ -204,7 +220,7 @@ export interface LLMDefaultsResponse {
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider: LLMProvider
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
   endpoint?: string // Azure endpoint URL
@@ -759,14 +775,14 @@ export interface AgentLLMFallback {
 }
 
 export interface AgentLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider: LLMProvider
   model_id: string
   fallbacks?: AgentLLMFallback[]
 }
 
 export interface PresetLLMConfig {
   // Legacy: Single default model (for backward compatibility)
-  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
+  provider?: LLMProvider
   model_id?: string
 
   // New: Agent-specific default models (takes priority over legacy fields)

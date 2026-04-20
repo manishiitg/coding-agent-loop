@@ -92,7 +92,7 @@ import SubAgentImportDialog from './subagents/SubAgentImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
-import type { PlannerFile, PollingEvent } from '../services/api-types'
+import type { PlannerFile, PollingEvent, LLMProvider } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
@@ -1176,7 +1176,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       const newConfig = {
         ...currentConfig, // ✅ Preserve all existing configuration
-        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli',
+        provider: llm.provider as LLMProvider,
         model_id: llm.model
       }
 

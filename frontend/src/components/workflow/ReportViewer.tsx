@@ -29,6 +29,7 @@ import type {
   ModelTokenUsage,
   ParsedReportPlan,
   PhaseTokenUsageFile,
+  PlannerFile,
   ReportAlertSeverity,
   ReportCostsMetric,
   ReportEvalsMetric,
@@ -188,6 +189,46 @@ function metricLabel(metric: ReportCostsMetric | undefined): string {
 function formatMetricValue(metric: ReportCostsMetric | undefined, value: number): string {
   if ((metric ?? 'cost') === 'cost') return formatNamed(value, 'currency-usd').text
   return formatAuto(value).text
+}
+
+function evalScoreTone(scorePercentage: number): {
+  pillClassName: string
+  accentClassName: string
+  label: string
+} {
+  if (scorePercentage >= 95) {
+    return {
+      pillClassName: 'border-emerald-500/30 bg-emerald-500/14 text-emerald-300',
+      accentClassName: 'from-emerald-500/18 via-emerald-500/8 to-transparent',
+      label: 'Excellent',
+    }
+  }
+  if (scorePercentage >= 85) {
+    return {
+      pillClassName: 'border-sky-500/30 bg-sky-500/14 text-sky-300',
+      accentClassName: 'from-sky-500/18 via-sky-500/8 to-transparent',
+      label: 'Strong',
+    }
+  }
+  if (scorePercentage >= 70) {
+    return {
+      pillClassName: 'border-amber-500/30 bg-amber-500/14 text-amber-300',
+      accentClassName: 'from-amber-500/18 via-amber-500/8 to-transparent',
+      label: 'Watch',
+    }
+  }
+  return {
+    pillClassName: 'border-red-500/30 bg-red-500/14 text-red-300',
+    accentClassName: 'from-red-500/18 via-red-500/8 to-transparent',
+    label: 'Needs work',
+  }
+}
+
+function evalScoreBarClass(scorePercentage: number): string {
+  if (scorePercentage >= 95) return 'bg-emerald-400'
+  if (scorePercentage >= 85) return 'bg-sky-400'
+  if (scorePercentage >= 70) return 'bg-amber-400'
+  return 'bg-red-400'
 }
 
 function parseTimestamp(value?: string | null): number | null {
@@ -532,6 +573,192 @@ async function readWorkspaceText(filepath: string): Promise<string | null> {
   }
 }
 
+type DailyGroupTokenUsageFile = {
+  date?: string
+  group_folder?: string
+  updated_at?: string
+  run_folders?: Record<string, TokenUsageFile>
+}
+
+type DailyPhaseTokenUsageFile = {
+  date: string
+  updated_at?: string
+  token_usage?: PhaseTokenUsageFile
+}
+
+function collectPlannerFilePaths(items: PlannerFile[], into: Set<string>): void {
+  for (const item of items) {
+    if (item.type === 'file' && item.filepath) {
+      into.add(item.filepath)
+    }
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      collectPlannerFilePaths(item.children, into)
+    }
+  }
+}
+
+async function listWorkspaceFilePaths(folderPath: string, maxDepth = 10): Promise<string[]> {
+  try {
+    const resp = await agentApi.getPlannerFiles(folderPath, -1, maxDepth)
+    const items = Array.isArray(resp?.data) ? resp.data : []
+    const filePaths = new Set<string>()
+    collectPlannerFilePaths(items, filePaths)
+    for (const item of items) {
+      if (item.type === 'file' && item.filepath) filePaths.add(item.filepath)
+    }
+    return Array.from(filePaths).sort()
+  } catch {
+    return []
+  }
+}
+
+async function readWorkspaceJSON<T>(filepath: string): Promise<T | null> {
+  const content = await readWorkspaceText(filepath)
+  if (!content) return null
+  try {
+    return JSON.parse(content) as T
+  } catch {
+    return null
+  }
+}
+
+function mergeModelUsage(a?: ModelTokenUsage, b?: ModelTokenUsage): ModelTokenUsage | undefined {
+  if (!a) return b ? { ...b } : undefined
+  if (!b) return { ...a }
+  return {
+    provider: b.provider || a.provider,
+    input_tokens: (a.input_tokens || 0) + (b.input_tokens || 0),
+    output_tokens: (a.output_tokens || 0) + (b.output_tokens || 0),
+    input_tokens_m: b.input_tokens_m || a.input_tokens_m || '0.000M',
+    output_tokens_m: b.output_tokens_m || a.output_tokens_m || '0.000M',
+    cache_tokens: (a.cache_tokens || 0) + (b.cache_tokens || 0),
+    cache_tokens_m: b.cache_tokens_m || a.cache_tokens_m || '0.000M',
+    cache_read_tokens: (a.cache_read_tokens || 0) + (b.cache_read_tokens || 0),
+    cache_read_tokens_m: b.cache_read_tokens_m || a.cache_read_tokens_m || '0.000M',
+    cache_write_tokens: (a.cache_write_tokens || 0) + (b.cache_write_tokens || 0),
+    cache_write_tokens_m: b.cache_write_tokens_m || a.cache_write_tokens_m || '0.000M',
+    reasoning_tokens: (a.reasoning_tokens || 0) + (b.reasoning_tokens || 0),
+    reasoning_tokens_m: b.reasoning_tokens_m || a.reasoning_tokens_m || '0.000M',
+    llm_call_count: (a.llm_call_count || 0) + (b.llm_call_count || 0),
+    input_cost_usd: (a.input_cost_usd || 0) + (b.input_cost_usd || 0),
+    output_cost_usd: (a.output_cost_usd || 0) + (b.output_cost_usd || 0),
+    reasoning_cost_usd: (a.reasoning_cost_usd || 0) + (b.reasoning_cost_usd || 0),
+    cache_cost_usd: (a.cache_cost_usd || 0) + (b.cache_cost_usd || 0),
+    cache_read_cost_usd: (a.cache_read_cost_usd || 0) + (b.cache_read_cost_usd || 0),
+    cache_write_cost_usd: (a.cache_write_cost_usd || 0) + (b.cache_write_cost_usd || 0),
+    total_cost_usd: (a.total_cost_usd || 0) + (b.total_cost_usd || 0),
+    context_window_usage: Math.max(a.context_window_usage || 0, b.context_window_usage || 0),
+    model_context_window: Math.max(a.model_context_window || 0, b.model_context_window || 0),
+    context_usage_percent: Math.max(a.context_usage_percent || 0, b.context_usage_percent || 0),
+  }
+}
+
+function pickEarlierTimestamp(a?: string, b?: string): string {
+  if (!a) return b || ''
+  if (!b) return a
+  return new Date(a).getTime() <= new Date(b).getTime() ? a : b
+}
+
+function pickLaterTimestamp(a?: string, b?: string): string {
+  if (!a) return b || ''
+  if (!b) return a
+  return new Date(a).getTime() >= new Date(b).getTime() ? a : b
+}
+
+function mergeTokenUsageFiles(a?: TokenUsageFile, b?: TokenUsageFile): TokenUsageFile | undefined {
+  if (!a) return b ? { ...b } : undefined
+  if (!b) return { ...a }
+  const byModel: Record<string, ModelTokenUsage> = { ...(a.by_model || {}) }
+  for (const [modelID, usage] of Object.entries(b.by_model || {})) {
+    const merged = mergeModelUsage(byModel[modelID], usage)
+    if (merged) byModel[modelID] = merged
+  }
+
+  const byStepAndModel: Record<string, Record<string, ModelTokenUsage>> = { ...(a.by_step_and_model || {}) }
+  for (const [stepID, modelUsage] of Object.entries(b.by_step_and_model || {})) {
+    const mergedStep = { ...(byStepAndModel[stepID] || {}) }
+    for (const [modelID, usage] of Object.entries(modelUsage || {})) {
+      const merged = mergeModelUsage(mergedStep[modelID], usage)
+      if (merged) mergedStep[modelID] = merged
+    }
+    byStepAndModel[stepID] = mergedStep
+  }
+
+  return {
+    created_at: pickEarlierTimestamp(a.created_at, b.created_at),
+    updated_at: pickLaterTimestamp(a.updated_at, b.updated_at),
+    by_model: byModel,
+    by_step_and_model: Object.keys(byStepAndModel).length > 0 ? byStepAndModel : undefined,
+  }
+}
+
+async function loadCostsDataFallback(workspacePath: string): Promise<WorkflowCostsResponse | null> {
+  const [phaseTokenUsage, phaseDailyPaths, executionPaths, evaluationPaths] = await Promise.all([
+    readWorkspaceJSON<PhaseTokenUsageFile>(`${workspacePath}/costs/phase/token_usage.json`),
+    listWorkspaceFilePaths(`${workspacePath}/costs/phase/daily`, 4),
+    listWorkspaceFilePaths(`${workspacePath}/costs/execution`, 6),
+    listWorkspaceFilePaths(`${workspacePath}/costs/evaluation`, 6),
+  ])
+
+  const executionMap = new Map<string, TokenUsageFile>()
+  const evaluationMap = new Map<string, TokenUsageFile>()
+
+  const loadScopedRuns = async (
+    filePaths: string[],
+    target: Map<string, TokenUsageFile>,
+  ) => {
+    for (const filePath of filePaths.filter(path => path.endsWith('.json'))) {
+      const daily = await readWorkspaceJSON<DailyGroupTokenUsageFile>(filePath)
+      if (!daily?.run_folders) continue
+      for (const [runFolder, tokenUsage] of Object.entries(daily.run_folders)) {
+        const merged = mergeTokenUsageFiles(target.get(runFolder), tokenUsage)
+        if (merged) target.set(runFolder, merged)
+      }
+    }
+  }
+
+  await Promise.all([
+    loadScopedRuns(executionPaths, executionMap),
+    loadScopedRuns(evaluationPaths, evaluationMap),
+  ])
+
+  const phaseDailyCosts: WorkflowCostsResponse['phase_daily_costs'] = []
+  for (const filePath of phaseDailyPaths.filter(path => path.endsWith('.json'))) {
+    const daily = await readWorkspaceJSON<DailyPhaseTokenUsageFile>(filePath)
+    if (!daily?.date) continue
+    phaseDailyCosts.push({
+      date: daily.date,
+      token_usage: daily.token_usage,
+    })
+  }
+
+  const runFolderSet = new Set<string>([
+    ...Array.from(executionMap.keys()),
+    ...Array.from(evaluationMap.keys()),
+  ])
+
+  const runs = Array.from(runFolderSet)
+    .map(runFolder => ({
+      run_folder: runFolder,
+      token_usage: executionMap.get(runFolder),
+      evaluation_token_usage: evaluationMap.get(runFolder),
+    }))
+    .sort((a, b) => {
+      const aTime = parseTimestamp(a.token_usage?.updated_at || a.evaluation_token_usage?.updated_at || a.token_usage?.created_at || a.evaluation_token_usage?.created_at || null) || 0
+      const bTime = parseTimestamp(b.token_usage?.updated_at || b.evaluation_token_usage?.updated_at || b.token_usage?.created_at || b.evaluation_token_usage?.created_at || null) || 0
+      return bTime - aTime || a.run_folder.localeCompare(b.run_folder)
+    })
+
+  if (!phaseTokenUsage && phaseDailyCosts.length === 0 && runs.length === 0) return null
+
+  return {
+    success: true,
+    phase_token_usage: phaseTokenUsage || undefined,
+    phase_daily_costs: phaseDailyCosts,
+    runs,
+  }
+}
+
 interface ReportViewerProps {
   workspacePath: string
   isOpen: boolean
@@ -757,12 +984,26 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     setCostsLoading(true)
     setCostsError(null)
     agentApi.getCosts(workspacePath)
-      .then(response => {
+      .then(async response => {
         if (cancelled) return
-        setCostsData(response)
+        if ((response.runs?.length ?? 0) > 0) {
+          setCostsData(response)
+          return
+        }
+
+        const fallback = await loadCostsDataFallback(workspacePath)
+        if (cancelled) return
+        setCostsData(fallback ?? response)
       })
-      .catch(() => {
+      .catch(async () => {
         if (cancelled) return
+        const fallback = await loadCostsDataFallback(workspacePath)
+        if (cancelled) return
+        if (fallback) {
+          setCostsData(fallback)
+          setCostsError(null)
+          return
+        }
         setCostsData(null)
         setCostsError('Failed to load workflow costs.')
       })
@@ -891,12 +1132,14 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     }
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
-  const isMobilePreview =
+  const canUseSplitPreview = mobilePreview
+  const isMobilePreview = canUseSplitPreview && (
     previewPreference === 'mobile'
       ? true
       : previewPreference === 'desktop'
         ? false
         : mobilePreview
+  )
   const isRefreshing = loading || costsLoading || evalsLoading || runsLoading
   const previewShellClassName = isMobilePreview
     ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
@@ -1000,14 +1243,16 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
       </div>
 
       <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-2 sm:bottom-5 sm:right-5">
-        <button
-          onClick={handleTogglePreviewMode}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
-          title={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
-          aria-label={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
-        >
-          {isMobilePreview ? <Monitor className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
-        </button>
+        {canUseSplitPreview && (
+          <button
+            onClick={handleTogglePreviewMode}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
+            title={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
+            aria-label={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
+          >
+            {isMobilePreview ? <Monitor className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
+          </button>
+        )}
         <button
           onClick={handleRefresh}
           disabled={isRefreshing}
@@ -1515,6 +1760,26 @@ function CostsWidget({
   }, [costsData, runScope, scope, widget.group, widget.runFolder])
 
   const aggregateRunSummary = useMemo(() => aggregateRunCostSummaries(runSummaries), [runSummaries])
+  const hasAnyRunCosts = (costsData?.runs?.length ?? 0) > 0
+  const hasScopedRunCosts = runSummaries.length > 0
+  const costsEmptyState = useMemo(() => {
+    if (!hasAnyRunCosts) {
+      return {
+        message: 'No run cost data is available yet.',
+        hint: 'Execution and evaluation costs appear after runs have persisted token usage into the workflow costs ledger.',
+      }
+    }
+    if (widget.runFolder || widget.group) {
+      return {
+        message: 'No run cost data matched the selected filter.',
+        hint: 'Adjust the run/group filter, or remove it so the widget can see the available run ledgers.',
+      }
+    }
+    return {
+      message: 'No run cost data is available for the selected scope.',
+      hint: 'The workflow has cost data, but none of the persisted run ledgers matched this widget scope.',
+    }
+  }, [hasAnyRunCosts, widget.group, widget.runFolder])
 
   const summaryCards = useMemo(() => {
     if (scope === 'phase') {
@@ -1550,7 +1815,12 @@ function CostsWidget({
     return (
       <div className="flex flex-col gap-3">
         <WidgetHeader widget={widget} />
-        <WidgetError widget={widget} message={error} hint="Costs widgets read aggregated data from the workflow costs API." />
+        <WidgetError
+          widget={widget}
+          message={error}
+          hint="Costs widgets read aggregated data from the workflow costs API."
+          showWidgetMeta={false}
+        />
       </div>
     )
   }
@@ -1565,6 +1835,7 @@ function CostsWidget({
             message="No phase cost data is available yet."
             hint="Phase costs come from builder-style workflow sessions and appear after token usage has been persisted."
             severity="info"
+            showWidgetMeta={false}
           />
         </div>
       )
@@ -1640,24 +1911,26 @@ function CostsWidget({
             message={`"${view}" is not available for phase scope.`}
             hint="Use `summary`, `stage-breakdown`, or `model-table` with `scope: phase`."
             severity="info"
+            showWidgetMeta={false}
           />
         ) : null}
         {view !== 'summary' && view !== 'stage-breakdown' && view !== 'model-table' && view !== 'run-table' && view !== 'step-table' && (
-          <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" />
+          <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" showWidgetMeta={false} />
         )}
       </div>
     )
   }
 
-  if (!aggregateRunSummary || runSummaries.length === 0) {
+  if (!aggregateRunSummary || !hasScopedRunCosts) {
     return (
       <div className="flex flex-col gap-3">
         <WidgetHeader widget={widget} />
         <WidgetError
           widget={widget}
-          message="No run cost data is available for the selected scope."
-          hint="Execution and evaluation costs appear after runs have persisted token usage into the workflow costs ledger."
+          message={costsEmptyState.message}
+          hint={costsEmptyState.hint}
           severity="info"
+          showWidgetMeta={false}
         />
       </div>
     )
@@ -1809,7 +2082,7 @@ function CostsWidget({
         />
       )}
       {view !== 'summary' && view !== 'stage-breakdown' && view !== 'run-table' && view !== 'step-table' && view !== 'model-table' && (
-        <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" />
+        <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" showWidgetMeta={false} />
       )}
     </div>
   )
@@ -1886,6 +2159,7 @@ function EvalsWidget({
       max_possible_score: entry.report.max_possible_score,
       score_percentage: entry.report.score_percentage,
       step_count: entry.report.step_scores.length,
+      score_band: evalScoreTone(entry.report.score_percentage).label,
     }))
   }, [selectedReports])
 
@@ -1932,7 +2206,12 @@ function EvalsWidget({
     return (
       <div className="flex flex-col gap-3">
         <WidgetHeader widget={widget} />
-        <WidgetError widget={widget} message={error} hint="Evals widgets read aggregated data from the evaluation reports API." />
+        <WidgetError
+          widget={widget}
+          message={error}
+          hint="Evals widgets read aggregated data from the evaluation reports API."
+          showWidgetMeta={false}
+        />
       </div>
     )
   }
@@ -1946,6 +2225,7 @@ function EvalsWidget({
           message="No evaluation reports are available for the selected scope."
           hint="Run evaluation first, or remove the run/group filter so the widget can see existing reports."
           severity="info"
+          showWidgetMeta={false}
         />
       </div>
     )
@@ -1989,18 +2269,10 @@ function EvalsWidget({
         />
       )}
       {view === 'run-table' && (
-        <TableWidget
-          value={runRows}
-          widget={makeSyntheticTableWidget({
-            formats: {
-              generated_at: 'datetime',
-              total_score: 'number',
-              max_possible_score: 'number',
-              score_percentage: 'number-1dp',
-              step_count: 'number',
-            },
-            defaultSort: { field: metric === 'total_score' ? 'total_score' : 'score_percentage', direction: 'desc' },
-          })}
+        <EvalRunCards
+          rows={runRows}
+          pageSize={widget.pageSize ?? DEFAULT_TABLE_PAGE_SIZE}
+          compact={isCompact}
         />
       )}
       {view === 'step-table' && (
@@ -2013,12 +2285,213 @@ function EvalsWidget({
               max_score: 'number',
               score_percentage: 'number-1dp',
             },
-            defaultSort: { field: 'score_percentage', direction: 'asc' },
+            defaultSort: { field: 'generated_at', direction: 'desc' },
           })}
         />
       )}
       {view !== 'summary' && view !== 'run-chart' && view !== 'run-table' && view !== 'step-table' && (
-        <WidgetError widget={widget} message={`Unsupported evals view "${view}".`} severity="info" />
+        <WidgetError widget={widget} message={`Unsupported evals view "${view}".`} severity="info" showWidgetMeta={false} />
+      )}
+    </div>
+  )
+}
+
+function EvalRunCards({
+  rows,
+  pageSize,
+  compact,
+}: {
+  rows: Array<{
+    run_folder: string
+    generated_at: string
+    total_score: number
+    max_possible_score: number
+    score_percentage: number
+    step_count: number
+    score_band: string
+  }>
+  pageSize: number
+  compact: boolean
+}) {
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+
+  const filteredRows = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (!needle) return rows
+    return rows.filter(row =>
+      row.run_folder.toLowerCase().includes(needle) ||
+      row.score_band.toLowerCase().includes(needle) ||
+      formatNamed(row.generated_at, 'datetime').text.toLowerCase().includes(needle),
+    )
+  }, [rows, search])
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
+  const safePage = Math.min(page, totalPages - 1)
+  const pageRows = useMemo(
+    () => filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize),
+    [filteredRows, safePage, pageSize],
+  )
+
+  const rowCountText =
+    filteredRows.length === rows.length
+      ? `${filteredRows.length} run${filteredRows.length === 1 ? '' : 's'}`
+      : `${filteredRows.length} of ${rows.length}`
+
+  const handleExport = () => {
+    const csv = rowsToCSV(filteredRows as Record<string, unknown>[], [
+      'run_folder',
+      'generated_at',
+      'total_score',
+      'max_possible_score',
+      'score_percentage',
+      'step_count',
+    ])
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `eval-scores-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-1.5 text-xs">
+        <div className="relative w-full">
+          <Search className="absolute left-2 top-1.5 h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search runs…"
+            value={search}
+            onChange={e => {
+              setSearch(e.target.value)
+              setPage(0)
+            }}
+            className="w-full rounded-md border border-input bg-muted/30 py-1.5 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center rounded-full border border-border bg-background/80 px-2 py-1 text-muted-foreground">
+            {rowCountText}
+          </div>
+          <button
+            onClick={handleExport}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            title="Export CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <div className={`grid gap-2.5 ${compact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2'}`}>
+        {pageRows.map((row, index) => {
+          const tone = evalScoreTone(row.score_percentage)
+          const generatedAt = formatNamed(row.generated_at, 'datetime').text
+          const clampedPercentage = Math.max(0, Math.min(100, row.score_percentage))
+          return (
+            <div
+              key={`${row.run_folder}:${row.generated_at}:${index}`}
+              className={`overflow-hidden rounded-xl border border-border/50 bg-gradient-to-br ${tone.accentClassName} px-3 py-3 shadow-sm`}
+            >
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-foreground">
+                    {row.run_folder}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {generatedAt}
+                  </div>
+                </div>
+                <div className={`inline-flex shrink-0 items-center rounded-full border px-2 py-1 text-[11px] font-semibold ${tone.pillClassName}`}>
+                  {row.score_percentage.toFixed(1)}%
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-border/45 bg-background/45 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Score Progress
+                  </div>
+                  <div className="text-sm font-semibold tabular-nums text-foreground">
+                    {row.total_score}
+                    <span className="text-muted-foreground"> / {row.max_possible_score}</span>
+                  </div>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-background/80">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${evalScoreBarClass(row.score_percentage)}`}
+                    style={{ width: `${clampedPercentage}%` }}
+                  />
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>{row.score_band}</span>
+                  <span>{clampedPercentage.toFixed(1)}%</span>
+                </div>
+              </div>
+
+              <div className={`mt-3 grid gap-2 ${compact ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                <div className="rounded-lg bg-background/60 px-2.5 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Steps
+                  </div>
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                    {row.step_count}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-background/60 px-2.5 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Status
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-foreground">
+                    {row.score_band}
+                  </div>
+                </div>
+                <div className={`rounded-lg bg-background/60 px-2.5 py-2 ${compact ? 'col-span-2' : ''}`}>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Generated
+                  </div>
+                  <div className="mt-1 truncate text-sm font-medium text-foreground">
+                    {generatedAt}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted-foreground">
+          <button
+            onClick={() => setPage(current => Math.max(0, current - 1))}
+            disabled={safePage === 0}
+            className="inline-flex items-center gap-0.5 rounded-md border border-border bg-background px-2 py-1 disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Prev
+          </button>
+          <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 font-medium tabular-nums text-primary">
+            {safePage + 1}
+            <span className="mx-1 opacity-60">/</span>
+            {totalPages}
+          </span>
+          <button
+            onClick={() => setPage(current => Math.min(totalPages - 1, current + 1))}
+            disabled={safePage >= totalPages - 1}
+            className="inline-flex items-center gap-0.5 rounded-md border border-border bg-background px-2 py-1 disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Next page"
+          >
+            Next
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
     </div>
   )
@@ -2150,7 +2623,12 @@ function RunsWidget({
     return (
       <div className="flex flex-col gap-3">
         <WidgetHeader widget={widget} />
-        <WidgetError widget={widget} message={error} hint="Runs widgets read workspace run-folder metadata from the workflow API." />
+        <WidgetError
+          widget={widget}
+          message={error}
+          hint="Runs widgets read workspace run-folder metadata from the workflow API."
+          showWidgetMeta={false}
+        />
       </div>
     )
   }
@@ -2164,6 +2642,7 @@ function RunsWidget({
           message="No workflow runs are available for the selected scope."
           hint="Run the workflow first, or remove the run/group filter so the widget can see existing runs."
           severity="info"
+          showWidgetMeta={false}
         />
       </div>
     )
@@ -2244,7 +2723,7 @@ function RunsWidget({
         />
       )}
       {view !== 'summary' && view !== 'duration-chart' && view !== 'status-chart' && view !== 'table' && (
-        <WidgetError widget={widget} message={`Unsupported runs view "${view}".`} severity="info" />
+        <WidgetError widget={widget} message={`Unsupported runs view "${view}".`} severity="info" showWidgetMeta={false} />
       )}
     </div>
   )
@@ -2282,21 +2761,25 @@ function WidgetError({
   message,
   hint,
   severity = 'error',
+  showWidgetMeta = true,
 }: {
   widget: ReportWidget
   message: string
   hint?: string
   severity?: 'error' | 'info'
+  showWidgetMeta?: boolean
 }) {
   const tone = severity === 'error'
     ? 'border-destructive/30 bg-destructive/5 text-destructive'
     : 'border-border/70 bg-muted/30 text-muted-foreground'
   return (
     <div className={`rounded-xl border px-2.5 py-2 text-xs ${tone}`}>
-      <div className="flex items-center gap-2">
-        {widget.title && <span className="font-semibold">{widget.title}</span>}
-        <span className="opacity-70">({widget.kind})</span>
-      </div>
+      {showWidgetMeta && (
+        <div className="flex items-center gap-2">
+          {widget.title && <span className="font-semibold">{widget.title}</span>}
+          <span className="opacity-70">({widget.kind})</span>
+        </div>
+      )}
       <div className="mt-0.5">{message}</div>
       {hint && <div className="mt-0.5 opacity-75">{hint}</div>}
     </div>

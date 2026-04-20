@@ -68,6 +68,7 @@ export interface StoredProviderKeys {
   openrouter?: string
   openai?: string
   anthropic?: string
+  zai?: string
   vertex?: string
   gemini_cli?: string
   minimax?: string

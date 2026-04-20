@@ -83,7 +83,7 @@ Summary:
   },
   {
     command: 'review-plan',
-    description: 'Critically analyze the plan for weaknesses and improvements',
+    description: 'Critically analyze the workflow design for weaknesses and improvements',
     icon: <Search className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -94,7 +94,46 @@ Summary:
       const focusText = focus ? ` Focus especially on: ${focus}.` : ''
       ctx.onSubmit(`Run review_plan() to critically analyze the current workflow plan.${focusText}
 
-Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.`)
+Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
+
+This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.`)
+    }
+  },
+  {
+    command: 'check-goal',
+    description: 'Check whether a real run achieves the goal, and whether eval is measuring that properly',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const runFolder = ctx.getWorkflowStore().selectedRunFolder
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
+      const runText = runFolder
+        ? `Use the selected run folder "${runFolder}" unless you find stronger newer evidence is needed.`
+        : 'If no run folder is selected, find the latest meaningful run/eval evidence first.'
+      ctx.onSubmit(`Run review_workflow_results() to judge actual workflow outcomes, not just the plan.${focusText}
+
+${runText}
+
+Assess three things separately:
+1. Is the workflow actually achieving the stated objective?
+2. Which success criteria are met, partial, unmet, or still unknown?
+3. Does the evaluation plan/report actually measure the objective and success criteria properly, or is it giving false confidence?
+
+For each success criterion, show:
+- status: met / partial / unmet / unknown
+- the strongest run evidence
+- whether eval measures it directly, indirectly, weakly, or not at all
+
+Then give:
+- an overall verdict on goal achievement
+- an overall verdict on evaluation quality
+- the most important workflow gaps
+- the most important eval gaps
+- the top next actions, clearly separated into workflow fixes vs eval fixes.`)
     }
   },
   {
@@ -413,8 +452,8 @@ Summarize:
     }
   },
   {
-    command: 'auto-research-improve',
-    description: 'Analyze outputs, evals & success criteria to auto-improve the workflow',
+    command: 'improve-workflow',
+    description: 'Run structural review, replan if needed, then execute → eval → harden',
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -425,53 +464,58 @@ Summarize:
       const focus = ctx.beforeSlash.trim()
       const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
       const iterationHint = runFolder
-        ? `Use iteration "${runFolder.split('/')[0]}".`
-        : 'Read runs/ to find the latest iteration.'
-      ctx.onSubmit(`Your single goal: make this workflow achieve its success criteria as reliably as possible. Research what's going wrong, fix it, and verify the fix. Do all of this autonomously without pausing for confirmation. ${iterationHint}${focusText}
+        ? `Use iteration "${runFolder.split('/')[0]}" as the starting evidence set for structural review.`
+        : 'Read runs/ to find the latest iteration and use that as the starting evidence set for structural review.'
+      const focusArg = focus ? `, focus="${focus}"` : ''
+      ctx.onSubmit(`Your single goal: improve this workflow end-to-end with the minimum necessary changes. Start with structural diagnosis, then execute, evaluate, and harden. Do all phases autonomously without pausing for confirmation.${focusText}
 
-PHASE 1 — UNDERSTAND THE GOAL
-1. Read planning/plan.json — extract the objective and success_criteria. These are your north star. Every change you make must move the workflow closer to meeting ALL success criteria.
-2. Read evaluation/evaluation_plan.json — understand what's being measured and how.
-3. Read variables.json to get all group IDs.
+SETUP
+1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
+2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
+3. Read variables.json to get the enabled group names.
+4. ${iterationHint}
 
-PHASE 2 — RESEARCH WHAT'S FAILING AND WHY
-For each group in the latest iteration:
-- Read every step's execution output (runs/{iter}/{group}/step-*/output.json or context output files).
-- Read evaluation/runs/{iter}/{group}/evaluation_report.json for scores and failure reasons.
-- For failed/low-scoring steps, read the full execution logs to understand the root cause.
+PHASE 1 — STRUCTURAL DIAGNOSIS
+1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
+2. Read the optimize_workflow result carefully and classify the findings:
+   - **Structural**: missing steps, redundant steps, wrong ordering, wrong step type, broken context flow.
+   - **Non-structural**: weak prompts, weak validation, step reliability issues, tool/config issues.
+3. If the findings show a MATERIAL structural problem and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before doing the hardening loop.
+4. If the findings are minor or mostly non-structural, skip replanning and keep the current structure.
+5. Do not thrash the plan. At most one structural replan in this command run.
 
-Map every failure back to a specific success criterion that's not being met. Build a gap analysis:
-| Success Criterion | Met? | Blocking Step(s) | Root Cause |
+PHASE 2 — PER-GROUP EXECUTE → EVAL → HARDEN
+Repeat the following for each enabled group, sequentially. Do NOT start the next group until the previous group's full cycle is complete.
 
-Prioritize by impact: fix the gaps that block the most success criteria first.
+For group {group}:
+  a. **EXECUTE** — call run_full_workflow(enabled_group_names=["{group}"]) and wait for completion.
+     - The first group's run triggers paired iteration rotation (iteration-0 → iteration-N for both runs/ and evaluation/runs/). Subsequent partial-group runs in this same cycle reuse iteration-0 without rotating.
+     - If this group's run fails outright (no usable outputs), inspect the logs before deciding next action.
+  b. **EVALUATE** — call run_full_evaluation(target_run_folder="iteration-0/{group}") and wait for completion.
+     - Confirm evaluation/runs/iteration-0/{group}/evaluation_report.json exists before continuing.
+  c. **DECIDE** — based on the eval report and logs:
+     - If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="iteration-0", group_name="{group}"${focusArg}), then continue with the remaining groups using the updated plan.
+     - Otherwise call harden_workflow(iteration="iteration-0", group_name="{group}"${focusArg}) and wait for it to finish.
+  d. **BE CONSERVATIVE** — prefer harden_workflow for reliability fixes; use replanning only when the workflow shape is actually wrong.
 
-PHASE 3 — FIX EVERYTHING (apply all fixes automatically)
-Work through the gap analysis top-down. For each issue, pick the right tool:
+PHASE 3 — VERIFY THE IMPROVEMENT
+1. After all groups have completed, compare:
+   - structural issues found in Phase 1
+   - per-group run outcomes
+   - per-group eval results
+   - harden/replan changes applied
+2. If the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification pass on the highest-value group only:
+   - run_full_workflow(enabled_group_names=["{group}"])
+   - run_full_evaluation(target_run_folder="iteration-0/{group}")
+3. Do not loop indefinitely. Maximum one extra verification pass.
 
-- **Wrong plan structure** (missing steps, wrong order, steps that should be split/merged) → replan_workflow_from_results(iteration="{iter}")
-- **Bad step instructions** (step misunderstands the task, produces wrong output) → update_regular_step or update_todo_task_route — rewrite the description based on what the output SHOULD have been to satisfy the success criteria
-- **Weak validation** (bad output slips through uncaught) → update_validation_schema — add checks that would have caught the failure
-- **Repeated mistakes** (step keeps hitting the same issue) → harden_workflow(iteration="{iter}") — capture the fix as a durable learning
-- **Poor orchestration** (todo_task steps with bad delegation/routing) → rewrite orchestrator descriptions with clear objectives, routing criteria, and failure handling
-- **Missing or wrong tools/MCP servers on a step** → update_step_config to give the step what it needs
-
-After applying fixes, do a second pass: re-read the success criteria and ask "is there anything in the plan that still can't produce what the criteria require?" Fix any remaining gaps.
-
-PHASE 4 — VERIFY
-1. Pick one group and re-run: run_full_workflow(iteration=next_iter, group_name="{group}").
-2. Wait for completion, then evaluate: run_full_evaluation(iteration=next_iter, group_name="{group}").
-3. Compare the gap analysis from Phase 2 against the new results. For each success criterion, report: was it met before? Is it met now?
-4. If new failures appeared, fix them and re-verify (max 2 retry cycles).
-
-PHASE 5 — REPORT & SCHEDULE
-Produce a clear summary:
-- **Goal**: The success criteria from plan.json
-- **Before**: Which criteria were met/unmet, scores per group
-- **Changes made**: What you fixed and why
-- **After**: Which criteria are now met, new scores
-- **Remaining gaps**: What still needs work (if any)
-
-Then ask the user: "Would you like me to set up a recurring schedule to keep improving this workflow automatically? (e.g., daily at 2 AM). Each run will research the latest results, fix issues, and verify — continuously pushing toward 100% success criteria achievement." If yes, use create_schedule to set it up.`)
+FINAL REPORT
+Summarize:
+- Structural diagnosis from optimize_workflow
+- Whether replan_workflow_from_results was used, and why
+- Per-group: run outcome, eval score, harden changes, steps newly marked optimized
+- Which success criteria are now better satisfied than before
+- Remaining gaps that still need human attention, if any`)
     }
   },
   {

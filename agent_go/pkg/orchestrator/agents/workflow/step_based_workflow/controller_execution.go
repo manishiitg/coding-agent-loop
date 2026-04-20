@@ -1469,6 +1469,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Read metadata (needed for hash-based exploration-reset check below)
 			learningPathIdentifier := step.GetID()
 			metadata, _ := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+			currentDescriptionHash := hashStepDescription(step.GetDescription())
+			currentLearningHash := ""
 
 			// Always use paths-only mode — full learning content is too expensive for context.
 			// The agent can read learning files if needed.
@@ -1491,18 +1493,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
 				}
+				if formattedLearningHistory != "" {
+					h := sha256.Sum256([]byte(formattedLearningHistory))
+					currentLearningHash = hex.EncodeToString(h[:])
+				}
 
 				// Hash-based exploration reset: if learning content changed since last run, force exploration mode
 				if formattedLearningHistory != "" && metadata != nil {
-					h := sha256.Sum256([]byte(formattedLearningHistory))
-					currentHash := hex.EncodeToString(h[:])
-					if metadata.LearningContentHash != "" && metadata.LearningContentHash != currentHash {
+					if metadata.LearningContentHash != "" && metadata.LearningContentHash != currentLearningHash {
 						keepLearningFull = false
 						keepLearningFullSource = "dynamic (learning content changed — exploration reset)"
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Learning content changed for step '%s' — forcing exploration mode (hash: %s → %s)", step.GetTitle(), metadata.LearningContentHash[:8], currentHash[:8]))
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Learning content changed for step '%s' — forcing exploration mode (hash: %s → %s)", step.GetTitle(), metadata.LearningContentHash[:8], currentLearningHash[:8]))
 					}
-					// Store the current hash in metadata for next comparison (saved when metadata is persisted later)
-					metadata.LearningContentHash = currentHash
 				}
 
 				// Get learning file paths for user message (when KeepLearningFull is false)
@@ -1542,6 +1544,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// If learn_code was ever active in any attempt, the conversation is polluted
 			// with main.py authoring turns — fall back to fresh agents instead of continuing.
 			learnCodeActiveInAnyAttempt := false
+			adaptiveTierEnabled := hcpo.shouldUseAdaptiveExecutionTiering(ctx, agentConfigs)
+			adaptiveTier := TierHigh
+			adaptiveTierReason := "high (adaptive tiering disabled)"
+			if adaptiveTierEnabled {
+				decision, tierErr := hcpo.decideAdaptiveExecutionTier(
+					ctx,
+					learningPathIdentifier,
+					stepPath,
+					formattedLearningHistory != "",
+					currentDescriptionHash,
+					currentLearningHash,
+				)
+				if tierErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve adaptive execution tier for step %d: %v — defaulting to Tier 1 (High)", stepIndex+1, tierErr))
+					adaptiveTierEnabled = false
+				} else {
+					adaptiveTier = decision.Tier
+					adaptiveTierReason = decision.Reason
+					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [ADAPTIVE] Step %d initial execution tier: %s (%s)", stepIndex+1, TierLevelLabel(adaptiveTier), adaptiveTierReason))
+				}
+			}
 
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
@@ -1598,6 +1621,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
+				attemptTier := adaptiveTier
 
 				// Track learn_code presence to poison continuation in future attempts.
 				if isLearnCodeMode {
@@ -1617,6 +1641,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					len(executionConversationHistory) > 0 &&
 					!isLearnCodeMode &&
 					!learnCodeActiveInAnyAttempt
+
+				if adaptiveTierEnabled {
+					executionAgentCtx = context.WithValue(executionAgentCtx, WorkshopTierOverrideKey, int(attemptTier))
+					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [ADAPTIVE] Step %d attempt %d/%d forcing Tier %d (%s): %s",
+						stepIndex+1, retryAttempt, maxRetryAttempts, int(attemptTier), TierLevelLabel(attemptTier), adaptiveTierReason))
+				}
 
 				if !shouldContinue {
 					// Fresh-agent path: close prior (if any) and create a new execution agent.
@@ -1712,6 +1742,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if err != nil {
 					// Execution errors
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d execution failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
+					if adaptiveTierEnabled && attemptTier == TierMedium {
+						failureReason := fmt.Sprintf("execution error on attempt %d: %v", retryAttempt, err)
+						if metaErr := hcpo.recordAdaptiveExecutionTierFailure(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash, currentLearningHash, failureReason); metaErr != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier failure for step %d: %v", stepIndex+1, metaErr))
+						}
+						adaptiveTier = TierHigh
+						adaptiveTierReason = "high (medium-tier execution failed in this run)"
+					}
 
 					// Save partial conversation history on failure/cancellation so users can inspect
 					// tool responses from interrupted executions via debug_step or log files.
@@ -2213,6 +2251,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Check if success criteria was met
 				// Check IsSuccessCriteriaMet instead of just ExecutionStatus - PARTIAL/INCOMPLETE can also mean criteria not met
 				if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
+					if adaptiveTierEnabled {
+						if metaErr := hcpo.recordAdaptiveExecutionTierSuccess(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash, currentLearningHash); metaErr != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier success for step %d: %v", stepIndex+1, metaErr))
+						}
+					}
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d passed validation - success criteria met (Status: %s)", stepIndex+1, validationResponse.ExecutionStatus))
 
 					break // Exit retry loop and continue to next step
@@ -2222,6 +2265,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						statusStr = validationResponse.ExecutionStatus
 					}
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d failed validation - success criteria not met (Status: %s, attempt %d/%d)", stepIndex+1, statusStr, retryAttempt, maxRetryAttempts))
+					if adaptiveTierEnabled && attemptTier == TierMedium {
+						failureReason := fmt.Sprintf("validation failed on attempt %d (status=%s)", retryAttempt, statusStr)
+						if metaErr := hcpo.recordAdaptiveExecutionTierFailure(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash, currentLearningHash, failureReason); metaErr != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier failure for step %d: %v", stepIndex+1, metaErr))
+						}
+						adaptiveTier = TierHigh
+						adaptiveTierReason = "high (medium-tier validation failed in this run)"
+					}
 
 					// Increment validation failure count for UI display
 					if err := hcpo.IncrementValidationFailureCount(ctx, stepPath); err != nil {

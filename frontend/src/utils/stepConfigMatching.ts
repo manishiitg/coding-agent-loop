@@ -1,8 +1,9 @@
 import type { TodoStep } from '../generated/event-types';
+import type { LLMProvider } from '../services/api-types';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
-  provider?: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan';
+  provider?: LLMProvider;
   model_id?: string;
 }
 

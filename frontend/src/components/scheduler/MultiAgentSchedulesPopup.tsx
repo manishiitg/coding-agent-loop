@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
-import { X, CalendarDays, Play, Trash2, Square, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { X, CalendarDays, Play, Trash2, Square, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, CheckCircle2, ClockAlert } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import type { ScheduledJob } from '../../services/api-types'
+
+const MISSED_SCHEDULE_GRACE_MS = 60_000
 
 function describeCron(expr: string): string {
   try {
@@ -31,6 +33,45 @@ function formatRelativeTime(dateStr: string): string {
   }
   const days = Math.round(absDiff / 86400_000)
   return isPast ? `${days}d ago` : `in ${days}d`
+}
+
+function getMissedScheduleDelayMs(job: ScheduledJob): number | null {
+  if (!job.enabled || job.last_status === 'running' || !job.next_run_at) return null
+
+  const scheduledAtMs = new Date(job.next_run_at).getTime()
+  if (Number.isNaN(scheduledAtMs)) return null
+
+  const overdueMs = Date.now() - scheduledAtMs
+  if (overdueMs < MISSED_SCHEDULE_GRACE_MS) return null
+
+  return overdueMs
+}
+
+function formatDurationShort(durationMs: number): string {
+  if (durationMs < 60_000) return `${Math.round(durationMs / 1000)}s`
+  if (durationMs < 3_600_000) return `${Math.round(durationMs / 60_000)}m`
+  if (durationMs < 86_400_000) return `${Math.round(durationMs / 3_600_000)}h`
+  return `${Math.round(durationMs / 86_400_000)}d`
+}
+
+function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
+  const rank = (job: ScheduledJob) => {
+    if (job.last_status === 'running') return 0
+    if (getMissedScheduleDelayMs(job) != null) return 1
+    if (job.enabled && job.next_run_at) return 2
+    if (job.enabled) return 3
+    if (job.last_status === 'error') return 4
+    return 5
+  }
+
+  const rankDiff = rank(a) - rank(b)
+  if (rankDiff !== 0) return rankDiff
+
+  if (a.next_run_at && b.next_run_at) {
+    return a.next_run_at.localeCompare(b.next_run_at)
+  }
+
+  return a.name.localeCompare(b.name)
 }
 
 interface MultiAgentSchedulesPopupProps {
@@ -62,6 +103,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
     const interval = setInterval(loadJobs, 30_000)
     return () => clearInterval(interval)
   }, [loadJobs])
+
+  const missedCount = useMemo(
+    () => jobs.filter(job => getMissedScheduleDelayMs(job) != null).length,
+    [jobs]
+  )
+
+  const sortedJobs = useMemo(
+    () => [...jobs].sort(sortJobs),
+    [jobs]
+  )
 
   const handleToggle = async (job: ScheduledJob) => {
     setActionInProgress(job.id)
@@ -116,9 +167,15 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
   }
 
   const statusBadge = (job: ScheduledJob) => {
+    const missedDelayMs = getMissedScheduleDelayMs(job)
     if (job.last_status === 'running') {
       return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-400 border border-blue-700/50">
         <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" /> Running
+      </span>
+    }
+    if (missedDelayMs != null) {
+      return <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-900/30 text-amber-300 border border-amber-700/50">
+        <ClockAlert className="w-3 h-3" /> Missed
       </span>
     }
     if (job.last_status === 'error') {
@@ -148,6 +205,12 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
             <span className="text-xs text-gray-500">
               {jobs.length} schedule{jobs.length !== 1 ? 's' : ''}
             </span>
+            {missedCount > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/50 bg-amber-900/30 px-2 py-0.5 text-[10px] font-medium text-amber-300">
+                <ClockAlert className="h-3 w-3" />
+                {missedCount} missed
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -186,11 +249,16 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
             </div>
           ) : (
             <div className="space-y-2">
-              {jobs.map((job) => (
+              {sortedJobs.map((job) => {
+                const missedDelayMs = getMissedScheduleDelayMs(job)
+
+                return (
                 <div
                   key={job.id}
                   className={`rounded-lg border p-3 transition-colors ${
-                    job.enabled
+                    missedDelayMs != null
+                      ? 'border-amber-700/50 bg-amber-950/20'
+                      : job.enabled
                       ? 'border-gray-700 bg-gray-800/50'
                       : 'border-gray-800 bg-gray-900/50 opacity-60'
                   }`}
@@ -233,7 +301,11 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-3 text-[10px] text-gray-500">
                       {job.next_run_at && job.enabled && (
-                        <span>Next: {formatRelativeTime(job.next_run_at)}</span>
+                        <span>
+                          {missedDelayMs != null
+                            ? `Missed by ${formatDurationShort(missedDelayMs)}`
+                            : `Next: ${formatRelativeTime(job.next_run_at)}`}
+                        </span>
                       )}
                       {job.last_run_at && (
                         <span>Last: {formatRelativeTime(job.last_run_at)}</span>
@@ -256,10 +328,15 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                         <button
                           onClick={() => handleTrigger(job)}
                           disabled={actionInProgress === job.id}
-                          className="p-1 rounded text-gray-400 hover:text-green-400 hover:bg-gray-700 transition-colors disabled:opacity-50"
-                          title="Run now"
+                          className={`rounded transition-colors disabled:opacity-50 ${
+                            missedDelayMs != null
+                              ? 'flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-amber-200 bg-amber-900/40 hover:bg-amber-900/60'
+                              : 'p-1 text-gray-400 hover:text-green-400 hover:bg-gray-700'
+                          }`}
+                          title={missedDelayMs != null ? 'Run missed schedule now' : 'Run now'}
                         >
                           <Play className="w-3.5 h-3.5" />
+                          {missedDelayMs != null && <span>Run now</span>}
                         </button>
                       )}
                       <button
@@ -280,7 +357,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
                     </p>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

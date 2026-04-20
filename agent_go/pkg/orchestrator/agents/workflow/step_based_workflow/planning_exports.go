@@ -1427,6 +1427,16 @@ func RegisterEvaluationValidationTools(
 	return registerEvaluationValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
+// RegisterEvaluationCapabilitiesTool is the exported wrapper for registering the
+// get_evaluation_capabilities tool on an MCP agent. Used by server.go for workflow-builder
+// and optimizer chat sessions so eval grammar can be loaded on demand.
+func RegisterEvaluationCapabilitiesTool(
+	mcpAgent *mcpagent.Agent,
+	logger loggerv2.Logger,
+) error {
+	return registerEvaluationCapabilitiesTool(mcpAgent, logger)
+}
+
 // RegisterReportPlanValidationTools is the exported wrapper for registering the
 // validate_report_plan tool on an MCP agent. Used by server.go for workflow-builder
 // chat sessions. Validates reports/report_plan.md widget blocks against their JSON sources.
@@ -1437,6 +1447,29 @@ func RegisterReportPlanValidationTools(
 	readFile func(context.Context, string) (string, error),
 ) error {
 	return registerReportPlanValidationTools(mcpAgent, workspacePath, logger, readFile)
+}
+
+// RegisterReportingCapabilitiesTool is the exported wrapper for registering the
+// get_reporting_capabilities tool on an MCP agent. Used by server.go for workflow-builder
+// and optimizer chat sessions so reporting grammar can be loaded on demand.
+func RegisterReportingCapabilitiesTool(
+	mcpAgent *mcpagent.Agent,
+	logger loggerv2.Logger,
+) error {
+	return registerReportPlanCapabilitiesTool(mcpAgent, logger)
+}
+
+// RegisterReportRenderPreviewTool is the exported wrapper for registering the
+// preview_report_render tool on an MCP agent. Used by server.go for workflow-builder
+// and optimizer chat sessions so the agent can inspect the final report structure
+// and resolved data without relying on the frontend UI.
+func RegisterReportRenderPreviewTool(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+) error {
+	return registerReportRenderPreviewTool(mcpAgent, workspacePath, logger, readFile)
 }
 
 // RegisterPlanModificationTools is the exported wrapper for registering plan modification tools

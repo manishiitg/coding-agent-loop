@@ -64,7 +64,7 @@ type LLMAgentConfig struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool
-	APIKeys            *llm.ProviderAPIKeys // API keys for providers
+	APIKeys              *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -728,7 +728,7 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 		logger.Info(fmt.Sprintf("Using custom fallback models from config: %v", fallbackModels))
 	} else {
 		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llmProvider)...)
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModelsForModel(llmProvider, config.ModelID)...)
 		// Also add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)

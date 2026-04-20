@@ -25,7 +25,9 @@ interface WorkflowScheduleRunsPanelProps {
 }
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
-type JobFilter = 'running' | 'enabled' | 'paused' | 'issues' | 'all'
+type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
+
+const MISSED_SCHEDULE_GRACE_MS = 60_000
 
 interface JobPopupState {
   jobId: string
@@ -228,6 +230,29 @@ function formatTimeUntil(dateStr?: string): string {
   return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
+function getMissedScheduleDelayMs(job: ScheduledJob): number | null {
+  if (!job.enabled || job.last_status === 'running' || !job.next_run_at) return null
+
+  const scheduledAtMs = new Date(job.next_run_at).getTime()
+  if (Number.isNaN(scheduledAtMs)) return null
+
+  const overdueMs = Date.now() - scheduledAtMs
+  if (overdueMs < MISSED_SCHEDULE_GRACE_MS) return null
+
+  return overdueMs
+}
+
+function isMissedSchedule(job: ScheduledJob): boolean {
+  return getMissedScheduleDelayMs(job) != null
+}
+
+function formatOverdueDuration(durationMs: number): string {
+  if (durationMs < 60_000) return `${Math.round(durationMs / 1000)}s`
+  if (durationMs < 3_600_000) return `${Math.round(durationMs / 60_000)}m`
+  if (durationMs < 86_400_000) return `${Math.round(durationMs / 3_600_000)}h`
+  return `${Math.round(durationMs / 86_400_000)}d`
+}
+
 function formatLocalScheduleTime(dateStr?: string): string {
   if (!dateStr) return '—'
 
@@ -302,10 +327,11 @@ function getWorkflowFilterMeta(
 function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
   const rank = (job: ScheduledJob) => {
     if (job.last_status === 'running') return 0
-    if (job.enabled && job.next_run_at) return 1
-    if (job.enabled) return 2
-    if (job.last_status === 'error') return 3
-    return 4
+    if (isMissedSchedule(job)) return 1
+    if (job.enabled && job.next_run_at) return 2
+    if (job.enabled) return 3
+    if (job.last_status === 'error') return 4
+    return 5
   }
 
   const rankDiff = rank(a) - rank(b)
@@ -521,10 +547,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   const summary = useMemo(() => {
     const running = jobs.filter(j => j.last_status === 'running').length
+    const missed = jobs.filter(isMissedSchedule).length
     const issues = jobs.filter(j => j.last_status === 'error').length
     const paused = jobs.filter(j => !j.enabled).length
     return {
       running,
+      missed,
       issues,
       paused,
       enabled: activeJobs,
@@ -551,10 +579,26 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return [...jobs]
       .filter(job => {
         if (!job.enabled || !job.next_run_at) return false
+        if (isMissedSchedule(job)) return false
         if (selectedWorkflowFilter === 'all') return true
         return getWorkflowFilterMeta(job, presetMap).value === selectedWorkflowFilter
       })
       .sort((a, b) => (a.next_run_at || '').localeCompare(b.next_run_at || ''))
+      .slice(0, 4)
+  }, [jobs, presetMap, selectedWorkflowFilter])
+
+  const missedJobs = useMemo(() => {
+    return [...jobs]
+      .filter(job => {
+        if (!isMissedSchedule(job)) return false
+        if (selectedWorkflowFilter === 'all') return true
+        return getWorkflowFilterMeta(job, presetMap).value === selectedWorkflowFilter
+      })
+      .sort((a, b) => {
+        const aDelay = getMissedScheduleDelayMs(a) ?? 0
+        const bDelay = getMissedScheduleDelayMs(b) ?? 0
+        return bDelay - aDelay
+      })
       .slice(0, 4)
   }, [jobs, presetMap, selectedWorkflowFilter])
 
@@ -571,6 +615,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             break
           case 'paused':
             if (job.enabled) return false
+            break
+          case 'missed':
+            if (!isMissedSchedule(job)) return false
             break
           case 'issues':
             if (job.last_status !== 'error') return false
@@ -833,6 +880,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     { key: 'running', label: 'Running', count: summary.running },
     { key: 'enabled', label: 'Enabled', count: summary.enabled },
     { key: 'paused', label: 'Paused', count: summary.paused },
+    { key: 'missed', label: 'Missed', count: summary.missed },
     { key: 'issues', label: 'Issues', count: summary.issues },
     { key: 'all', label: 'All', count: summary.total },
   ]
@@ -854,7 +902,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             </h2>
             {!isLoading && (
               <span className="text-xs text-muted-foreground ml-1">
-                {summary.running} running · {!isSchedulerExecutionEnabled ? 'server scheduler disabled' : isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
+                {summary.running} running · {summary.missed} missed · {!isSchedulerExecutionEnabled ? 'server scheduler disabled' : isSchedulerPaused ? 'globally paused' : `${activeJobs} active`} · {jobs.length} total
               </span>
             )}
           </div>
@@ -943,7 +991,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 </div>
               )}
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <button
                   onClick={() => setActiveFilter('running')}
                   className={`text-left rounded-xl border px-3 py-2 transition-colors ${
@@ -981,6 +1029,20 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.paused}</div>
                 </button>
                 <button
+                  onClick={() => setActiveFilter('missed')}
+                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
+                    activeFilter === 'missed'
+                      ? 'border-amber-400/70 bg-muted text-foreground shadow-sm'
+                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Missed</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-lg font-semibold text-foreground">{summary.missed}</span>
+                  </div>
+                </button>
+                <button
                   onClick={() => setActiveFilter('issues')}
                   className={`text-left rounded-xl border px-3 py-2 transition-colors ${
                     activeFilter === 'issues'
@@ -992,6 +1054,52 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.issues}</div>
                 </button>
               </div>
+
+              {missedJobs.length > 0 && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Missed schedules</div>
+                      <div className="text-sm font-medium text-foreground">Schedules that were due but have not run yet</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground whitespace-nowrap">
+                      {summary.missed} missed
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {missedJobs.map((job) => {
+                      const preset = presetMap.get(job.preset_query_id ?? '')
+                      const label = localizeTimezoneLabel(
+                        preset?.label || job.workflow_label || job.name,
+                        job.next_run_at
+                      )
+                      const overdueMs = getMissedScheduleDelayMs(job) ?? 0
+
+                      return (
+                        <button
+                          key={`missed-${job.id}`}
+                          onClick={() => setExpandedJobId(job.id)}
+                          className="rounded-lg border border-amber-400/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm font-medium text-foreground" title={label}>
+                              {label}
+                            </span>
+                            <span className="text-xs font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                              Missed by {formatOverdueDuration(overdueMs)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                            <span className="truncate" title={job.name}>{getLocalizedJobName(job)}</span>
+                            <span className="whitespace-nowrap">{formatLocalScheduleTime(job.next_run_at)}</span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-xl border border-border bg-background px-3 py-3">
                 <div className="flex items-center justify-between gap-3 mb-2">
@@ -1123,8 +1231,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 const isLoadingThis = loadingRuns === job.id
                 const previousJob = index > 0 ? jobsList[index - 1] : null
                 const isRunningJob = job.last_status === 'running'
+                const isMissedJob = isMissedSchedule(job)
+                const missedDelayMs = getMissedScheduleDelayMs(job)
                 const showRunningHeader = isRunningJob && (!previousJob || previousJob.last_status !== 'running')
-                const showScheduledHeader = !isRunningJob && (!previousJob || previousJob.last_status === 'running')
+                const previousJobWasMissed = previousJob ? isMissedSchedule(previousJob) : false
+                const showMissedHeader = isMissedJob && (!previousJob || previousJob.last_status === 'running' || !previousJobWasMissed)
+                const showScheduledHeader = !isRunningJob && !isMissedJob && (!previousJob || previousJob.last_status === 'running' || previousJobWasMissed)
 
                 return (
                   <React.Fragment key={job.id}>
@@ -1156,12 +1268,27 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       </div>
                     )}
 
+                    {showMissedHeader && (
+                      <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Missed schedules</div>
+                            <div className="text-sm font-medium text-foreground">Schedules that were due, but never started at the scheduled time</div>
+                          </div>
+                          <div className="text-xs text-muted-foreground whitespace-nowrap">
+                            {summary.missed} missed
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
                     {/* Row top */}
                     <div className="flex items-start gap-3">
                       {/* Status dot */}
                       <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${
                         job.last_status === 'running' ? 'bg-amber-500 animate-pulse' :
+                        isMissedJob ? 'bg-amber-500' :
                         job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
                       }`} />
 
@@ -1185,6 +1312,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate" title={job.name}>
                             {localizedJobName}
                           </span>
+                          {isMissedJob && (
+                            <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                              Missed
+                            </span>
+                          )}
                           {!job.enabled && (
                             <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
                               Paused
@@ -1232,7 +1364,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             )}
                             {job.last_status === 'running' ? 'Running...' : `Last: ${timeAgo(job.last_run_at)}`}
                           </span>
-                          <span>Next: {job.enabled ? formatLocalScheduleTime(job.next_run_at) : 'paused'}</span>
+                          <span>
+                            {job.enabled
+                              ? isMissedJob && missedDelayMs != null
+                                ? `Missed by ${formatOverdueDuration(missedDelayMs)}`
+                                : `Next: ${formatLocalScheduleTime(job.next_run_at)}`
+                              : 'paused'}
+                          </span>
                           <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                           {job.last_duration_ms != null && job.last_status !== 'running' && (
                             <span>Duration: {formatDuration(job.last_duration_ms)}</span>
@@ -1271,14 +1409,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <button
-                                      onClick={() => handleTrigger(job)}
-                                      disabled={triggering === job.id}
-                                      className="p-1.5 rounded-md text-gray-400 hover:text-green-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40"
-                                    >
-                                      <Play className="w-3.5 h-3.5" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom">Trigger a manual run now</TooltipContent>
+                                    onClick={() => handleTrigger(job)}
+                                    disabled={triggering === job.id}
+                                    className={`rounded-md transition-colors disabled:opacity-40 ${
+                                      isMissedJob
+                                        ? 'flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800'
+                                        : 'p-1.5 text-gray-400 hover:text-green-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    }`}
+                                  >
+                                    <Play className="w-3.5 h-3.5" />
+                                    {isMissedJob && <span>Run now</span>}
+                                  </button>
+                                </TooltipTrigger>
+                                  <TooltipContent side="bottom">{isMissedJob ? 'Run this missed schedule now' : 'Trigger a manual run now'}</TooltipContent>
                                 </Tooltip>
                                 {/* Pause */}
                                 <Tooltip>

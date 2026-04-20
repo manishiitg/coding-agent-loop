@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
@@ -64,6 +64,7 @@ function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
     keys?.openrouter ||
     keys?.openai ||
     keys?.anthropic ||
+    keys?.zai ||
     keys?.vertex ||
     keys?.gemini_cli ||
     keys?.minimax ||
@@ -77,6 +78,7 @@ function extractStoredProviderKeysFromState(state: {
   openrouterConfig: ExtendedLLMConfiguration
   openaiConfig: ExtendedLLMConfiguration
   anthropicConfig: ExtendedLLMConfiguration
+  zaiConfig: ExtendedLLMConfiguration
   vertexConfig: ExtendedLLMConfiguration
   bedrockConfig: ExtendedLLMConfiguration
   azureConfig: ExtendedLLMConfiguration
@@ -89,6 +91,7 @@ function extractStoredProviderKeysFromState(state: {
     openrouter: state.openrouterConfig?.api_key || undefined,
     openai: state.openaiConfig?.api_key || undefined,
     anthropic: state.anthropicConfig?.api_key || undefined,
+    zai: state.zaiConfig?.api_key || undefined,
     vertex: state.vertexConfig?.api_key || undefined,
     gemini_cli: state.geminiCliApiKey || undefined,
     minimax: state.minimaxConfig?.api_key || undefined,
@@ -108,6 +111,7 @@ function extractStoredProviderKeysFromState(state: {
     if (llm.provider === 'openrouter' && llm.api_key && !keys.openrouter) keys.openrouter = llm.api_key
     if (llm.provider === 'openai' && llm.api_key && !keys.openai) keys.openai = llm.api_key
     if (llm.provider === 'anthropic' && llm.api_key && !keys.anthropic) keys.anthropic = llm.api_key
+    if (llm.provider === 'z-ai' && llm.api_key && !keys.zai) keys.zai = llm.api_key
     if (llm.provider === 'vertex' && llm.api_key && !keys.vertex) keys.vertex = llm.api_key
     if (llm.provider === 'minimax' && llm.api_key && !keys.minimax) keys.minimax = llm.api_key
     if (llm.provider === 'minimax-coding-plan' && llm.api_key && !keys.minimax_coding_plan) keys.minimax_coding_plan = llm.api_key
@@ -150,6 +154,7 @@ interface LLMState extends StoreActions {
   vertexConfig: ExtendedLLMConfiguration
   anthropicConfig: ExtendedLLMConfiguration
   azureConfig: ExtendedLLMConfiguration
+  zaiConfig: ExtendedLLMConfiguration
   minimaxConfig: ExtendedLLMConfiguration
   minimaxCodingPlanConfig: ExtendedLLMConfiguration
 
@@ -175,6 +180,7 @@ interface LLMState extends StoreActions {
   availableVertexModels: string[]
   availableAnthropicModels: string[]
   availableAzureModels: string[]
+  availableZAIModels: string[]
   availableMinimaxModels: string[]
   availableMinimaxCodingPlanModels: string[]
 
@@ -191,7 +197,7 @@ interface LLMState extends StoreActions {
   defaultsLoaded: boolean
 
   // Supported providers (from backend, not persisted)
-  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan')[]
+  supportedProviders: LLMProvider[]
   isProviderSupported: (provider: string) => boolean
 
   // Delegation tier configuration
@@ -220,6 +226,7 @@ interface LLMState extends StoreActions {
   setVertexConfig: (config: ExtendedLLMConfiguration) => void
   setAnthropicConfig: (config: ExtendedLLMConfiguration) => void
   setAzureConfig: (config: ExtendedLLMConfiguration) => void
+  setZaiConfig: (config: ExtendedLLMConfiguration) => void
   setMinimaxConfig: (config: ExtendedLLMConfiguration) => void
   setMinimaxCodingPlanConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
@@ -246,14 +253,14 @@ interface LLMState extends StoreActions {
   removeCustomMinimaxCodingPlanModel: (model: string) => void
 
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan') => void
+  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'minimax' | 'minimax-coding-plan') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null, correctedOptions?: Record<string, unknown>}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null, correctedOptions?: Record<string, unknown>}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -338,6 +345,13 @@ export const useLLMStore = create<LLMState>()(
           api_key: '',
           endpoint: ''
         },
+        zaiConfig: {
+          provider: 'z-ai',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
         minimaxConfig: {
           provider: 'minimax',
           model_id: '',
@@ -379,6 +393,7 @@ export const useLLMStore = create<LLMState>()(
         availableVertexModels: [],
         availableAnthropicModels: [],
         availableAzureModels: [],
+        availableZAIModels: [],
         availableMinimaxModels: [],
         availableMinimaxCodingPlanModels: [],
 
@@ -395,7 +410,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'codex-cli', 'minimax', 'minimax-coding-plan'],
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'claude-code', 'gemini-cli', 'codex-cli', 'minimax', 'minimax-coding-plan'],
         llmConfigLocked: false,
         lockedProviders: [],
         defaultPublishedLLMsLocked: false,
@@ -468,6 +483,10 @@ export const useLLMStore = create<LLMState>()(
           set({ azureConfig: config, error: null })
         },
 
+        setZaiConfig: (config) => {
+          set({ zaiConfig: config, error: null })
+        },
+
         setMinimaxConfig: (config) => {
           set({ minimaxConfig: config, error: null })
         },
@@ -494,6 +513,7 @@ export const useLLMStore = create<LLMState>()(
               vertex: state.vertexConfig,
               bedrock: state.bedrockConfig,
               azure: state.azureConfig,
+              'z-ai': state.zaiConfig,
               minimax: state.minimaxConfig,
               'minimax-coding-plan': state.minimaxCodingPlanConfig,
             }
@@ -802,6 +822,16 @@ export const useLLMStore = create<LLMState>()(
                 endpoint: ''
               }
             )
+            const zaiConfig = preserveUserConfig(
+              currentState.zaiConfig,
+              defaults.zai_config || {
+                provider: 'z-ai',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+              }
+            )
             const minimaxConfig = preserveUserConfig(
               currentState.minimaxConfig,
               defaults.minimax_config || {
@@ -826,6 +856,7 @@ export const useLLMStore = create<LLMState>()(
             if (workspaceProviderKeys?.openrouter) openrouterConfig.api_key = workspaceProviderKeys.openrouter
             if (workspaceProviderKeys?.openai) openaiConfig.api_key = workspaceProviderKeys.openai
             if (workspaceProviderKeys?.anthropic) anthropicConfig.api_key = workspaceProviderKeys.anthropic
+            if (workspaceProviderKeys?.zai) zaiConfig.api_key = workspaceProviderKeys.zai
             if (workspaceProviderKeys?.vertex) vertexConfig.api_key = workspaceProviderKeys.vertex
             if (workspaceProviderKeys?.minimax) minimaxConfig.api_key = workspaceProviderKeys.minimax
             if (workspaceProviderKeys?.minimax_coding_plan) minimaxCodingPlanConfig.api_key = workspaceProviderKeys.minimax_coding_plan
@@ -861,6 +892,7 @@ export const useLLMStore = create<LLMState>()(
               vertexConfig,
               anthropicConfig,
               azureConfig,
+              zaiConfig,
               minimaxConfig,
               minimaxCodingPlanConfig,
               geminiCliApiKey: workspaceProviderKeys?.gemini_cli || '', // gitleaks:allow
@@ -871,10 +903,11 @@ export const useLLMStore = create<LLMState>()(
               availableVertexModels: defaults.available_models.vertex || [],
               availableAnthropicModels: defaults.available_models.anthropic || [],
               availableAzureModels: defaults.available_models.azure || [],
+              availableZAIModels: defaults.available_models['z-ai'] || [],
               availableMinimaxModels: defaults.available_models.minimax || [],
               availableMinimaxCodingPlanModels: defaults.available_models['minimax-coding-plan'] || [],
               supportedProviders: (() => {
-                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax', 'minimax-coding-plan']
+                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'z-ai', 'claude-code', 'gemini-cli', 'minimax', 'minimax-coding-plan']
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
               })(),
@@ -974,6 +1007,9 @@ export const useLLMStore = create<LLMState>()(
               break;
             case 'azure':
               availableModels = [...state.availableAzureModels, ...state.customAzureModels];
+              break;
+            case 'z-ai':
+              availableModels = state.availableZAIModels;
               break;
             case 'minimax':
               availableModels = [...state.availableMinimaxModels, ...state.customMinimaxModels];
@@ -1187,6 +1223,13 @@ export const useLLMStore = create<LLMState>()(
               api_key: '',
               endpoint: ''
             },
+            zaiConfig: {
+              provider: 'z-ai',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              api_key: ''
+            },
             minimaxConfig: {
               provider: 'minimax',
               model_id: '',
@@ -1232,6 +1275,7 @@ export const useLLMStore = create<LLMState>()(
           vertexConfig: sanitizeProviderConfigForPersistence(state.vertexConfig),
           anthropicConfig: sanitizeProviderConfigForPersistence(state.anthropicConfig),
           azureConfig: sanitizeProviderConfigForPersistence(state.azureConfig),
+          zaiConfig: sanitizeProviderConfigForPersistence(state.zaiConfig),
           minimaxConfig: sanitizeProviderConfigForPersistence(state.minimaxConfig),
           minimaxCodingPlanConfig: sanitizeProviderConfigForPersistence(state.minimaxCodingPlanConfig),
           customBedrockModels: state.customBedrockModels,
@@ -1283,6 +1327,7 @@ function syncProviderKeysToServer() {
         openrouter: s.openrouterConfig?.api_key || undefined,
         openai: s.openaiConfig?.api_key || undefined,
         anthropic: s.anthropicConfig?.api_key || undefined,
+        zai: s.zaiConfig?.api_key || undefined,
         vertex: s.vertexConfig?.api_key || undefined,
         gemini_cli: s.geminiCliApiKey || undefined,
         minimax: s.minimaxConfig?.api_key || undefined,
@@ -1307,6 +1352,7 @@ const getProviderKeySnapshot = (state: LLMState) => ([
   state.openrouterConfig?.api_key,
   state.openaiConfig?.api_key,
   state.anthropicConfig?.api_key,
+  state.zaiConfig?.api_key,
   state.vertexConfig?.api_key,
   state.azureConfig?.api_key,
   state.azureConfig?.endpoint,

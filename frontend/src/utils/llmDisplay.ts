@@ -9,6 +9,7 @@ export type ProviderType =
   | 'vertex'
   | 'anthropic'
   | 'azure'
+  | 'z-ai'
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
@@ -52,6 +53,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Endpoint + API Key',
     colorClass: 'text-sky-600 dark:text-sky-400',
   },
+  'z-ai': {
+    name: 'Z.AI',
+    authDescription: 'API Key',
+    colorClass: 'text-fuchsia-600 dark:text-fuchsia-400',
+  },
   'claude-code': {
     name: 'Claude Code',
     authDescription: 'Local CLI (no API key)',
@@ -86,6 +92,7 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'vertex',
   'anthropic',
   'azure',
+  'z-ai',
   'minimax',
   'minimax-coding-plan',
   'claude-code',

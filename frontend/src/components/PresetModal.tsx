@@ -11,7 +11,7 @@ import { SecretSelectionSection } from './secrets/SecretSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import ConfirmationDialog from './ui/ConfirmationDialog';
 import type { CustomPreset } from '../types/preset';
-import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback } from '../services/api-types';
+import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback, LLMProvider } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore';
@@ -190,7 +190,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
     setLlmConfig({
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+      provider: llm.provider as LLMProvider,
       model_id: llm.model
     });
   }, []);
@@ -625,7 +625,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               llm.provider === effectiveTier1LLM.provider && llm.model === effectiveTier1LLM.model_id
                             ) || null : currentLLMOption)}
                             onLLMSelect={(llm) => setPhaseLLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                              provider: llm.provider as LLMProvider,
                               model_id: llm.model
                             })}
                             onRefresh={loadDefaultsFromBackend}

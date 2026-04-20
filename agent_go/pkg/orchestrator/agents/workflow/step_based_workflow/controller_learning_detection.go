@@ -38,11 +38,11 @@ type LearningMetadata struct {
 	StepPath            string `json:"step_path"`
 	LearningContentHash string `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
 	TotalIterations     int    `json:"total_iterations"`
-	SuccessfulRuns      int    `json:"successful_runs"`                    // Total count of successful runs (all description versions, observability only)
-	LastDescriptionHash string `json:"last_description_hash,omitempty"`    // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
-	DescriptionHashRuns int    `json:"description_hash_runs,omitempty"`    // Successful runs accumulated under LastDescriptionHash. Auto-lock gate fires at 3.
-	FailureLearningRuns int    `json:"failure_learning_runs"` // Count of failure learning runs (persisted across iterations)
-	LastTurnCount       int    `json:"last_turn_count"`       // Last recorded TurnCount
+	SuccessfulRuns      int    `json:"successful_runs"`                 // Total count of successful runs (all description versions, observability only)
+	LastDescriptionHash string `json:"last_description_hash,omitempty"` // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
+	DescriptionHashRuns int    `json:"description_hash_runs,omitempty"` // Successful runs accumulated under LastDescriptionHash. Auto-lock gate fires at 3.
+	FailureLearningRuns int    `json:"failure_learning_runs"`           // Count of failure learning runs (persisted across iterations)
+	LastTurnCount       int    `json:"last_turn_count"`                 // Last recorded TurnCount
 	LastExecutionLLM    string `json:"last_execution_llm,omitempty"`
 	LastLearningLLM     string `json:"last_learning_llm,omitempty"`
 	// Detection tracking
@@ -58,6 +58,16 @@ type LearningMetadata struct {
 	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`
 	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`
 	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"`
+	// Adaptive execution tiering (Tier 1 High vs Tier 2 Medium) for execution agents.
+	// The step starts on High, may promote to Medium after stable successful runs,
+	// and falls back to High immediately if a Medium attempt fails.
+	PreferredExecutionTier              string `json:"preferred_execution_tier,omitempty"`                 // "high" | "medium"
+	LastExecutionTier                   string `json:"last_execution_tier,omitempty"`                      // Last execution tier actually used ("high" | "medium")
+	MediumSuccessStreak                 int    `json:"medium_success_streak,omitempty"`                    // Consecutive successful executions on Medium
+	HighSuccessStreakSinceMediumFailure int    `json:"high_success_streak_since_medium_failure,omitempty"` // Recovery successes required before retrying Medium
+	LastMediumFailureAt                 string `json:"last_medium_failure_at,omitempty"`                   // Timestamp of the last Medium-tier failure
+	LastTierDecisionReason              string `json:"last_tier_decision_reason,omitempty"`                // Human-readable reason for current preference
+	LastTierChangeAt                    string `json:"last_tier_change_at,omitempty"`                      // Timestamp when PreferredExecutionTier last changed
 	// Global learning: per-step contribution tracking (only used when StepID == "_global")
 	// Maps step ID -> number of times that step has contributed to the global skill
 	StepContributions map[string]int `json:"step_contributions,omitempty"`

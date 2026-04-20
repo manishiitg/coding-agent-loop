@@ -707,12 +707,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 			if strings.HasPrefix(entry, "workspace_git") {
 				continue // Drop deprecated workspace_git entries
 			}
-			if entry == "workspace_image_gen:*" || entry == "workspace_image_edit:*" {
-				entry = "workspace_image:*"
-			} else if strings.HasPrefix(entry, "workspace_image_gen:") {
-				entry = strings.Replace(entry, "workspace_image_gen:", "workspace_image:", 1)
-			} else if strings.HasPrefix(entry, "workspace_image_edit:") {
-				entry = strings.Replace(entry, "workspace_image_edit:", "workspace_image:", 1)
+			// workspace_image* entries are legacy — image tools now live inside workspace_advanced,
+			// which is auto-added below, so these entries become no-ops and are dropped.
+			if entry == "workspace_image:*" || strings.HasPrefix(entry, "workspace_image:") ||
+				entry == "workspace_image_gen:*" || strings.HasPrefix(entry, "workspace_image_gen:") ||
+				entry == "workspace_image_edit:*" || strings.HasPrefix(entry, "workspace_image_edit:") {
+				continue
 			}
 			if strings.HasPrefix(entry, "workspace_advanced") {
 				hasAdvanced = true
@@ -1815,8 +1815,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for todo task orchestrator agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
 	} else {
 		toolsToRegister = hcpo.WorkspaceTools
-		executorsToUse = hcpo.WorkspaceToolExecutors
+		// Clone to avoid mutating the shared workspace executor map when we wrap
+		// execute_shell_command below to inject STEP_OUTPUT_DIR / STEP_EXECUTION_DIR.
+		executorsToUse = make(map[string]interface{}, len(hcpo.WorkspaceToolExecutors))
+		for k, v := range hcpo.WorkspaceToolExecutors {
+			executorsToUse[k] = v
+		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for todo task orchestrator agent: %d tools", len(toolsToRegister)))
+	}
+
+	// Inject STEP_OUTPUT_DIR and STEP_EXECUTION_DIR into execute_shell_command so the
+	// todo-task orchestrator's own shell calls resolve sibling step outputs via env vars
+	// rather than having to rebuild absolute paths from the step context.
+	{
+		stepExecutionRelPath := hcpo.getTodoTaskStepExecutionPath(stepID, stepPath)
+		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionRelPath)
+		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting STEP_OUTPUT_DIR/STEP_EXECUTION_DIR into execute_shell_command for todo task %s: %s", stepID, stepOutputAbsPath))
 	}
 
 	// NOTE: Task management is handled directly by the orchestrator LLM via shell commands

@@ -23,6 +23,7 @@ type StoredProviderKeys struct {
 	OpenRouter        string               `json:"openrouter,omitempty"`
 	OpenAI            string               `json:"openai,omitempty"`
 	Anthropic         string               `json:"anthropic,omitempty"`
+	ZAI               string               `json:"zai,omitempty"`
 	Vertex            string               `json:"vertex,omitempty"`
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
@@ -105,6 +106,9 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.Anthropic != "" {
 		m["anthropic"] = keys.Anthropic
 	}
+	if keys.ZAI != "" {
+		m["z-ai"] = keys.ZAI
+	}
 	if keys.Vertex != "" {
 		m["vertex"] = keys.Vertex
 	}
@@ -153,6 +157,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.Anthropic != "" {
 		result.Anthropic = &keys.Anthropic
 	}
+	if keys.ZAI != "" {
+		result.ZAI = &keys.ZAI
+	}
 	if keys.Vertex != "" {
 		result.Vertex = &keys.Vertex
 	}
@@ -178,14 +185,33 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	// Log which providers have keys loaded
 	var loaded []string
-	if result.GeminiCLI != nil { loaded = append(loaded, "gemini-cli") }
-	if result.OpenRouter != nil { loaded = append(loaded, "openrouter") }
-	if result.OpenAI != nil { loaded = append(loaded, "openai") }
-	if result.Anthropic != nil { loaded = append(loaded, "anthropic") }
-	if result.Vertex != nil { loaded = append(loaded, "vertex") }
-	if result.MiniMax != nil { loaded = append(loaded, "minimax") }
-	if result.Bedrock != nil { loaded = append(loaded, "bedrock") }
-	if result.Azure != nil { loaded = append(loaded, "azure") }
+	if result.GeminiCLI != nil {
+		loaded = append(loaded, "gemini-cli")
+	}
+	if result.OpenRouter != nil {
+		loaded = append(loaded, "openrouter")
+	}
+	if result.OpenAI != nil {
+		loaded = append(loaded, "openai")
+	}
+	if result.Anthropic != nil {
+		loaded = append(loaded, "anthropic")
+	}
+	if result.ZAI != nil {
+		loaded = append(loaded, "z-ai")
+	}
+	if result.Vertex != nil {
+		loaded = append(loaded, "vertex")
+	}
+	if result.MiniMax != nil {
+		loaded = append(loaded, "minimax")
+	}
+	if result.Bedrock != nil {
+		loaded = append(loaded, "bedrock")
+	}
+	if result.Azure != nil {
+		loaded = append(loaded, "azure")
+	}
 	log.Printf("[PROVIDER_KEYS] Loaded workspace keys for providers: %v", loaded)
 
 	return result
@@ -211,13 +237,16 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 
 	// Start from env, workspace overrides when set
 	pick := func(env, ws *string) *string {
-		if ws != nil { return ws }
+		if ws != nil {
+			return ws
+		}
 		return env
 	}
 	result := &llm.ProviderAPIKeys{
 		OpenRouter:        pick(envKeys.OpenRouter, wsKeys.OpenRouter),
 		OpenAI:            pick(envKeys.OpenAI, wsKeys.OpenAI),
 		Anthropic:         pick(envKeys.Anthropic, wsKeys.Anthropic),
+		ZAI:               pick(envKeys.ZAI, wsKeys.ZAI),
 		Vertex:            pick(envKeys.Vertex, wsKeys.Vertex),
 		GeminiCLI:         pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
 		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),

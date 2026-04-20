@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	pathpkg "path"
 	"sort"
 	"time"
@@ -39,6 +38,7 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 	if userID == "" {
 		userID = "default"
 	}
+	logCtx := newServerLogContext("", "", agentMode, userID, "", sessionID)
 
 	convData := map[string]interface{}{
 		"session_id":           sessionID,
@@ -49,17 +49,17 @@ func (api *StreamingAPI) persistChatConversation(sessionID, agentMode, userID st
 
 	convJSON, err := json.MarshalIndent(convData, "", "  ")
 	if err != nil {
-		log.Printf("[CHAT_HISTORY] Failed to marshal conversation for %s: %v", sessionID, err)
+		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to marshal conversation for %s: %v", sessionID, err)
 		return
 	}
 
 	convPath := pathpkg.Join(chatHistoryRoot(userID), sessionID, "conversation.json")
 	if err := writeRawFileToWorkspace(context.Background(), convPath, string(convJSON)); err != nil {
-		log.Printf("[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
+		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
 	}
 
-	log.Printf("[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(history), convPath)
+	logfWithContext(logCtx, "[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(history), convPath)
 }
 
 // ListChatHistorySessions returns persisted session metadata for a user, newest first.

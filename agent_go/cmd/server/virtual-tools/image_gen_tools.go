@@ -47,9 +47,18 @@ type ImageGenRuntimeOverride struct {
 	APIKey   string
 }
 
-// GetWorkspaceImageToolCategory returns the category name for workspace image tools.
+// GetWorkspaceImageToolCategory returns the category name used by image tools.
+// Image tools live inside workspace_advanced so step configs with workspace_advanced:*
+// automatically get image_gen/image_edit — no separate category toggle needed.
 func GetWorkspaceImageToolCategory() string {
-	return "workspace_image"
+	return "workspace_advanced"
+}
+
+// IsImageTool reports whether the given tool name is a workspace image tool
+// (image_gen or image_edit). Used by override wiring that can't rely on
+// category name anymore since image tools share the workspace_advanced category.
+func IsImageTool(name string) bool {
+	return name == "image_gen" || name == "image_edit"
 }
 
 // GetImageGenToolCategory returns the category name for the image gen tool.
@@ -119,12 +128,12 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 
 // imageGenResult is the JSON structure returned to the LLM
 type imageGenResult struct {
-	Model        string                `json:"model"`
-	CostPerImage float64               `json:"cost_per_image"`
-	Prompt       string                `json:"prompt"`
-	SavedPaths   []string              `json:"saved_paths,omitempty"`
-	Count        int                   `json:"count"`
-	Note         string                `json:"note,omitempty"`
+	Model        string   `json:"model"`
+	CostPerImage float64  `json:"cost_per_image"`
+	Prompt       string   `json:"prompt"`
+	SavedPaths   []string `json:"saved_paths,omitempty"`
+	Count        int      `json:"count"`
+	Note         string   `json:"note,omitempty"`
 }
 
 const (
@@ -153,6 +162,16 @@ func inferImageProviderFromModel(modelID string) string {
 	}
 }
 
+func inferImageAnalysisProviderFromModel(modelID string) string {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	switch {
+	case strings.HasPrefix(modelID, "glm-"):
+		return "z-ai"
+	default:
+		return inferImageProviderFromModel(modelID)
+	}
+}
+
 func normalizeImageProviderAndModel(provider, modelID string) (string, string, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	modelID = strings.TrimSpace(modelID)
@@ -175,6 +194,28 @@ func normalizeImageProviderAndModel(provider, modelID string) (string, string, e
 	}
 }
 
+func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, string, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.TrimSpace(modelID)
+
+	if provider == "" && modelID != "" {
+		provider = inferImageAnalysisProviderFromModel(modelID)
+	}
+	if provider == "" {
+		provider = defaultImageGenProvider
+	}
+	if modelID == "" {
+		modelID = defaultImageModelForProvider(provider)
+	}
+
+	switch provider {
+	case "vertex", "minimax-coding-plan", "z-ai":
+		return provider, modelID, nil
+	default:
+		return "", "", fmt.Errorf("unsupported image analysis provider %q. %s", provider, supportedImageAnalysisProviderSummary())
+	}
+}
+
 func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "vertex":
@@ -186,8 +227,21 @@ func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	}
 }
 
+func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "z-ai":
+		return apiKeys != nil && apiKeys.ZAI != nil && strings.TrimSpace(*apiKeys.ZAI) != ""
+	default:
+		return hasImageProviderAuth(provider, apiKeys)
+	}
+}
+
 func supportedImageProviderSummary() string {
 	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image), minimax-coding-plan (image-01)"
+}
+
+func supportedImageAnalysisProviderSummary() string {
+	return "Supported image analysis providers: vertex (Gemini vision models), minimax-coding-plan (image-01), z-ai (glm-4.6v, glm-5v-turbo)"
 }
 
 func imageModelsSummaryForProvider(provider string) string {

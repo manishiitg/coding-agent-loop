@@ -11,6 +11,10 @@ import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/use
 import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
+import {
+  REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
+  REPORT_PREVIEW_PREFERENCE_KEY,
+} from './ReportViewer'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -266,10 +270,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Use workflow store for UI state (single source of truth)
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
+  const showWorkspacePane = useWorkflowStore(state => state.showWorkspacePane)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
-  const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
+  const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
   const showRunningDrawer = useShowRunningDrawer()
 
@@ -305,8 +310,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
   const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
-  // Auto-expand chat when workspace is open (needs more space alongside workspace)
-  const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
   const lastWorkspaceRunExpansionKeyRef = useRef<string | null>(null)
   const reportAutoMinimizedWorkspaceRef = useRef(false)
   const prevWorkflowWorkspaceViewRef = useRef<string | null>(null)
@@ -323,6 +326,55 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activeWorkflowPreset])
+
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+    try {
+      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
+
+  useEffect(() => {
+    const syncReportPreviewPreference = () => {
+      try {
+        const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
+        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
+      } catch {
+        setReportPreviewPreference('auto')
+      }
+    }
+
+    window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, syncReportPreviewPreference as EventListener)
+    window.addEventListener('storage', syncReportPreviewPreference)
+
+    return () => {
+      window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, syncReportPreviewPreference as EventListener)
+      window.removeEventListener('storage', syncReportPreviewPreference)
+    }
+  }, [])
+
+  const workspacePaneVisible = !showChatArea || showWorkspacePane
+  const shouldUseMobileReportPane =
+    showChatArea &&
+    workspacePaneVisible &&
+    canvasViewMode === 'report' &&
+    reportPreviewPreference !== 'desktop'
+  const splitLayoutClassName = !showChatArea
+    ? 'flex-1 min-h-0 flex flex-col'
+    : !workspacePaneVisible
+      ? 'flex-1 min-h-0 flex flex-col'
+      : shouldUseMobileReportPane
+      ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:grid-rows-[auto_minmax(0,1fr)]'
+      : 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-2 lg:grid-rows-[auto_minmax(0,1fr)]'
+  const canvasPaneClassName = !showChatArea
+    ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
+    : !workspacePaneVisible
+      ? 'hidden'
+    : shouldUseMobileReportPane
+      ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[480px] lg:flex-none'
+      : 'min-h-0 min-w-0 transition-all duration-300 lg:col-start-2 lg:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -1090,74 +1142,76 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     )
   }
 
+  const canvasElement = (
+    <WorkflowCanvas
+      ref={canvasRef}
+      workspacePath={workspacePath}
+      presetQueryId={activePresetId}
+      currentPhase={activePhase || currentWorkflowPhase}
+      onStartPhase={handleStartPhase}
+      onCreatePlan={onCreatePlan || handleCreatePlan}
+      showChatArea={showChatArea}
+      toolbarOnly={!workspacePaneVisible && showChatArea}
+      sharedToolbar={showChatArea}
+      paneClassName={canvasPaneClassName}
+      onToggleChatArea={() => {
+        const newShow = !showChatArea
+        if (newShow) {
+          // Ensure a workflow tab is active when showing the chat panel
+          // (activeTabId might point to a chat/multi-agent tab from a different mode)
+          const chatStore = useChatStore.getState()
+          const activeTab = chatStore.getActiveTab()
+          if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
+            const workflowTabs = Object.values(chatStore.chatTabs)
+              .filter(t => t.metadata?.mode === 'workflow')
+              .sort((a, b) => b.createdAt - a.createdAt)
+            if (workflowTabs.length > 0) {
+              chatStore.switchTab(workflowTabs[0].tabId)
+            }
+          }
+        }
+        setShowChatArea(newShow)
+      }}
+      className="h-full"
+    />
+  )
+
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Main Content */}
-      <div className="flex-1 flex min-h-0 relative">
-        {/* Canvas - main area. When chat is expanded, WorkflowCanvas renders toolbar only
-            and skips expensive hooks (plan loading, node/edge computation, layout, etc.). */}
-        <div className={`${showChatArea && chatAreaExpanded ? 'w-full' : 'flex-1 min-w-0'} transition-all duration-300 ${showChatArea && !chatAreaExpanded ? 'w-1/2' : ''}`}>
-          <WorkflowCanvas
-            ref={canvasRef}
-            workspacePath={workspacePath}
-            presetQueryId={activePresetId}
-            currentPhase={activePhase || currentWorkflowPhase}
-            onStartPhase={handleStartPhase}
-            onCreatePlan={onCreatePlan || handleCreatePlan}
-            showChatArea={showChatArea}
-            toolbarOnly={showChatArea && chatAreaExpanded}
-            onToggleChatArea={() => {
-              const newShow = !showChatArea
-              if (newShow) {
-                // Ensure a workflow tab is active when showing the chat panel
-                // (activeTabId might point to a chat/multi-agent tab from a different mode)
-                const chatStore = useChatStore.getState()
-                const activeTab = chatStore.getActiveTab()
-                if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
-                  const workflowTabs = Object.values(chatStore.chatTabs)
-                    .filter(t => t.metadata?.mode === 'workflow')
-                    .sort((a, b) => b.createdAt - a.createdAt)
-                  if (workflowTabs.length > 0) {
-                    chatStore.switchTab(workflowTabs[0].tabId)
-                  }
-                }
-              }
-              setShowChatArea(newShow)
-            }}
-            className="h-full"
-          />
-        </div>
+      <div className={splitLayoutClassName}>
+        {showChatArea && !workspacePaneVisible && canvasElement}
 
-        {/* ChatArea Panel - appears on right side, positioned below toolbar */}
-        <div className={`${showChatArea ? (chatAreaExpanded ? 'w-full' : 'w-1/2') : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0 bg-white dark:bg-gray-900 absolute right-0 top-0 bottom-0 transition-all duration-300`} style={{ top: '40px' }}>
-          {showChatArea && (
-            <>
-              {/* Workflow Chat Tabs - only shows active workflow tabs */}
-              <div className="flex-shrink-0">
-                <WorkflowChatTabs />
+        {showChatArea && (
+          <div className={`flex min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
+            workspacePaneVisible
+              ? `border-b border-border lg:col-start-1 lg:row-start-2 lg:border-b-0 lg:border-r ${shouldUseMobileReportPane ? 'flex-1 lg:flex-[1.35]' : 'flex-1 basis-1/2'}`
+              : 'flex-1'
+          }`}>
+            <div className="flex-shrink-0">
+              <WorkflowChatTabs />
+            </div>
+
+            {isRestoringWorkflowSessions && (
+              <div className="flex items-center gap-2 border-b border-blue-100 bg-blue-50 px-3 py-1.5 dark:border-blue-800/50 dark:bg-blue-900/20">
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-600 dark:border-t-blue-400"></div>
+                <span className="text-xs text-blue-600 dark:text-blue-400">Restoring previous session...</span>
               </div>
+            )}
 
-              {/* Loading indicator while restoring previous sessions */}
-              {isRestoringWorkflowSessions && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-800/50">
-                  <div className="w-3 h-3 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-                  <span className="text-xs text-blue-600 dark:text-blue-400">Restoring previous session...</span>
-                </div>
-              )}
+            <div className="min-h-[320px] flex-1">
+              <ChatAreaWithObserverId
+                ref={chatAreaCallbackRef}
+                onNewChat={onNewChat}
+                hideHeader
+                hideInput
+                compact
+              />
+            </div>
+          </div>
+        )}
 
-              {/* Single ChatArea component - takes remaining space */}
-              <div className="flex-1 min-h-0">
-                <ChatAreaWithObserverId
-                  ref={chatAreaCallbackRef}
-                  onNewChat={onNewChat}
-                  hideHeader
-                  hideInput
-                  compact
-                />
-              </div>
-            </>
-          )}
-        </div>
+        {workspacePaneVisible && canvasElement}
       </div>
     </div>
   )

@@ -302,6 +302,7 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		OpenRouter        string `json:"openrouter,omitempty"`
 		OpenAI            string `json:"openai,omitempty"`
 		Anthropic         string `json:"anthropic,omitempty"`
+		ZAI               string `json:"zai,omitempty"`
 		Vertex            string `json:"vertex,omitempty"`
 		GeminiCLI         string `json:"gemini_cli,omitempty"`
 		CodexCLI          string `json:"codex_cli,omitempty"`
@@ -330,6 +331,9 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.Anthropic != "" {
 		m["anthropic"] = stored.Anthropic
+	}
+	if stored.ZAI != "" {
+		m["z-ai"] = stored.ZAI
 	}
 	if stored.Vertex != "" {
 		m["vertex"] = stored.Vertex

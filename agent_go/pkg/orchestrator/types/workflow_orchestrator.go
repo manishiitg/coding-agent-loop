@@ -13,8 +13,8 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -118,8 +118,8 @@ type WorkflowOrchestrator struct {
 	presetPhaseLLM *step_based_workflow.AgentLLMConfig // Default for all phase agents
 
 	// Preset-level feature toggles
-	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
-	lockKnowledgebase bool // When true, post-step KB update agent never fires; graph.json mutates only via explicit reorganize_knowledgebase calls
+	useKnowledgebase  bool   // Whether to create and reference knowledgebase folder (default: true)
+	lockKnowledgebase bool   // When true, post-step KB update agent never fires; graph.json mutates only via explicit reorganize_knowledgebase calls
 	kbShape           string // "graph+notes" (default) | "notes-only"; controls which KB artifacts exist.
 
 	// Tiered LLM allocation mode
@@ -171,6 +171,9 @@ func (wo *WorkflowOrchestrator) SetVirtualPlan(plan *step_based_workflow.Plannin
 // When set, backend will use these options instead of asking interactively
 func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow.ExecutionOptions) {
 	wo.executionOptions = options
+	if options != nil {
+		wo.ApplyWorkflowLogContext(wo.GetWorkspacePath(), orchestrator.SingleSelectedGroupName(options.EnabledGroupNames))
+	}
 	if options != nil {
 		wo.GetLogger().Info(fmt.Sprintf("📋 WorkflowOrchestrator: Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s",
 			options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder))
@@ -400,6 +403,12 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	// Set workspace path from parameter
 	wo.SetWorkspacePath(workspacePath)
+	wo.ApplyWorkflowLogContext(workspacePath, orchestrator.SingleSelectedGroupName(func() []string {
+		if wo.executionOptions == nil {
+			return nil
+		}
+		return wo.executionOptions.EnabledGroupNames
+	}()))
 	if wo.GetWorkspacePath() == "" {
 		return "", fmt.Errorf("workspace path is required")
 	}
@@ -540,7 +549,6 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	wo.GetLogger().Info("✅ Evaluation execution completed successfully")
 	return result, nil
 }
-
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
 // This is called for execution status and executes the approved plan

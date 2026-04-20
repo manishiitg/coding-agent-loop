@@ -156,6 +156,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onStartPhase,
   onStop,
   onCreatePlan,
+  showChatArea = false,
   onBulkUpdateSteps,
   onRefresh,
   onSaveLayout,
@@ -188,6 +189,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     restoreSelectionFromLocalStorage,
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
+    showWorkspacePane,
     canvasViewMode,
     setCanvasViewMode,
     setWorkflowWorkspaceView,
@@ -205,6 +207,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
+    showWorkspacePane: state.showWorkspacePane,
     canvasViewMode: state.canvasViewMode,
     setCanvasViewMode: state.setCanvasViewMode,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
@@ -750,9 +753,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // View selection should follow the actual canvas/report renderer, not the
   // higher-level workspace mode. That lets Builder/Execution keep whatever
   // view (Flow/Plan/Report) the user last selected.
-  const isReportWorkspace = canvasViewMode === 'report'
-  const isPlanWorkspace = canvasViewMode === 'plan'
-  const isFlowWorkspace = canvasViewMode === 'flow'
+  const isBuilderPaneVisible = showChatArea === true
+  const isBuilderModeActive = isBuilderPaneVisible
+  const isExecutionModeActive = !isBuilderPaneVisible && isExecutionWorkspace
+  const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
+  const isPlanWorkspace = showWorkspacePane && canvasViewMode === 'plan'
+  const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
 
   // Handle creating new iteration
   const handleCreateIteration = useCallback(async () => {
@@ -981,14 +987,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  if (isBuilderPaneVisible) {
+                    store.setShowChatArea(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('builder')
-                  // Builder owns the chat/workshop experience, so selecting it should
-                  // also surface the chat panel rather than requiring a second control.
+                  store.setShowWorkspacePane(false)
                   store.setShowChatArea(true)
                   onStartPhase('workflow-builder')
                 }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isBuilderWorkspace
+                  isBuilderModeActive
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                 }`}
@@ -1008,7 +1017,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   }
                 }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isExecutionWorkspace
+                  isExecutionModeActive
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                 }`}
@@ -1028,12 +1037,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'flow' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('flow')
-                  // Hide chat entirely so the canvas becomes visible. Just collapsing
-                  // chatAreaExpanded is not enough — WorkflowLayout derives effective
-                  // expansion as `chatAreaExpandedManual || !workspaceMinimized`, which
-                  // re-expands chat whenever the workspace panel isn't minimized.
-                  store.setShowChatArea(false)
+                  store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('flow')
                 }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
@@ -1047,8 +1056,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'plan' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('plan')
-                  store.setShowChatArea(false)
+                  store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('plan')
                 }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
@@ -1062,8 +1075,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               <button
                 onClick={() => {
                   const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'report' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
                   store.setWorkflowWorkspaceView('report')
-                  store.setShowChatArea(false)
+                  store.setShowWorkspacePane(true)
                   store.setCanvasViewMode('report')
                 }}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${

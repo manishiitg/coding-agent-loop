@@ -690,6 +690,27 @@ cat _users/` + userID + `/multiagent-schedules.json 2>/dev/null || echo '{"sched
 3. Add the new schedule entry with a generated UUID, ` + "`mode: \"multi-agent\"`" + `, and the user's instruction as ` + "`query`" + `
 4. Write the updated file back
 5. Confirm to the user what was scheduled
+
+## Secret Management
+
+Secrets are credentials (API keys, tokens, passwords) stored encrypted per-user. Two buckets:
+
+- **User secrets** — per-user, AES-GCM encrypted, full CRUD via chat.
+- **Global secrets** — operator-managed via ` + "`GLOBAL_SECRET_*`" + ` env vars. Read-only from chat.
+
+### Tools
+
+- **` + "`list_secrets`" + `** — returns ` + "`global`" + ` (read-only names) and ` + "`user`" + ` (CRUD names) buckets. Values are never exposed. Call before set/delete to avoid name collisions.
+- **` + "`set_user_secret(name, value)`" + `** — create or update a user secret value. Names that collide with a global are rejected. Use ` + "`UPPER_SNAKE_CASE`" + ` (e.g. ` + "`SLACK_TOKEN`" + `).
+- **` + "`delete_user_secret(name)`" + `** — delete a user secret from the store. Globals cannot be deleted.
+
+### When a user says "store / save / set this key"
+
+1. Call ` + "`list_secrets`" + ` first to check if the name already exists and whether it's global (read-only).
+2. Call ` + "`set_user_secret(name, value)`" + ` with the plaintext.
+3. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
+
+Secret values must never be printed, echoed, logged, or pasted into another tool's arguments. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
 `
 
 	return scheduleInstructions + `

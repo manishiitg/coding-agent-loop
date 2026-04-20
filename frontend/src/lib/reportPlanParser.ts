@@ -20,6 +20,12 @@
 // user is editing shouldn't break the whole report; bad widgets should just not render.
 
 import type {
+  ReportCostsMetric,
+  ReportCostsScope,
+  ReportCostsView,
+  ReportEvalsMetric,
+  ReportEvalsView,
+  ReportRunsView,
   ParsedReportPlan,
   ReportAlertSeverity,
   ReportChartType,
@@ -46,6 +52,18 @@ const KNOWN_ALERT_SEVERITIES: ReportAlertSeverity[] = ['info', 'warning', 'error
 const KNOWN_ALERT_SEVERITY_SET = new Set<string>(KNOWN_ALERT_SEVERITIES)
 const KNOWN_PIVOT_AGGREGATES: ReportPivotAggregate[] = ['sum', 'avg', 'count', 'min', 'max', 'first']
 const KNOWN_PIVOT_AGGREGATE_SET = new Set<string>(KNOWN_PIVOT_AGGREGATES)
+const KNOWN_COSTS_SCOPES: ReportCostsScope[] = ['phase', 'execution', 'evaluation', 'all']
+const KNOWN_COSTS_SCOPE_SET = new Set<string>(KNOWN_COSTS_SCOPES)
+const KNOWN_COSTS_VIEWS: ReportCostsView[] = ['summary', 'stage-breakdown', 'run-table', 'step-table', 'model-table']
+const KNOWN_COSTS_VIEW_SET = new Set<string>(KNOWN_COSTS_VIEWS)
+const KNOWN_COSTS_METRICS: ReportCostsMetric[] = ['cost', 'total_tokens', 'input_tokens', 'output_tokens', 'llm_calls']
+const KNOWN_COSTS_METRIC_SET = new Set<string>(KNOWN_COSTS_METRICS)
+const KNOWN_EVALS_VIEWS: ReportEvalsView[] = ['summary', 'run-chart', 'run-table', 'step-table']
+const KNOWN_EVALS_VIEW_SET = new Set<string>(KNOWN_EVALS_VIEWS)
+const KNOWN_EVALS_METRICS: ReportEvalsMetric[] = ['score_percentage', 'total_score']
+const KNOWN_EVALS_METRIC_SET = new Set<string>(KNOWN_EVALS_METRICS)
+const KNOWN_RUNS_VIEWS: ReportRunsView[] = ['summary', 'duration-chart', 'status-chart', 'table']
+const KNOWN_RUNS_VIEW_SET = new Set<string>(KNOWN_RUNS_VIEWS)
 
 // Parses a comma-separated list of field names into a trimmed non-empty array.
 // Returns undefined when the resulting list is empty so callers can drop the key.
@@ -195,7 +213,10 @@ function isWidgetKind(kind: string): kind is ReportWidgetKind {
     kind === 'table' ||
     kind === 'stat' ||
     kind === 'alert' ||
-    kind === 'pivot'
+    kind === 'pivot' ||
+    kind === 'costs' ||
+    kind === 'evals' ||
+    kind === 'runs'
   )
 }
 
@@ -221,8 +242,12 @@ function parseKeyValueWidget(kind: ReportWidgetKind, body: string[]): ReportWidg
     const value = trimmed.slice(sepIdx + 1).trim()
     if (value) fields[key] = value
   }
-  if (!fields.source) return null
-  const widget: ReportWidget = { kind, source: fields.source, path: normalizePath(fields.path) }
+  if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !fields.source) return null
+  const widget: ReportWidget = {
+    kind,
+    source: kind === 'costs' || kind === 'evals' || kind === 'runs' ? '' : fields.source,
+    path: normalizePath(fields.path),
+  }
   if (fields.filter) widget.filter = fields.filter
   if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
   applyOptionalFields(widget, fields)
@@ -340,6 +365,39 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
       const list = parseColorsField(fields.heatmap_colors || fields.heatmapcolors)
       if (list && list.length >= 2) widget.heatmapColors = [list[0], list[1]]
     }
+  } else if (widget.kind === 'costs') {
+    if (fields.scope) {
+      const scope = fields.scope.toLowerCase()
+      if (KNOWN_COSTS_SCOPE_SET.has(scope)) widget.costsScope = scope as ReportCostsScope
+    }
+    if (fields.view) {
+      const view = fields.view.toLowerCase()
+      if (KNOWN_COSTS_VIEW_SET.has(view)) widget.costsView = view as ReportCostsView
+    }
+    if (fields.metric) {
+      const metric = fields.metric.toLowerCase()
+      if (KNOWN_COSTS_METRIC_SET.has(metric)) widget.costsMetric = metric as ReportCostsMetric
+    }
+    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
+    if (fields.group) widget.group = fields.group
+  } else if (widget.kind === 'evals') {
+    if (fields.view) {
+      const view = fields.view.toLowerCase()
+      if (KNOWN_EVALS_VIEW_SET.has(view)) widget.evalsView = view as ReportEvalsView
+    }
+    if (fields.metric) {
+      const metric = fields.metric.toLowerCase()
+      if (KNOWN_EVALS_METRIC_SET.has(metric)) widget.evalsMetric = metric as ReportEvalsMetric
+    }
+    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
+    if (fields.group) widget.group = fields.group
+  } else if (widget.kind === 'runs') {
+    if (fields.view) {
+      const view = fields.view.toLowerCase()
+      if (KNOWN_RUNS_VIEW_SET.has(view)) widget.runsView = view as ReportRunsView
+    }
+    if (fields.run_folder || fields.runfolder) widget.runFolder = fields.run_folder || fields.runfolder
+    if (fields.group) widget.group = fields.group
   }
 
   // Color options — apply to chart and table; ignored for text widgets.
@@ -384,6 +442,8 @@ function normalizePath(raw: string | undefined): string {
 
 // Parses a `widget:row` body. Each non-blank non-comment line is expected to be:
 //   - {kind} | source: {path} | path: {key} [ | filter: {expr} ]
+// Costs / evals / runs widgets are the exception: they read from dedicated APIs, so
+// `source` is omitted and the row can be as small as `costs | view: summary`.
 // The leading `-` is optional to tolerate agent-edited variants.
 function parseRowBlock(body: string[]): ReportWidgetRow {
   const widgets: ReportWidget[] = []
@@ -392,7 +452,7 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
     if (!line || line.startsWith('#')) continue
 
     const parts = line.split('|').map(p => p.trim()).filter(Boolean)
-    if (parts.length < 3) continue
+    if (parts.length < 2) continue
     const kind = parts[0].toLowerCase()
     if (!isWidgetKind(kind)) continue
 
@@ -405,10 +465,15 @@ function parseRowBlock(body: string[]): ReportWidgetRow {
       const value = segment.slice(sepIdx + 1).trim()
       if (value) fields[key] = value
     }
-    if (!fields.source) continue
-    const widget: ReportWidget = { kind, source: fields.source, path: normalizePath(fields.path) }
+    if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !fields.source) continue
+    const widget: ReportWidget = {
+      kind,
+      source: kind === 'costs' || kind === 'evals' || kind === 'runs' ? '' : fields.source,
+      path: normalizePath(fields.path),
+    }
     if (fields.filter) widget.filter = fields.filter
     if (fields.show_if || fields.showif) widget.showIf = fields.show_if || fields.showif
+    applyOptionalFields(widget, fields)
     widgets.push(widget)
   }
   return { widgets }

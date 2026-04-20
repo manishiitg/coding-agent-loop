@@ -36,6 +36,7 @@ interface JobPopupState {
   selectedRunFolder?: string
   sessionId?: string
   presetQueryId?: string
+  jobMode?: ScheduledJob['mode']
 }
 
 type RunCostData = {
@@ -689,17 +690,24 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     finally { setTriggering(null) }
   }
 
-  const openScheduledRunInChat = useCallback(async (sessionId: string, jobName: string, presetQueryId?: string) => {
+  const openScheduledRunInChat = useCallback(async (
+    sessionId: string,
+    jobName: string,
+    jobMode?: ScheduledJob['mode'],
+    presetQueryId?: string,
+  ) => {
     if (!sessionId) return
 
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(t => t.sessionId === sessionId)
 
     let effectivePresetQueryId = presetQueryId || existingTab?.metadata?.presetQueryId
+    let resolvedPhaseId = existingTab?.metadata?.phaseId
     if (!effectivePresetQueryId) {
       try {
         const running = await agentApi.getRunningWorkflow(sessionId)
         effectivePresetQueryId = running.preset_query_id || undefined
+        resolvedPhaseId = running.phase_id || resolvedPhaseId
       } catch {
         // Leave undefined rather than rebinding the scheduled run to whichever
         // workflow is currently open.
@@ -711,20 +719,33 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
     useWorkflowStore.getState().setShowChatArea(true)
 
-    const desiredName = 'Schedule'
+    const isWorkshopRun = jobMode === 'workshop' || resolvedPhaseId === 'workflow-builder'
+    const desiredName = isWorkshopRun ? 'Workflow Builder' : 'Schedule'
+    const metadata = isWorkshopRun
+      ? {
+          mode: 'workflow' as const,
+          phaseId: 'workflow-builder',
+          phaseName: 'Workflow Builder',
+          ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
+          isViewOnly: false,
+          isScheduledRun: true,
+          scheduledJobName: jobName,
+        }
+      : {
+          mode: 'workflow' as const,
+          phaseId: undefined,
+          phaseName: undefined,
+          ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
+          isViewOnly: true,
+          isScheduledRun: true,
+          scheduledJobName: jobName,
+        }
 
     if (existingTab) {
-      // Rebind the tab to this preset and tag it as a read-only scheduled-run view.
-      // Auto-restore may have created the tab under a different (or empty) presetQueryId
-      // because it couldn't determine the source preset; rebinding makes the tab appear
-      // under the correct workflow and surfaces the schedule banner/badge.
-      chatStore.setTabMetadata(existingTab.tabId, {
-        mode: 'workflow',
-        ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
-        isViewOnly: true,
-        isScheduledRun: true,
-        scheduledJobName: jobName,
-      })
+      // Rebind the tab to this preset and surface the schedule badge. Workshop-mode
+      // sessions should behave like normal workflow-builder chat, while normal
+      // workflow schedules remain read-only observers.
+      chatStore.setTabMetadata(existingTab.tabId, metadata)
       if (existingTab.name !== desiredName) {
         useChatStore.setState((state) => {
           const t = state.chatTabs[existingTab.tabId]
@@ -739,13 +760,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
     const tabId = await chatStore.createChatTab(
       desiredName,
-      {
-        mode: 'workflow',
-        ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
-        isViewOnly: true,
-        isScheduledRun: true,
-        scheduledJobName: jobName,
-      },
+      metadata,
       sessionId,
     )
     chatStore.switchTab(tabId)
@@ -1454,6 +1469,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                               popup: 'live',
                                               sessionId: run.session_id,
                                               presetQueryId: job.preset_query_id,
+                                              jobMode: job.mode,
                                             })}
                                             className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
                                           >
@@ -1463,18 +1479,20 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipContent side="left">Live execution view</TooltipContent>
                                       </Tooltip>
                                     )}
-                                    {/* Open in chat (read-only) — available for any live running job */}
+                                    {/* Workshop schedules resume in builder chat; normal workflow schedules stay read-only. */}
                                     {run.status === 'running' && run.session_id && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
-                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.preset_query_id)}
+                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.mode, job.preset_query_id)}
                                             className="p-1 text-blue-500 hover:text-blue-400 transition-colors"
                                           >
                                             <MessageSquare className="w-3 h-3" />
                                           </button>
                                         </TooltipTrigger>
-                                        <TooltipContent side="left">Open in chat (read-only)</TooltipContent>
+                                        <TooltipContent side="left">
+                                          {job.mode === 'workshop' ? 'Resume in workflow builder' : 'Open in chat (read-only)'}
+                                        </TooltipContent>
                                       </Tooltip>
                                     )}
                                     {/* Stop button for running jobs */}
@@ -1582,9 +1600,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           onOpenInChat={() => {
             const sid = popupState.sessionId!
             const name = popupState.jobName
+            const mode = popupState.jobMode
             const pid = popupState.presetQueryId
             setPopupState(null)
-            openScheduledRunInChat(sid, name, pid)
+            openScheduledRunInChat(sid, name, mode, pid)
           }}
         />
       )}

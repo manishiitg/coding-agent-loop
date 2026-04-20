@@ -173,6 +173,7 @@ type WorkshopChatSession struct {
 	skillFuncs             *SkillCallbacks
 	llmToolsFuncs          *LLMToolsCallbacks
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
+	resolveSecretValues    func(ctx context.Context, names []string) map[string]string
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier      SubAgentNotifier
@@ -335,6 +336,11 @@ type WorkshopConfig struct {
 	// ListAvailableSecrets returns names of all available secrets (global + user-stored).
 	// Used by get_workflow_config to show which secrets can be added.
 	ListAvailableSecrets func(ctx context.Context) ([]string, error)
+	// ResolveSecretValues returns plaintext values for the given secret names, merging
+	// user-stored secrets and global env secrets. Missing names are simply absent from
+	// the returned map — never an error. Used by update_workflow_config to refresh the
+	// workshop shell's SECRET_* env vars mid-session without a session restart.
+	ResolveSecretValues func(ctx context.Context, names []string) map[string]string
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -513,6 +519,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		skillFuncs:             cfg.SkillFuncs,
 		llmToolsFuncs:          cfg.LLMToolsFuncs,
 		listAvailableSecrets:   cfg.ListAvailableSecrets,
+		resolveSecretValues:    cfg.ResolveSecretValues,
 		workshopNotifier:       wsn,
 	}, nil
 }
@@ -659,6 +666,7 @@ func RegisterWorkshopChatTools(
 		llmToolsFuncs:          session.llmToolsFuncs,
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
+		resolveSecretValues:    session.resolveSecretValues,
 		executionNotifier:      session.executionNotifier,
 		hasPendingCompletions:  session.hasPendingCompletions,
 		hasRunningAgents:       session.hasRunningAgents,
@@ -677,6 +685,92 @@ func (s *WorkshopChatSession) Close() {
 	if s.controller != nil {
 		s.controller.CloseWorkshopGroupSessions()
 	}
+}
+
+// DetachSecretFromWorkflow removes a secret name from the workshop's in-memory
+// state, workflow.json manifest, and workshop shell env. Safe to call even if
+// the name was never attached — in that case it is a no-op. Intended to be
+// invoked by delete_user_secret so a single user action leaves no stale state
+// anywhere (store, manifest, or shell env).
+func (s *WorkshopChatSession) DetachSecretFromWorkflow(ctx context.Context, name string) error {
+	if s == nil || s.controller == nil || name == "" {
+		return nil
+	}
+
+	current := s.controller.GetSecrets()
+	filtered := current[:0:len(current)]
+	removed := false
+	for _, entry := range current {
+		if entry.Name == name {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	if !removed {
+		// Not attached — still clear envRef defensively and return.
+		if envRef := s.controller.GetWorkspaceEnvRef(); envRef != nil {
+			s.controller.LockWorkspaceEnv()
+			delete(envRef, "SECRET_"+name)
+			s.controller.UnlockWorkspaceEnv()
+		}
+		return nil
+	}
+
+	s.controller.SetSecrets(filtered)
+	if s.config != nil {
+		cloned := make([]orchestrator.SecretEntry, len(filtered))
+		copy(cloned, filtered)
+		s.config.Secrets = cloned
+	}
+
+	if envRef := s.controller.GetWorkspaceEnvRef(); envRef != nil {
+		s.controller.LockWorkspaceEnv()
+		delete(envRef, "SECRET_"+name)
+		s.controller.UnlockWorkspaceEnv()
+	}
+
+	// Persist the updated secret-name list to workflow.json. Mirrors the update
+	// block in persistWorkflowConfigToManifest but touches only selected_global_secret_names.
+	wsPath := s.controller.GetWorkspacePath()
+	if wsPath == "" {
+		return nil
+	}
+	manifestPath := "workflow.json"
+	content, readErr := s.controller.ReadWorkspaceFile(ctx, manifestPath)
+	if readErr != nil {
+		// No manifest yet — nothing to persist.
+		return nil
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return fmt.Errorf("parse workflow.json: %w", err)
+	}
+	caps, _ := manifest["capabilities"].(map[string]interface{})
+	if caps == nil {
+		return nil
+	}
+	names := make([]string, 0, len(filtered))
+	for _, s := range filtered {
+		if s.Name != "" {
+			names = append(names, s.Name)
+		}
+	}
+	// Write to BOTH fields — see persistWorkflowConfigToManifest for why (user secrets
+	// are looked up via selected_secrets; globals via selected_global_secret_names).
+	caps["selected_secrets"] = names
+	caps["selected_global_secret_names"] = names
+	manifest["capabilities"] = caps
+	manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+
+	updated, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal workflow.json: %w", err)
+	}
+	if err := s.controller.WriteWorkspaceFile(ctx, manifestPath, string(updated)); err != nil {
+		return fmt.Errorf("write workflow.json: %w", err)
+	}
+	return nil
 }
 
 // RegisterReorganizeKnowledgebaseTool registers a reorganize_knowledgebase tool that

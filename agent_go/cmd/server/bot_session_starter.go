@@ -40,6 +40,12 @@ func (api *StreamingAPI) startSessionInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create internal request: %w", err)
 	}
+	if userID != "" && GetUserFromContext(httpReq.Context()) == nil {
+		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), UserContextKey, &UserClaims{
+			UserID:   userID,
+			Username: userID,
+		}))
+	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -65,12 +71,12 @@ func (api *StreamingAPI) startSessionInternal(
 	var queryResp QueryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
 		if isScheduledSession(sessionID) {
-			scheduleLogf("[BOT_SESSION] Failed to parse handleQuery response: %v", err)
+			scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Failed to parse handleQuery response: %v", err)
 		}
 	}
 
 	if isScheduledSession(sessionID) {
-		scheduleLogf("[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
+		scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
 	}
 
 	// Now wait for the session to complete using the already-active subscription
@@ -98,6 +104,12 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create follow-up request: %w", err)
 	}
+	if userID != "" && GetUserFromContext(httpReq.Context()) == nil {
+		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), UserContextKey, &UserClaims{
+			UserID:   userID,
+			Username: userID,
+		}))
+	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -117,7 +129,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	}
 
 	if isScheduledSession(sessionID) {
-		scheduleLogf("[BOT_SESSION] Follow-up injected into session %s", sessionID)
+		scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Follow-up injected into session %s", sessionID)
 	}
 	return nil
 }

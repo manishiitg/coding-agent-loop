@@ -54,6 +54,8 @@ interface WorkflowCanvasProps {
   showChatArea?: boolean
   onToggleChatArea?: () => void
   toolbarOnly?: boolean  // When true, only render the toolbar (skip React Flow canvas for performance)
+  sharedToolbar?: boolean
+  paneClassName?: string
   className?: string
 }
 
@@ -76,6 +78,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   showChatArea = false,
   onToggleChatArea,
   toolbarOnly = false,
+  sharedToolbar = false,
+  paneClassName = '',
   className = ''
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -2120,7 +2124,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   if (!isFullyLoaded) {
     return (
-      <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
+      <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${paneClassName} ${className}`}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-gray-400 dark:border-gray-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm text-gray-500 dark:text-gray-400">
@@ -2142,7 +2146,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   if (hasError) {
     return (
-      <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
+      <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${paneClassName} ${className}`}>
         <div className="flex flex-col items-center gap-3 text-center max-w-md">
           <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
             <span className="text-2xl">⚠️</span>
@@ -2188,24 +2192,26 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
-      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
-        <WorkflowToolbar
-          status={status}
-          hasPlan={false}
-          currentPhase={currentPhase}
-          workspacePath={workspacePath}
-          presetQueryId={presetQueryId}
-          runFolders={runFoldersForToolbar}
-          variablesManifest={variablesManifest}
-          isLoadingWorkspaceState={isLoadingWorkspaceState}
-          onStartPhase={handleStartPhase}
-          onStop={stopWorkflow}
-          onCreatePlan={onCreatePlan || (() => {})}
-          showChatArea={showChatArea}
-          onToggleChatArea={onToggleChatArea}
-          onRefresh={handleRefresh}
-        />
-        <div className="flex-1 flex items-center justify-center">
+      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'lg:contents' : ''}`}>
+        <div className={sharedToolbar && showChatArea ? 'lg:col-span-2 lg:row-start-1' : ''}>
+          <WorkflowToolbar
+            status={status}
+            hasPlan={false}
+            currentPhase={currentPhase}
+            workspacePath={workspacePath}
+            presetQueryId={presetQueryId}
+            runFolders={runFoldersForToolbar}
+            variablesManifest={variablesManifest}
+            isLoadingWorkspaceState={isLoadingWorkspaceState}
+            onStartPhase={handleStartPhase}
+            onStop={stopWorkflow}
+            onCreatePlan={onCreatePlan || (() => {})}
+            showChatArea={showChatArea}
+            onToggleChatArea={onToggleChatArea}
+            onRefresh={handleRefresh}
+          />
+        </div>
+        <div className={`${sharedToolbar && showChatArea ? 'lg:col-start-2 lg:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
               <span className="text-3xl">📋</span>
@@ -2233,62 +2239,64 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   return (
-    <div className={`flex flex-col h-full ${className}`} ref={reactFlowWrapper}>
-      {/* Toolbar */}
-      <WorkflowToolbar
-        status={status}
-        hasPlan={true}
-        plan={plan || undefined}
-        currentPhase={currentPhase}
-        workspacePath={workspacePath}
-        presetQueryId={presetQueryId}
-        runFolders={runFoldersForToolbar}
-        variablesManifest={variablesManifest}
-        isLoadingWorkspaceState={isLoadingWorkspaceState}
-        onStartPhase={handleStartPhase}
-        onStop={stopWorkflow}
-        onBulkUpdateSteps={handleBulkUpdateSteps}
-        onCreatePlan={onCreatePlan || (() => {})}
-        showChatArea={showChatArea}
-        onToggleChatArea={onToggleChatArea}
-        onRefresh={handleRefresh}
-        onSaveLayout={saveLayout}
-        onDeleteLayout={deleteLayout}
-        hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
-        isSavingLayout={isSavingLayout}
-        isDeletingLayout={isDeletingLayout}
-        selectedStepIds={selectedStepIds}
-      />
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'lg:contents' : ''}`} ref={reactFlowWrapper}>
+      <div className={sharedToolbar && showChatArea ? 'lg:col-span-2 lg:row-start-1' : ''}>
+        <WorkflowToolbar
+          status={status}
+          hasPlan={true}
+          plan={plan || undefined}
+          currentPhase={currentPhase}
+          workspacePath={workspacePath}
+          presetQueryId={presetQueryId}
+          runFolders={runFoldersForToolbar}
+          variablesManifest={variablesManifest}
+          isLoadingWorkspaceState={isLoadingWorkspaceState}
+          onStartPhase={handleStartPhase}
+          onStop={stopWorkflow}
+          onBulkUpdateSteps={handleBulkUpdateSteps}
+          onCreatePlan={onCreatePlan || (() => {})}
+          showChatArea={showChatArea}
+          onToggleChatArea={onToggleChatArea}
+          onRefresh={handleRefresh}
+          onSaveLayout={saveLayout}
+          onDeleteLayout={deleteLayout}
+          hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
+          isSavingLayout={isSavingLayout}
+          isDeletingLayout={isDeletingLayout}
+          selectedStepIds={selectedStepIds}
+        />
+      </div>
 
-      {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
-      {toolbarOnly ? null : canvasViewMode === 'plan' ? (
-        <div className="flex-1 min-h-0 relative">
-          {stablePlan && <PlanOutlineView
-            plan={stablePlan}
-              stepStatusMap={stepStatusMap}
-            onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
-            onFileClick={(filePath) => {
-              useWorkspaceStore.getState().highlightFile(filePath)
-            }}
-            onRefresh={handleRefresh}
-            workspacePath={workspacePath}
-            className="h-full"
-          />}
-        </div>
-      ) : canvasViewMode === 'report' ? (
-        <div className="flex-1 min-h-0 relative">
-          {workspacePath && <ReportView workspacePath={workspacePath} />}
-        </div>
-      ) : <div className="flex-1 min-h-0 relative flex">
-        <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
-          selectedNode
-            ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
-            : selectedStepIds.length >= 2
-              ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[500px]')
-              : showVariablesSidebar
-                ? 'mr-[450px]'
-                : ''
-        }`}>
+      <div className={`${sharedToolbar && showChatArea ? 'lg:col-start-2 lg:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+        {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
+        {toolbarOnly ? null : canvasViewMode === 'plan' ? (
+          <div className="h-full min-h-0 relative">
+            {stablePlan && <PlanOutlineView
+              plan={stablePlan}
+                stepStatusMap={stepStatusMap}
+              onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
+              onFileClick={(filePath) => {
+                useWorkspaceStore.getState().highlightFile(filePath)
+              }}
+              onRefresh={handleRefresh}
+              workspacePath={workspacePath}
+              className="h-full"
+            />}
+          </div>
+        ) : canvasViewMode === 'report' ? (
+          <div className="h-full min-h-0 relative">
+            {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
+          </div>
+        ) : <div className="h-full min-h-0 relative flex">
+          <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
+            selectedNode
+              ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]')
+              : selectedStepIds.length >= 2
+                ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[500px]')
+                : showVariablesSidebar
+                  ? 'mr-[450px]'
+                  : ''
+          }`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"
           style={{ width: '100%', height: '100%' }}
@@ -2434,6 +2442,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
       </div>}
+      </div>
 
     </div>
   )

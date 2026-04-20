@@ -1,7 +1,7 @@
 // Dynamic report viewer — parses reports/report_plan.md, fetches each widget's JSON
 // source, renders widgets. See docs/workflow/persistent_stores_design.md.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Bar, BarChart,
   CartesianGrid,
@@ -14,7 +14,7 @@ import {
   Tooltip,
   XAxis, YAxis,
 } from 'recharts'
-import { ArrowDown, ArrowUp, ArrowUpDown, Download, Search } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Monitor, RefreshCw, Search, Smartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import {
   applyWidgetFilter,
@@ -25,17 +25,455 @@ import {
 import { compareValues, formatAuto, formatNamed, rowsToCSV } from '../../lib/reportFormatters'
 import { useTheme } from '../../hooks/useTheme'
 import type {
+  EvaluationReportsResponse,
+  ModelTokenUsage,
   ParsedReportPlan,
+  PhaseTokenUsageFile,
   ReportAlertSeverity,
+  ReportCostsMetric,
+  ReportEvalsMetric,
   ReportEntry,
   ReportFormatterName,
   ReportWidget,
+  RunFoldersResponse,
+  TokenUsageFile,
+  WorkflowCostsResponse,
 } from '../../services/api-types'
 
 // Default rows-per-page for tables; overridable per-widget via `page_size:`.
 const DEFAULT_TABLE_PAGE_SIZE = 25
+export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
+export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
 // Default categorical palette. Widgets override via `colors:` / `colors_dark:`.
-const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
+// Keep the fallback theme-driven so report charts follow the app palette.
+const CHART_COLORS = [
+  'hsl(var(--chart-1))',
+  'hsl(var(--chart-2))',
+  'hsl(var(--chart-3))',
+  'hsl(var(--chart-4))',
+  'hsl(var(--chart-5))',
+  'hsl(var(--primary))',
+  'hsl(var(--warning))',
+  'hsl(var(--success))',
+]
+
+type CostStageBucket = 'execution' | 'learning' | 'evaluation' | 'knowledgebase' | 'routing' | 'workshop' | 'other'
+
+type CostSummary = {
+  totalCost: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalTokens: number
+  totalLLMCalls: number
+  stageCosts: Record<CostStageBucket, number>
+  stepCosts: Array<{
+    stepID: string
+    stepTitle: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+    stage: CostStageBucket
+  }>
+  modelCosts: Array<{
+    modelID: string
+    provider: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+  }>
+}
+
+type RunCostSummary = CostSummary & {
+  runFolder: string
+  updatedAt: string | null
+}
+
+type PhaseCostSummary = {
+  totalCost: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalTokens: number
+  totalLLMCalls: number
+  phaseCosts: Array<{
+    phaseID: string
+    phaseTitle: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+  }>
+  modelCosts: Array<{
+    modelID: string
+    provider: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+  }>
+}
+
+function emptyStageCosts(): Record<CostStageBucket, number> {
+  return {
+    execution: 0,
+    learning: 0,
+    evaluation: 0,
+    knowledgebase: 0,
+    routing: 0,
+    workshop: 0,
+    other: 0,
+  }
+}
+
+function classifyCostPhase(phase: string): CostStageBucket {
+  if (phase === 'execution_only') return 'execution'
+  if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) return 'learning'
+  if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
+  if (phase.startsWith('kb_')) return 'knowledgebase'
+  if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
+  if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') return 'workshop'
+  return 'other'
+}
+
+function formatPhaseTitle(phaseID: string) {
+  const knownTitles: Record<string, string> = {
+    'workflow-builder': 'Workflow Builder',
+    'report-execution': 'Report Execution',
+    planning: 'Planning',
+    'plan-improvement': 'Plan Improvement',
+    'evaluation-builder': 'Evaluation Builder',
+    'output-builder': 'Output Builder',
+  }
+  if (knownTitles[phaseID]) return knownTitles[phaseID]
+  return phaseID
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function metricValue(metric: ReportCostsMetric | undefined, item: {
+  totalCost?: number
+  totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  llmCalls?: number
+}): number {
+  switch (metric ?? 'cost') {
+    case 'input_tokens': return item.inputTokens ?? 0
+    case 'output_tokens': return item.outputTokens ?? 0
+    case 'llm_calls': return item.llmCalls ?? 0
+    case 'total_tokens': return item.totalTokens ?? 0
+    case 'cost':
+    default: return item.totalCost ?? 0
+  }
+}
+
+function metricLabel(metric: ReportCostsMetric | undefined): string {
+  switch (metric ?? 'cost') {
+    case 'input_tokens': return 'Input Tokens'
+    case 'output_tokens': return 'Output Tokens'
+    case 'llm_calls': return 'LLM Calls'
+    case 'total_tokens': return 'Total Tokens'
+    case 'cost':
+    default: return 'Cost'
+  }
+}
+
+function formatMetricValue(metric: ReportCostsMetric | undefined, value: number): string {
+  if ((metric ?? 'cost') === 'cost') return formatNamed(value, 'currency-usd').text
+  return formatAuto(value).text
+}
+
+function parseTimestamp(value?: string | null): number | null {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+function formatRuntimeDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0m'
+  const totalMinutes = Math.round(ms / 60000)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 24) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+  const days = Math.floor(hours / 24)
+  const remHours = hours % 24
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`
+}
+
+function timestampForTokenUsage(tokenUsage?: TokenUsageFile | null, evaluationTokenUsage?: TokenUsageFile | null): string | null {
+  return tokenUsage?.updated_at || evaluationTokenUsage?.updated_at || tokenUsage?.created_at || evaluationTokenUsage?.created_at || null
+}
+
+function summariseModelUsage(map: Record<string, ModelTokenUsage>, target: Map<string, {
+  modelID: string
+  provider: string
+  totalCost: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  llmCalls: number
+}>): void {
+  for (const [modelID, usage] of Object.entries(map)) {
+    const existing = target.get(modelID) ?? {
+      modelID,
+      provider: usage.provider || 'unknown',
+      totalCost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      llmCalls: 0,
+    }
+    existing.totalCost += usage.total_cost_usd || 0
+    existing.inputTokens += usage.input_tokens || 0
+    existing.outputTokens += usage.output_tokens || 0
+    existing.totalTokens += (usage.input_tokens || 0) + (usage.output_tokens || 0)
+    existing.llmCalls += usage.llm_call_count || 0
+    target.set(modelID, existing)
+  }
+}
+
+function summariseRunCosts(
+  runFolder: string,
+  tokenUsage: TokenUsageFile | null | undefined,
+  evaluationTokenUsage: TokenUsageFile | null | undefined,
+  scope: 'execution' | 'evaluation' | 'all',
+): RunCostSummary | null {
+  const totals = {
+    totalCost: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    totalLLMCalls: 0,
+  }
+  const stageCosts = emptyStageCosts()
+  const stepMap = new Map<string, {
+    stepID: string
+    stepTitle: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+    stage: CostStageBucket
+  }>()
+  const modelMap = new Map<string, {
+    modelID: string
+    provider: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+  }>()
+
+  const processUsage = (
+    usageFile: TokenUsageFile | null | undefined,
+    mode: 'execution' | 'evaluation',
+  ) => {
+    if (!usageFile?.by_model) return
+    summariseModelUsage(usageFile.by_model, modelMap)
+    for (const usage of Object.values(usageFile.by_model)) {
+      totals.totalCost += usage.total_cost_usd || 0
+      totals.totalInputTokens += usage.input_tokens || 0
+      totals.totalOutputTokens += usage.output_tokens || 0
+      totals.totalTokens += (usage.input_tokens || 0) + (usage.output_tokens || 0)
+      totals.totalLLMCalls += usage.llm_call_count || 0
+    }
+
+    for (const [key, modelUsage] of Object.entries(usageFile.by_step_and_model || {})) {
+      const [phase, rawStepID] = key.split(':')
+      const stage = mode === 'evaluation' ? 'evaluation' : classifyCostPhase(phase || '')
+      const stepID = rawStepID || phase || 'unknown'
+      const displayStepID = mode === 'evaluation' ? `eval:${stepID}` : stepID
+      const stepTitle = mode === 'evaluation' ? `[Eval] ${stepID}` : stepID
+      const entry = stepMap.get(displayStepID) ?? {
+        stepID: displayStepID,
+        stepTitle,
+        totalCost: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        llmCalls: 0,
+        stage,
+      }
+      for (const usage of Object.values(modelUsage)) {
+        const inputTokens = usage.input_tokens || 0
+        const outputTokens = usage.output_tokens || 0
+        entry.totalCost += usage.total_cost_usd || 0
+        entry.inputTokens += inputTokens
+        entry.outputTokens += outputTokens
+        entry.totalTokens += inputTokens + outputTokens
+        entry.llmCalls += usage.llm_call_count || 0
+        stageCosts[stage] += usage.total_cost_usd || 0
+      }
+      stepMap.set(displayStepID, entry)
+    }
+  }
+
+  if (scope === 'execution' || scope === 'all') processUsage(tokenUsage, 'execution')
+  if (scope === 'evaluation' || scope === 'all') processUsage(evaluationTokenUsage, 'evaluation')
+
+  if (totals.totalCost === 0 && totals.totalTokens === 0 && modelMap.size === 0 && stepMap.size === 0) return null
+
+  return {
+    runFolder,
+    updatedAt: timestampForTokenUsage(tokenUsage, evaluationTokenUsage),
+    ...totals,
+    stageCosts,
+    stepCosts: Array.from(stepMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.stepTitle.localeCompare(b.stepTitle)),
+    modelCosts: Array.from(modelMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.modelID.localeCompare(b.modelID)),
+  }
+}
+
+function summarisePhaseCosts(tokenUsage: PhaseTokenUsageFile | null | undefined): PhaseCostSummary | null {
+  if (!tokenUsage?.by_model) return null
+  const totals = {
+    totalCost: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    totalLLMCalls: 0,
+  }
+  const modelMap = new Map<string, {
+    modelID: string
+    provider: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    llmCalls: number
+  }>()
+  summariseModelUsage(tokenUsage.by_model, modelMap)
+  for (const usage of Object.values(tokenUsage.by_model)) {
+    totals.totalCost += usage.total_cost_usd || 0
+    totals.totalInputTokens += usage.input_tokens || 0
+    totals.totalOutputTokens += usage.output_tokens || 0
+    totals.totalTokens += (usage.input_tokens || 0) + (usage.output_tokens || 0)
+    totals.totalLLMCalls += usage.llm_call_count || 0
+  }
+
+  const phaseCosts = Object.entries(tokenUsage.by_phase_and_model || {})
+    .map(([phaseID, modelUsage]) => {
+      let totalCost = 0
+      let inputTokens = 0
+      let outputTokens = 0
+      let llmCalls = 0
+      for (const usage of Object.values(modelUsage)) {
+        totalCost += usage.total_cost_usd || 0
+        inputTokens += usage.input_tokens || 0
+        outputTokens += usage.output_tokens || 0
+        llmCalls += usage.llm_call_count || 0
+      }
+      return {
+        phaseID,
+        phaseTitle: formatPhaseTitle(phaseID),
+        totalCost,
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        llmCalls,
+      }
+    })
+    .sort((a, b) => b.totalCost - a.totalCost || a.phaseTitle.localeCompare(b.phaseTitle))
+
+  return {
+    ...totals,
+    phaseCosts,
+    modelCosts: Array.from(modelMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.modelID.localeCompare(b.modelID)),
+  }
+}
+
+function aggregateRunCostSummaries(runs: RunCostSummary[]): CostSummary | null {
+  if (runs.length === 0) return null
+  const stageCosts = emptyStageCosts()
+  const stepMap = new Map<string, CostSummary['stepCosts'][number]>()
+  const modelMap = new Map<string, CostSummary['modelCosts'][number]>()
+  const totals = {
+    totalCost: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    totalLLMCalls: 0,
+  }
+
+  for (const run of runs) {
+    totals.totalCost += run.totalCost
+    totals.totalInputTokens += run.totalInputTokens
+    totals.totalOutputTokens += run.totalOutputTokens
+    totals.totalTokens += run.totalTokens
+    totals.totalLLMCalls += run.totalLLMCalls
+    for (const stage of Object.keys(stageCosts) as CostStageBucket[]) stageCosts[stage] += run.stageCosts[stage]
+    for (const step of run.stepCosts) {
+      const current = stepMap.get(step.stepID) ?? { ...step }
+      if (current !== step) {
+        current.totalCost += step.totalCost
+        current.inputTokens += step.inputTokens
+        current.outputTokens += step.outputTokens
+        current.totalTokens += step.totalTokens
+        current.llmCalls += step.llmCalls
+      }
+      stepMap.set(step.stepID, current)
+    }
+    for (const model of run.modelCosts) {
+      const current = modelMap.get(model.modelID) ?? { ...model }
+      if (current !== model) {
+        current.totalCost += model.totalCost
+        current.inputTokens += model.inputTokens
+        current.outputTokens += model.outputTokens
+        current.totalTokens += model.totalTokens
+        current.llmCalls += model.llmCalls
+      }
+      modelMap.set(model.modelID, current)
+    }
+  }
+
+  return {
+    ...totals,
+    stageCosts,
+    stepCosts: Array.from(stepMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.stepTitle.localeCompare(b.stepTitle)),
+    modelCosts: Array.from(modelMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.modelID.localeCompare(b.modelID)),
+  }
+}
+
+function useCompactWidgetLayout(maxWidth = 520) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [isCompact, setIsCompact] = useState(false)
+
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+
+    const update = (width: number) => {
+      setIsCompact(width <= maxWidth)
+    }
+
+    const measure = () => update(node.getBoundingClientRect().width)
+    measure()
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(entries => {
+        const entry = entries[0]
+        if (!entry) return
+        update(entry.contentRect.width)
+      })
+      observer.observe(node)
+      return () => observer.disconnect()
+    }
+
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [maxWidth])
+
+  return [ref, isCompact] as const
+}
 
 // Resolves the effective color palette for a widget given the current theme.
 // Precedence: colorsDark (when dark) > colors > CHART_COLORS.
@@ -104,18 +542,55 @@ interface ReportViewProps {
   workspacePath: string
   /** Optional close/back handler; when omitted, no close button is rendered (used for canvas-mode). */
   onClose?: () => void
+  mobilePreview?: boolean
 }
 
 // Source content cached per workspace-relative path. `undefined` = not yet fetched;
 // `null` = fetched and missing/malformed; otherwise the parsed JSON value.
 type SourceCache = Record<string, unknown>
 
+function widgetInstanceKey(
+  widget: ReportWidget,
+  ids: { sectionIndex: number; entryIndex: number; widgetIndex: number },
+) {
+  return [
+    ids.sectionIndex,
+    ids.entryIndex,
+    ids.widgetIndex,
+    widget.kind,
+    widget.source,
+    widget.path ?? '',
+    widget.title ?? '',
+  ].join('::')
+}
+
+function widgetShouldRender(widget: ReportWidget, raw: unknown) {
+  if (widget.kind === 'costs' || widget.kind === 'evals' || widget.kind === 'runs') return true
+  if (raw === undefined || raw === null) return true
+  if (!evaluateShowIf(raw, widget.showIf)) return false
+  if (widget.kind === 'stat' || widget.kind === 'alert' || widget.kind === 'pivot') return true
+
+  const resolvedRaw = resolveJSONPath(raw, widget.path)
+  if (resolvedRaw === undefined) return true
+
+  const resolved = applyWidgetFilter(resolvedRaw, widget.filter)
+  if (resolved == null) return false
+  if (Array.isArray(resolved) && resolved.length === 0) return true
+  return true
+}
+
 // Modal wrapper — overlay + panel + close-on-backdrop. Used by scheduler runs panel.
 export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerProps) {
   if (!isOpen) return null
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div style={panelStyle} onClick={e => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 px-2 py-3 backdrop-blur-sm sm:px-4 sm:py-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-border/70 bg-background shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:max-h-[90vh] sm:rounded-2xl"
+        onClick={e => e.stopPropagation()}
+      >
         <ReportView workspacePath={workspacePath} onClose={onClose} />
       </div>
     </div>
@@ -124,11 +599,30 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
-export function ReportView({ workspacePath, onClose }: ReportViewProps) {
+export function ReportView({ workspacePath, onClose, mobilePreview = false }: ReportViewProps) {
+  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+    try {
+      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
+      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
   const [loading, setLoading] = useState(false)
   const [planMarkdown, setPlanMarkdown] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceCache>({})
+  const [costsData, setCostsData] = useState<WorkflowCostsResponse | null>(null)
+  const [costsLoading, setCostsLoading] = useState(false)
+  const [costsError, setCostsError] = useState<string | null>(null)
+  const [evalsData, setEvalsData] = useState<EvaluationReportsResponse | null>(null)
+  const [evalsLoading, setEvalsLoading] = useState(false)
+  const [evalsError, setEvalsError] = useState<string | null>(null)
+  const [runsData, setRunsData] = useState<RunFoldersResponse | null>(null)
+  const [runsLoading, setRunsLoading] = useState(false)
+  const [runsError, setRunsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
 
   const plan: ParsedReportPlan = useMemo(() => {
     if (!planMarkdown) return { sections: [] }
@@ -142,11 +636,55 @@ export function ReportView({ workspacePath, onClose }: ReportViewProps) {
     const set = new Set<string>()
     for (const section of plan.sections) {
       for (const entry of section.entries) {
-        if (entry.kind === 'single') set.add(entry.widget.source)
-        else for (const w of entry.row.widgets) set.add(w.source)
+        if (entry.kind === 'single') {
+          if (entry.widget.kind !== 'costs' && entry.widget.kind !== 'evals' && entry.widget.kind !== 'runs' && entry.widget.source) set.add(entry.widget.source)
+        } else {
+          for (const w of entry.row.widgets) {
+            if (w.kind !== 'costs' && w.kind !== 'evals' && w.kind !== 'runs' && w.source) set.add(w.source)
+          }
+        }
       }
     }
     return Array.from(set).sort().join('|')
+  }, [plan])
+
+  const hasCostsWidget = useMemo(() => {
+    for (const section of plan.sections) {
+      for (const entry of section.entries) {
+        if (entry.kind === 'single') {
+          if (entry.widget.kind === 'costs') return true
+        } else {
+          if (entry.row.widgets.some(widget => widget.kind === 'costs')) return true
+        }
+      }
+    }
+    return false
+  }, [plan])
+
+  const hasEvalsWidget = useMemo(() => {
+    for (const section of plan.sections) {
+      for (const entry of section.entries) {
+        if (entry.kind === 'single') {
+          if (entry.widget.kind === 'evals') return true
+        } else {
+          if (entry.row.widgets.some(widget => widget.kind === 'evals')) return true
+        }
+      }
+    }
+    return false
+  }, [plan])
+
+  const hasRunsWidget = useMemo(() => {
+    for (const section of plan.sections) {
+      for (const entry of section.entries) {
+        if (entry.kind === 'single') {
+          if (entry.widget.kind === 'runs') return true
+        } else {
+          if (entry.row.widgets.some(widget => widget.kind === 'runs')) return true
+        }
+      }
+    }
+    return false
   }, [plan])
 
   useEffect(() => {
@@ -167,7 +705,7 @@ export function ReportView({ workspacePath, onClose }: ReportViewProps) {
     return () => {
       cancelled = true
     }
-  }, [workspacePath])
+  }, [workspacePath, refreshNonce])
 
   // Fetch sources referenced by the plan. `sources` is intentionally NOT a dep — we
   // read it fresh via setSources' functional form and return `prev` unchanged when
@@ -206,226 +744,1535 @@ export function ReportView({ workspacePath, onClose }: ReportViewProps) {
     return () => {
       cancelled = true
     }
-  }, [workspacePath, referencedSourcesKey])
+  }, [workspacePath, referencedSourcesKey, refreshNonce])
+
+  useEffect(() => {
+    if (!workspacePath || !hasCostsWidget) {
+      setCostsData(null)
+      setCostsError(null)
+      setCostsLoading(false)
+      return
+    }
+    let cancelled = false
+    setCostsLoading(true)
+    setCostsError(null)
+    agentApi.getCosts(workspacePath)
+      .then(response => {
+        if (cancelled) return
+        setCostsData(response)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCostsData(null)
+        setCostsError('Failed to load workflow costs.')
+      })
+      .finally(() => {
+        if (!cancelled) setCostsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspacePath, hasCostsWidget, refreshNonce])
+
+  useEffect(() => {
+    if (!workspacePath || !hasEvalsWidget) {
+      setEvalsData(null)
+      setEvalsError(null)
+      setEvalsLoading(false)
+      return
+    }
+    let cancelled = false
+    setEvalsLoading(true)
+    setEvalsError(null)
+    agentApi.getEvaluationReports(workspacePath)
+      .then(response => {
+        if (cancelled) return
+        setEvalsData(response)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setEvalsData(null)
+        setEvalsError('Failed to load evaluation reports.')
+      })
+      .finally(() => {
+        if (!cancelled) setEvalsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspacePath, hasEvalsWidget, refreshNonce])
+
+  useEffect(() => {
+    if (!workspacePath || !hasRunsWidget) {
+      setRunsData(null)
+      setRunsError(null)
+      setRunsLoading(false)
+      return
+    }
+    let cancelled = false
+    setRunsLoading(true)
+    setRunsError(null)
+    agentApi.getRunFolders(workspacePath)
+      .then(response => {
+        if (cancelled) return
+        setRunsData(response)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRunsData(null)
+        setRunsError('Failed to load workflow runs.')
+      })
+      .finally(() => {
+        if (!cancelled) setRunsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspacePath, hasRunsWidget, refreshNonce])
+
+  useEffect(() => {
+    setHiddenWidgetKeys(new Set())
+  }, [workspacePath, planMarkdown, refreshNonce])
+
+  const handleRefresh = () => {
+    setError(null)
+    setSources({})
+    setCostsData(null)
+    setCostsError(null)
+    setEvalsData(null)
+    setEvalsError(null)
+    setRunsData(null)
+    setRunsError(null)
+    setRefreshNonce(prev => prev + 1)
+  }
+
+  const handleToggleWidgetHidden = (widgetKey: string) => {
+    setHiddenWidgetKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(widgetKey)) next.delete(widgetKey)
+      else next.add(widgetKey)
+      return next
+    })
+  }
 
   const planExists = planMarkdown !== null
+  const visibleSections = useMemo(() => {
+    return plan.sections.flatMap((section, sectionIndex) => {
+      const entries = section.entries.flatMap((entry, entryIndex) => {
+        const widgets = entry.kind === 'single' ? [entry.widget] : entry.row.widgets
+        const hasVisibleWidget = widgets.some((widget, widgetIndex) => {
+          if (hiddenWidgetKeys.has(widgetInstanceKey(widget, { sectionIndex, entryIndex, widgetIndex }))) return true
+          return widgetShouldRender(widget, sources[widget.source])
+        })
+        return hasVisibleWidget ? [{ entry, entryIndex }] : []
+      })
+
+      if (entries.length === 0) return []
+      return [{ section, sectionIndex, entries }]
+    })
+  }, [plan, hiddenWidgetKeys, sources])
   const hasAnyContent = useMemo(() => {
     if (!planExists) return false
-    for (const section of plan.sections) {
-      for (const entry of section.entries) {
+    for (let sectionIndex = 0; sectionIndex < plan.sections.length; sectionIndex += 1) {
+      const section = plan.sections[sectionIndex]
+      for (let entryIndex = 0; entryIndex < section.entries.length; entryIndex += 1) {
+        const entry = section.entries[entryIndex]
         const widgets = entry.kind === 'single' ? [entry.widget] : entry.row.widgets
-        for (const w of widgets) {
-          const raw = sources[w.source]
-          if (raw === undefined) return true
-          if (raw == null) continue
-          // Honor show_if when deciding whether this widget counts as "content" —
-          // a hidden widget shouldn't keep the empty-state banner suppressed.
-          if (!evaluateShowIf(raw, w.showIf)) continue
-          // Widget kinds that render from a declared scalar/config rather than
-          // a resolved array/value (stat / alert / pivot) count as content as
-          // long as their source resolves to anything — their own renderer
-          // surfaces per-widget empty states with better messaging.
-          if (w.kind === 'stat' || w.kind === 'alert' || w.kind === 'pivot') {
-            return true
-          }
-          const resolved = applyWidgetFilter(resolveJSONPath(raw, w.path), w.filter)
-          if (resolved != null && !(Array.isArray(resolved) && resolved.length === 0)) {
-            return true
-          }
+        for (let widgetIndex = 0; widgetIndex < widgets.length; widgetIndex += 1) {
+          const w = widgets[widgetIndex]
+          if (hiddenWidgetKeys.has(widgetInstanceKey(w, { sectionIndex, entryIndex, widgetIndex }))) return true
+          if (w.kind === 'costs' || w.kind === 'evals' || w.kind === 'runs') return true
+          if (widgetShouldRender(w, sources[w.source])) return true
         }
       }
     }
     return false
-  }, [planExists, plan, sources])
+  }, [planExists, plan, sources, hiddenWidgetKeys])
+  const isMobilePreview =
+    previewPreference === 'mobile'
+      ? true
+      : previewPreference === 'desktop'
+        ? false
+        : mobilePreview
+  const isRefreshing = loading || costsLoading || evalsLoading || runsLoading
+  const previewShellClassName = isMobilePreview
+    ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
+    : 'mx-auto w-full max-w-full transition-all duration-200'
+  const previewContentClassName = isMobilePreview
+    ? 'w-full max-w-full'
+    : 'mx-auto w-full max-w-5xl'
 
-  const totalWidgets = useMemo(() => {
-    let n = 0
-    for (const s of plan.sections) {
-      for (const e of s.entries) {
-        n += e.kind === 'single' ? 1 : e.row.widgets.length
+  const handleTogglePreviewMode = () => {
+    setPreviewPreference(prev => {
+      const currentIsMobile =
+        prev === 'mobile'
+          ? true
+          : prev === 'desktop'
+            ? false
+            : mobilePreview
+      const next = currentIsMobile ? 'desktop' : 'mobile'
+      try {
+        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, next)
+        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: next } }))
+      } catch {
+        // ignore
       }
-    }
-    return n
-  }, [plan])
+      return next
+    })
+  }
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-background text-foreground">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0 bg-background/80 backdrop-blur-sm">
-        <div className="flex items-baseline gap-3">
-          <h2 className="m-0 text-base font-semibold">Report</h2>
-          {planExists && totalWidgets > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {plan.sections.length} section{plan.sections.length === 1 ? '' : 's'} · {totalWidgets} widget{totalWidgets === 1 ? '' : 's'}
-            </span>
-          )}
-        </div>
-        {onClose && (
+    <div className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground">
+      {onClose && (
+        <div className="flex flex-shrink-0 items-center justify-end border-b border-border/50 bg-background/80 px-3 py-2.5 backdrop-blur-sm sm:px-5">
           <button
             onClick={onClose}
-            className="text-2xl leading-none bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/70 bg-background/80 text-xl leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title="Close"
+            aria-label="Close report"
           >
             ×
           </button>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        {loading && <ReportSkeleton />}
-        {error && <div className="text-destructive">Failed to load report: {error}</div>}
-
-        {!loading && !error && !hasAnyContent && (
-          <div className="flex flex-col items-center justify-center py-16 gap-2">
-            <div className="text-3xl opacity-40" aria-hidden>📊</div>
-            <div className="text-sm font-medium text-foreground">No report yet</div>
-            <div className="max-w-md text-center text-xs text-muted-foreground">
-              The builder writes <code className="px-1 rounded bg-muted">reports/report_plan.md</code> to configure
-              this view; widgets render once <code className="px-1 rounded bg-muted">db/</code> or{' '}
-              <code className="px-1 rounded bg-muted">knowledgebase/graph.json</code> has data.
-            </div>
-          </div>
-        )}
-
-        {!loading && !error && hasAnyContent && (
-          <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-            {plan.sections.map((section, i) => (
-              <section key={i} className="flex flex-col gap-3">
-                <div className="flex items-baseline gap-2 border-b border-border/40 pb-1">
-                  <h3 className="m-0 text-sm font-semibold tracking-wide uppercase text-foreground">
-                    {section.heading}
-                  </h3>
-                  <div className="h-px flex-1" />
-                </div>
-                <div className="flex flex-col gap-3">
-                  {section.entries.map((entry, j) => (
-                    <EntryRenderer key={j} entry={entry} sources={sources} />
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// Loading skeleton — three light-gray placeholder blocks so the layout doesn't
-// jump when widgets resolve. Matches typical section + widget heights roughly.
-function ReportSkeleton() {
-  return (
-    <div className="flex flex-col gap-6 animate-pulse">
-      {[0, 1, 2].map(i => (
-        <div key={i} className="flex flex-col gap-2">
-          <div className="h-4 w-24 rounded bg-muted" />
-          <div className="h-24 w-full rounded-md border border-border/50 bg-muted/30" />
         </div>
-      ))}
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2.5 py-3 [scrollbar-gutter:stable] sm:px-4 sm:py-4">
+        <div className={previewShellClassName}>
+          <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
+            {loading && <ReportSkeleton />}
+            {error && <div className="text-destructive">Failed to load report: {error}</div>}
+
+            {!loading && !error && !hasAnyContent && (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/70 px-4 py-8 text-center shadow-sm sm:px-6 sm:py-10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary sm:h-14 sm:w-14">
+                  <BarChart3 className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-base font-semibold text-foreground">No report yet</div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Waiting For Plan Or Data</div>
+                </div>
+                <div className="max-w-md text-center text-sm text-muted-foreground leading-6">
+                  The builder writes <code className="px-1 rounded bg-muted">reports/report_plan.md</code> to configure
+                  this view; widgets render once <code className="px-1 rounded bg-muted">db/</code> or{' '}
+                  <code className="px-1 rounded bg-muted">knowledgebase/graph.json</code> has data.
+                </div>
+              </div>
+            )}
+
+            {!loading && !error && hasAnyContent && (
+              <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+                {visibleSections.map(({ section, sectionIndex, entries }) => (
+                  <section key={sectionIndex} className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
+                    <SectionHeader
+                      heading={section.heading}
+                    />
+                    <div className="flex flex-col gap-3">
+                      {entries.map(({ entry, entryIndex }) => (
+                        <EntryRenderer
+                          key={entryIndex}
+                          entry={entry}
+                          entryIndex={entryIndex}
+                          sectionIndex={sectionIndex}
+                          sources={sources}
+                          costsData={costsData}
+                          costsLoading={costsLoading}
+                          costsError={costsError}
+                          evalsData={evalsData}
+                          evalsLoading={evalsLoading}
+                          evalsError={evalsError}
+                          runsData={runsData}
+                          runsLoading={runsLoading}
+                          runsError={runsError}
+                          hiddenWidgetKeys={hiddenWidgetKeys}
+                          onToggleWidgetHidden={handleToggleWidgetHidden}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-2 sm:bottom-5 sm:right-5">
+        <button
+          onClick={handleTogglePreviewMode}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
+          title={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
+          aria-label={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
+        >
+          {isMobilePreview ? <Monitor className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
+        </button>
+        <button
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+          title={isRefreshing ? 'Refreshing…' : 'Refresh report'}
+          aria-label="Refresh report"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
     </div>
   )
 }
 
-// Heavy widgets (table/chart/pivot) get a subtle card shell for visual grouping.
-// Light widgets (text/stat/alert) already carry their own chrome — wrapping
-// would produce a distracting double-border.
-const WIDGET_KINDS_WITH_CARD = new Set(['table', 'chart', 'pivot'])
+// Loading skeleton — shimmer placeholders so the layout doesn't jump when widgets
+// resolve. Uses a moving gradient overlay (keyframes defined inline) for a subtle
+// shimmer, with card-shaped blocks matching typical section + widget heights.
+function ReportSkeleton() {
+  const shimmer =
+    'relative overflow-hidden bg-muted/40 before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_1.6s_infinite] before:bg-gradient-to-r before:from-transparent before:via-muted-foreground/10 before:to-transparent'
+  return (
+    <>
+      <style>{`@keyframes shimmer { 100% { transform: translateX(100%); } }`}</style>
+      <div className="flex flex-col gap-4">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="flex flex-col gap-2.5 rounded-xl border border-border/50 bg-card/55 p-2.5 sm:rounded-2xl sm:p-3.5">
+            <div className={`h-3 w-24 rounded-full ${shimmer}`} />
+            <div className={`h-4 w-48 rounded ${shimmer}`} />
+            <div className={`h-32 w-full rounded-xl border border-border/50 ${shimmer}`} />
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function SectionHeader({
+  heading,
+}: {
+  heading: string
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-b border-border/50 pb-2.5 sm:flex-row sm:flex-wrap sm:items-end">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            Report Section
+          </div>
+          <h3 className="m-0 truncate text-lg font-semibold tracking-tight text-foreground">
+            {heading}
+          </h3>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WidgetHeader({
+  widget,
+  mode = 'default',
+  className = '',
+}: {
+  widget: ReportWidget
+  mode?: 'default' | 'metric'
+  className?: string
+}) {
+  if (!widget.title && !widget.description) return null
+  if (mode === 'metric') {
+    return (
+      <div className={`flex flex-col gap-1 ${className}`}>
+        {widget.title && <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{widget.title}</div>}
+        {widget.description && <div className="text-xs leading-5 text-muted-foreground">{widget.description}</div>}
+      </div>
+    )
+  }
+  return (
+    <div className={`flex flex-col gap-1 ${className}`}>
+      {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
+      {widget.description && <div className="text-xs leading-5 text-muted-foreground">{widget.description}</div>}
+    </div>
+  )
+}
 
 function EntryRenderer({
   entry,
+  entryIndex,
+  sectionIndex,
   sources,
+  costsData,
+  costsLoading,
+  costsError,
+  evalsData,
+  evalsLoading,
+  evalsError,
+  runsData,
+  runsLoading,
+  runsError,
+  hiddenWidgetKeys,
+  onToggleWidgetHidden,
 }: {
   entry: ReportEntry
+  entryIndex: number
+  sectionIndex: number
   sources: SourceCache
+  costsData: WorkflowCostsResponse | null
+  costsLoading: boolean
+  costsError: string | null
+  evalsData: EvaluationReportsResponse | null
+  evalsLoading: boolean
+  evalsError: string | null
+  runsData: RunFoldersResponse | null
+  runsLoading: boolean
+  runsError: string | null
+  hiddenWidgetKeys: Set<string>
+  onToggleWidgetHidden: (widgetKey: string) => void
 }) {
+  const [rowRef, isCompact] = useCompactWidgetLayout()
   if (entry.kind === 'single') {
-    return <WidgetShell widget={entry.widget}><WidgetRenderer widget={entry.widget} sources={sources} /></WidgetShell>
+    const widgetKey = widgetInstanceKey(entry.widget, { sectionIndex, entryIndex, widgetIndex: 0 })
+    return (
+      <WidgetCard
+        widget={entry.widget}
+        sources={sources}
+        costsData={costsData}
+        costsLoading={costsLoading}
+        costsError={costsError}
+        evalsData={evalsData}
+        evalsLoading={evalsLoading}
+        evalsError={evalsError}
+        runsData={runsData}
+        runsLoading={runsLoading}
+        runsError={runsError}
+        hidden={hiddenWidgetKeys.has(widgetKey)}
+        onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
+      />
+    )
   }
+  const visibleWidgets = entry.row.widgets.flatMap((widget, widgetIndex) => {
+    const widgetKey = widgetInstanceKey(widget, { sectionIndex, entryIndex, widgetIndex })
+    if (hiddenWidgetKeys.has(widgetKey)) return [{ widget, widgetKey, hidden: true }]
+    if (!widgetShouldRender(widget, sources[widget.source])) return []
+    return [{ widget, widgetKey, hidden: false }]
+  })
+  if (visibleWidgets.length === 0) return null
   return (
-    <div className="flex flex-wrap gap-3">
-      {entry.row.widgets.map((w, i) => (
-        <div key={i} className="flex-1 min-w-[240px]">
-          <WidgetShell widget={w}>
-            <WidgetRenderer widget={w} sources={sources} />
-          </WidgetShell>
+    <div ref={rowRef} className={`flex gap-2.5 ${isCompact ? 'flex-col' : 'flex-col xl:flex-row xl:flex-wrap'}`}>
+      {visibleWidgets.map(({ widget, widgetKey, hidden }) => (
+        <div key={widgetKey} className={`w-full ${isCompact ? '' : 'xl:min-w-[260px] xl:flex-1'}`}>
+          <WidgetCard
+            widget={widget}
+            sources={sources}
+            costsData={costsData}
+            costsLoading={costsLoading}
+            costsError={costsError}
+            evalsData={evalsData}
+            evalsLoading={evalsLoading}
+            evalsError={evalsError}
+            runsData={runsData}
+            runsLoading={runsLoading}
+            runsError={runsError}
+            hidden={Boolean(hidden)}
+            onToggleHidden={() => onToggleWidgetHidden(widgetKey)}
+          />
         </div>
       ))}
     </div>
   )
 }
 
-// Adds a soft card around table/chart/pivot widgets. Hover lifts the shadow
-// slightly so the dashboard feels interactive even when the content is static.
-function WidgetShell({ widget, children }: { widget: ReportWidget; children: React.ReactNode }) {
-  if (!WIDGET_KINDS_WITH_CARD.has(widget.kind)) return <>{children}</>
+function WidgetVisibilityButton({
+  hidden = false,
+  onToggle,
+  className = '',
+}: {
+  hidden?: boolean
+  onToggle: () => void
+  className?: string
+}) {
+  const Icon = hidden ? ChevronDown : ChevronUp
   return (
-    <div className="rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm transition-shadow hover:shadow-md">
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`absolute right-2 top-2 z-20 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/70 bg-background/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground ${className}`}
+      title={hidden ? 'Show widget' : 'Hide widget'}
+      aria-label={hidden ? 'Show widget' : 'Hide widget'}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  )
+}
+
+function StandaloneWidgetNotice({
+  children,
+  hidden = false,
+  onToggleHidden,
+}: {
+  children: React.ReactNode
+  hidden?: boolean
+  onToggleHidden?: () => void
+}) {
+  return (
+    <div className="relative rounded-xl bg-card/70 px-4 py-3 sm:border sm:border-border/60 sm:bg-card/80 sm:shadow-sm">
+      {onToggleHidden && <WidgetVisibilityButton hidden={hidden} onToggle={onToggleHidden} />}
       {children}
     </div>
   )
 }
 
-function WidgetRenderer({
+type SingularWidgetSourceResolution =
+  | { status: 'ok'; value: unknown }
+  | { status: 'no-match'; value: undefined }
+  | { status: 'multi-match'; value: unknown[] }
+
+function normalizeSingularWidgetPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed || trimmed === '$' || trimmed === '$[*]' || trimmed === '.' || trimmed === '*') return ''
+  if (trimmed.startsWith('$[*].')) return trimmed.slice(5)
+  if (trimmed.startsWith('$.')) return trimmed.slice(2)
+  return trimmed
+}
+
+function resolveSingularWidgetSource(source: unknown, widget: ReportWidget): SingularWidgetSourceResolution {
+  const filtered = applyWidgetFilter(source, widget.filter)
+  if (!Array.isArray(filtered)) return { status: 'ok', value: filtered }
+  if (filtered.length === 0) return { status: 'no-match', value: undefined }
+  if (filtered.length === 1) return { status: 'ok', value: filtered[0] }
+  return { status: 'multi-match', value: filtered }
+}
+
+function HiddenWidgetCard({
+  widget,
+  onShow,
+}: {
+  widget: ReportWidget
+  onShow: () => void
+}) {
+  return (
+    <div className="relative flex min-h-[52px] items-center rounded-xl border border-dashed border-border/70 bg-muted/15 px-3 py-2.5 shadow-sm">
+      <div className="min-w-0 pr-10">
+        <div className="truncate text-sm font-medium text-foreground">
+          {widget.title || `${widget.kind[0].toUpperCase()}${widget.kind.slice(1)} widget`}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Hidden widget
+        </div>
+      </div>
+      <WidgetVisibilityButton hidden onToggle={onShow} />
+    </div>
+  )
+}
+
+function WidgetCard({
   widget,
   sources,
+  costsData,
+  costsLoading,
+  costsError,
+  evalsData,
+  evalsLoading,
+  evalsError,
+  runsData,
+  runsLoading,
+  runsError,
+  hidden = false,
+  onToggleHidden,
 }: {
   widget: ReportWidget
   sources: SourceCache
+  costsData: WorkflowCostsResponse | null
+  costsLoading: boolean
+  costsError: string | null
+  evalsData: EvaluationReportsResponse | null
+  evalsLoading: boolean
+  evalsError: string | null
+  runsData: RunFoldersResponse | null
+  runsLoading: boolean
+  runsError: string | null
+  hidden?: boolean
+  onToggleHidden?: () => void
 }) {
+  if (hidden && onToggleHidden) {
+    return <HiddenWidgetCard widget={widget} onShow={onToggleHidden} />
+  }
+
+  if (widget.kind === 'costs') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <CostsWidget
+          widget={widget}
+          costsData={costsData}
+          loading={costsLoading}
+          error={costsError}
+        />
+      </WidgetShell>
+    )
+  }
+
+  if (widget.kind === 'evals') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <EvalsWidget
+          widget={widget}
+          evalsData={evalsData}
+          loading={evalsLoading}
+          error={evalsError}
+        />
+      </WidgetShell>
+    )
+  }
+
+  if (widget.kind === 'runs') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <RunsWidget
+          widget={widget}
+          runsData={runsData}
+          loading={runsLoading}
+          error={runsError}
+        />
+      </WidgetShell>
+    )
+  }
+
   const raw = sources[widget.source]
   if (raw === undefined) {
-    // Source still loading — show a small placeholder so empty widgets aren't silent.
-    return (
-      <div className="text-xs italic text-muted-foreground py-2">
+    const content = (
+      <div className="py-1.5 text-xs italic text-muted-foreground">
         Loading {widget.source}…
       </div>
     )
+    if (widget.kind === 'stat' || widget.kind === 'alert') {
+      return <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
+    }
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        {content}
+      </WidgetShell>
+    )
   }
   if (raw === null) {
-    return (
-      <div className="text-xs italic text-muted-foreground py-2">
+    const content = (
+      <div className="py-1.5 text-xs italic text-muted-foreground">
         Source not available: <code className="px-1 rounded bg-muted">{widget.source}</code>
       </div>
     )
+    if (widget.kind === 'stat' || widget.kind === 'alert') {
+      return <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
+    }
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        {content}
+      </WidgetShell>
+    )
   }
-  // Universal conditional — drop the widget entirely when show_if is set and
-  // evaluates to false. Happens BEFORE path resolution so "hide when count=0"
-  // doesn't flash a spinner / empty-state first.
-  if (!evaluateShowIf(raw, widget.showIf)) return null
-
-  // Stat / alert / pivot have their own shape expectations and surface their
-  // own errors — delegate so we don't try to force them through the generic
-  // array-or-scalar pipeline below.
-  if (widget.kind === 'stat') return <StatWidget source={raw} widget={widget} />
-  if (widget.kind === 'alert') return <AlertWidget source={raw} widget={widget} />
-  if (widget.kind === 'pivot') return <PivotWidget source={raw} widget={widget} />
+  const singularSource =
+    widget.kind === 'stat' || widget.kind === 'alert'
+      ? resolveSingularWidgetSource(raw, widget)
+      : null
+  const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : raw
+  if (!evaluateShowIf(conditionalSource, widget.showIf)) return null
+  if (widget.kind === 'stat') {
+    return (
+      <StatWidget
+        source={singularSource?.status === 'ok' ? singularSource.value : undefined}
+        resolution={singularSource ?? { status: 'ok', value: raw }}
+        widget={widget}
+        onToggleHidden={onToggleHidden}
+      />
+    )
+  }
+  if (widget.kind === 'alert') {
+    return (
+      <AlertWidget
+        source={singularSource?.status === 'ok' ? singularSource.value : undefined}
+        resolution={singularSource ?? { status: 'ok', value: raw }}
+        widget={widget}
+        onToggleHidden={onToggleHidden}
+      />
+    )
+  }
+  if (widget.kind === 'pivot') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <PivotWidget source={raw} widget={widget} />
+      </WidgetShell>
+    )
+  }
 
   const resolvedRaw = resolveJSONPath(raw, widget.path)
+  let content: React.ReactNode = null
   if (resolvedRaw === undefined) {
-    return (
+    content = (
       <WidgetError
         widget={widget}
         message={`Path "${widget.path || '(root)'}" doesn't resolve in ${widget.source}.`}
         hint="Check the source JSON for a matching key. Run validate_report_plan in builder chat for specifics."
       />
     )
+  } else {
+    const resolved = applyWidgetFilter(resolvedRaw, widget.filter)
+    if (resolved == null) return null
+    if (Array.isArray(resolved) && resolved.length === 0) {
+      content = (
+        <WidgetError
+          widget={widget}
+          message={`No rows in ${widget.source}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
+          hint="The source is valid but empty for this widget; this usually clears after the workflow runs."
+          severity="info"
+        />
+      )
+    } else if (widget.kind === 'text') {
+      content = <TextWidget value={resolved} widget={widget} />
+    } else if (widget.kind === 'table') {
+      content = <TableWidget value={resolved} widget={widget} />
+    } else if (widget.kind === 'chart') {
+      content = <ChartWidget value={resolved} widget={widget} />
+    }
   }
-  const resolved = applyWidgetFilter(resolvedRaw, widget.filter)
-  if (resolved == null) return null
-  if (Array.isArray(resolved) && resolved.length === 0) {
+
+  if (content == null) return null
+  return (
+    <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+      {content}
+    </WidgetShell>
+  )
+}
+
+function makeSyntheticTableWidget(options: {
+  formats?: Record<string, ReportFormatterName>
+  defaultSort?: { field: string; direction: 'asc' | 'desc' }
+  colorBy?: string
+  colorMap?: Record<string, string>
+  hideColumns?: string[]
+} = {}): ReportWidget {
+  return {
+    kind: 'table',
+    source: '',
+    path: '',
+    enableSearch: true,
+    pageSize: 10,
+    ...options,
+  }
+}
+
+function makeSyntheticChartWidget(options: {
+  chartType?: 'bar' | 'line' | 'area'
+  xAxis?: string
+  yAxis?: string
+  series?: string[]
+  stacked?: boolean
+  format?: ReportFormatterName
+} = {}): ReportWidget {
+  return {
+    kind: 'chart',
+    source: '',
+    path: '',
+    chartType: options.chartType ?? 'bar',
+    xAxis: options.xAxis,
+    yAxis: options.yAxis,
+    series: options.series,
+    stacked: options.stacked,
+    format: options.format,
+    showValues: false,
+    height: 260,
+  }
+}
+
+function CostsWidget({
+  widget,
+  costsData,
+  loading,
+  error,
+}: {
+  widget: ReportWidget
+  costsData: WorkflowCostsResponse | null
+  loading: boolean
+  error: string | null
+}) {
+  const [summaryRef, isCompact] = useCompactWidgetLayout()
+  const scope = widget.costsScope ?? 'all'
+  const view = widget.costsView ?? 'summary'
+  const metric = widget.costsMetric ?? 'cost'
+  const runScope = scope === 'phase' ? 'all' : scope
+
+  const phaseSummary = useMemo(() => summarisePhaseCosts(costsData?.phase_token_usage ?? null), [costsData])
+
+  const runSummaries = useMemo(() => {
+    if (!costsData?.runs || scope === 'phase') return []
+    const filtered = costsData.runs
+      .filter(entry => {
+        if (!widget.group) return true
+        return entry.run_folder === widget.group || entry.run_folder.endsWith(`/${widget.group}`)
+      })
+      .map(entry => summariseRunCosts(entry.run_folder, entry.token_usage, entry.evaluation_token_usage, runScope))
+      .filter((entry): entry is RunCostSummary => entry !== null)
+      .sort((a, b) => {
+        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        return bTime - aTime || b.totalCost - a.totalCost || a.runFolder.localeCompare(b.runFolder)
+      })
+    if (!widget.runFolder) return filtered
+    if (widget.runFolder === 'latest') return filtered.length > 0 ? [filtered[0]] : []
+    return filtered.filter(entry => entry.runFolder === widget.runFolder)
+  }, [costsData, runScope, scope, widget.group, widget.runFolder])
+
+  const aggregateRunSummary = useMemo(() => aggregateRunCostSummaries(runSummaries), [runSummaries])
+
+  const summaryCards = useMemo(() => {
+    if (scope === 'phase') {
+      if (!phaseSummary) return []
+      return [
+        { label: 'Total Cost', value: formatMetricValue('cost', phaseSummary.totalCost) },
+        { label: 'Total Tokens', value: formatMetricValue('total_tokens', phaseSummary.totalTokens) },
+        { label: 'LLM Calls', value: formatMetricValue('llm_calls', phaseSummary.totalLLMCalls) },
+        { label: 'Phases', value: String(phaseSummary.phaseCosts.length) },
+      ]
+    }
+    if (!aggregateRunSummary) return []
+    return [
+      { label: 'Total Cost', value: formatMetricValue('cost', aggregateRunSummary.totalCost) },
+      { label: 'Total Tokens', value: formatMetricValue('total_tokens', aggregateRunSummary.totalTokens) },
+      { label: 'LLM Calls', value: formatMetricValue('llm_calls', aggregateRunSummary.totalLLMCalls) },
+      { label: 'Runs', value: String(runSummaries.length) },
+    ]
+  }, [aggregateRunSummary, phaseSummary, runSummaries.length, scope])
+
+  if (loading) {
     return (
-      <WidgetError
-        widget={widget}
-        message={`No rows in ${widget.source}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
-        hint="The source is valid but empty for this widget; this usually clears after the workflow runs."
-        severity="info"
-      />
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-3 text-sm text-muted-foreground">
+          Loading workflow costs…
+        </div>
+      </div>
     )
   }
 
-  if (widget.kind === 'text') return <TextWidget value={resolved} widget={widget} />
-  if (widget.kind === 'table') return <TableWidget value={resolved} widget={widget} />
-  if (widget.kind === 'chart') return <ChartWidget value={resolved} widget={widget} />
-  return null
+  if (error) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError widget={widget} message={error} hint="Costs widgets read aggregated data from the workflow costs API." />
+      </div>
+    )
+  }
+
+  if (scope === 'phase') {
+    if (!phaseSummary) {
+      return (
+        <div className="flex flex-col gap-3">
+          <WidgetHeader widget={widget} />
+          <WidgetError
+            widget={widget}
+            message="No phase cost data is available yet."
+            hint="Phase costs come from builder-style workflow sessions and appear after token usage has been persisted."
+            severity="info"
+          />
+        </div>
+      )
+    }
+
+    const phaseChartRows = phaseSummary.phaseCosts.map(phase => ({
+      label: phase.phaseTitle,
+      value: metricValue(metric, phase),
+    }))
+    const modelRows = phaseSummary.modelCosts.map(model => ({
+      model: model.modelID,
+      provider: model.provider,
+      total_cost: model.totalCost,
+      total_tokens: model.totalTokens,
+      input_tokens: model.inputTokens,
+      output_tokens: model.outputTokens,
+      llm_calls: model.llmCalls,
+    }))
+
+    return (
+      <div ref={summaryRef} className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        {view === 'summary' && (
+          <>
+            <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-4'}`}>
+              {summaryCards.map(card => (
+                <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+                  <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
+                </div>
+              ))}
+            </div>
+            <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Phase Breakdown</div>
+              <div className="flex flex-wrap gap-1.5">
+                {phaseSummary.phaseCosts.slice(0, 6).map(phase => (
+                  <div key={phase.phaseID} className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                    {phase.phaseTitle}: <span className="font-medium">{formatMetricValue(metric, metricValue(metric, phase))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+        {view === 'stage-breakdown' && (
+          <ChartWidget
+            value={phaseChartRows}
+            widget={makeSyntheticChartWidget({
+              chartType: 'bar',
+              xAxis: 'label',
+              yAxis: 'value',
+            })}
+          />
+        )}
+        {view === 'model-table' && (
+          <TableWidget
+            value={modelRows}
+            widget={makeSyntheticTableWidget({
+              formats: {
+                total_cost: 'currency-usd',
+                total_tokens: 'number',
+                input_tokens: 'number',
+                output_tokens: 'number',
+                llm_calls: 'number',
+              },
+              defaultSort: { field: metric === 'cost' ? 'total_cost' : metric, direction: 'desc' },
+            })}
+          />
+        )}
+        {view === 'run-table' || view === 'step-table' ? (
+          <WidgetError
+            widget={widget}
+            message={`"${view}" is not available for phase scope.`}
+            hint="Use `summary`, `stage-breakdown`, or `model-table` with `scope: phase`."
+            severity="info"
+          />
+        ) : null}
+        {view !== 'summary' && view !== 'stage-breakdown' && view !== 'model-table' && view !== 'run-table' && view !== 'step-table' && (
+          <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" />
+        )}
+      </div>
+    )
+  }
+
+  if (!aggregateRunSummary || runSummaries.length === 0) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError
+          widget={widget}
+          message="No run cost data is available for the selected scope."
+          hint="Execution and evaluation costs appear after runs have persisted token usage into the workflow costs ledger."
+          severity="info"
+        />
+      </div>
+    )
+  }
+
+  const stageMetricMap = aggregateRunSummary.stepCosts.reduce((acc, step) => {
+    const current = acc.get(step.stage) ?? {
+      label: step.stage.replace(/_/g, ' '),
+      totalCost: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      llmCalls: 0,
+    }
+    current.totalCost += step.totalCost
+    current.totalTokens += step.totalTokens
+    current.inputTokens += step.inputTokens
+    current.outputTokens += step.outputTokens
+    current.llmCalls += step.llmCalls
+    acc.set(step.stage, current)
+    return acc
+  }, new Map<string, {
+    label: string
+    totalCost: number
+    totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    llmCalls: number
+  }>())
+
+  const stageMetricRows = Array.from(stageMetricMap.values())
+    .map(stage => ({
+      label: stage.label,
+      value: metricValue(metric, stage),
+    }))
+    .filter(stage => stage.value > 0)
+
+  const runRows = runSummaries.map(run => ({
+    run_folder: run.runFolder,
+    updated_at: run.updatedAt ?? '',
+    total_cost: run.totalCost,
+    total_tokens: run.totalTokens,
+    input_tokens: run.totalInputTokens,
+    output_tokens: run.totalOutputTokens,
+    llm_calls: run.totalLLMCalls,
+  }))
+
+  const stepRows = aggregateRunSummary.stepCosts.map(step => ({
+    step: step.stepTitle,
+    stage: step.stage,
+    total_cost: step.totalCost,
+    total_tokens: step.totalTokens,
+    input_tokens: step.inputTokens,
+    output_tokens: step.outputTokens,
+    llm_calls: step.llmCalls,
+  }))
+
+  const modelRows = aggregateRunSummary.modelCosts.map(model => ({
+    model: model.modelID,
+    provider: model.provider,
+    total_cost: model.totalCost,
+    total_tokens: model.totalTokens,
+    input_tokens: model.inputTokens,
+    output_tokens: model.outputTokens,
+    llm_calls: model.llmCalls,
+  }))
+
+  return (
+    <div ref={summaryRef} className="flex flex-col gap-3">
+      <WidgetHeader widget={widget} />
+      {view === 'summary' && (
+        <>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-4'}`}>
+            {summaryCards.map(card => (
+              <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+                <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {metricLabel(metric)} by Stage
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {stageMetricRows.map(stage => (
+                <div key={stage.label} className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                  {stage.label}: <span className="font-medium">{formatMetricValue(metric, stage.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+      {view === 'stage-breakdown' && (
+        <ChartWidget
+          value={stageMetricRows}
+          widget={makeSyntheticChartWidget({
+            chartType: 'bar',
+            xAxis: 'label',
+            yAxis: 'value',
+          })}
+        />
+      )}
+      {view === 'run-table' && (
+        <TableWidget
+          value={runRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              total_cost: 'currency-usd',
+              total_tokens: 'number',
+              input_tokens: 'number',
+              output_tokens: 'number',
+              llm_calls: 'number',
+              updated_at: 'datetime',
+            },
+            defaultSort: { field: metric === 'cost' ? 'total_cost' : metric, direction: 'desc' },
+          })}
+        />
+      )}
+      {view === 'step-table' && (
+        <TableWidget
+          value={stepRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              total_cost: 'currency-usd',
+              total_tokens: 'number',
+              input_tokens: 'number',
+              output_tokens: 'number',
+              llm_calls: 'number',
+            },
+            defaultSort: { field: metric === 'cost' ? 'total_cost' : metric, direction: 'desc' },
+          })}
+        />
+      )}
+      {view === 'model-table' && (
+        <TableWidget
+          value={modelRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              total_cost: 'currency-usd',
+              total_tokens: 'number',
+              input_tokens: 'number',
+              output_tokens: 'number',
+              llm_calls: 'number',
+            },
+            defaultSort: { field: metric === 'cost' ? 'total_cost' : metric, direction: 'desc' },
+          })}
+        />
+      )}
+      {view !== 'summary' && view !== 'stage-breakdown' && view !== 'run-table' && view !== 'step-table' && view !== 'model-table' && (
+        <WidgetError widget={widget} message={`Unsupported costs view "${view}".`} severity="info" />
+      )}
+    </div>
+  )
+}
+
+function EvalsWidget({
+  widget,
+  evalsData,
+  loading,
+  error,
+}: {
+  widget: ReportWidget
+  evalsData: EvaluationReportsResponse | null
+  loading: boolean
+  error: string | null
+}) {
+  const [summaryRef, isCompact] = useCompactWidgetLayout()
+  const view = widget.evalsView ?? 'summary'
+  const metric: ReportEvalsMetric = widget.evalsMetric ?? 'score_percentage'
+
+  const selectedReports = useMemo(() => {
+    const reports = (evalsData?.reports ?? [])
+      .filter(entry => {
+        if (!widget.group) return true
+        return entry.run_folder === widget.group || entry.run_folder.endsWith(`/${widget.group}`)
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.report.generated_at).getTime()
+        const bTime = new Date(b.report.generated_at).getTime()
+        return bTime - aTime || b.report.score_percentage - a.report.score_percentage || a.run_folder.localeCompare(b.run_folder)
+      })
+
+    if (!widget.runFolder) return reports
+    if (widget.runFolder === 'latest') return reports.length > 0 ? [reports[0]] : []
+    return reports.filter(entry => entry.run_folder === widget.runFolder)
+  }, [evalsData, widget.group, widget.runFolder])
+
+  const summary = useMemo(() => {
+    if (selectedReports.length === 0) return null
+    const totals = selectedReports.reduce((acc, entry) => {
+      acc.totalScore += entry.report.total_score
+      acc.totalMaxScore += entry.report.max_possible_score
+      acc.totalSteps += entry.report.step_scores.length
+      return acc
+    }, {
+      totalScore: 0,
+      totalMaxScore: 0,
+      totalSteps: 0,
+    })
+    const percentages = selectedReports.map(entry => entry.report.score_percentage)
+    return {
+      totalRuns: selectedReports.length,
+      averagePercentage: percentages.reduce((acc, value) => acc + value, 0) / percentages.length,
+      highestPercentage: Math.max(...percentages),
+      lowestPercentage: Math.min(...percentages),
+      totalScore: totals.totalScore,
+      totalMaxScore: totals.totalMaxScore,
+      totalSteps: totals.totalSteps,
+    }
+  }, [selectedReports])
+
+  const runChartRows = useMemo(() => {
+    return selectedReports.map(entry => ({
+      label: entry.run_folder.split('/').slice(-2).join(' / ') || entry.run_folder,
+      value: metric === 'total_score' ? entry.report.total_score : entry.report.score_percentage,
+    }))
+  }, [metric, selectedReports])
+
+  const runRows = useMemo(() => {
+    return selectedReports.map(entry => ({
+      run_folder: entry.run_folder,
+      generated_at: entry.report.generated_at,
+      total_score: entry.report.total_score,
+      max_possible_score: entry.report.max_possible_score,
+      score_percentage: entry.report.score_percentage,
+      step_count: entry.report.step_scores.length,
+    }))
+  }, [selectedReports])
+
+  const stepRows = useMemo(() => {
+    return selectedReports.flatMap(entry =>
+      entry.report.step_scores.map(step => ({
+        run_folder: entry.run_folder,
+        generated_at: entry.report.generated_at,
+        step_id: step.step_id,
+        score: step.score,
+        max_score: step.max_score,
+        score_percentage: step.max_score > 0 ? (step.score / step.max_score) * 100 : 0,
+        reasoning: step.reasoning,
+        evidence: step.evidence,
+      }))
+    )
+      .sort((a, b) => a.score_percentage - b.score_percentage || a.run_folder.localeCompare(b.run_folder) || a.step_id.localeCompare(b.step_id))
+  }, [selectedReports])
+
+  const summaryCards = useMemo(() => {
+    if (!summary) return []
+    return [
+      { label: 'Average Score', value: `${summary.averagePercentage.toFixed(1)}%` },
+      { label: 'Highest Score', value: `${summary.highestPercentage.toFixed(1)}%` },
+      { label: 'Lowest Score', value: `${summary.lowestPercentage.toFixed(1)}%` },
+      { label: 'Runs', value: String(summary.totalRuns) },
+    ]
+  }, [summary])
+
+  const weakestSteps = useMemo(() => stepRows.slice(0, 5), [stepRows])
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-3 text-sm text-muted-foreground">
+          Loading evaluation reports…
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError widget={widget} message={error} hint="Evals widgets read aggregated data from the evaluation reports API." />
+      </div>
+    )
+  }
+
+  if (!summary || selectedReports.length === 0) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError
+          widget={widget}
+          message="No evaluation reports are available for the selected scope."
+          hint="Run evaluation first, or remove the run/group filter so the widget can see existing reports."
+          severity="info"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div ref={summaryRef} className="flex flex-col gap-3">
+      <WidgetHeader widget={widget} />
+      {view === 'summary' && (
+        <>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-4'}`}>
+            {summaryCards.map(card => (
+              <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+                <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Weakest Steps
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {weakestSteps.map(step => (
+                <div key={`${step.run_folder}:${step.step_id}`} className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                  {step.step_id}: <span className="font-medium">{step.score_percentage.toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+      {view === 'run-chart' && (
+        <ChartWidget
+          value={runChartRows}
+          widget={makeSyntheticChartWidget({
+            chartType: 'bar',
+            xAxis: 'label',
+            yAxis: 'value',
+          })}
+        />
+      )}
+      {view === 'run-table' && (
+        <TableWidget
+          value={runRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              generated_at: 'datetime',
+              total_score: 'number',
+              max_possible_score: 'number',
+              score_percentage: 'number-1dp',
+              step_count: 'number',
+            },
+            defaultSort: { field: metric === 'total_score' ? 'total_score' : 'score_percentage', direction: 'desc' },
+          })}
+        />
+      )}
+      {view === 'step-table' && (
+        <TableWidget
+          value={stepRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              generated_at: 'datetime',
+              score: 'number',
+              max_score: 'number',
+              score_percentage: 'number-1dp',
+            },
+            defaultSort: { field: 'score_percentage', direction: 'asc' },
+          })}
+        />
+      )}
+      {view !== 'summary' && view !== 'run-chart' && view !== 'run-table' && view !== 'step-table' && (
+        <WidgetError widget={widget} message={`Unsupported evals view "${view}".`} severity="info" />
+      )}
+    </div>
+  )
+}
+
+function RunsWidget({
+  widget,
+  runsData,
+  loading,
+  error,
+}: {
+  widget: ReportWidget
+  runsData: RunFoldersResponse | null
+  loading: boolean
+  error: string | null
+}) {
+  const [summaryRef, isCompact] = useCompactWidgetLayout()
+  const view = widget.runsView ?? 'summary'
+  const now = Date.now()
+
+  const selectedRuns = useMemo(() => {
+    const runs = (runsData?.folders ?? [])
+      .filter(entry => {
+        if (!widget.group) return true
+        return entry.name === widget.group || entry.name.endsWith(`/${widget.group}`)
+      })
+      .sort((a, b) => {
+        const aTime = parseTimestamp(a.metadata?.created_at) ?? 0
+        const bTime = parseTimestamp(b.metadata?.created_at) ?? 0
+        return bTime - aTime || a.name.localeCompare(b.name)
+      })
+
+    if (!widget.runFolder) return runs
+    if (widget.runFolder === 'latest') return runs.length > 0 ? [runs[0]] : []
+    return runs.filter(entry => entry.name === widget.runFolder)
+  }, [runsData, widget.group, widget.runFolder])
+
+  const normalisedRuns = useMemo(() => {
+    return selectedRuns.map(run => {
+      const startedAt = run.metadata?.created_at ?? ''
+      const completedAt = run.metadata?.completed_at ?? ''
+      const startedMs = parseTimestamp(startedAt)
+      const completedMs = parseTimestamp(completedAt)
+      const durationMs = startedMs == null
+        ? 0
+        : Math.max(0, (completedMs ?? now) - startedMs)
+      return {
+        run,
+        run_folder: run.name,
+        status: run.metadata?.status ?? 'unknown',
+        triggered_by: run.metadata?.triggered_by ?? '',
+        created_at: startedAt,
+        completed_at: completedAt,
+        duration_ms: durationMs,
+        duration_minutes: durationMs / 60000,
+        duration_label: formatRuntimeDuration(durationMs),
+      }
+    })
+  }, [now, selectedRuns])
+
+  const summary = useMemo(() => {
+    if (normalisedRuns.length === 0) return null
+    const completed = normalisedRuns.filter(run => run.status === 'completed').length
+    const running = normalisedRuns.filter(run => run.status === 'running').length
+    const failed = normalisedRuns.filter(run => run.status === 'failed').length
+    const totalDurationMs = normalisedRuns.reduce((sum, run) => sum + run.duration_ms, 0)
+    return {
+      totalRuns: normalisedRuns.length,
+      completed,
+      running,
+      failed,
+      totalDurationMs,
+      averageDurationMs: totalDurationMs / normalisedRuns.length,
+      latestRun: normalisedRuns[0] ?? null,
+    }
+  }, [normalisedRuns])
+
+  const summaryCards = useMemo(() => {
+    if (!summary) return []
+    return [
+      { label: 'Runs', value: String(summary.totalRuns) },
+      { label: 'Completed', value: String(summary.completed) },
+      { label: 'Running', value: String(summary.running) },
+      { label: 'Total Runtime', value: formatRuntimeDuration(summary.totalDurationMs) },
+      { label: 'Avg Runtime', value: formatRuntimeDuration(summary.averageDurationMs) },
+    ]
+  }, [summary])
+
+  const durationChartRows = useMemo(() => {
+    return normalisedRuns.map(run => ({
+      label: run.run_folder.split('/').slice(-2).join(' / ') || run.run_folder,
+      value: Number(run.duration_minutes.toFixed(2)),
+    }))
+  }, [normalisedRuns])
+
+  const statusChartRows = useMemo(() => {
+    if (!summary) return []
+    return [
+      { label: 'Completed', value: summary.completed },
+      { label: 'Running', value: summary.running },
+      { label: 'Failed', value: summary.failed },
+    ].filter(row => row.value > 0)
+  }, [summary])
+
+  const runRows = useMemo(() => {
+    return normalisedRuns.map(run => ({
+      run_folder: run.run_folder,
+      status: run.status,
+      triggered_by: run.triggered_by,
+      created_at: run.created_at,
+      completed_at: run.completed_at,
+      duration: run.duration_label,
+      duration_minutes: Number(run.duration_minutes.toFixed(2)),
+    }))
+  }, [normalisedRuns])
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-3 text-sm text-muted-foreground">
+          Loading workflow runs…
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError widget={widget} message={error} hint="Runs widgets read workspace run-folder metadata from the workflow API." />
+      </div>
+    )
+  }
+
+  if (!summary || normalisedRuns.length === 0) {
+    return (
+      <div className="flex flex-col gap-3">
+        <WidgetHeader widget={widget} />
+        <WidgetError
+          widget={widget}
+          message="No workflow runs are available for the selected scope."
+          hint="Run the workflow first, or remove the run/group filter so the widget can see existing runs."
+          severity="info"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div ref={summaryRef} className="flex flex-col gap-3">
+      <WidgetHeader widget={widget} />
+      {view === 'summary' && (
+        <>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-5'}`}>
+            {summaryCards.map(card => (
+              <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+                <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
+              </div>
+            ))}
+          </div>
+          {summary.latestRun && (
+            <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Latest Run
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                  {summary.latestRun.run_folder}
+                </div>
+                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                  Status: <span className="font-medium">{summary.latestRun.status}</span>
+                </div>
+                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
+                  Runtime: <span className="font-medium">{summary.latestRun.duration_label}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {view === 'duration-chart' && (
+        <ChartWidget
+          value={durationChartRows}
+          widget={makeSyntheticChartWidget({
+            chartType: 'bar',
+            xAxis: 'label',
+            yAxis: 'value',
+          })}
+        />
+      )}
+      {view === 'status-chart' && (
+        <ChartWidget
+          value={statusChartRows}
+          widget={makeSyntheticChartWidget({
+            chartType: 'bar',
+            xAxis: 'label',
+            yAxis: 'value',
+          })}
+        />
+      )}
+      {view === 'table' && (
+        <TableWidget
+          value={runRows}
+          widget={makeSyntheticTableWidget({
+            formats: {
+              created_at: 'datetime',
+              completed_at: 'datetime',
+              duration_minutes: 'number-2dp',
+            },
+            defaultSort: { field: 'created_at', direction: 'desc' },
+            colorBy: 'status',
+            colorMap: {
+              completed: '#10b981',
+              running: '#3b82f6',
+              failed: '#ef4444',
+              unknown: '#6b7280',
+            },
+            hideColumns: ['duration_minutes'],
+          })}
+        />
+      )}
+      {view !== 'summary' && view !== 'duration-chart' && view !== 'status-chart' && view !== 'table' && (
+        <WidgetError widget={widget} message={`Unsupported runs view "${view}".`} severity="info" />
+      )}
+    </div>
+  )
+}
+
+// Adds a soft card around table/chart/pivot widgets. Hover lifts the shadow
+// slightly so the dashboard feels interactive even when the content is static.
+function WidgetShell({
+  widget,
+  children,
+  onToggleHidden,
+}: {
+  widget: ReportWidget
+  children: React.ReactNode
+  onToggleHidden?: () => void
+}) {
+  if (widget.kind === 'stat' || widget.kind === 'alert') return <>{children}</>
+  const shellClassName =
+    widget.kind === 'text'
+      ? 'group relative px-0 py-0 transition-all duration-200 sm:rounded-xl sm:border sm:border-border/60 sm:bg-background/85 sm:px-3 sm:py-3 sm:shadow-sm sm:hover:border-border sm:hover:shadow-md'
+      : 'group relative px-0 py-0 transition-all duration-200 sm:overflow-hidden sm:rounded-xl sm:border sm:border-border/60 sm:bg-gradient-to-b sm:from-card sm:to-muted/15 sm:px-3 sm:py-3 sm:shadow-sm sm:hover:border-border sm:hover:shadow-md'
+  return (
+    <div className={shellClassName}>
+      {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
+      <span className="absolute inset-x-0 top-0 hidden h-[2px] bg-gradient-to-r from-primary/0 via-primary/60 to-primary/0 opacity-60 transition-opacity group-hover:opacity-100 sm:block" aria-hidden />
+      {children}
+    </div>
+  )
 }
 
 // Inline per-widget diagnostic — surfaces silent-failure cases (unresolved path,
@@ -443,9 +2290,9 @@ function WidgetError({
 }) {
   const tone = severity === 'error'
     ? 'border-destructive/30 bg-destructive/5 text-destructive'
-    : 'border-muted bg-muted/30 text-muted-foreground'
+    : 'border-border/70 bg-muted/30 text-muted-foreground'
   return (
-    <div className={`text-xs rounded border px-2 py-1.5 my-1 ${tone}`}>
+    <div className={`rounded-xl border px-2.5 py-2 text-xs ${tone}`}>
       <div className="flex items-center gap-2">
         {widget.title && <span className="font-semibold">{widget.title}</span>}
         <span className="opacity-70">({widget.kind})</span>
@@ -464,14 +2311,11 @@ function TextWidget({ value, widget }: { value: unknown; widget: ReportWidget })
         ? String(value)
         : JSON.stringify(value, null, 2)
   return (
-    <div className="flex flex-col gap-1">
-      {(widget.title || widget.description) && (
-        <div className="flex flex-col gap-0.5">
-          {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
-          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
-        </div>
-      )}
-      <div className="whitespace-pre-wrap leading-6 text-foreground">{text}</div>
+    <div className="flex flex-col gap-2.5">
+      <WidgetHeader widget={widget} />
+      <div className="whitespace-pre-wrap rounded-lg bg-muted/25 px-2.5 py-2.5 text-sm leading-7 text-foreground sm:px-3 sm:text-[15px]">
+        {text}
+      </div>
     </div>
   )
 }
@@ -481,19 +2325,56 @@ function TextWidget({ value, widget }: { value: unknown; widget: ReportWidget })
 // `path` resolves to a scalar. `delta_path` and `trend_path` resolve against
 // the same source; delta is a signed number, trend is an array of numbers.
 // ---------------------------------------------------------------------------
-function StatWidget({ source, widget }: { source: unknown; widget: ReportWidget }) {
-  const rawValue = resolveJSONPath(source, widget.path)
+function StatWidget({
+  source,
+  resolution,
+  widget,
+  onToggleHidden,
+}: {
+  source: unknown
+  resolution: SingularWidgetSourceResolution
+  widget: ReportWidget
+  onToggleHidden?: () => void
+}) {
+  if (resolution.status === 'no-match') {
+    return (
+      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>
+        <WidgetError
+          widget={widget}
+          message={`No rows in ${widget.source}${widget.filter ? ` matching filter "${widget.filter}"` : ''}.`}
+          hint="Stat widgets backed by array sources need one matching row."
+          severity="info"
+        />
+      </StandaloneWidgetNotice>
+    )
+  }
+  if (resolution.status === 'multi-match') {
+    return (
+      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>
+        <WidgetError
+          widget={widget}
+          message={`Stat widget matched ${resolution.value.length} rows in ${widget.source}${widget.filter ? ` for filter "${widget.filter}"` : ''}.`}
+          hint="Point the widget at a single row, or narrow the filter so exactly one record remains."
+        />
+      </StandaloneWidgetNotice>
+    )
+  }
+
+  const scalarPath = normalizeSingularWidgetPath(widget.path)
+  const rawValue = resolveJSONPath(source, scalarPath)
   if (rawValue === undefined) {
     return (
-      <WidgetError
-        widget={widget}
-        message={`Path "${widget.path || '(root)'}" doesn't resolve in ${widget.source}.`}
-        hint="Point `path:` at a scalar (number or string) the stat should display."
-      />
+      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>
+        <WidgetError
+          widget={widget}
+          message={`Path "${widget.path || '(root)'}" doesn't resolve in ${widget.source}.`}
+          hint="Point `path:` at a scalar (number or string) the stat should display."
+        />
+      </StandaloneWidgetNotice>
     )
   }
   const formatted = widget.format ? formatNamed(rawValue, widget.format) : formatAuto(rawValue)
-  const delta = widget.deltaPath != null ? resolveJSONPath(source, widget.deltaPath) : undefined
+  const delta = widget.deltaPath != null ? resolveJSONPath(source, normalizeSingularWidgetPath(widget.deltaPath)) : undefined
   const deltaNum = typeof delta === 'number' ? delta : Number(delta)
   const deltaFormatted =
     Number.isFinite(deltaNum) && widget.deltaPath
@@ -501,34 +2382,32 @@ function StatWidget({ source, widget }: { source: unknown; widget: ReportWidget 
         ? formatNamed(deltaNum, widget.deltaFormat).text
         : formatAuto(deltaNum).text
       : undefined
-  const trend = widget.trendPath != null ? resolveJSONPath(source, widget.trendPath) : undefined
+  const trend = widget.trendPath != null ? resolveJSONPath(source, normalizeSingularWidgetPath(widget.trendPath)) : undefined
   const trendNumbers = Array.isArray(trend)
     ? (trend as unknown[]).map(v => Number(v)).filter(n => Number.isFinite(n))
     : []
 
   const deltaTone =
     Number.isFinite(deltaNum) && deltaNum > 0
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/30'
       : Number.isFinite(deltaNum) && deltaNum < 0
-        ? 'text-red-600 dark:text-red-400'
-        : 'text-muted-foreground'
+        ? 'bg-red-500/15 text-red-700 dark:text-red-300 ring-1 ring-red-500/30'
+        : 'bg-muted text-muted-foreground ring-1 ring-border/50'
   const deltaArrow = Number.isFinite(deltaNum) && deltaNum > 0 ? '▲' : Number.isFinite(deltaNum) && deltaNum < 0 ? '▼' : '·'
 
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border/60 bg-muted/20 px-4 py-3">
-      {(widget.title || widget.description) && (
-        <div className="flex flex-col gap-0.5">
-          {widget.title && <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{widget.title}</div>}
-          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
-        </div>
-      )}
+    <div className="relative flex h-full flex-col gap-2 overflow-hidden rounded-xl bg-card/75 px-3 py-3 transition-shadow sm:border sm:border-border/60 sm:bg-gradient-to-br sm:from-card sm:via-card sm:to-muted/25 sm:shadow-sm sm:hover:shadow-md">
+      {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
+      <span className="absolute inset-x-0 top-0 hidden h-[2px] bg-gradient-to-r from-primary/0 via-primary/60 to-primary/0 sm:block" aria-hidden />
+      <WidgetHeader widget={widget} mode="metric" />
       <div className="flex items-baseline gap-2">
-        <div className="text-2xl font-semibold tabular-nums text-foreground">
+        <div className="text-2xl font-semibold tabular-nums tracking-tight text-foreground sm:text-3xl">
           {widget.prefix ?? ''}{formatted.text}{widget.suffix ?? ''}
         </div>
         {deltaFormatted !== undefined && (
-          <div className={`text-xs font-medium ${deltaTone}`}>
-            {deltaArrow} {deltaFormatted}
+          <div className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${deltaTone}`}>
+            <span aria-hidden>{deltaArrow}</span>
+            <span className="tabular-nums">{deltaFormatted}</span>
           </div>
         )}
       </div>
@@ -541,22 +2420,31 @@ function StatWidget({ source, widget }: { source: unknown; widget: ReportWidget 
 // Inline sparkline SVG — minimal: a single path scaled to fit, 1px stroke.
 // No axes, no points, no tooltip. Fits inside stat widgets + table cells.
 function Sparkline({ points, width = 120, height = 28 }: { points: number[]; width?: number; height?: number }) {
-  const { theme } = useTheme()
-  const stroke = theme === 'dark' ? '#60a5fa' : '#2563eb'
+  const stroke = 'hsl(var(--chart-1))'
+  const gradId = useId().replace(/:/g, '') + '-spark'
   const min = Math.min(...points)
   const max = Math.max(...points)
   const span = max - min || 1
   const stepX = points.length > 1 ? width / (points.length - 1) : 0
-  const d = points
-    .map((v, i) => {
-      const x = i * stepX
-      const y = height - ((v - min) / span) * height
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(' ')
+  const coords = points.map((v, i) => {
+    const x = i * stepX
+    const y = height - ((v - min) / span) * height
+    return [x, y] as const
+  })
+  const lineD = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
+  const fillD = coords.length > 0
+    ? `${lineD} L${(coords[coords.length - 1][0]).toFixed(2)},${height} L0,${height} Z`
+    : ''
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="mt-1">
-      <path d={d} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity={0.35} />
+          <stop offset="100%" stopColor={stroke} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      {fillD && <path d={fillD} fill={`url(#${gradId})`} stroke="none" />}
+      <path d={lineD} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -567,7 +2455,30 @@ function Sparkline({ points, width = 120, height = 28 }: { points: number[]; wid
 // "last_sync_days > 7", etc.). `path` is optional — if set, its resolved
 // value is available via `{value}` interpolation in message/title.
 // ---------------------------------------------------------------------------
-function AlertWidget({ source, widget }: { source: unknown; widget: ReportWidget }) {
+function AlertWidget({
+  source,
+  resolution,
+  widget,
+  onToggleHidden,
+}: {
+  source: unknown
+  resolution: SingularWidgetSourceResolution
+  widget: ReportWidget
+  onToggleHidden?: () => void
+}) {
+  if (resolution.status === 'no-match') return null
+  if (resolution.status === 'multi-match') {
+    return (
+      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>
+        <WidgetError
+          widget={widget}
+          message={`Alert widget matched ${resolution.value.length} rows in ${widget.source}${widget.filter ? ` for filter "${widget.filter}"` : ''}.`}
+          hint="Alert widgets backed by array sources need a single row so `{value}` and `show_if` resolve consistently."
+        />
+      </StandaloneWidgetNotice>
+    )
+  }
+
   const severity: ReportAlertSeverity = widget.severity ?? 'info'
   const tone = {
     info: 'border-blue-500/30 bg-blue-500/5 text-foreground',
@@ -576,7 +2487,7 @@ function AlertWidget({ source, widget }: { source: unknown; widget: ReportWidget
     success: 'border-emerald-500/40 bg-emerald-500/10 text-foreground',
   }[severity]
   const icon = { info: 'ℹ', warning: '⚠', error: '✕', success: '✓' }[severity]
-  const resolvedValue = widget.path ? resolveJSONPath(source, widget.path) : undefined
+  const resolvedValue = widget.path ? resolveJSONPath(source, normalizeSingularWidgetPath(widget.path)) : undefined
   const valueText =
     resolvedValue === undefined || resolvedValue === null
       ? ''
@@ -588,13 +2499,14 @@ function AlertWidget({ source, widget }: { source: unknown; widget: ReportWidget
   const title = interpolate(widget.title)
   const message = interpolate(widget.message)
   return (
-    <div className={`flex items-start gap-2 rounded-md border px-3 py-2 ${tone}`}>
-      <div className="text-base leading-5" aria-hidden>{icon}</div>
+    <div className={`relative flex items-start gap-3 rounded-xl px-3 py-2.5 sm:border sm:shadow-sm ${tone}`}>
+      {onToggleHidden && <WidgetVisibilityButton onToggle={onToggleHidden} />}
+      <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-current/15 bg-background/60 text-sm leading-5" aria-hidden>{icon}</div>
       <div className="flex flex-col gap-0.5">
         {title && <div className="text-sm font-semibold">{title}</div>}
-        {message && <div className="text-sm">{message}</div>}
+        {message && <div className="text-sm leading-6">{message}</div>}
         {!title && !message && (
-          <div className="text-sm">
+          <div className="text-sm leading-6">
             {valueText || <span className="italic text-muted-foreground">(no message)</span>}
           </div>
         )}
@@ -607,6 +2519,7 @@ type SortDirection = 'asc' | 'desc'
 
 function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
   const { theme } = useTheme()
+  const [widgetRef, isCompact] = useCompactWidgetLayout()
   const formats = widget.formats ?? {}
   const enableSearch = widget.enableSearch !== false // default true
   const pageSize = widget.pageSize ?? DEFAULT_TABLE_PAGE_SIZE
@@ -675,6 +2588,18 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
     return out
   }, [value, columns])
 
+  const compactPrimaryColumn = useMemo(() => {
+    return columns.find(col => !numericColumns.has(col)) ?? columns[0] ?? null
+  }, [columns, numericColumns])
+
+  const compactSecondaryColumn = useMemo(() => {
+    return columns.find(col => col !== compactPrimaryColumn && !numericColumns.has(col)) ?? null
+  }, [columns, compactPrimaryColumn, numericColumns])
+
+  const compactDetailColumns = useMemo(() => {
+    return columns.filter(col => col !== compactPrimaryColumn && col !== compactSecondaryColumn)
+  }, [columns, compactPrimaryColumn, compactSecondaryColumn])
+
   const filtered = useMemo(() => {
     if (!Array.isArray(value)) return []
     const rows = value as Record<string, unknown>[]
@@ -739,16 +2664,11 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {(widget.title || widget.description) && (
-        <div className="flex flex-col gap-0.5">
-          {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
-          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
-        </div>
-      )}
-      <div className="flex items-center gap-2 text-xs">
+    <div ref={widgetRef} className="flex flex-col gap-2.5">
+      <WidgetHeader widget={widget} />
+      <div className="flex flex-col gap-1.5 text-xs sm:flex-row sm:flex-wrap sm:items-center">
         {enableSearch && (
-          <div className="relative flex-1 max-w-xs">
+          <div className="relative w-full sm:max-w-xs sm:flex-1">
             <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-muted-foreground" />
             <input
               type="text"
@@ -758,98 +2678,174 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                 setSearch(e.target.value)
                 setPage(0)
               }}
-              className="w-full pl-7 pr-2 py-1 text-xs bg-muted/30 border border-input rounded focus:outline-none focus:ring-1 focus:ring-primary"
+              className="w-full rounded-md border border-input bg-muted/30 py-1.5 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
         )}
-        <div className="text-muted-foreground">{rowCountText}</div>
+        <div className="inline-flex items-center self-start rounded-full border border-border bg-background/80 px-2 py-1 text-muted-foreground sm:self-auto">{rowCountText}</div>
         <button
           onClick={handleExport}
-          className="ml-auto p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:ml-auto sm:w-auto sm:justify-start"
           title="Export CSV"
         >
           <Download className="w-3.5 h-3.5" />
+          <span>CSV</span>
         </button>
       </div>
 
-      <div className="overflow-auto max-h-[60vh] border border-border/60 rounded-md">
-        <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_var(--border)]">
-            <tr>
-              {columns.map(c => {
-                const isSorted = sortField === c
-                const align = numericColumns.has(c) || c in formats ? 'text-right' : 'text-left'
-                return (
-                  <th
-                    key={c}
-                    className={`px-2.5 py-1.5 border-b-2 border-border font-semibold text-foreground select-none cursor-pointer hover:bg-muted/40 transition-colors ${align}`}
-                    onClick={() => onSortClick(c)}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <span>{c}</span>
-                      {isSorted ? (
-                        sortDir === 'asc' ? (
-                          <ArrowUp className="w-3 h-3" />
-                        ) : (
-                          <ArrowDown className="w-3 h-3" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </span>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((row, i) => {
-              const rowColor = resolveSemanticColor(widget, row, palette, distinctIndex[String(row?.[widget.colorBy ?? ''] ?? '')] ?? i)
-              const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined
-              return (
-              <tr
+      {isCompact ? (
+        <div className="flex flex-col gap-2">
+          {pageRows.map((row, i) => {
+            const rowColor = resolveSemanticColor(widget, row, palette, distinctIndex[String(row?.[widget.colorBy ?? ''] ?? '')] ?? i)
+            const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined
+            const primaryValue = compactPrimaryColumn ? row?.[compactPrimaryColumn] : undefined
+            const primaryText = compactPrimaryColumn
+              ? (formats[compactPrimaryColumn]
+                ? formatNamed(primaryValue, formats[compactPrimaryColumn] as ReportFormatterName).text
+                : formatAuto(primaryValue).text)
+              : ''
+            const secondaryValue = compactSecondaryColumn ? row?.[compactSecondaryColumn] : undefined
+            const secondaryText = compactSecondaryColumn
+              ? (formats[compactSecondaryColumn]
+                ? formatNamed(secondaryValue, formats[compactSecondaryColumn] as ReportFormatterName).text
+                : formatAuto(secondaryValue).text)
+              : ''
+            return (
+              <div
                 key={safePage * pageSize + i}
-                className={rowColor ? 'hover:bg-muted/40 transition-colors' : 'even:bg-muted/20 hover:bg-muted/40 transition-colors'}
+                className="rounded-xl border border-border/55 bg-card/90 px-3 py-3 shadow-sm"
                 style={rowStyle}
               >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Row {safePage * pageSize + i + 1}
+                    </div>
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {primaryText || 'Untitled row'}
+                    </div>
+                    {compactSecondaryColumn && secondaryText && secondaryText !== primaryText && (
+                      <div className="truncate text-xs text-muted-foreground">
+                        {compactSecondaryColumn}: {secondaryText}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-2">
+                  {compactDetailColumns.length === 0 && (
+                    <div className="rounded-lg bg-background/45 px-2.5 py-2 text-sm text-muted-foreground">
+                      Compact summary view
+                    </div>
+                  )}
+                  {compactDetailColumns.length > 0 && (
+                    <div className="divide-y divide-border/35 overflow-hidden rounded-lg bg-background/40">
+                      {compactDetailColumns.map(c => {
+                        const preset = formats[c] as ReportFormatterName | undefined
+                        const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
+                        return (
+                          <div key={c} className="flex items-start justify-between gap-3 px-2.5 py-2">
+                            <div className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                              {c}
+                            </div>
+                            <div className={`min-w-0 break-words text-right text-sm text-foreground ${formatted.isNumeric ? 'tabular-nums' : ''}`}>
+                              {formatted.text}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [scrollbar-gutter:stable]">
+          <table className="w-full border-collapse text-sm">
+            <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm z-10 shadow-[0_1px_0_0_var(--border)]">
+              <tr>
                 {columns.map(c => {
-                  const preset = formats[c] as ReportFormatterName | undefined
-                  const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
-                  const align = formatted.isNumeric ? 'text-right tabular-nums' : 'text-left'
+                  const isSorted = sortField === c
+                  const align = numericColumns.has(c) || c in formats ? 'text-right' : 'text-left'
                   return (
-                    <td
+                    <th
                       key={c}
-                      className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground ${align}`}
+                      className={`px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-muted-foreground select-none cursor-pointer hover:bg-muted hover:text-foreground transition-colors ${align} ${isSorted ? 'text-primary' : ''}`}
+                      onClick={() => onSortClick(c)}
                     >
-                      {formatted.text}
-                    </td>
+                      <span className="inline-flex items-center gap-1">
+                        <span>{c}</span>
+                        {isSorted ? (
+                          sortDir === 'asc' ? (
+                            <ArrowUp className="w-3 h-3" />
+                          ) : (
+                            <ArrowDown className="w-3 h-3" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-30" />
+                        )}
+                      </span>
+                    </th>
                   )
                 })}
               </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {pageRows.map((row, i) => {
+                const rowColor = resolveSemanticColor(widget, row, palette, distinctIndex[String(row?.[widget.colorBy ?? ''] ?? '')] ?? i)
+                const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined
+                return (
+                <tr
+                  key={safePage * pageSize + i}
+                  className={`group/row transition-colors ${rowColor ? 'hover:bg-muted/40' : 'even:bg-muted/20 hover:bg-muted/40'} hover:shadow-[inset_2px_0_0_0_hsl(var(--primary))]`}
+                  style={rowStyle}
+                >
+                  {columns.map(c => {
+                    const preset = formats[c] as ReportFormatterName | undefined
+                    const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
+                    const align = formatted.isNumeric ? 'text-right tabular-nums' : 'text-left'
+                    return (
+                      <td
+                        key={c}
+                        className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground ${align}`}
+                      >
+                        {formatted.text}
+                      </td>
+                    )
+                  })}
+                </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted-foreground">
           <button
             onClick={() => setPage(p => Math.max(0, p - 1))}
             disabled={safePage === 0}
-            className="px-2 py-0.5 rounded border border-border disabled:opacity-30 hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-0.5 pl-1 pr-2 py-1 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Previous page"
           >
+            <ChevronLeft className="w-3.5 h-3.5" />
             Prev
           </button>
-          <span>
-            Page {safePage + 1} of {totalPages}
+          <span className="inline-flex items-center px-2 py-1 rounded-md bg-primary/10 text-primary font-medium tabular-nums">
+            {safePage + 1}
+            <span className="opacity-60 mx-1">/</span>
+            {totalPages}
           </span>
           <button
             onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
             disabled={safePage >= totalPages - 1}
-            className="px-2 py-0.5 rounded border border-border disabled:opacity-30 hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-0.5 pl-2 pr-1 py-1 rounded-md border border-border bg-background disabled:opacity-30 hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Next page"
           >
             Next
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -864,6 +2860,7 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
 // ---------------------------------------------------------------------------
 function PivotWidget({ source, widget }: { source: unknown; widget: ReportWidget }) {
   const { theme } = useTheme()
+  const [widgetRef, isCompact] = useCompactWidgetLayout()
   const resolvedRaw = resolveJSONPath(source, widget.path)
   const resolved = applyWidgetFilter(resolvedRaw, widget.filter)
 
@@ -967,33 +2964,16 @@ function PivotWidget({ source, widget }: { source: unknown; widget: ReportWidget
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {(widget.title || widget.description) && (
-        <div className="flex flex-col gap-0.5">
-          {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
-          {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
-        </div>
-      )}
-      <div className="overflow-auto max-h-[60vh] border border-border/60 rounded-md">
-        <table className="border-collapse text-sm">
-          <thead className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_var(--border)]">
-            <tr>
-              <th className="px-2.5 py-1.5 border-b-2 border-border font-semibold text-left text-muted-foreground">
-                {rowsField} ╲ {columnsField}
-              </th>
-              {colKeys.map(ck => (
-                <th key={ck} className="px-2.5 py-1.5 border-b-2 border-border font-semibold text-right text-foreground">
-                  {ck}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rowKeys.map(rk => (
-              <tr key={rk} className="hover:bg-muted/30 transition-colors">
-                <th className="px-2.5 py-1.5 border-b border-border/40 font-medium text-left text-foreground bg-muted/20 sticky left-0">
-                  {rk}
-                </th>
+    <div ref={widgetRef} className="flex flex-col gap-3">
+      <WidgetHeader widget={widget} />
+      {isCompact ? (
+        <div className="flex flex-col gap-2">
+          {rowKeys.map(rk => (
+            <div key={rk} className="rounded-xl border border-border/55 bg-card/90 px-3 py-3 shadow-sm">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {rowsField}: <span className="text-foreground">{rk}</span>
+              </div>
+              <div className="divide-y divide-border/35 overflow-hidden rounded-lg bg-background/40">
                 {colKeys.map(ck => {
                   const { raw, num } = cell(rk, ck)
                   const text = raw == null
@@ -1003,20 +2983,69 @@ function PivotWidget({ source, widget }: { source: unknown; widget: ReportWidget
                       : formatAuto(raw).text
                   const bg = tintFor(num)
                   return (
-                    <td
+                    <div
                       key={ck}
-                      className="px-2.5 py-1.5 border-b border-border/40 text-right tabular-nums text-foreground"
+                      className="flex items-start justify-between gap-3 px-2.5 py-2"
                       style={bg ? { backgroundColor: bg } : undefined}
                     >
-                      {text}
-                    </td>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {ck}
+                      </div>
+                      <div className="text-right text-sm tabular-nums text-foreground">
+                        {text || '—'}
+                      </div>
+                    </div>
                   )
                 })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border/60 bg-background/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [scrollbar-gutter:stable]">
+          <table className="border-collapse text-sm">
+            <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm z-10 shadow-[0_1px_0_0_var(--border)]">
+              <tr>
+                <th className="px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-left text-muted-foreground">
+                  {rowsField} ╲ {columnsField}
+                </th>
+                {colKeys.map(ck => (
+                  <th key={ck} className="px-2.5 py-2 border-b-2 border-border font-semibold text-xs uppercase tracking-wide text-right text-muted-foreground">
+                    {ck}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rowKeys.map(rk => (
+                <tr key={rk} className="hover:bg-muted/30 transition-colors">
+                  <th className="px-2.5 py-1.5 border-b border-border/40 font-medium text-left text-foreground bg-muted/20 sticky left-0">
+                    {rk}
+                  </th>
+                  {colKeys.map(ck => {
+                    const { raw, num } = cell(rk, ck)
+                    const text = raw == null
+                      ? ''
+                      : widget.format
+                        ? formatNamed(raw, widget.format).text
+                        : formatAuto(raw).text
+                    const bg = tintFor(num)
+                    return (
+                      <td
+                        key={ck}
+                        className="px-2.5 py-1.5 border-b border-border/40 text-right tabular-nums text-foreground"
+                        style={bg ? { backgroundColor: bg } : undefined}
+                      >
+                        {text}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="text-xs text-muted-foreground">
         {rowKeys.length} row{rowKeys.length === 1 ? '' : 's'} × {colKeys.length} col{colKeys.length === 1 ? '' : 's'} · aggregate: {aggregate}
       </div>
@@ -1097,8 +3126,36 @@ function normaliseChartPoints(value: unknown, widget: ReportWidget): Array<Recor
   return out
 }
 
+// Themed tooltip — replaces recharts' default gray box. Matches app theme,
+// shows a small color swatch per series, tabular numbers.
+type TooltipEntry = { name?: string; value?: unknown; color?: string; fill?: string; payload?: Record<string, unknown> }
+function ChartTooltipContent({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: unknown }) {
+  if (!active || !payload || payload.length === 0) return null
+  const fmt = (v: unknown) => {
+    if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    return String(v ?? '')
+  }
+  return (
+    <div className="rounded-md border border-border bg-popover/95 backdrop-blur-sm px-2.5 py-1.5 text-xs shadow-lg">
+      {label != null && String(label) !== '' && (
+        <div className="font-semibold text-foreground mb-1">{String(label)}</div>
+      )}
+      <div className="flex flex-col gap-0.5">
+        {payload.map((p, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: p.color || p.fill }} />
+            {p.name && <span className="text-muted-foreground">{p.name}:</span>}
+            <span className="font-medium tabular-nums text-foreground">{fmt(p.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }) {
   const { theme } = useTheme()
+  const [widgetRef, isCompact] = useCompactWidgetLayout()
   const points = useMemo(() => {
     let pts = normaliseChartPoints(value, widget)
     // Sort first (so topN takes the right slice), then truncate.
@@ -1113,6 +3170,8 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   const chartType = widget.chartType ?? 'bar'
   const showValues = widget.showValues === true
   const heightPx = widget.height ?? 288 // h-72 default
+  const minHeightPx = Math.min(isCompact ? 180 : 220, heightPx)
+  const chartFrameStyle = { width: '100%', height: `clamp(${minHeightPx}px, ${isCompact ? 34 : 42}vh, ${heightPx}px)` }
 
   const palette = resolvePalette(widget, theme)
   // For semantic coloring, assign each distinct colorBy value a stable index into
@@ -1140,10 +3199,7 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   }
 
   const header = (widget.title || widget.description) ? (
-    <div className="flex flex-col gap-0.5 mb-2">
-      {widget.title && <div className="text-sm font-semibold text-foreground">{widget.title}</div>}
-      {widget.description && <div className="text-xs text-muted-foreground">{widget.description}</div>}
-    </div>
+    <WidgetHeader widget={widget} className="mb-2" />
   ) : null
 
   // Pie chart — always colors per slice.
@@ -1151,7 +3207,7 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
     return (
       <div className="flex flex-col">
         {header}
-        <div style={{ width: '100%', height: heightPx }}>
+        <div style={chartFrameStyle}>
           <ResponsiveContainer>
             <PieChart>
               <Pie
@@ -1165,11 +3221,11 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                 }) as never : undefined}
               >
                 {points.map((p, i) => (
-                  <Cell key={i} fill={colorForPoint(p, i)} />
+                  <Cell key={i} fill={colorForPoint(p, i)} stroke="hsl(var(--background))" strokeWidth={2} />
                 ))}
               </Pie>
-              <Tooltip />
-              <Legend />
+              <Tooltip content={<ChartTooltipContent />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -1197,172 +3253,77 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   // Single-series fallback — palette[0] for line/area; bar supports per-Cell.
   const singleSeriesColor = palette[0]
 
+  // Stable, unique gradient ids per widget instance. Recharts re-renders would
+  // re-create random ids and break the reference, so useId() is required here.
+  const gradPrefix = useId().replace(/:/g, '')
+  const axisTick = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' }
+  const gridStroke = 'hsl(var(--border))'
+  const axisLine = { stroke: gridStroke, opacity: 0.65 }
+  const hoverCursorFill = 'hsl(var(--muted))'
+
   return (
-    <div className="flex flex-col">
+    <div ref={widgetRef} className="flex flex-col text-muted-foreground">
       {header}
-      <div style={{ width: '100%', height: heightPx }}>
+      <div className="rounded-lg bg-background/55 px-0.5 py-1.5" style={chartFrameStyle}>
         <ResponsiveContainer>
-          <ChartContainer data={points} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            <XAxis dataKey="_label" tick={{ fontSize: 11 }} interval={0} angle={points.length > 8 ? -30 : 0} textAnchor={points.length > 8 ? 'end' : 'middle'} height={points.length > 8 ? 60 : 30} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            {series && <Legend wrapperStyle={{ fontSize: 11 }} />}
+          <ChartContainer data={points} margin={{ top: 8, right: isCompact ? 8 : 16, left: isCompact ? -12 : 0, bottom: 8 }}>
+            <defs>
+              {/* Per-series gradient for area fills; per-point gradient for single-bar color cycling. */}
+              {series
+                ? series.map((field, i) => {
+                    const c = seriesColorFor(i)
+                    return (
+                      <linearGradient key={field} id={`${gradPrefix}-s-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={c} stopOpacity={0.5} />
+                        <stop offset="100%" stopColor={c} stopOpacity={0.05} />
+                      </linearGradient>
+                    )
+                  })
+                : (
+                    <linearGradient id={`${gradPrefix}-single`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={singleSeriesColor} stopOpacity={0.5} />
+                      <stop offset="100%" stopColor={singleSeriesColor} stopOpacity={0.05} />
+                    </linearGradient>
+                  )}
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.55} vertical={false} />
+            <XAxis dataKey="_label" tick={axisTick} tickLine={false} axisLine={axisLine} interval={0} angle={points.length > (isCompact ? 5 : 8) ? -30 : 0} textAnchor={points.length > (isCompact ? 5 : 8) ? 'end' : 'middle'} height={points.length > (isCompact ? 5 : 8) ? 60 : 30} />
+            <YAxis tick={axisTick} tickLine={false} axisLine={axisLine} />
+            <Tooltip
+              cursor={{ fill: hoverCursorFill, opacity: 0.65 }}
+              content={<ChartTooltipContent />}
+            />
+            {series && !isCompact && <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />}
             {series
               ? series.map((field, i) => {
                   const color = seriesColorFor(i)
                   if (chartType === 'bar') {
-                    return <Bar key={field} dataKey={field} fill={color} stackId={stackId} radius={widget.stacked ? undefined : [3, 3, 0, 0]} />
+                    return <Bar key={field} dataKey={field} fill={color} stackId={stackId} radius={widget.stacked ? undefined : [4, 4, 0, 0]} />
                   }
                   if (chartType === 'line') {
-                    return <Line key={field} type="monotone" dataKey={field} stroke={color} strokeWidth={2} dot={{ r: 3 }} />
+                    return <Line key={field} type="monotone" dataKey={field} stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }} />
                   }
                   if (chartType === 'area') {
-                    return <Area key={field} type="monotone" dataKey={field} stroke={color} fill={color} fillOpacity={0.3} stackId={stackId} />
+                    return <Area key={field} type="monotone" dataKey={field} stroke={color} strokeWidth={2} fill={`url(#${gradPrefix}-s-${i})`} stackId={stackId} activeDot={{ r: 5 }} />
                   }
                   return null
                 })
               : <>
                   {chartType === 'bar' && (
-                    <Bar dataKey="_value" radius={[3, 3, 0, 0]} label={ValueLabel}>
+                    // Single-series bars cycle palette colors per point when no colorBy is set,
+                    // so reports don't render as monochrome blocks. `colorBy` still wins when present.
+                    <Bar dataKey="_value" radius={[4, 4, 0, 0]} label={ValueLabel}>
                       {points.map((p, i) => (
-                        <Cell key={i} fill={colorForPoint(p, widget.colorBy ? i : 0)} />
+                        <Cell key={i} fill={colorForPoint(p, i)} />
                       ))}
                     </Bar>
                   )}
-                  {chartType === 'line' && <Line type="monotone" dataKey="_value" stroke={singleSeriesColor} strokeWidth={2} dot={{ r: 3 }} label={ValueLabel} />}
-                  {chartType === 'area' && <Area type="monotone" dataKey="_value" stroke={singleSeriesColor} fill={singleSeriesColor} fillOpacity={0.25} label={ValueLabel} />}
+                  {chartType === 'line' && <Line type="monotone" dataKey="_value" stroke={singleSeriesColor} strokeWidth={2.25} dot={{ r: 3, fill: singleSeriesColor }} activeDot={{ r: 5 }} label={ValueLabel} />}
+                  {chartType === 'area' && <Area type="monotone" dataKey="_value" stroke={singleSeriesColor} strokeWidth={2.25} fill={`url(#${gradPrefix}-single)`} activeDot={{ r: 5 }} label={ValueLabel} />}
                 </>}
           </ChartContainer>
         </ResponsiveContainer>
       </div>
     </div>
   )
-}
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(0, 0, 0, 0.55)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 1000,
-}
-
-const panelStyle: React.CSSProperties = {
-  background: 'var(--color-bg, #fff)',
-  color: 'var(--color-fg, #111)',
-  width: 'min(960px, 92vw)',
-  maxHeight: '90vh',
-  borderRadius: 8,
-  boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
-  display: 'flex',
-  flexDirection: 'column',
-  overflow: 'hidden',
-}
-
-// Used when ReportView renders inline (e.g. as a canvas mode). Fills its parent and
-// provides its own column layout so the header stays pinned and the content scrolls.
-const innerWrapStyle: React.CSSProperties = {
-  background: 'var(--color-bg, #fff)',
-  color: 'var(--color-fg, #111)',
-  height: '100%',
-  width: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  overflow: 'hidden',
-}
-
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '12px 20px',
-  borderBottom: '1px solid rgba(0,0,0,0.1)',
-}
-
-const closeButtonStyle: React.CSSProperties = {
-  background: 'transparent',
-  border: 'none',
-  fontSize: 28,
-  lineHeight: 1,
-  cursor: 'pointer',
-  color: 'inherit',
-}
-
-const contentStyle: React.CSSProperties = {
-  padding: 20,
-  overflowY: 'auto',
-  flex: 1,
-}
-
-const mutedStyle: React.CSSProperties = { opacity: 0.7, fontStyle: 'italic' }
-const errorStyle: React.CSSProperties = { color: '#b00020' }
-
-const sectionStyle: React.CSSProperties = { marginBottom: 24 }
-const sectionHeadingStyle: React.CSSProperties = {
-  margin: '0 0 8px 0',
-  fontSize: 16,
-  fontWeight: 600,
-  opacity: 0.85,
-}
-
-const rowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 16,
-  flexWrap: 'wrap',
-  marginBottom: 12,
-}
-const rowCellStyle: React.CSSProperties = { flex: 1, minWidth: 240 }
-
-const tableStyle: React.CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: 14,
-}
-const thStyle: React.CSSProperties = {
-  textAlign: 'left',
-  padding: '6px 10px',
-  borderBottom: '2px solid rgba(0,0,0,0.15)',
-  fontWeight: 600,
-}
-const tdStyle: React.CSSProperties = {
-  padding: '6px 10px',
-  borderBottom: '1px solid rgba(0,0,0,0.08)',
-  verticalAlign: 'top',
-}
-
-const chartWrapStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-}
-const chartRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  fontSize: 13,
-}
-const chartLabelStyle: React.CSSProperties = {
-  width: 140,
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-}
-const chartBarTrackStyle: React.CSSProperties = {
-  flex: 1,
-  background: 'rgba(0,0,0,0.08)',
-  height: 14,
-  borderRadius: 3,
-  overflow: 'hidden',
-}
-const chartBarFillStyle: React.CSSProperties = {
-  height: '100%',
-  background: 'var(--color-accent, #3b82f6)',
-}
-const chartValueStyle: React.CSSProperties = {
-  minWidth: 40,
-  textAlign: 'right',
-  fontVariantNumeric: 'tabular-nums',
 }

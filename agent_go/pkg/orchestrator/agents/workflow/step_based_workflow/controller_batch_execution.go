@@ -10,6 +10,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
@@ -181,16 +182,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		}
 	}
 
+	enabledGroupNames := make([]string, len(enabledGroups))
+	for i, g := range enabledGroups {
+		enabledGroupNames[i] = g.Name
+	}
+
 	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Starting batch execution for %d variable groups", totalGroups))
+	hcpo.ApplyWorkflowLogContext(hcpo.GetWorkspacePath(), orchestrator.SingleSelectedGroupName(enabledGroupNames))
 
 	// Create ExecutionManager for centralized cleanup management
 	execManager := NewExecutionManager(hcpo)
 
 	// Emit batch execution start event
-	enabledGroupNames := make([]string, len(enabledGroups))
-	for i, g := range enabledGroups {
-		enabledGroupNames[i] = g.Name
-	}
 	hcpo.emitBatchExecutionStartEvent(ctx, totalGroups, enabledGroupNames, iteration)
 
 	result := &BatchExecutionResult{
@@ -221,6 +224,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		default:
 		}
 
+		hcpo.ApplyWorkflowLogContext(hcpo.GetWorkspacePath(), group.Name)
 		hcpo.GetLogger().Info(fmt.Sprintf("📦 Batch execution: processing group %d/%d (%s)", groupIndex+1, totalGroups, group.Name))
 
 		// Log group values being used for this execution
@@ -423,6 +427,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	result.Success = result.FailedGroups == 0 && result.CanceledGroups == 0
 
 	// Emit batch execution end event
+	hcpo.ApplyWorkflowLogContext(hcpo.GetWorkspacePath(), "")
 	hcpo.emitBatchExecutionEndEvent(ctx, result, iteration)
 
 	// Clear batch context on context-aware bridge (cleanup after batch ends)

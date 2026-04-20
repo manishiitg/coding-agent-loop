@@ -1324,6 +1324,12 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 		selectedSet[name] = true
 	}
 
+	// Track which selected names were actually resolved so we can surface orphans.
+	// An orphan is a name attached to the workflow with no value in the user store
+	// and no matching GLOBAL_SECRET_* env var — runtime would silently set
+	// $SECRET_<NAME> to empty, masking downstream failures.
+	resolved := make(map[string]bool, len(selectedNames))
+
 	var result []struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
@@ -1341,6 +1347,24 @@ func (api *StreamingAPI) loadSelectedUserSecrets(ctx context.Context, userID str
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		}{Name: s.Name, Value: plaintext})
+		resolved[s.Name] = true
+	}
+
+	// Also treat globals as resolved — mergeGlobalSecrets layers these in separately.
+	for _, gs := range getGlobalSecrets() {
+		if selectedSet[gs.Name] {
+			resolved[gs.Name] = true
+		}
+	}
+
+	var orphans []string
+	for _, name := range selectedNames {
+		if !resolved[name] {
+			orphans = append(orphans, name)
+		}
+	}
+	if len(orphans) > 0 {
+		log.Printf("[SECRETS] ⚠️  Workflow attaches secret name(s) with no stored value for user %s: %v — $SECRET_<NAME> will be EMPTY at runtime. Store a value with set_user_secret or detach via update_workflow_config(remove_secrets=[...]).", userID, orphans)
 	}
 
 	return result
@@ -1844,7 +1868,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
-	log.Printf("[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
+	queryLogCtx := requestLogContext(r.Context(), req, sessionID)
+	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	// Chat sessions are in-memory only — tracked via activeSessions map
 	// below. No persistent session metadata.
@@ -1879,7 +1904,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	api.activeSessionsMux.Unlock()
 	for _, rel := range []string{perUserMemoryFolder, perUserChatsFolder} {
 		if err := createWorkspaceFolder(context.Background(), rel); err != nil {
-			log.Printf("[SESSION] Warning: could not pre-create per-user folder %s: %v", rel, err)
+			logfWithContext(queryLogCtx, "[SESSION] Warning: could not pre-create per-user folder %s: %v", rel, err)
 		}
 	}
 
@@ -1888,7 +1913,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if req.CdpPort != nil {
 		cdpPort = *req.CdpPort
 	}
-	log.Printf(
+	logfWithContext(
+		queryLogCtx,
 		"[QUERY] session=%s enable_browser_access=%v browser_mode=%q cdp_port=%d enabled_servers=%v llm_guidance_len=%d query=%q",
 		sessionID,
 		enableBrowserAccess,
@@ -1898,7 +1924,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		len(req.LLMGuidance),
 		req.Query,
 	)
-	log.Printf("[LATENCY_DEBUG] T+%dms | Session setup complete | sessionID=%s", time.Since(startTime).Milliseconds(), sessionID)
+	logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Session setup complete | sessionID=%s", time.Since(startTime).Milliseconds(), sessionID)
 
 	// Create fresh agent for this request
 	// Use LLM configuration from request if provided, otherwise use request defaults
@@ -1966,9 +1992,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
 	_ = workflowPhaseFolder   // used later in the function
 	if isWorkflowPhase {
-		log.Printf("[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
+		logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
 		if req.PresetQueryID == "" {
-			log.Printf("[WORKFLOW_PHASE] ERROR: workflow_phase mode requires a preset_query_id")
+			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] ERROR: workflow_phase mode requires a preset_query_id")
 			http.Error(w, `{"error":"workflow_phase mode requires a preset_query_id (workflow preset)"}`, http.StatusBadRequest)
 			return
 		}
@@ -1982,18 +2008,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		} else if req.SelectedFolder != "" {
 			// Scheduler/cron sets selected_folder directly — no DB lookup needed
 			resolvedWPath = req.SelectedFolder
-			log.Printf("[WORKFLOW_PHASE] Using selected_folder as workspace path: %s", resolvedWPath)
+			logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using selected_folder as workspace path: %s", resolvedWPath)
 		}
 		if resolvedWPath != "" {
 			manifest, found, mErr := ReadWorkflowManifest(context.Background(), resolvedWPath)
 			if mErr == nil && found {
 				phaseManifestLoaded = true
 				workflowPhaseFolder = resolvedWPath
-				log.Printf("[WORKFLOW_PHASE] Loaded config from manifest at %s", resolvedWPath)
+				logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Loaded config from manifest at %s", resolvedWPath)
 				if manifest.Capabilities.LLMConfig != nil && manifest.Capabilities.LLMConfig.PhaseLLM != nil {
 					finalProvider = manifest.Capabilities.LLMConfig.PhaseLLM.Provider
 					finalModelID = manifest.Capabilities.LLMConfig.PhaseLLM.ModelID
-					log.Printf("[WORKFLOW_PHASE] Using phase LLM from manifest: %s/%s", finalProvider, finalModelID)
+					logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using phase LLM from manifest: %s/%s", finalProvider, finalModelID)
 				}
 				// If manifest has explicit selection, use it; otherwise leave nil (= all globals included)
 				if req.SelectedGlobalSecrets == nil && manifest.Capabilities.SelectedGlobalSecretNames != nil {
@@ -2006,7 +2032,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		if !phaseManifestLoaded {
 			// Manifest-only mode: workflow.json is the source of truth.
-			log.Printf("[WORKFLOW_PHASE] WARNING: No workflow.json found for preset %s - phase will use request defaults only", req.PresetQueryID)
+			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] WARNING: No workflow.json found for preset %s - phase will use request defaults only", req.PresetQueryID)
 			// Still need to resolve workspace folder for FolderGuard write access
 			if workflowPhaseFolder == "" {
 				if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
@@ -3157,15 +3183,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
 			agentConfig.SmartRoutingMaxTools, agentConfig.SmartRoutingMaxServers)
-		log.Printf("[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
+		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
 		if err != nil {
-			log.Printf("[AGENT DEBUG] Failed to create LLM agent wrapper: %v", err)
+			logfWithContext(queryLogCtx, "[AGENT DEBUG] Failed to create LLM agent wrapper: %v", err)
 			sendError(fmt.Sprintf("Failed to create agent: %v", err), true)
 			return
 		}
-		log.Printf("[LATENCY_DEBUG] T+%dms | Agent wrapper created", time.Since(startTime).Milliseconds())
+		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent wrapper created", time.Since(startTime).Milliseconds())
 
 		// Add workspace tools to chat agents (multi-agent chat mode)
 		// Workflow mode handles workspace tools differently, so exclude it
@@ -3289,7 +3315,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
 			}, workspaceExecutors, nil)
-			log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
+			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 			if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
 				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
@@ -3419,7 +3445,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 					// Executor is already the correct type (func(ctx, args) (string, error))
 					// No type assertion needed unlike workflow where executors are map[string]interface{}
-					if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && req.ImageGenConfig != nil {
+					if virtualtools.IsImageTool(toolName) && req.ImageGenConfig != nil {
 						executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
 							Provider: req.ImageGenConfig.Provider,
 							ModelID:  req.ImageGenConfig.ModelID,
@@ -3507,7 +3533,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Get underlying agent for tool registration
 				delegationAgent := llmAgent.GetUnderlyingAgent()
 				if delegationAgent == nil {
-					log.Printf("[DELEGATION TOOLS ERROR] Cannot register delegation tools - underlying agent is nil")
+					logfWithContext(queryLogCtx, "[DELEGATION TOOLS ERROR] Cannot register delegation tools - underlying agent is nil")
 				} else {
 					// Create the delegation execution function that will spawn sub-agents
 					// This function is injected into the context for the delegate tool to use
@@ -3552,7 +3578,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 							if params == nil {
-								log.Printf("[DELEGATION TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+								logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
 								continue
 							}
 
@@ -3595,13 +3621,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								0, // No timeout — delegation tools run indefinitely (controlled by parent context)
 								delegationCategory,
 							); err != nil {
-								log.Printf("[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+								logfWithContext(queryLogCtx, "[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
 								continue
 							}
-							log.Printf("[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
+							logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
 						}
 					}
-					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
+					logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
 
 					// Register workflow run tools (run_workflow, run_step)
 					wfRunTools := createWorkflowRunTools()
@@ -3631,9 +3657,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								0,
 								delegationCategory,
 							); err != nil {
-								log.Printf("[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
+								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Failed to register %s: %v", toolName, err)
 							} else {
-								log.Printf("[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
+								logfWithContext(queryLogCtx, "[WORKFLOW_RUN_TOOLS] Registered %s", toolName)
 							}
 						}
 					}
@@ -3657,7 +3683,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 					// Skip workspace tools - already registered above.
 					switch toolCategories[toolName] {
-					case "workspace_tools", virtualtools.GetWorkspaceAdvancedToolCategory(), virtualtools.GetWorkspaceImageToolCategory(), virtualtools.GetWorkspaceBrowserToolCategory():
+					case "workspace_tools", virtualtools.GetWorkspaceAdvancedToolCategory(), virtualtools.GetWorkspaceBrowserToolCategory():
 						continue
 					}
 
@@ -3795,35 +3821,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			isMultiAgentChat := !isWorkflowPhase
 			if isMultiAgentChat {
 				if err := api.registerMultiAgentLLMTools(underlyingAgent); err != nil {
-					log.Printf("[LLM TOOLS] Failed to register multi-agent LLM tools: %v", err)
+					logfWithContext(queryLogCtx, "[LLM TOOLS] Failed to register multi-agent LLM tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent LLM tools: %v", err), true)
 					return
 				}
-				log.Printf("[LLM TOOLS] Registered multi-agent LLM tools")
+				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered multi-agent LLM tools")
 
 				if err := api.registerMultiAgentSkillTools(underlyingAgent); err != nil {
-					log.Printf("[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
+					logfWithContext(queryLogCtx, "[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
 					return
 				}
-				log.Printf("[SKILL TOOLS] Registered multi-agent skill tools")
+				logfWithContext(queryLogCtx, "[SKILL TOOLS] Registered multi-agent skill tools")
 			}
 			if isMultiAgentChat {
 				if err := api.registerMultiAgentMCPServerTools(underlyingAgent); err != nil {
-					log.Printf("[MCP SERVER TOOLS] Failed to register multi-agent MCP server tools: %v", err)
+					logfWithContext(queryLogCtx, "[MCP SERVER TOOLS] Failed to register multi-agent MCP server tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
 					return
 				}
-				log.Printf("[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
+				logfWithContext(queryLogCtx, "[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
 
 				// create_workflow — privileged tool for writing new workflows under Workflow/
 				// Bypasses the session folder guard by writing via direct filesystem I/O.
 				if err := api.registerWorkflowCreatorTool(underlyingAgent); err != nil {
-					log.Printf("[WORKFLOW CREATOR] Failed to register create_workflow tool: %v", err)
+					logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Failed to register create_workflow tool: %v", err)
 					sendError(fmt.Sprintf("Failed to register create_workflow tool: %v", err), true)
 					return
 				}
-				log.Printf("[WORKFLOW CREATOR] Registered create_workflow tool")
+				logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Registered create_workflow tool")
+
+				if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", nil); err != nil {
+					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret)")
 			}
 
 			// Read session state early for guidance injection
@@ -3850,7 +3883,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			//    This MUST come first so it takes precedence over reference material.
 			if !isWorkflowPhase {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetMultiAgentDelegationInstructionsWithUser(perUserChatsFolder, currentUserID))
-				log.Printf("[DELEGATION] Added multi-agent delegation instructions to system prompt")
+				logfWithContext(queryLogCtx, "[DELEGATION] Added multi-agent delegation instructions to system prompt")
 				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
 					underlyingAgent.AppendSystemPrompt(section)
 				}
@@ -4105,7 +4138,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseTemplateVars["GroupInfo"] = groupInfo
 					}
 					phaseTemplateVars["RunFolder"] = phaseRunFolder
-					phaseTemplateVars["UseKnowledgebase"] = "true" // default; overridden by preset below if needed
+					phaseTemplateVars["UseKnowledgebase"] = "true"                 // default; overridden by preset below if needed
 					phaseTemplateVars["KBShape"] = workflowtypes.KBShapeGraphNotes // default; overridden from manifest below if set
 					if phaseWorkspacePath != "" {
 						if manifest, found, mErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath); mErr == nil && found && manifest.Capabilities.LLMConfig != nil {
@@ -4546,6 +4579,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						)
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
+
+						builderSession := workshopSession
+						afterDelete := func(ctx context.Context, name string) error {
+							if builderSession == nil {
+								return nil
+							}
+							return builderSession.DetachSecretFromWorkflow(ctx, name)
+						}
+						if err := api.registerSecretManagementTools(underlyingAgent, currentUserID, "secret_tools", afterDelete); err != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to register secret tools in %s: %v", workflowPhaseID, err)
+						} else {
+							log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)
+						}
 					}
 
 					// Register evaluation tools in builder-style phases (eval plan validation + run_full_evaluation)
@@ -4709,7 +4755,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Inject user ID into the agent context
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
-		log.Printf("[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
+		logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
 
 		// Store the cancel function for potential cancellation
 		api.agentCancelMux.Lock()
@@ -4728,7 +4774,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, s := range allChatSecrets {
 				workspaceEnv["SECRET_"+s.Name] = s.Value
 			}
-			log.Printf("[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
+			logfWithContext(queryLogCtx, "[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
 
 			// Only inject secret names (not values) into the system prompt — values are in env vars
 			var secretNames []string
@@ -4738,7 +4784,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			secretPrompt := "\n## Secrets\n\nThe following secrets are available as environment variables in execute_shell_command. Do NOT ask the user for these values — read them from the environment.\n\n" + strings.Join(secretNames, "\n")
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
-				log.Printf("[SECRETS] Injected %d secret names (not values) into system prompt", len(allChatSecrets))
+				logfWithContext(queryLogCtx, "[SECRETS] Injected %d secret names (not values) into system prompt", len(allChatSecrets))
 			}
 		}
 
@@ -4766,14 +4812,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
-		log.Printf("[STREAMING_LIFECYCLE] T+%dms | Starting StreamWithEvents | session=%s query=%.80s", time.Since(startTime).Milliseconds(), sessionID, chatQuery)
+		logfWithContext(queryLogCtx, "[STREAMING_LIFECYCLE] T+%dms | Starting StreamWithEvents | session=%s query=%.80s", time.Since(startTime).Milliseconds(), sessionID, chatQuery)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
-			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
+			logfWithContext(queryLogCtx, "[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
 			return
 		}
-		log.Printf("[LATENCY_DEBUG] T+%dms | StreamWithEvents channel opened | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
+		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | StreamWithEvents channel opened | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() started successfully for query %s", queryID)
 
 		// Stream response chunks with enhanced error handling
@@ -5337,7 +5383,13 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID 
 		UserID:       userID,
 	}
 
-	log.Printf("[ACTIVE_SESSION] Tracked active session: %s (mode: %s, user: %s)", sessionID, agentMode, userID)
+	logfWithContext(
+		newServerLogContext("", "", agentMode, userID, "", sessionID),
+		"[ACTIVE_SESSION] Tracked active session: %s (mode: %s, user: %s)",
+		sessionID,
+		agentMode,
+		userID,
+	)
 }
 
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
@@ -5957,7 +6009,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 					continue
 				}
 
-				if toolCategory == virtualtools.GetWorkspaceImageToolCategory() && parentReq.ImageGenConfig != nil {
+				if virtualtools.IsImageTool(toolName) && parentReq.ImageGenConfig != nil {
 					executor = virtualtools.WrapImageToolExecutorWithRuntimeOverride(executor, virtualtools.ImageGenRuntimeOverride{
 						Provider: parentReq.ImageGenConfig.Provider,
 						ModelID:  parentReq.ImageGenConfig.ModelID,
@@ -7801,6 +7853,27 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		}
 		sort.Strings(names)
 		return names, nil
+	}
+	cfg.ResolveSecretValues = func(ctx context.Context, names []string) map[string]string {
+		if len(names) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(names))
+		wanted := make(map[string]bool, len(names))
+		for _, n := range names {
+			wanted[n] = true
+		}
+		// Globals first — they set the baseline. User secrets can override by same name.
+		for _, gs := range getGlobalSecrets() {
+			if wanted[gs.Name] {
+				out[gs.Name] = gs.Value
+			}
+		}
+		decrypted := api.loadSelectedUserSecrets(ctx, currentUserID, names)
+		for _, s := range decrypted {
+			out[s.Name] = s.Value
+		}
+		return out
 	}
 
 	return cfg, nil

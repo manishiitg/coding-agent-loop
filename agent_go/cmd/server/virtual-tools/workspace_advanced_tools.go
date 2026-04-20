@@ -548,6 +548,10 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.Anthropic = &v
 	}
+	if value, ok := rawKeys["z-ai"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.ZAI = &v
+	}
 	if value, ok := rawKeys["vertex"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.Vertex = &v
@@ -824,11 +828,11 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL string) (llmtypes.
 			candidates = append(candidates, imageCfg.Fallbacks...)
 
 			for _, candidate := range candidates {
-				provider, modelID, err := normalizeImageProviderAndModel(candidate.Provider, candidate.ModelID)
+				provider, modelID, err := normalizeImageAnalysisProviderAndModel(candidate.Provider, candidate.ModelID)
 				if err != nil {
 					continue
 				}
-				if !hasImageProviderAuth(provider, apiKeys) {
+				if !hasImageAnalysisProviderAuth(provider, apiKeys) {
 					continue
 				}
 				model, err := llm.InitializeLLM(llm.Config{
@@ -877,6 +881,8 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.OpenAI = config.APIKey
 		case llm.ProviderOpenRouter:
 			apiKeys.OpenRouter = config.APIKey
+		case llm.ProviderZAI:
+			apiKeys.ZAI = config.APIKey
 		case llm.ProviderVertex:
 			apiKeys.Vertex = config.APIKey
 		case llm.ProviderGeminiCLI:

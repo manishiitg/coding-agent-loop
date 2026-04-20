@@ -1005,7 +1005,7 @@ func getAddRegularStepSchema() string {
 						"items": {
 							"type": "object",
 							"properties": {
-								"file_name": {"type": "string"},
+								"file_name": {"type": "string", "description": "Path rules: a bare filename (e.g. 'results.json') is resolved under the step's execution folder. A path starting with 'db/' is resolved against the workflow-root 'db/' store; pre-validation accepts the file either there OR inside the step execution folder, since 'db/' and the step folder are the only two places a step may legally write. Paths starting with other workflow-root prefixes ('knowledgebase/', 'learnings/', 'planning/', etc.) are workflow-root-relative and must be present exactly at that location — those folders are written by dedicated agents, so a step-local copy is a bug and will fail validation."},
 								"must_exist": {"type": "boolean"},
 								"json_checks": {
 									"type": "array",
@@ -1273,7 +1273,7 @@ func getAddTodoTaskStepSchema() string {
 						"items": {
 							"type": "object",
 							"properties": {
-								"file_name": {"type": "string"},
+								"file_name": {"type": "string", "description": "Path rules: a bare filename (e.g. 'results.json') is resolved under the step's execution folder. A path starting with 'db/' is resolved against the workflow-root 'db/' store; pre-validation accepts the file either there OR inside the step execution folder, since 'db/' and the step folder are the only two places a step may legally write. Paths starting with other workflow-root prefixes ('knowledgebase/', 'learnings/', 'planning/', etc.) are workflow-root-relative and must be present exactly at that location — those folders are written by dedicated agents, so a step-local copy is a bug and will fail validation."},
 								"must_exist": {"type": "boolean"},
 								"json_checks": {"type": "array", "items": {"type": "object"}}
 							}
@@ -1321,7 +1321,7 @@ func getAddTodoTaskStepSchema() string {
 											"items": {
 												"type": "object",
 												"properties": {
-													"file_name": {"type": "string"},
+													"file_name": {"type": "string", "description": "Path rules: a bare filename (e.g. 'results.json') is resolved under the step's execution folder. A path starting with 'db/' is resolved against the workflow-root 'db/' store; pre-validation accepts the file either there OR inside the step execution folder, since 'db/' and the step folder are the only two places a step may legally write. Paths starting with other workflow-root prefixes ('knowledgebase/', 'learnings/', 'planning/', etc.) are workflow-root-relative and must be present exactly at that location — those folders are written by dedicated agents, so a step-local copy is a bug and will fail validation."},
 													"must_exist": {"type": "boolean"},
 													"json_checks": {"type": "array", "items": {"type": "object"}}
 												}
@@ -1638,7 +1638,7 @@ func getUpdateValidationSchemaSchema() string {
 						"items": {
 							"type": "object",
 							"properties": {
-								"file_name": {"type": "string"},
+								"file_name": {"type": "string", "description": "Path rules: a bare filename (e.g. 'results.json') is resolved under the step's execution folder. A path starting with 'db/' is resolved against the workflow-root 'db/' store; pre-validation accepts the file either there OR inside the step execution folder, since 'db/' and the step folder are the only two places a step may legally write. Paths starting with other workflow-root prefixes ('knowledgebase/', 'learnings/', 'planning/', etc.) are workflow-root-relative and must be present exactly at that location — those folders are written by dedicated agents, so a step-local copy is a bug and will fail validation."},
 								"must_exist": {"type": "boolean"},
 								"json_checks": {
 									"type": "array",

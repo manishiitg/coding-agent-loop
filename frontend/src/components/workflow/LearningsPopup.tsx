@@ -294,27 +294,32 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         // Every other file (excluding SKILL.md + .learning_metadata.json + anything
         // that somehow resolved outside _global/). Grouped by directory for display;
         // content fetched on demand.
-        const tree = flatFiles
-          .map(f => {
-            const rawPath = f.filepath || ''
-            const relPath = relFromGlobal(rawPath)
-            return { relPath, rawPath }
-          })
-          .filter(({ relPath, rawPath }) => {
-            if (!relPath || relPath === 'SKILL.md') return false
-            if (relPath.endsWith('.learning_metadata.json')) return false
-            if (relPath.endsWith('/')) return false
-            // Safety: only include files we can place under _global/. If relFromGlobal
-            // didn't strip a /_global/ prefix AND the raw path doesn't look relative
-            // (e.g. it's a sibling workflow folder), skip it — the listing probably
-            // included a parent's content because _global/ is empty.
-            if (!rawPath.includes('/_global/') && rawPath.includes('/')) {
-              // Raw path has directory separators but none of them are under _global.
-              // Likely outside the target folder. Exclude to avoid confusing UI rows.
-              return false
-            }
-            return true
-          })
+        const dedupedByRelPath = new Map<string, { relPath: string; rawPath: string }>()
+        for (const file of flatFiles) {
+          const rawPath = file.filepath || ''
+          const relPath = relFromGlobal(rawPath)
+
+          if (!relPath || relPath === 'SKILL.md') continue
+          if (relPath.endsWith('.learning_metadata.json')) continue
+          if (relPath.endsWith('/')) continue
+          // Safety: only include files we can place under _global/. If relFromGlobal
+          // didn't strip a /_global/ prefix AND the raw path doesn't look relative
+          // (e.g. it's a sibling workflow folder), skip it — the listing probably
+          // included a parent's content because _global/ is empty.
+          if (!rawPath.includes('/_global/') && rawPath.includes('/')) {
+            // Raw path has directory separators but none of them are under _global.
+            // Likely outside the target folder. Exclude to avoid confusing UI rows.
+            continue
+          }
+
+          // The workspace documents API can include a file both as a top-level entry
+          // and nested under its parent folder's children. Keep one row per path.
+          if (!dedupedByRelPath.has(relPath)) {
+            dedupedByRelPath.set(relPath, { relPath, rawPath })
+          }
+        }
+
+        const tree = Array.from(dedupedByRelPath.values())
           .map(({ relPath, rawPath }) => {
             const name = relPath.split('/').pop() || relPath
             const dirPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : ''
@@ -536,11 +541,53 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       let codeFileName = ''
       let error: string | null = null
 
-      // List files in the learnings folder to find the markdown file
-      const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100)
-      const files: Array<PlannerFile & { name?: string }> = Array.isArray(filesResponse)
+      const flattenLeafFiles = (items: Array<PlannerFile & { name?: string }>) => {
+        const out: Array<PlannerFile & { name?: string }> = []
+        const seen = new Set<string>()
+        const walk = (nodes: Array<PlannerFile & { name?: string }>) => {
+          for (const node of nodes) {
+            const isFolder = node.type === 'folder' || (Array.isArray(node.children) && node.children.length > 0)
+            if (isFolder) {
+              if (Array.isArray(node.children)) walk(node.children as Array<PlannerFile & { name?: string }>)
+              continue
+            }
+
+            const key = node.filepath || node.name || ''
+            if (!key || seen.has(key)) continue
+            seen.add(key)
+            out.push(node)
+          }
+        }
+        walk(items)
+        return out
+      }
+
+      const resolveAbsPath = (rawPath: string) => {
+        let filePath = rawPath
+        if (!filePath.startsWith(workspacePath)) {
+          const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath
+          filePath = `${workspacePath}/${cleanPath}`
+        }
+        if (!filePath.includes('/learnings/')) {
+          filePath = `${learningsPath}/${filePath}`
+        }
+        return filePath
+      }
+
+      const relFromStepLearnings = (rawPath: string) => {
+        const normalized = rawPath.replace(/\\/g, '/')
+        const marker = `/learnings/${stepId}/`
+        const idx = normalized.indexOf(marker)
+        if (idx !== -1) return normalized.slice(idx + marker.length)
+        return normalized.replace(/^\/+/, '')
+      }
+
+      // List files in the learnings folder to find the markdown file and saved scripts
+      const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100, 3)
+      const rawFiles: Array<PlannerFile & { name?: string }> = Array.isArray(filesResponse)
         ? filesResponse
         : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data : [])
+      const files = flattenLeafFiles(rawFiles)
 
       // Find the first .md file (excluding metadata files)
       const mdFile = files.find((file) => {
@@ -550,12 +597,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
       // Fetch markdown content
       if (mdFile) {
-        let filePath = mdFile.filepath || mdFile.name
+        const rawPath = mdFile.filepath || mdFile.name
+        let filePath = rawPath ? resolveAbsPath(rawPath) : ''
         if (filePath) {
-          if (!filePath.startsWith(workspacePath)) {
-            const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath
-            filePath = `${workspacePath}/${cleanPath}`
-          }
           const response = await agentApi.getPlannerFileContent(filePath)
           if (response.success && response.data && response.data.content) {
             mdContent = response.data.content
@@ -563,56 +607,59 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         }
       }
 
-      // Check for code files in the code/ subdirectory (already returned in the files listing with code/ prefix)
+      // Check for saved scripts. The canonical learn_code artifact is
+      // learnings/{stepId}/main.py; older/secondary artifacts may live under code/.
       const codeExtensions = ['.go', '.py', '.sh', '.js', '.ts', '.jsx', '.tsx', '.bash', '.curl', '.rb', '.java', '.rs', '.c', '.cpp', '.json', '.yaml', '.yml']
-
-      // First try: find code files from the already-fetched file listing (files with code/ prefix)
-      let codeFile = files.find((file) => {
-        const fileName = file.filepath || file.name || ''
-        return fileName.startsWith('code/') && codeExtensions.some(ext => fileName.endsWith(ext))
+      let codeFiles = files.filter((file) => {
+        const fileName = relFromStepLearnings(file.filepath || file.name || '')
+        return codeExtensions.some(ext => fileName.endsWith(ext))
       })
-      console.log('[LearningsPopup] Code file from parent listing:', codeFile)
 
-      // Fallback: try listing the code/ subdirectory directly
-      if (!codeFile) {
+      // Fallback: some workspace API responses only return top-level entries for the
+      // folder listing, so check code/ explicitly as well.
+      if (codeFiles.length === 0) {
         try {
           const codePath = `${learningsPath}/code`
-          console.log('[LearningsPopup] Checking code path:', codePath)
           const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
-          console.log('[LearningsPopup] Code files response:', codeFilesResponse)
-          const codeFiles: Array<PlannerFile & { name?: string }> = Array.isArray(codeFilesResponse)
+          const rawCodeFiles: Array<PlannerFile & { name?: string }> = Array.isArray(codeFilesResponse)
             ? codeFilesResponse
             : (codeFilesResponse?.data && Array.isArray(codeFilesResponse.data) ? codeFilesResponse.data : [])
-          console.log('[LearningsPopup] Code files found:', codeFiles)
-
-          codeFile = codeFiles.find((file) => {
-            const fileName = file.filepath || file.name || ''
+          codeFiles = flattenLeafFiles(rawCodeFiles).filter((file) => {
+            const fileName = relFromStepLearnings(file.filepath || file.name || '')
             return codeExtensions.some(ext => fileName.endsWith(ext))
           })
-          console.log('[LearningsPopup] Code file from subfolder listing:', codeFile)
-        } catch (codeErr) {
-          console.log('[LearningsPopup] Code folder error (might not exist):', codeErr)
+        } catch {
+          // code/ may not exist for non-scripted steps
         }
       }
 
+      const codePriority = (file: PlannerFile & { name?: string }) => {
+        const relPath = relFromStepLearnings(file.filepath || file.name || '')
+        const baseName = relPath.split('/').pop() || relPath
+
+        if (relPath === 'main.py') return 0
+        if (relPath === 'code/main.py') return 1
+        if (baseName === 'main.py') return 2
+        if (relPath.startsWith('code/')) return 3
+        return 4
+      }
+
+      const codeFile = [...codeFiles].sort((a, b) => {
+        const priorityDiff = codePriority(a) - codePriority(b)
+        if (priorityDiff !== 0) return priorityDiff
+        const aRel = relFromStepLearnings(a.filepath || a.name || '')
+        const bRel = relFromStepLearnings(b.filepath || b.name || '')
+        return aRel.localeCompare(bRel)
+      })[0]
+
       if (codeFile) {
-        let codeFilePath = codeFile.filepath || codeFile.name
+        const rawCodeFilePath = codeFile.filepath || codeFile.name
+        let codeFilePath = rawCodeFilePath ? resolveAbsPath(rawCodeFilePath) : ''
         if (codeFilePath) {
           codeFileName = codeFilePath.split('/').pop() || 'code'
-          if (!codeFilePath.startsWith(workspacePath)) {
-            const cleanPath = codeFilePath.startsWith('/') ? codeFilePath.slice(1) : codeFilePath
-            codeFilePath = `${workspacePath}/${cleanPath}`
-          }
-          // If filepath is relative (e.g. code/file.py), prepend learningsPath
-          if (!codeFilePath.includes('/learnings/')) {
-            codeFilePath = `${learningsPath}/${codeFilePath}`
-          }
-          console.log('[LearningsPopup] Fetching code from:', codeFilePath)
           const codeResponse = await agentApi.getPlannerFileContent(codeFilePath)
-          console.log('[LearningsPopup] Code response:', codeResponse)
           if (codeResponse.success && codeResponse.data && codeResponse.data.content) {
             codeContent = codeResponse.data.content
-            console.log('[LearningsPopup] Code content loaded, length:', codeContent.length)
           }
         }
       }

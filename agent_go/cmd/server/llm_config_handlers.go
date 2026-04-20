@@ -19,18 +19,32 @@ import (
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
 
+var supportedLLMProviders = []string{
+	"openrouter",
+	"bedrock",
+	"openai",
+	"vertex",
+	"anthropic",
+	"azure",
+	"z-ai",
+	"minimax",
+	"minimax-coding-plan",
+	"claude-code",
+	"gemini-cli",
+	"codex-cli",
+}
+
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "minimax-coding-plan", "claude-code", "gemini-cli", "codex-cli"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
-		return allProviders
+		return supportedLLMProviders
 	}
 
 	// Parse comma-separated list
 	parts := strings.Split(envValue, ",")
 	validProviders := make(map[string]bool)
-	for _, p := range allProviders {
+	for _, p := range supportedLLMProviders {
 		validProviders[p] = true
 	}
 
@@ -50,7 +64,7 @@ func getSupportedProviders() []string {
 	// If no valid providers found, return all
 	if len(supported) == 0 {
 		log.Printf("Warning: no valid providers found in SUPPORTED_LLM_PROVIDERS, enabling all providers")
-		return allProviders
+		return supportedLLMProviders
 	}
 
 	return supported
@@ -151,15 +165,19 @@ func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 // buildProviderAPIKeysFromEnv builds llm.ProviderAPIKeys from environment variables (for locked mode).
 func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	keys := &llm.ProviderAPIKeys{}
-	if s := os.Getenv("OPENROUTER_API_KEY"); s != "" {
-		keys.OpenRouter = &s
+	setProviderKeyFromEnv := func(provider llm.Provider, envNames ...string) {
+		for _, envName := range envNames {
+			if s := strings.TrimSpace(os.Getenv(envName)); s != "" {
+				keys.SetKeyForProvider(provider, &s)
+				return
+			}
+		}
 	}
-	if s := os.Getenv("OPENAI_API_KEY"); s != "" {
-		keys.OpenAI = &s
-	}
-	if s := os.Getenv("ANTHROPIC_API_KEY"); s != "" {
-		keys.Anthropic = &s
-	}
+
+	setProviderKeyFromEnv(llm.ProviderOpenRouter, "OPENROUTER_API_KEY")
+	setProviderKeyFromEnv(llm.ProviderOpenAI, "OPENAI_API_KEY")
+	setProviderKeyFromEnv(llm.ProviderAnthropic, "ANTHROPIC_API_KEY")
+	setProviderKeyFromEnv(llm.ProviderZAI, "ZAI_API_KEY")
 	if s := os.Getenv("VERTEX_API_KEY"); s != "" {
 		keys.Vertex = &s
 	} else if s := os.Getenv("GOOGLE_API_KEY"); s != "" {
@@ -251,7 +269,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "minimax", "minimax-coding-plan"}
+	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "z-ai", "minimax", "minimax-coding-plan"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -307,6 +325,8 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 			entry["api_key"] = key
 		} else if key := os.Getenv("ANTHROPIC_API_KEY"); provider == "anthropic" && key != "" {
 			entry["api_key"] = key
+		} else if key := os.Getenv("ZAI_API_KEY"); provider == "z-ai" && key != "" {
+			entry["api_key"] = key
 		}
 	}
 	return []map[string]interface{}{entry}
@@ -329,6 +349,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"openai_config":              defaults.OpenaiConfig,
 		"anthropic_config":           defaults.AnthropicConfig,
 		"azure_config":               defaults.AzureConfig,
+		"zai_config":                 defaults.ZAIConfig,
 		"minimax_config":             defaults.MinimaxConfig,
 		"minimax_coding_plan_config": defaults.MinimaxCodingPlanConfig,
 		"available_models":           defaults.AvailableModels,
@@ -363,6 +384,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("anthropic_config")
 			case "azure":
 				stripSecrets("azure_config")
+			case "z-ai":
+				stripSecrets("zai_config")
 			case "vertex":
 				stripSecrets("vertex_config")
 			case "minimax":

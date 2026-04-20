@@ -3174,9 +3174,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 		}
 		sort.Strings(fileList)
 
+		// Keep SKILL.md first so the execution prompt's file manifest mirrors the
+		// intended access pattern: read the index first, then follow its linked
+		// references/scripts as needed.
+		if idx := sort.SearchStrings(fileList, "SKILL.md"); idx < len(fileList) && fileList[idx] == "SKILL.md" && idx != 0 {
+			fileList[0], fileList[idx] = fileList[idx], fileList[0]
+		}
+
+		var listedFiles strings.Builder
+		for _, filename := range fileList {
+			listedFiles.WriteString("- `")
+			listedFiles.WriteString(filename)
+			listedFiles.WriteString("`\n")
+		}
+
 		formattedLearningHistory = fmt.Sprintf(
-			"📚 **Workflow skill available** at `%s/`. Start by reading `SKILL.md` — it contains accumulated domain knowledge and references to detailed files. Navigate to references/ and scripts/ as needed.",
-			absLearningsPath)
+			"📚 **Workflow skill available** at `%s/`.\n"+
+				"Start by reading `SKILL.md` — it is the index and will point you to the right detailed files.\n\n"+
+				"Available files:\n%s"+
+				"\nRead additional files from `references/`, `scripts/`, `code/`, or other listed paths only as needed for this step.",
+			absLearningsPath, listedFiles.String())
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d global learning file(s) (path reference only)", len(learningFiles)))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No global learning files found: %s", globalLearningsPath))

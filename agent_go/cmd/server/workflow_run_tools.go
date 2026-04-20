@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -226,6 +225,7 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 	if stepID != "" {
 		agentName = fmt.Sprintf("Step: %s (%s)", stepID, workflowLabel)
 	}
+	logCtx := newServerLogContext(workflowPath, groupName, "workflow", userID, "", wfSessionID)
 
 	// Register in the background agent registry so list_agents/terminate_agent see it
 	agentID := registry.NextID(agentName)
@@ -249,7 +249,7 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 	// Run the workflow in background
 	go func() {
-		log.Printf("[WORKFLOW_RUN_TOOL] Starting %s (agent=%s session=%s)", agentName, agentID, wfSessionID)
+		logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] Starting %s (agent=%s session=%s)", agentName, agentID, wfSessionID)
 
 		runErr := api.startSessionInternal(runCtx, reqMap, wfSessionID, userID, nil)
 
@@ -259,11 +259,11 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		if runErr != nil {
 			bgAgent.Status = BGAgentFailed
 			bgAgent.Error = runErr.Error()
-			log.Printf("[WORKFLOW_RUN_TOOL] %s failed: %v", agentName, runErr)
+			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s failed: %v", agentName, runErr)
 		} else {
 			bgAgent.Status = BGAgentCompleted
 			bgAgent.Result = fmt.Sprintf("Workflow completed. Check %s/runs/iteration-0/%s/ for results.", workflowPath, groupName)
-			log.Printf("[WORKFLOW_RUN_TOOL] %s completed", agentName)
+			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s completed", agentName)
 		}
 		bgAgent.mu.Unlock()
 

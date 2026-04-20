@@ -331,6 +331,20 @@ func validateFile(
 		return result
 	}
 
+	// A step may only write in two places: its execution folder or workflow-root db/.
+	// If the schema targets db/ and the file is missing there but present in the step
+	// folder, promote the alternate so existence + JSON reads both use it. We scope
+	// this to db/ because other workflow-root folders (knowledgebase/, learnings/, …)
+	// are written by dedicated agents — a step-local copy there is always a bug.
+	readPath := fullPath
+	if !exists && result.AlternateExists && isDBSchemaPath(fileRule.FileName) {
+		readPath = alternatePath
+		result.ResolvedPath = alternatePath
+		result.AlternatePath = ""
+		result.AlternateExists = false
+		exists = true
+	}
+
 	result.Exists = exists
 
 	// If file doesn't exist and we have JSON checks, we can't validate them
@@ -339,7 +353,7 @@ func validateFile(
 	}
 
 	// Read file content
-	content, err := baseOrchestrator.ReadWorkspaceFile(ctx, fullPath)
+	content, err := baseOrchestrator.ReadWorkspaceFile(ctx, readPath)
 	if err != nil {
 		result.JSONChecks = append(result.JSONChecks, JSONCheckResult{
 			Path:      "",
@@ -1068,6 +1082,31 @@ func resolveAbsoluteValidationPath(fileName string, scopes validationPathScopes)
 	}
 
 	return strings.TrimPrefix(cleanAbsPath, docsRoot+"/"), nil
+}
+
+// isDBSchemaPath reports whether a validation-schema file name targets the
+// workflow-root db/ folder — either as a bare relative path (`db/foo.json`) or
+// after absolute-path normalization. Used to scope the step-local fallback in
+// validateFile: db/ is the only workflow-root folder a step is allowed to
+// populate directly, so it is the only prefix where accepting a step-local
+// copy is safe.
+func isDBSchemaPath(fileName string) bool {
+	cleanPath, err := sanitizeValidationFileName(fileName)
+	if err != nil {
+		return false
+	}
+	if filepath.IsAbs(cleanPath) {
+		// Absolute paths carry the workflow root prefix; strip to the segment
+		// after the workflow-root folder before checking.
+		parts := strings.Split(strings.TrimPrefix(cleanPath, "/"), "/")
+		for i, p := range parts {
+			if p == DBFolderName && i+1 < len(parts) {
+				return true
+			}
+		}
+		return false
+	}
+	return cleanPath == DBFolderName || strings.HasPrefix(cleanPath, DBFolderName+"/")
 }
 
 func isWorkflowRootValidationPath(fileName string) bool {

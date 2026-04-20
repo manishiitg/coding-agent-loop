@@ -43,6 +43,10 @@ func scheduleLogf(format string, args ...interface{}) {
 	getScheduleLogger().Printf(format, args...)
 }
 
+func scheduleLogfWithContext(logCtx serverLogContext, format string, args ...interface{}) {
+	getScheduleLogger().Println(formatContextLog(logCtx, format, args...))
+}
+
 func isScheduledSession(sessionID string) bool {
 	return strings.HasPrefix(sessionID, "sched_")
 }

@@ -57,7 +57,8 @@ type BaseOrchestrator struct {
 	contextAwareBridge mcpagent.AgentEventListener
 
 	// Logger for the orchestrator
-	logger loggerv2.Logger
+	logger     loggerv2.Logger
+	baseLogger loggerv2.Logger
 
 	// Workspace tools for file operations
 	WorkspaceTools         []llmtypes.Tool
@@ -212,6 +213,7 @@ func NewBaseOrchestrator(
 	orchestrator := &BaseOrchestrator{
 		contextAwareBridge:     contextAwareBridge,
 		logger:                 logger,
+		baseLogger:             logger,
 		WorkspaceTools:         customTools,
 		WorkspaceToolExecutors: customToolExecutors,
 		ToolCategories:         toolCategories, // NEW: store category map

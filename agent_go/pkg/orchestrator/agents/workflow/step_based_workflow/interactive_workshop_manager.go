@@ -625,6 +625,7 @@ type InteractiveWorkshopManager struct {
 	skillFuncs             *SkillCallbacks                             // skill import/delete callbacks from server.go
 	llmToolsFuncs          *LLMToolsCallbacks                          // LLM management callbacks from server.go
 	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
+	resolveSecretValues    func(ctx context.Context, names []string) map[string]string
 	executionNotifier      WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
 	hasPendingCompletions  func() bool                                 // optional: true if completions are queued for delivery
 	hasRunningAgents       func() bool                                 // optional: true if server still has running background agents
@@ -665,13 +666,20 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 	caps["selected_servers"] = iwm.controller.GetSelectedServers()
 	caps["selected_skills"] = iwm.controller.GetSelectedSkills()
 
-	// Update secrets (names only, never values)
+	// Update secrets (names only, never values). Write to BOTH manifest fields:
+	//   - selected_secrets           → used by loadSelectedUserSecrets to decrypt user-stored values
+	//   - selected_global_secret_names → used by mergeGlobalSecrets to filter GLOBAL_SECRET_* env vars
+	// Each loader path ignores names it can't resolve in its own bucket, so writing the
+	// union to both fields lets user and global names each resolve via their own path.
+	// Writing to only one field is the bug the builder chat hit: user secrets attached via
+	// update_workflow_config never reached step runtime because selected_secrets stayed empty.
 	secretNames := make([]string, 0)
 	for _, s := range iwm.controller.GetSecrets() {
 		if s.Name != "" {
 			secretNames = append(secretNames, s.Name)
 		}
 	}
+	caps["selected_secrets"] = secretNames
 	caps["selected_global_secret_names"] = secretNames
 
 	caps["use_code_execution_mode"] = iwm.controller.GetUseCodeExecutionMode()
@@ -800,6 +808,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// Workspace advanced tools
 		"execute_shell_command", "diff_patch_workspace_file",
 		"read_image", "read_pdf", "generate_text_llm", "search_web_llm",
+		"image_gen", "image_edit",
+		// Secret management tools (user-scoped; global secrets are read-only)
+		"list_secrets", "set_user_secret", "delete_user_secret",
 		// Human tools
 		"human_feedback",
 		// Browser (if registered)
@@ -1328,7 +1339,7 @@ When you call ` + "`" + `run_full_workflow` + "`" + ` for a multi-group workflow
 
 ## Reporting — the frontend Report tab is already wired
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.md`"+` and renders the widget blocks defined there against `+"`db/*.json`"+` and `+"`knowledgebase/`"+` (graph + notes). It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.md`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
 
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
 - The answer is almost always: **edit `+"`reports/report_plan.md`"+`** — add or update widget blocks.
@@ -1383,13 +1394,19 @@ filter: type=company
 - `+"`widget:stat`"+` — KPI tile: big number with label, optional prefix/suffix/delta/sparkline
 - `+"`widget:alert`"+` — conditional callout banner (info / warning / error / success). Pair with `+"`show_if:`"+`.
 - `+"`widget:pivot`"+` — 2-D aggregated grid (rows × columns × sum/avg/count/min/max/first)
-- `+"`widget:row`"+` — layout wrapper; each line `+"`- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ] [ | show_if: <expr> ]`"+`
+- `+"`widget:costs`"+` — built-in workflow cost widget backed by `+"`/api/workflow/costs`"+`
+- `+"`widget:evals`"+` — built-in evaluation widget backed by `+"`/api/workflow/evaluation-reports`"+`
+- `+"`widget:runs`"+` — built-in run-history widget backed by `+"`/api/workflow/run-folders`"+`
+- `+"`widget:row`"+` — layout wrapper; standard row lines look like `+"`- {kind} | source: <path> | path: <dot.path> [ | filter: <key=value> ] [ | show_if: <expr> ]`"+`. For `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+`, omit `+"`source`"+` and use widget-specific fields instead (for example `+"`- costs | view: summary | scope: all`"+`).
 
-**Valid `+"`source`"+` paths:** `+"`db/<file>.json`"+`, `+"`knowledgebase/graph.json`"+`, `+"`knowledgebase/index.json`"+`. Anything else is rejected.
+**Valid `+"`source`"+` paths for source-backed widgets:** `+"`db/<file>.json`"+`, `+"`knowledgebase/graph.json`"+`, `+"`knowledgebase/index.json`"+`. Anything else is rejected. `+"`widget:costs`"+`, `+"`widget:evals`"+`, and `+"`widget:runs`"+` do NOT use `+"`source:`"+` because they are backed by dedicated workflow APIs.
 
-**Required fields on every widget:**
+**Required fields on source-backed widgets (`+"`text`"+`, `+"`table`"+`, `+"`chart`"+`, `+"`stat`"+`, `+"`alert`"+`, `+"`pivot`"+`):**
 - `+"`source:`"+` — workspace-relative JSON file path
 - `+"`path:`"+` — dot-notation key into the JSON. For root-level arrays/values use `+"`$`"+`, `+"`$[*]`"+`, `+"`.`"+`, or `+"`*`"+` (all normalize to "the whole source").
+
+**Required fields on API-backed widgets:**
+- `+"`widget:costs`"+`, `+"`widget:evals`"+`, and `+"`widget:runs`"+` do not require `+"`source:`"+` or `+"`path:`"+`. Use their widget-specific fields instead. If you include `+"`source:`"+` / `+"`path:`"+`, the renderer ignores them.
 
 **Optional fields — common to all widget kinds:**
 - `+"`title:`"+` — header label rendered above the widget
@@ -1457,6 +1474,24 @@ filter: type=company
 - `+"`format:`"+` — formatter applied to each cell.
 - `+"`heatmap:`"+` — `+"`true`"+` to tint cells by magnitude (default low→high = light→dark blue; dark theme adjusted automatically).
 - `+"`heatmap_colors:`"+` — two-color override: `+"`heatmap_colors: #f1f5f9, #0ea5e9`"+` (low, high).
+
+**Optional fields for `+"`widget:costs`"+`:**
+- `+"`view:`"+` — `+"`summary`"+` (default), `+"`stage-breakdown`"+`, `+"`run-table`"+`, `+"`step-table`"+`, `+"`model-table`"+`.
+- `+"`scope:`"+` — `+"`phase`"+`, `+"`execution`"+`, `+"`evaluation`"+`, `+"`all`"+` (default).
+- `+"`metric:`"+` — `+"`cost`"+` (default), `+"`total_tokens`"+`, `+"`input_tokens`"+`, `+"`output_tokens`"+`, `+"`llm_calls`"+`.
+- `+"`run_folder:`"+` — restrict to one run folder when the view supports it.
+- `+"`group:`"+` — restrict to one group when the data supports it.
+
+**Optional fields for `+"`widget:evals`"+`:**
+- `+"`view:`"+` — `+"`summary`"+` (default), `+"`run-chart`"+`, `+"`run-table`"+`, `+"`step-table`"+`.
+- `+"`metric:`"+` — `+"`score_percentage`"+` (default) or `+"`total_score`"+`.
+- `+"`run_folder:`"+` — restrict to one run folder.
+- `+"`group:`"+` — restrict to one group.
+
+**Optional fields for `+"`widget:runs`"+`:**
+- `+"`view:`"+` — `+"`summary`"+` (default), `+"`duration-chart`"+`, `+"`status-chart`"+`, `+"`table`"+`.
+- `+"`run_folder:`"+` — restrict to one run folder.
+- `+"`group:`"+` — restrict to one group.
 
 **Color controls (optional, chart + table):** hex (`+"`#rrggbb`"+`, `+"`#rgb`"+`) or CSS color names.
 - `+"`colors:`"+` — comma-separated palette. Chart: cycled across bars/pie slices. Table: only used alongside `+"`color_by`"+`.
@@ -1553,11 +1588,36 @@ delta_path: runs.0.employee_sync.delta
 trend_path: runs.0.employee_sync.history
 suffix: " active"
 ` + "`" + `` + "`" + `` + "`" + `
+
+## Workflow Costs
+
+` + "`" + `` + "`" + `` + "`" + `widget:costs
+title: Workflow cost overview
+description: Total spend and token usage across the workflow.
+view: summary
+scope: all
+metric: cost
+` + "`" + `` + "`" + `` + "`" + `
+
+## Evaluation Quality
+
+` + "`" + `` + "`" + `` + "`" + `widget:evals
+title: Eval scores by run
+view: run-chart
+metric: score_percentage
+` + "`" + `` + "`" + `` + "`" + `
+
+## Run History
+
+` + "`" + `` + "`" + `` + "`" + `widget:runs
+title: Recent runs
+view: table
+` + "`" + `` + "`" + `` + "`" + `
 ` + "```" + `
 
 **Asking the user before writing widgets** — this is the LLM-driven part. When the user says "add a report widget" or similar, ask clarifying questions before writing the markdown:
-- "Which data should it bind to — `+"`db/<file>`"+` or KB entities of a specific type?"
-- "Table, chart, stat, alert, or pivot? (If chart, bar/line/area/pie? If pivot, rows × columns × what aggregate?)"
+- "Should this bind to a file (`+"`db/<file>`"+` or KB entities) or is it better as a built-in workflow widget (`+"`costs`"+`, `+"`evals`"+`, `+"`runs`"+`)?"
+- "Table, chart, stat, alert, pivot, costs, evals, or runs? (If chart, bar/line/area/pie? If pivot, rows × columns × what aggregate? If costs/evals/runs, which view?)"
 - "Any columns/values to format specially (currency, percent, dates)?"
 - "Sort by what initially?"
 - "Should I cap to top N rows or show everything?"
@@ -1570,6 +1630,9 @@ Then write the widget block honoring their answers. Don't dump generic widgets �
 - **table** → rows with many fields per row, user needs to scan and sort.
 - **chart** → shape/trend of a set of numbers. Multi-series when comparing metrics over the same x-axis.
 - **pivot** → two-dimensional summary (team × month, group × status). Much denser than a flat table for the same data.
+- **costs** → workflow spend/tokens/LLM usage. Prefer this over hand-binding cost ledger files into generic widgets.
+- **evals** → evaluation summaries, run scores, and per-step eval drill-down. Prefer this over manually wiring eval JSON unless the user wants a very custom visualization.
+- **runs** → recent run folders, run status, and duration summaries/charts.
 - **text** → narrative / free-form (description, notes, long strings). Default when nothing else fits, not before.
 
 **Choosing a chart type:**
@@ -2432,6 +2495,24 @@ Skills are reusable instruction sets injected into step agents at runtime. They 
 6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes files from workspace entirely
 
 Use `+"`get_workflow_config`"+` to see the workflow's selected skills. Use `+"`list_skills`"+` to see all installed skills.
+
+### Secrets
+Secrets are credentials (API keys, tokens, passwords) injected into step agents as `+"`$SECRET_<NAME>`"+` environment variables at execution time. They exist in two buckets:
+- **User secrets** — per-user, encrypted server-side, full CRUD via chat.
+- **Global secrets** — operator-managed via `+"`GLOBAL_SECRET_*`"+` env vars on the server. Read-only from chat.
+
+**Adding a secret is a TWO-STEP flow. Doing only step 2 is a common silent-failure trap: the name gets attached but `+"`$SECRET_<NAME>`"+` is empty at runtime.**
+
+1. **Store the value** (user secrets only): `+"`set_user_secret(name=\"BUFFER_API_KEY\", value=\"<plaintext>\")`"+` — AES-GCM encrypts and stores per-user. Names that already exist as globals are rejected.
+2. **Attach to this workflow**: `+"`update_workflow_config(add_secrets=[\"BUFFER_API_KEY\"])`"+`. This step validates that a value exists (user store OR global); attaching an orphan name is rejected with an error pointing to step 1.
+
+**Other secret ops:**
+- **Inspect**: `+"`list_secrets`"+` returns `+"`global`"+` (read-only names) and `+"`user`"+` (CRUD names) buckets — values are never exposed.
+- **Edit a value**: `+"`set_user_secret`"+` again with the same name — it upserts.
+- **Delete from store**: `+"`delete_user_secret(name)`"+`. Workflow attachments are separate — also run `+"`update_workflow_config(remove_secrets=[\"NAME\"])`"+` to detach.
+- **Detach only (keep value)**: `+"`update_workflow_config(remove_secrets=[\"NAME\"])`"+`.
+
+Secret VALUES are never rendered into prompts, logs, or tool outputs. Step agents read them only from `+"`$SECRET_<NAME>`"+` in `+"`execute_shell_command`"+`. Never echo, print, or hardcode a secret value in descriptions, learnings, or main.py.
 
 ## FILE LAYOUT
 
@@ -6660,7 +6741,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"add_secrets": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Secret names to add/enable for the workflow",
+					"description": "Secret names to attach to the workflow. Each name MUST already have a stored value — either a GLOBAL_SECRET_* env var or a user secret (store via set_user_secret) — otherwise the request is rejected. Attaching only wires the name: runtime injects $SECRET_<NAME> with the looked-up value. Use list_secrets to see what's available.",
 				},
 				"remove_secrets": map[string]interface{}{
 					"type":        "array",
@@ -6835,6 +6916,41 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				changed := false
 
 				if len(addSecrets) > 0 {
+					// Attaching a name without a stored value is a silent foot-gun: runtime
+					// drops the empty entry and $SECRET_<NAME> ends up unset, masking the
+					// real "no value stored" error with a downstream graceful-fallback.
+					// Reject up front if any requested name has no value in user store or
+					// global env. The caller must store the value (set_user_secret) first.
+					availableNames := map[string]bool{}
+					if iwm.listAvailableSecrets != nil {
+						if names, listErr := iwm.listAvailableSecrets(ctx); listErr == nil {
+							for _, n := range names {
+								availableNames[n] = true
+							}
+						} else {
+							logger.Warn(fmt.Sprintf("Could not list available secrets for validation: %v", listErr))
+						}
+					}
+					var missing []string
+					if len(availableNames) > 0 {
+						for _, name := range addSecrets {
+							if !availableNames[name] {
+								missing = append(missing, name)
+							}
+						}
+					}
+					if len(missing) > 0 {
+						return fmt.Sprintf(
+							"Error: cannot attach secret(s) with no stored value: %v.\n\n"+
+								"These names have no value in the user secret store and no matching GLOBAL_SECRET_* env var. "+
+								"Attaching them would set $SECRET_<NAME> to an empty string at runtime and silently break any step that reads them.\n\n"+
+								"Fix:\n"+
+								"  1. Store the value first: set_user_secret(name=\"%s\", value=\"<plaintext>\").\n"+
+								"  2. Then re-run update_workflow_config(add_secrets=[...]).",
+							missing, missing[0],
+						), nil
+					}
+
 					existSet := make(map[string]bool, len(currentSecrets))
 					for _, s := range currentSecrets {
 						existSet[s.Name] = true
@@ -6865,12 +6981,53 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if changed {
+					// Resolve plaintext values for every attached name so the workshop shell's
+					// SECRET_* env vars stay in sync with workflow.json mid-session. Without
+					// this, add_secrets would silently give you an empty $SECRET_<NAME> in
+					// the workshop's own execute_shell_command (step runs still see values
+					// because their env is rebuilt per-step, but builder shell does not).
+					if iwm.resolveSecretValues != nil {
+						names := make([]string, 0, len(currentSecrets))
+						for _, s := range currentSecrets {
+							names = append(names, s.Name)
+						}
+						values := iwm.resolveSecretValues(ctx, names)
+						for i, s := range currentSecrets {
+							if v, ok := values[s.Name]; ok {
+								currentSecrets[i].Value = v
+							}
+						}
+					}
+
 					iwm.controller.SetSecrets(currentSecrets)
 					if iwm.workshopConfig != nil {
 						cloned := make([]orchestrator.SecretEntry, len(currentSecrets))
 						copy(cloned, currentSecrets)
 						iwm.workshopConfig.Secrets = cloned
 					}
+
+					// Sync SECRET_* into the workshop shell's persistent env map, so
+					// `execute_shell_command` from the builder agent picks up new keys
+					// without a session restart. Also strips removed secrets.
+					if envRef := iwm.controller.GetWorkspaceEnvRef(); envRef != nil {
+						nameSet := make(map[string]bool, len(currentSecrets))
+						iwm.controller.LockWorkspaceEnv()
+						for _, s := range currentSecrets {
+							if s.Name == "" {
+								continue
+							}
+							nameSet[s.Name] = true
+							envRef["SECRET_"+s.Name] = s.Value
+						}
+						for k := range envRef {
+							if strings.HasPrefix(k, "SECRET_") && !nameSet[strings.TrimPrefix(k, "SECRET_")] {
+								delete(envRef, k)
+							}
+						}
+						iwm.controller.UnlockWorkspaceEnv()
+						logger.Info(fmt.Sprintf("Refreshed workshop shell env with %d SECRET_* entries", len(currentSecrets)))
+					}
+
 					anyChanged = true
 					sb.WriteString("\n### Secrets (updated)\n")
 					if len(currentSecrets) == 0 {

@@ -1264,11 +1264,23 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 
 // Widget types supported by report_plan.md. See section 2 of the design doc.
-export type ReportWidgetKind = 'text' | 'chart' | 'table' | 'stat' | 'alert' | 'pivot';
+export type ReportWidgetKind = 'text' | 'chart' | 'table' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
 
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
 
 export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
+
+export type ReportCostsScope = 'phase' | 'execution' | 'evaluation' | 'all';
+
+export type ReportCostsView = 'summary' | 'stage-breakdown' | 'run-table' | 'step-table' | 'model-table';
+
+export type ReportCostsMetric = 'cost' | 'total_tokens' | 'input_tokens' | 'output_tokens' | 'llm_calls';
+
+export type ReportEvalsView = 'summary' | 'run-chart' | 'run-table' | 'step-table';
+
+export type ReportEvalsMetric = 'score_percentage' | 'total_score';
+
+export type ReportRunsView = 'summary' | 'duration-chart' | 'status-chart' | 'table';
 
 // Named formatter presets for table cells. Maps to functions in reportFormatters.ts.
 // Used in `formats:` block of widget:table definitions.
@@ -1365,6 +1377,20 @@ export interface ReportWidget {
   series?: string[];
   seriesColors?: string[];    // Per-series colors (parallel to `series`); falls back to `colors`
   stacked?: boolean;          // For bar/area charts, stack series instead of grouping
+  // Costs-widget options. Costs come from `/api/workflow/costs`, so `source`
+  // and `path` are ignored for this widget kind.
+  costsScope?: ReportCostsScope;
+  costsView?: ReportCostsView;
+  costsMetric?: ReportCostsMetric;
+  // Evaluations-widget options. Evaluation reports come from
+  // `/api/workflow/evaluation-reports`, so `source` and `path` are ignored.
+  evalsView?: ReportEvalsView;
+  evalsMetric?: ReportEvalsMetric;
+  // Runs-widget options. Run metadata comes from `/api/workflow/run-folders`,
+  // so `source` and `path` are ignored.
+  runsView?: ReportRunsView;
+  runFolder?: string;
+  group?: string;
 }
 
 // `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`

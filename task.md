@@ -41,3 +41,5 @@
 80.. should knowledge base update in step instead of a seperate step we run in background 
 
 81. also a workflow should be completed only when learnings / knowledgebase are done right now it doesnt wait for them
+
+82. see if we can intgrate the widget charts into the chat itself..  not important .

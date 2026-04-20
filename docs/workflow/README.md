@@ -14,14 +14,13 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 
 - `cost_and_log_measurement.md`
 - `evaluation_system.md`
+- `how_workflows_work.md`
 - `human_feedback_system.md`
 - `iteration_run_folder_architecture.md`
 - `learn_code_flow.md`
 - `learning_architecture.md`
 - `pre_validation_guide.md`
 - `prompt-fixes-2026-03-24.md`
-- `react_flow_workflow_canvas.md`
-- `running_workflows.md`
 - `runtime_mcp_overrides.md`
 - `step_config_format_specification.md`
 - `tiered_llm_allocation.md`

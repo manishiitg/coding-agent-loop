@@ -109,8 +109,8 @@ type StepBasedWorkflowOrchestrator struct {
 	presetPhaseLLM *AgentLLMConfig // Default for all phase agents (planning, evaluation, plan improvement, etc.)
 
 	// Preset-level feature toggles
-	useKnowledgebase  bool // Whether to create and reference knowledgebase folder (default: true)
-	lockKnowledgebase bool // When true, post-step KB update agent never enqueues — graph.json only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
+	useKnowledgebase  bool   // Whether to create and reference knowledgebase folder (default: true)
+	lockKnowledgebase bool   // When true, post-step KB update agent never enqueues — graph.json only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
 	kbShape           string // "graph+notes" | "notes-only"; empty resolves to "graph+notes". Controls which KB artifacts exist.
 
 	// Tiered LLM allocation mode
@@ -300,6 +300,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 	if groupName == "" {
 		return func() {}, nil
 	}
+	hcpo.ApplyWorkflowLogContext(hcpo.GetWorkspacePath(), groupName)
 
 	now := time.Now()
 	var (
@@ -618,6 +619,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 // - Simple direct planning approach
 // - NEW: Includes human approval loop with iterative plan refinement
 func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, objective, workspacePath string) (string, error) {
+	hcpo.ApplyWorkflowLogContext(workspacePath, orchestrator.SingleSelectedGroupName(func() []string {
+		if hcpo.executionOptions == nil {
+			return nil
+		}
+		return hcpo.executionOptions.EnabledGroupNames
+	}()))
 	hcpo.GetLogger().Info(fmt.Sprintf("🚀 Starting human-controlled todo planning for objective: %s", objective))
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Starting - workspacePath=%s", workspacePath))
 

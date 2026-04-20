@@ -57,6 +57,63 @@ func cloneOptionsMap(options map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
+func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
+	if keys == nil {
+		return ""
+	}
+
+	switch normalizeManagedProvider(provider) {
+	case "openrouter":
+		return strings.TrimSpace(keys.OpenRouter)
+	case "openai":
+		return strings.TrimSpace(keys.OpenAI)
+	case "anthropic":
+		return strings.TrimSpace(keys.Anthropic)
+	case "z-ai":
+		return strings.TrimSpace(keys.ZAI)
+	case "vertex":
+		return strings.TrimSpace(keys.Vertex)
+	case "gemini-cli":
+		return strings.TrimSpace(keys.GeminiCLI)
+	case "minimax":
+		return strings.TrimSpace(keys.MiniMax)
+	case "minimax-coding-plan":
+		return strings.TrimSpace(keys.MiniMaxCodingPlan)
+	default:
+		return ""
+	}
+}
+
+func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) bool {
+	if keys == nil {
+		return false
+	}
+
+	value := strings.TrimSpace(apiKey)
+	switch normalizeManagedProvider(provider) {
+	case "openrouter":
+		keys.OpenRouter = value
+	case "openai":
+		keys.OpenAI = value
+	case "anthropic":
+		keys.Anthropic = value
+	case "z-ai":
+		keys.ZAI = value
+	case "vertex":
+		keys.Vertex = value
+	case "gemini-cli":
+		keys.GeminiCLI = value
+	case "minimax":
+		keys.MiniMax = value
+	case "minimax-coding-plan":
+		keys.MiniMaxCodingPlan = value
+	default:
+		return false
+	}
+
+	return true
+}
+
 func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Agent) error {
 	if underlyingAgent == nil {
 		return fmt.Errorf("underlying agent is nil")
@@ -74,7 +131,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, minimax-coding-plan, or bedrock.",
+					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, or bedrock.",
 				},
 			},
 			"required": []string{"provider"},
@@ -116,7 +173,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, minimax-coding-plan, gemini-cli, claude-code, codex-cli, or bedrock.",
+					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, minimax-coding-plan, gemini-cli, claude-code, codex-cli, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -179,42 +236,11 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 
 			usedWorkspaceAuth := false
 			if !explicitAPIKeyProvided && keys != nil {
+				if value := getStoredProviderAPIKey(keys, provider); value != "" {
+					apiKey = value
+					usedWorkspaceAuth = true
+				}
 				switch provider {
-				case "openrouter":
-					if keys.OpenRouter != "" {
-						apiKey = keys.OpenRouter
-						usedWorkspaceAuth = true
-					}
-				case "openai":
-					if keys.OpenAI != "" {
-						apiKey = keys.OpenAI
-						usedWorkspaceAuth = true
-					}
-				case "anthropic":
-					if keys.Anthropic != "" {
-						apiKey = keys.Anthropic
-						usedWorkspaceAuth = true
-					}
-				case "vertex":
-					if keys.Vertex != "" {
-						apiKey = keys.Vertex
-						usedWorkspaceAuth = true
-					}
-				case "gemini-cli":
-					if keys.GeminiCLI != "" {
-						apiKey = keys.GeminiCLI
-						usedWorkspaceAuth = true
-					}
-				case "minimax":
-					if keys.MiniMax != "" {
-						apiKey = keys.MiniMax
-						usedWorkspaceAuth = true
-					}
-				case "minimax-coding-plan":
-					if keys.MiniMaxCodingPlan != "" {
-						apiKey = keys.MiniMaxCodingPlan
-						usedWorkspaceAuth = true
-					}
 				case "bedrock":
 					if keys.Bedrock != nil && strings.TrimSpace(region) == "" && keys.Bedrock.Region != "" {
 						region = keys.Bedrock.Region
@@ -296,7 +322,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 				},
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as openai, openrouter, anthropic, vertex, azure, minimax, gemini-cli, claude-code, or codex-cli.",
+					"description": "Provider id such as openai, openrouter, anthropic, z-ai, vertex, azure, minimax, gemini-cli, claude-code, or codex-cli.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -457,7 +483,7 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: openrouter, openai, anthropic, vertex, gemini-cli, minimax, minimax-coding-plan, bedrock, or azure.",
+					"description": "Provider id: openrouter, openai, anthropic, z-ai, vertex, gemini-cli, minimax, minimax-coding-plan, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",
@@ -494,41 +520,6 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 			}
 
 			switch provider {
-			case "openrouter":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for openrouter.", nil
-				}
-				keys.OpenRouter = apiKey
-			case "openai":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for openai.", nil
-				}
-				keys.OpenAI = apiKey
-			case "anthropic":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for anthropic.", nil
-				}
-				keys.Anthropic = apiKey
-			case "vertex":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for vertex.", nil
-				}
-				keys.Vertex = apiKey
-			case "gemini-cli":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for gemini-cli.", nil
-				}
-				keys.GeminiCLI = apiKey
-			case "minimax":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for minimax.", nil
-				}
-				keys.MiniMax = apiKey
-			case "minimax-coding-plan":
-				if strings.TrimSpace(apiKey) == "" {
-					return "api_key is required for minimax-coding-plan.", nil
-				}
-				keys.MiniMaxCodingPlan = apiKey
 			case "bedrock":
 				if strings.TrimSpace(region) == "" {
 					return "region is required for bedrock.", nil
@@ -545,7 +536,12 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 					Region:     strings.TrimSpace(region),
 				}
 			default:
-				return fmt.Sprintf("Unsupported managed provider %q.", provider), nil
+				if strings.TrimSpace(apiKey) == "" {
+					return fmt.Sprintf("api_key is required for %s.", provider), nil
+				}
+				if !setStoredProviderAPIKey(keys, provider, apiKey) {
+					return fmt.Sprintf("Unsupported managed provider %q.", provider), nil
+				}
 			}
 
 			if err := SaveProviderKeys(ctx, keys); err != nil {

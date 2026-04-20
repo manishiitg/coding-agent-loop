@@ -60,8 +60,8 @@ type ContextAwareEventBridge struct {
 	currentAgentName string
 	// Batch execution context (for batch progress tracking in frontend)
 	currentGroupName string // Current group name being executed
-	currentGroupIdx int    // 0-based index of current group
-	totalGroups     int    // Total number of groups in batch
+	currentGroupIdx  int    // 0-based index of current group
+	totalGroups      int    // Total number of groups in batch
 	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
 	contextStack []orchestratorContext
 	// Tool call collector — captures tool_call_start/end events for workspace logging
@@ -83,6 +83,14 @@ func NewContextAwareEventBridge(underlyingBridge mcpagent.AgentEventListener, lo
 		underlyingBridge: underlyingBridge,
 		logger:           logger,
 	}
+}
+
+// SetLogger updates the logger used by the bridge so workflow/group scoping can
+// follow the active orchestrator execution context.
+func (c *ContextAwareEventBridge) SetLogger(logger loggerv2.Logger) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.logger = logger
 }
 
 // SetTokenPersister sets the token persister (no longer using accumulators)

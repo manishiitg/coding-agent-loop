@@ -205,6 +205,7 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	workspaceAdvancedTools := virtualtools.CreateWorkspaceAdvancedTools()
 	workspaceImageCategory := virtualtools.GetWorkspaceImageToolCategory()
 	workspaceImageTools := virtualtools.CreateWorkspaceImageTools()
+	workspaceVideoTools := virtualtools.CreateWorkspaceVideoTools()
 
 	// Use session-aware executors when session info is provided
 	var workspaceAdvancedExecutors map[string]func(ctx context.Context, args map[string]any) (string, error)
@@ -216,10 +217,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	// Add advanced tools
 	allTools = append(allTools, workspaceAdvancedTools...)
 	allTools = append(allTools, workspaceImageTools...)
+	allTools = append(allTools, workspaceVideoTools...)
 	for name, executor := range workspaceAdvancedExecutors {
 		allExecutors[name] = executor
 	}
 	virtualtools.MergeImageToolExecutorsUntyped(virtualtools.ImageGenExecutorConfig{
+		WorkspaceAPIURL: getWorkspaceAPIURL(),
+		UserID:          userID,
+	}, allExecutors, nil)
+	virtualtools.MergeVideoToolExecutorsUntyped(virtualtools.VideoGenExecutorConfig{
 		WorkspaceAPIURL: getWorkspaceAPIURL(),
 		UserID:          userID,
 	}, allExecutors, nil)
@@ -233,6 +239,11 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	for _, tool := range workspaceImageTools {
 		if tool.Function != nil {
 			toolCategories[tool.Function.Name] = workspaceImageCategory
+		}
+	}
+	for _, tool := range workspaceVideoTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
 		}
 	}
 

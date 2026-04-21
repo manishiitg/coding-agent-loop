@@ -485,7 +485,7 @@ func init() {
 	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai, anthropic)")
 	ServerCmd.Flags().String("model", "", "Model ID (uses provider default if empty)")
 	ServerCmd.Flags().Float64("temperature", 0.0, "Temperature for LLM")
-	ServerCmd.Flags().Int("max-turns", 100, "Maximum conversation turns")
+	ServerCmd.Flags().Int("max-turns", 500, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
 
 	// Chat History Database flags
@@ -961,6 +961,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/events/stream", api.handleSSEStream).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/execution-tree", api.handleGetSessionExecutionTree).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/dismiss", api.handleDismissSession).Methods("POST", "OPTIONS")
 
 	// LLM Guidance API routes
@@ -1823,10 +1824,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// For non-workflow agents (simple/chat mode), req.Provider and req.ModelID come from the frontend request.
 	// Environment variable fallbacks have been removed - frontend always sends these values.
 
-	// Default maxTurns from environment variable or 100 if not provided or 0 (applies to both workflow and simple agent modes)
-	if req.MaxTurns <= 0 {
-		req.MaxTurns = orchestrator.GetDefaultMaxTurnsFromEnv()
-		log.Printf("[AGENT] MaxTurns not provided or 0, defaulting to %d (from env or 100)", req.MaxTurns)
+	// Default maxTurns only when omitted (0). Negative values are preserved to mean "no turn cap".
+	// Multi-agent chat and the workflow builder run uncapped by default.
+	isWorkflowBuilderPhase := req.AgentMode == "workflow_phase" && req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder
+	if req.MaxTurns == 0 {
+		if req.AgentMode == "simple" || isWorkflowBuilderPhase {
+			req.MaxTurns = -1
+			log.Printf("[AGENT] MaxTurns omitted for %s mode, running without a turn cap", req.AgentMode)
+		} else {
+			req.MaxTurns = orchestrator.GetDefaultMaxTurnsFromEnv()
+			log.Printf("[AGENT] MaxTurns not provided or 0, defaulting to %d (from env or 500)", req.MaxTurns)
+		}
 	}
 
 	// Use enabled_servers if provided, otherwise fall back to servers
@@ -2298,8 +2306,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		workflowLLMConfig.APIKeys = MergedProviderAPIKeys(r.Context())
 
-		// Create workflow orchestrator for this request
-		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
+		// Create workflow orchestrator for this request.
+		// Note: req.MaxTurns is already normalized earlier in the handler:
+		// 0 => default, negative => uncapped, positive => explicit limit.
 		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
 			api.mcpConfigPath,    // mcpConfigPath
@@ -2314,7 +2323,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			allTools,             // customTools
 			allExecutors,         // customToolExecutors
 			workflowLLMConfig,    // llmConfig (with merged API keys)
-			req.MaxTurns,         // maxTurns (defaults to 100 if not provided)
+			req.MaxTurns,         // maxTurns (normalized earlier in the handler)
 			toolCategories,       // NEW: toolCategories
 			presetLLMConfig,      // preset LLM config for agent defaults
 		)
@@ -3319,13 +3328,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
 			}
 
-			// Chat mode: LLM-visible workspace tools (advanced + image)
+			// Chat mode: LLM-visible workspace tools (advanced + image + video)
 			// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
 			// These tools are restricted to the current workspace/chat folder guard.
 			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
+			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
 			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 			workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
 			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          currentUserID,
+			}, workspaceExecutors, nil)
+			virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
 			}, workspaceExecutors, nil)
@@ -4563,6 +4577,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if workshopSession != nil {
+						workshopSession.SetExtraSubAgentNotifier(&workflowSubAgentTrackingNotifier{
+							api:       api,
+							sessionID: sessionID,
+						})
 						// NOTE: Do NOT wire todoSubAgentBgNotifier here. In workshop mode, all subAgentNotifier
 						// calls come from sub-agents within background step executions (execute_step goroutines),
 						// never from the main workshop agent itself. Wiring todoSubAgentBgNotifier causes double
@@ -4697,6 +4715,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if evalSession != nil {
+						evalSession.SetExtraSubAgentNotifier(&workflowSubAgentTrackingNotifier{
+							api:       api,
+							sessionID: sessionID,
+						})
 						evalSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
 							api:           api,
 							sessionID:     sessionID,
@@ -5710,10 +5732,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			return 0.7
 		}(),
 		MaxTurns: func() int {
-			if parentReq.MaxTurns > 0 {
+			if parentReq.MaxTurns != 0 {
 				return parentReq.MaxTurns
 			}
-			return 100
+			return 500
 		}(),
 		ToolChoice:         "", // Empty — let the library decide; Azure/OpenAI reject tool_choice when no tools are present
 		StreamingChunkSize: 1,
@@ -5984,10 +6006,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Register workspace tools for sub-agent
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image).
+		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image + video).
 		workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
+		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
 		workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
 		virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
+			WorkspaceAPIURL: getWorkspaceAPIURL(),
+			UserID:          subAgentUserID,
+		}, workspaceExecutors, nil)
+		virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
 			WorkspaceAPIURL: getWorkspaceAPIURL(),
 			UserID:          subAgentUserID,
 		}, workspaceExecutors, nil)
@@ -6297,13 +6324,19 @@ type workshopExecutionBgNotifier struct {
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human.WorkshopExecutionStart) {
+	kind := strings.TrimSpace(start.Kind)
+	if kind == "" {
+		kind = "workshop_background"
+	}
 	bgAgent := &BackgroundAgent{
-		ID:        start.ID,
-		Name:      start.Name,
-		SessionID: n.sessionID,
-		Status:    BGAgentRunning,
-		CreatedAt: time.Now(),
-		cancel:    start.Cancel,
+		ID:                start.ID,
+		ParentExecutionID: start.ParentExecutionID,
+		Name:              start.Name,
+		SessionID:         n.sessionID,
+		Kind:              kind,
+		Status:            BGAgentRunning,
+		CreatedAt:         time.Now(),
+		cancel:            start.Cancel,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
 	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.presetQueryID, n.userID, start.ID, start.Name)
@@ -6398,6 +6431,56 @@ func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string)
 	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
 }
 
+// workflowSubAgentTrackingNotifier tracks inner workshop sub-agents in the backend
+// execution tree without triggering synthetic-turn notifications.
+type workflowSubAgentTrackingNotifier struct {
+	api       *StreamingAPI
+	sessionID string
+}
+
+func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_human.WorkshopExecutionStart) {
+	if n == nil || n.api == nil || strings.TrimSpace(start.ID) == "" {
+		return
+	}
+	kind := strings.TrimSpace(start.Kind)
+	if kind == "" {
+		kind = "workflow_sub_agent"
+	}
+	bgAgent := &BackgroundAgent{
+		ID:                start.ID,
+		ParentExecutionID: start.ParentExecutionID,
+		Name:              start.Name,
+		SessionID:         n.sessionID,
+		Kind:              kind,
+		Status:            BGAgentRunning,
+		CreatedAt:         time.Now(),
+		cancel:            start.Cancel,
+	}
+	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
+}
+
+func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, _ string, result string, err error) {
+	if n == nil || n.api == nil || strings.TrimSpace(agentID) == "" {
+		return
+	}
+	agent := n.api.bgAgentRegistry.Get(n.sessionID, agentID)
+	if agent == nil {
+		return
+	}
+	if agent.GetStatus() == BGAgentCanceled {
+		return
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded") {
+			agent.SetCanceled()
+			return
+		}
+		agent.SetError(err.Error())
+		return
+	}
+	agent.SetResult(result)
+}
+
 // truncateForToolResponse truncates a string for inclusion in tool responses
 func truncateForToolResponse(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -6412,6 +6495,7 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 ) (string, error) {
 	agentID := api.bgAgentRegistry.NextID(name)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
+	parentExecutionID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
 
 	// Copy only the context values actually needed by executeDelegatedTask.
 	// Note: DelegationDepthKey is NOT copied because background sub-agents don't have
@@ -6443,13 +6527,15 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	}
 
 	bgAgent := &BackgroundAgent{
-		ID:          agentID,
-		Name:        name,
-		SessionID:   sessionID,
-		Instruction: instruction,
-		Status:      BGAgentRunning,
-		CreatedAt:   time.Now(),
-		cancel:      bgCancel,
+		ID:                agentID,
+		ParentExecutionID: parentExecutionID,
+		Name:              name,
+		SessionID:         sessionID,
+		Instruction:       instruction,
+		Kind:              "delegation",
+		Status:            BGAgentRunning,
+		CreatedAt:         time.Now(),
+		cancel:            bgCancel,
 	}
 	api.bgAgentRegistry.Register(sessionID, bgAgent)
 

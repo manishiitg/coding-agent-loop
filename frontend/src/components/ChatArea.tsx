@@ -5,6 +5,7 @@ import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
+import type { ActiveAgentInfo } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef, signalPlanModified } from './workflow'
 import { ToastContainer } from './ui/Toast'
@@ -23,6 +24,7 @@ import { logger } from '../utils/logger'
 import { summarizeEventForDebug } from '../utils/eventOrdering'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
+import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -489,107 +491,38 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     return filtered
   }, [tabEvents])
 
-  // Derive the most recently started active agent from start/end event pairs.
-  // Shows only the innermost (latest) running agent — parent orchestrator agents
-  // are implicitly running but not interesting to display.
-  const hasRunningBgAgents = activeTab?.hasRunningBgAgents ?? false
-  const activeAgents = useMemo(() => {
-    if (tabEvents.length === 0) return []
+  const { data: sessionExecutionTree } = useSessionExecutionTree(activeSessionId, !!activeSessionId)
+  const activeAgents = useMemo<ActiveAgentInfo[]>(() => {
+    const root = sessionExecutionTree?.root
+    if (!root) {
+      return []
+    }
 
-    // Track running agents by correlation ID with depth (based on how many are already running when each starts)
-    const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation', depth: number }>()
+    const items: ActiveAgentInfo[] = []
+    const visit = (node: typeof root, depth: number) => {
+      const children = node.children || []
+      for (const child of children) {
+        const isVisible =
+          child.status === 'running' &&
+          child.kind !== 'session' &&
+          child.kind !== 'main_agent' &&
+          child.kind !== 'synthetic_turn'
 
-    for (const event of tabEvents) {
-      const eventRecord = event as unknown as Record<string, unknown>
-      const agentEvent = event.data as Record<string, unknown> | undefined
-      const innerData = agentEvent?.data as Record<string, unknown> | undefined
-      const outerCorrelationId = (eventRecord.correlation_id ?? agentEvent?.correlation_id ?? '') as string
-      const innerCorrelationId = (innerData?.correlation_id ?? '') as string
-      const outerDelegationId = (eventRecord.delegation_id ?? agentEvent?.delegation_id ?? '') as string
-      const innerDelegationId = (innerData?.delegation_id ?? '') as string
-      const outerParentId = (eventRecord.parent_id ?? agentEvent?.parent_id ?? '') as string
-      const innerParentId = (innerData?.parent_id ?? '') as string
+        if (isVisible) {
+          items.push({
+            name: child.name || child.kind || 'Execution',
+            type: child.kind === 'delegation' ? 'delegation' : 'agent',
+            depth,
+          })
+        }
 
-      if (event.type === 'orchestrator_agent_start') {
-        const corrId = outerCorrelationId || innerCorrelationId
-        const name = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'Agent') as string
-        const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        if (corrId && !running.has(corrId)) {
-          // Check if this is the inner agent for a workshop step/background wrapper.
-          // Update the wrapper in-place (rename, update agentType) instead of delete+insert,
-          // so the wrapper entry STAYS in running. This preserves running.size for any
-          // sub-agents dispatched after the orchestrator turn completes (sequential agents
-          // within a step need the outer wrapper to anchor their depth).
-          let wrapperUpdated = false
-          for (const [wrapperCorrId, wrapperAgent] of running.entries()) {
-            const isStepWrapper = wrapperAgent.agentType === 'workshop-step-execution' && wrapperAgent.name === `Step: ${name}`
-            const isBgWrapper = wrapperAgent.agentType === 'workshop-background-task' && wrapperAgent.name === `Background: ${name}`
-            if (isStepWrapper || isBgWrapper) {
-              running.set(wrapperCorrId, { ...wrapperAgent, name, agentType })
-              wrapperUpdated = true
-              break
-            }
-          }
-          if (!wrapperUpdated) {
-            const depth = running.size
-            running.set(corrId, { name, agentType, type: 'agent', depth })
-          }
-        }
-      } else if (event.type === 'agent_start') {
-        const corrId = outerCorrelationId || innerCorrelationId
-        const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        const parentId = outerParentId || innerParentId
-        const looksNested = !!parentId || corrId.startsWith('delegation-')
-        const name = (
-          innerData?.agent_name ??
-          agentEvent?.agent_name ??
-          innerData?.name ??
-          agentEvent?.name ??
-          agentType ??
-          'Agent'
-        ) as string
-
-        // Skip the top-level simple chat agent; we only want the background/sub-agent activity
-        // that mirrors the workflow builder chat indicator.
-        if (corrId && !running.has(corrId) && (looksNested || agentType !== 'simple')) {
-          const depth = running.size
-          running.set(corrId, { name, agentType, type: 'agent', depth })
-        }
-      } else if (event.type === 'orchestrator_agent_end' || event.type === 'orchestrator_agent_error') {
-        const corrId = outerCorrelationId || innerCorrelationId
-        if (corrId) running.delete(corrId)
-      } else if (event.type === 'agent_end' || event.type === 'agent_error') {
-        const corrId = outerCorrelationId || innerCorrelationId
-        if (corrId) running.delete(corrId)
-      } else if (event.type === 'delegation_start') {
-        const delegationId = outerDelegationId || innerDelegationId || outerCorrelationId || innerCorrelationId
-        const rawName = (innerData?.agent_name ?? agentEvent?.agent_name ?? innerData?.instruction ?? agentEvent?.instruction ?? 'Sub-agent') as string
-        const name = typeof rawName === 'string' && rawName.length > 50 ? rawName.substring(0, 50) + '...' : rawName
-        if (delegationId && !running.has(delegationId)) {
-          const depth = running.size
-          running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation', depth })
-        }
-      } else if (event.type === 'background_agent_started') {
-        const fields = (innerData?.fields as Record<string, unknown> | undefined) || innerData || agentEvent
-        const agentId = (fields?.agent_id ?? '') as string
-        const name = (fields?.name ?? agentEvent?.name ?? 'Background agent') as string
-        if (agentId && !running.has(agentId)) {
-          const depth = running.size
-          running.set(agentId, { name, agentType: 'background', type: 'agent', depth })
-        }
-      } else if (event.type === 'background_agent_completed' || event.type === 'background_agent_terminated') {
-        const fields = (innerData?.fields as Record<string, unknown> | undefined) || innerData || agentEvent
-        const agentId = (fields?.agent_id ?? '') as string
-        if (agentId) running.delete(agentId)
-      } else if (event.type === 'delegation_end') {
-        const delegationId = outerDelegationId || innerDelegationId || outerCorrelationId || innerCorrelationId
-        if (delegationId) running.delete(delegationId)
+        visit(child, isVisible ? depth + 1 : depth)
       }
     }
 
-    if (running.size === 0) return []
-    return Array.from(running.values())
-  }, [tabEvents])
+    visit(root, 0)
+    return items
+  }, [sessionExecutionTree])
 
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {

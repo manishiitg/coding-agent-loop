@@ -28,6 +28,7 @@ const getCodeFileLanguage = (filepath: string): string | null => {
 
 export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const [content, setContent] = useState<string | null>(null)
+  const [binaryUrl, setBinaryUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [needsAuth, setNeedsAuth] = useState(false)
@@ -42,6 +43,9 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   })()
 
   const fileName = filePath?.split('/').pop() || 'Unknown file'
+  const lowerPath = (filePath || '').toLowerCase()
+  const isVideoFile = lowerPath.endsWith('.mp4') || lowerPath.endsWith('.webm') || lowerPath.endsWith('.mov')
+  const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'].some(ext => lowerPath.endsWith(ext))
 
   useEffect(() => {
     if (!filePath) {
@@ -54,6 +58,10 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
       try {
         setLoading(true)
         setError(null)
+        setBinaryUrl((current) => {
+          if (current) URL.revokeObjectURL(current)
+          return null
+        })
         const base = getApiBaseUrl() || ''
         const headers: Record<string, string> = {}
         const token = getAuthToken()
@@ -67,8 +75,16 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
         if (!resp.ok) {
           throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }
-        const text = await resp.text()
-        setContent(text)
+
+        if (isVideoFile || isImageFile) {
+          const blob = await resp.blob()
+          const objectUrl = URL.createObjectURL(blob)
+          setBinaryUrl(objectUrl)
+          setContent(null)
+        } else {
+          const text = await resp.text()
+          setContent(text)
+        }
       } catch (err) {
         console.error('Failed to load shared file:', err)
         setError(err instanceof Error ? err.message : 'Failed to load file')
@@ -78,7 +94,13 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
     }
 
     loadFile()
-  }, [encodedPath, filePath, uid])
+    return () => {
+      setBinaryUrl((current) => {
+        if (current) URL.revokeObjectURL(current)
+        return null
+      })
+    }
+  }, [encodedPath, filePath, uid, isVideoFile, isImageFile])
 
   if (loading) {
     return (
@@ -128,12 +150,29 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
     )
   }
 
-  if (content === null) return null
+  if (content === null && binaryUrl === null) return null
 
-  const lowerPath = (filePath || '').toLowerCase()
   const language = getCodeFileLanguage(filePath || '')
 
   const renderContent = () => {
+    if (isVideoFile && binaryUrl) {
+      return (
+        <div className="h-[calc(100vh-180px)] w-full flex items-center justify-center bg-black rounded-lg">
+          <video controls autoPlay className="max-h-full max-w-full" src={binaryUrl} />
+        </div>
+      )
+    }
+
+    if (isImageFile && binaryUrl) {
+      return (
+        <div className="flex items-center justify-center">
+          <img src={binaryUrl} alt={fileName} className="max-w-full max-h-[calc(100vh-180px)] object-contain rounded-lg shadow-lg" />
+        </div>
+      )
+    }
+
+    if (content === null) return null
+
     if (lowerPath.endsWith('.csv')) {
       return <CsvRenderer content={content} />
     }

@@ -25,7 +25,7 @@ interface MultiStepSidebarProps {
   showChatArea?: boolean
 }
 
-const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const
+const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100, 200, 500] as const
 
 export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   selectedStepIds,
@@ -560,7 +560,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                     <div className="flex items-center gap-2">
                       <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
                       <select
-                        value={agentConfigs.execution_max_turns || 100}
+                        value={agentConfigs.execution_max_turns || 500}
                         onChange={(e) => handleMaxTurnsChange(parseInt(e.target.value))}
                         className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 w-20"
                       >

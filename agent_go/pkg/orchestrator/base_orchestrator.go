@@ -18,7 +18,7 @@ import (
 
 // GetDefaultMaxTurnsFromEnv returns the default max turns from environment variable
 // Checks MAX_TURNS and ORCHESTRATOR_MAX_TURNS (in that order)
-// Returns 50 if neither is set or invalid
+// Returns 500 if neither is set or invalid
 func GetDefaultMaxTurnsFromEnv() int {
 	// Check MAX_TURNS first (more general)
 	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
@@ -32,8 +32,8 @@ func GetDefaultMaxTurnsFromEnv() int {
 			return maxTurns
 		}
 	}
-	// Default to 50 if neither is set or invalid
-	return 50
+	// Default to 500 if neither is set or invalid
+	return 500
 }
 
 // SecretEntry represents a decrypted secret (name + value, where value can be any text)
@@ -203,10 +203,11 @@ func NewBaseOrchestrator(
 		}
 	}
 
-	// Default maxTurns from environment variable or 50 if not provided or 0
-	if maxTurns <= 0 {
+	// Default maxTurns from environment variable when not provided (0).
+	// Negative values are preserved to mean "no turn cap".
+	if maxTurns == 0 {
 		maxTurns = GetDefaultMaxTurnsFromEnv()
-		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 50)", maxTurns))
+		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 500)", maxTurns))
 	}
 
 	// Create orchestrator instance

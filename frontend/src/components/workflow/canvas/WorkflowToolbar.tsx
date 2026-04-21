@@ -35,6 +35,7 @@ import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
+import { useSessionExecutionTree } from '../../../hooks/useSessionExecutionTree'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
@@ -333,6 +334,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       return false
     }
   }) // Zustand will handle memoization - only re-render if result changes
+
+  const {
+    activeWorkflowTab,
+    isActiveWorkflowTabStreaming,
+    setTabStreaming,
+    setTabHasRunningBgAgents,
+  } = useChatStore(useShallow(state => {
+    const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
+    const activeWorkflowTab =
+      activeTab?.metadata?.mode === 'workflow' &&
+      activeTab.metadata?.presetQueryId === presetQueryId
+        ? activeTab
+        : null
+
+    return {
+      activeWorkflowTab,
+      isActiveWorkflowTabStreaming: activeWorkflowTab ? state.getTabStreamingStatus(activeWorkflowTab.tabId) : false,
+      setTabStreaming: state.setTabStreaming,
+      setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
+    }
+  }))
+  const activeWorkflowSessionId = activeWorkflowTab?.sessionId ?? null
+  const { data: activeWorkflowExecutionTree } = useSessionExecutionTree(activeWorkflowSessionId, !!activeWorkflowSessionId)
+  const backendWorkflowDisplayStatus = activeWorkflowExecutionTree?.summary.display_status ?? null
 
   // Load saved settings when preset changes
   useEffect(() => {
@@ -759,14 +784,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isPlanWorkspace = showWorkspacePane && canvasViewMode === 'plan'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
+  const canStopActiveWorkflowSession = !!(
+    activeWorkflowTab?.sessionId &&
+    activeWorkflowTab.metadata?.phaseId !== EXECUTION_PHASE_ID &&
+    backendWorkflowDisplayStatus === 'busy'
+  )
   const workflowActivityStatus = useMemo(() => {
-    if (isExecutionRunning || status === 'running' || status === 'waiting_feedback' || status === 'paused') {
+    if (backendWorkflowDisplayStatus === 'busy') {
       return {
         label: 'Busy',
         className: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300',
       }
     }
-    if (status === 'completed' || status === 'failed') {
+    if (backendWorkflowDisplayStatus === 'stopped') {
       return {
         label: 'Stopped',
         className: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300',
@@ -774,9 +804,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
     return {
       label: 'Idle',
-      className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+        className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300',
     }
-  }, [isExecutionRunning, status])
+  }, [backendWorkflowDisplayStatus])
+
+  const handleStopActiveWorkflowSession = useCallback(async () => {
+    if (!activeWorkflowTab?.sessionId) return
+
+    try {
+      await agentApi.stopSession(activeWorkflowTab.sessionId, true)
+      setTabStreaming(activeWorkflowTab.tabId, false)
+      setTabHasRunningBgAgents(activeWorkflowTab.tabId, false)
+    } catch (error) {
+      console.error('[WorkflowToolbar] Failed to stop active workflow session:', error)
+    }
+  }, [activeWorkflowTab, setTabHasRunningBgAgents, setTabStreaming])
 
   // Handle creating new iteration
   const handleCreateIteration = useCallback(async () => {
@@ -1322,6 +1364,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           >
             {workflowActivityStatus.label}
           </div>
+          {canStopActiveWorkflowSession && (
+            <button
+              onClick={handleStopActiveWorkflowSession}
+              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300 dark:hover:bg-red-950/50"
+              title="Stop current workflow chat session"
+            >
+              <Square className="w-3 h-3" fill="currentColor" />
+              <span>Stop</span>
+            </button>
+          )}
         </div>
       </div>
 

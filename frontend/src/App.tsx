@@ -172,6 +172,42 @@ function App() {
     saveFile,
     binaryFileData
   } = useWorkspaceStore()
+
+  const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const filePath = selectedFile?.path?.toLowerCase() || ''
+    const isVideoFile = filePath.endsWith('.webm') || filePath.endsWith('.mp4') || filePath.endsWith('.mov')
+
+    if (!isVideoFile || !binaryFileData) {
+      setVideoObjectUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return null
+      })
+      return
+    }
+
+    const mimeType = filePath.endsWith('.webm')
+      ? 'video/webm'
+      : filePath.endsWith('.mov')
+        ? 'video/quicktime'
+        : 'video/mp4'
+    const blob = new Blob([binaryFileData], { type: mimeType })
+    const nextUrl = URL.createObjectURL(blob)
+
+    setVideoObjectUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current)
+      }
+      return nextUrl
+    })
+
+    return () => {
+      URL.revokeObjectURL(nextUrl)
+    }
+  }, [binaryFileData, selectedFile?.path])
   
   // Expose performance diagnostics on window for DevTools console
   useEffect(() => {
@@ -858,12 +894,15 @@ function App() {
 
     // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
     const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
-    const hasValidActiveTab = activeTab && activeTab.metadata?.mode === selectedModeCategory
+    const hasValidActiveTab = activeTab &&
+      activeTab.metadata?.mode === selectedModeCategory &&
+      activeTab.metadata?.isOrganizationAssistant !== true
 
     if (!hasValidActiveTab) {
       const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
-        tab.metadata?.mode === selectedModeCategory
-      ).sort((a, b) => b.createdAt - a.createdAt)
+        tab.metadata?.mode === selectedModeCategory &&
+        tab.metadata?.isOrganizationAssistant !== true
+      ).sort((a, b) => a.createdAt - b.createdAt)
 
       if (modeTabs.length > 0) {
         chatStore.switchTab(modeTabs[0].tabId)
@@ -1471,18 +1510,15 @@ function App() {
                             )
                           }
 
-                          // Video files (webm, mp4)
-                          if ((filePath.endsWith('.webm') || filePath.endsWith('.mp4')) && binaryFileData) {
-                            const mimeType = filePath.endsWith('.webm') ? 'video/webm' : 'video/mp4'
-                            const blob = new Blob([binaryFileData], { type: mimeType })
-                            const url = URL.createObjectURL(blob)
+                          // Video files
+                          if ((filePath.endsWith('.webm') || filePath.endsWith('.mp4') || filePath.endsWith('.mov')) && videoObjectUrl) {
                             return (
                               <div className="h-[calc(100vh-120px)] w-full flex items-center justify-center bg-black rounded-lg">
                                 <video
                                   controls
                                   autoPlay
                                   className="max-h-full max-w-full"
-                                  src={url}
+                                  src={videoObjectUrl}
                                 />
                               </div>
                             )

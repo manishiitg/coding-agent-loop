@@ -33,31 +33,33 @@ type HistoryFunc func(lastN int) []HistoryEntry
 // ToolCallRecord tracks a single tool call with timing
 type ToolCallRecord struct {
 	ToolName  string        `json:"tool_name"`
-	StartedAt time.Time    `json:"started_at"`
+	StartedAt time.Time     `json:"started_at"`
 	Duration  time.Duration `json:"duration,omitempty"` // 0 = still running
 	Status    string        `json:"status"`             // "running", "completed", "error"
 }
 
 // BackgroundAgent represents a background agent running asynchronously
 type BackgroundAgent struct {
-	ID             string                `json:"id"`
-	Name           string                `json:"name"`
-	SessionID      string                `json:"session_id"`
-	Instruction    string                `json:"instruction"`
-	Status         BackgroundAgentStatus `json:"status"`
-	Result         string                `json:"result,omitempty"`
-	Error          string                `json:"error,omitempty"`
-	CreatedAt      time.Time             `json:"created_at"`
-	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
-	ReasoningLevel string                `json:"reasoning_level,omitempty"`
-	ModelID        string                `json:"model_id,omitempty"`
-	Metadata       map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, step_optimized)
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
-	notified       bool
-	getHistory     HistoryFunc       // returns last N conversation entries from the running sub-agent
-	toolCalls      []ToolCallRecord  // tracked tool calls with timing
-	activeToolCall map[string]int    // toolCallID → index in toolCalls (for matching start/end)
+	ID                string                `json:"id"`
+	ParentExecutionID string                `json:"parent_execution_id,omitempty"`
+	Name              string                `json:"name"`
+	SessionID         string                `json:"session_id"`
+	Instruction       string                `json:"instruction"`
+	Kind              string                `json:"kind,omitempty"`
+	Status            BackgroundAgentStatus `json:"status"`
+	Result            string                `json:"result,omitempty"`
+	Error             string                `json:"error,omitempty"`
+	CreatedAt         time.Time             `json:"created_at"`
+	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
+	ReasoningLevel    string                `json:"reasoning_level,omitempty"`
+	ModelID           string                `json:"model_id,omitempty"`
+	Metadata          map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, step_optimized)
+	cancel            context.CancelFunc
+	mu                sync.RWMutex
+	notified          bool
+	getHistory        HistoryFunc      // returns last N conversation entries from the running sub-agent
+	toolCalls         []ToolCallRecord // tracked tool calls with timing
+	activeToolCall    map[string]int   // toolCallID → index in toolCalls (for matching start/end)
 }
 
 // SetResult updates the agent result and status atomically
@@ -196,18 +198,20 @@ func (a *BackgroundAgent) GetStatus() BackgroundAgentStatus {
 // BackgroundAgentSnapshot is a value-type copy of BackgroundAgent without the mutex.
 // Used to safely return agent state without copying sync.RWMutex.
 type BackgroundAgentSnapshot struct {
-	ID             string                `json:"id"`
-	Name           string                `json:"name"`
-	SessionID      string                `json:"session_id"`
-	Instruction    string                `json:"instruction"`
-	Status         BackgroundAgentStatus `json:"status"`
-	Result         string                `json:"result,omitempty"`
-	Error          string                `json:"error,omitempty"`
-	CreatedAt      time.Time             `json:"created_at"`
-	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
-	ReasoningLevel string                `json:"reasoning_level,omitempty"`
-	ModelID        string                `json:"model_id,omitempty"`
-	Metadata       map[string]string     `json:"metadata,omitempty"`
+	ID                string                `json:"id"`
+	ParentExecutionID string                `json:"parent_execution_id,omitempty"`
+	Name              string                `json:"name"`
+	SessionID         string                `json:"session_id"`
+	Instruction       string                `json:"instruction"`
+	Kind              string                `json:"kind,omitempty"`
+	Status            BackgroundAgentStatus `json:"status"`
+	Result            string                `json:"result,omitempty"`
+	Error             string                `json:"error,omitempty"`
+	CreatedAt         time.Time             `json:"created_at"`
+	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
+	ReasoningLevel    string                `json:"reasoning_level,omitempty"`
+	ModelID           string                `json:"model_id,omitempty"`
+	Metadata          map[string]string     `json:"metadata,omitempty"`
 }
 
 // GetSnapshot returns a snapshot of the agent state (thread-safe)
@@ -215,17 +219,19 @@ func (a *BackgroundAgent) GetSnapshot() BackgroundAgentSnapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	snap := BackgroundAgentSnapshot{
-		ID:             a.ID,
-		Name:           a.Name,
-		SessionID:      a.SessionID,
-		Instruction:    a.Instruction,
-		Status:         a.Status,
-		Result:         a.Result,
-		Error:          a.Error,
-		CreatedAt:      a.CreatedAt,
-		ReasoningLevel: a.ReasoningLevel,
-		ModelID:        a.ModelID,
-		Metadata:       a.Metadata,
+		ID:                a.ID,
+		ParentExecutionID: a.ParentExecutionID,
+		Name:              a.Name,
+		SessionID:         a.SessionID,
+		Instruction:       a.Instruction,
+		Kind:              a.Kind,
+		Status:            a.Status,
+		Result:            a.Result,
+		Error:             a.Error,
+		CreatedAt:         a.CreatedAt,
+		ReasoningLevel:    a.ReasoningLevel,
+		ModelID:           a.ModelID,
+		Metadata:          a.Metadata,
 	}
 	if a.CompletedAt != nil {
 		t := *a.CompletedAt
@@ -246,7 +252,7 @@ type BackgroundAgentRegistry struct {
 	agents              map[string]map[string]*BackgroundAgent // sessionID → agentID → agent
 	mu                  sync.RWMutex
 	completionNotifiers map[string]chan string // sessionID → completion channel
-	idCounter           atomic.Uint64         // monotonic counter for short agent IDs
+	idCounter           atomic.Uint64          // monotonic counter for short agent IDs
 }
 
 // NewBackgroundAgentRegistry creates a new registry

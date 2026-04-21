@@ -798,10 +798,10 @@ export default function Workspace({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolder, minimized, selectedModeCategory])
 
-  // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
+  // Check if a file is a viewable binary format that we can render inline.
   const isViewableBinaryFile = (fileName: string): boolean => {
     const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    return ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4'].includes(ext)
+    return ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4', 'mov'].includes(ext)
   }
 
   // Handle file click - fetch content and show in chat area
@@ -816,7 +816,7 @@ export default function Workspace({
 
         setSelectedFile({ name: fileName, path: fullFilePath })
 
-        // For viewable binary files (xlsx, docx), fetch as raw binary
+        // For viewable binary files, fetch as raw binary so the main viewer can render them.
         if (isViewableBinaryFile(fileName)) {
           const response = await wsRawApi.get(
             `/api/documents/${encodeURIComponent(fullFilePath)}`,
@@ -1239,7 +1239,7 @@ export default function Workspace({
       const extension = fileName.split('.').pop()?.toLowerCase() || ''
       
       // List of binary file extensions
-      const binaryExtensions = ['xls', 'xlsx', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip', 'rar', '7z', 'tar', 'gz', 'exe', 'dll', 'so', 'dylib', 'bin', 'qif']
+      const binaryExtensions = ['xls', 'xlsx', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'zip', 'rar', '7z', 'tar', 'gz', 'exe', 'dll', 'so', 'dylib', 'bin', 'qif', 'webm', 'mp4', 'mov']
       const isLikelyBinary = binaryExtensions.includes(extension)
       
       let blob: Blob
@@ -1416,6 +1416,9 @@ export default function Workspace({
       'xls': 'application/vnd.ms-excel',
       'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'pdf': 'application/pdf',
+      'webm': 'video/webm',
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
       'doc': 'application/msword',
       'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'ppt': 'application/vnd.ms-powerpoint',

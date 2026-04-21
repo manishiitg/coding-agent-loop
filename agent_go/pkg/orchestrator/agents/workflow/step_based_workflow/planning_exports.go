@@ -12,6 +12,7 @@ import (
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -177,6 +178,7 @@ type WorkshopChatSession struct {
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier      SubAgentNotifier
+	extraSubAgentNotifier SubAgentNotifier
 	executionNotifier     WorkshopExecutionNotifier // optional: notifies server when executions start/complete
 	hasPendingCompletions func() bool               // optional: server-level check for queued completions
 	hasRunningAgents      func() bool               // optional: server-level check for running background agents
@@ -226,14 +228,26 @@ func (s *WorkshopChatSession) MainSessionID() string {
 	return s.mainSessionID
 }
 
+func (s *WorkshopChatSession) combinedSubAgentNotifier() SubAgentNotifier {
+	if s == nil {
+		return nil
+	}
+	if s.workshopNotifier != nil && s.extraSubAgentNotifier != nil {
+		return ChainSubAgentNotifiers(s.workshopNotifier, s.extraSubAgentNotifier)
+	}
+	if s.workshopNotifier != nil {
+		return s.workshopNotifier
+	}
+	return s.extraSubAgentNotifier
+}
+
 // SetExtraSubAgentNotifier chains a server-supplied notifier (e.g. bgAgentRegistry)
 // with the workshop's own notifier. Safe to call on every request — always rebuilds
 // the chain so there are no duplicates.
 func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
-	if s.workshopNotifier != nil {
-		s.controller.SetSubAgentNotifier(ChainSubAgentNotifiers(s.workshopNotifier, n))
-	} else {
-		s.controller.SetSubAgentNotifier(n)
+	s.extraSubAgentNotifier = n
+	if s.controller != nil {
+		s.controller.SetSubAgentNotifier(s.combinedSubAgentNotifier())
 	}
 }
 
@@ -938,6 +952,7 @@ func RegisterRunFullEvaluationTool(
 			if session.executionNotifier != nil {
 				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: displayName, Cancel: cancel})
 			}
+			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
 			go func() {
 				var result string
@@ -985,6 +1000,8 @@ func RegisterRunFullEvaluationTool(
 					return
 				}
 				defer evalController.CloseWorkshopGroupSessions()
+				evalController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
+				evalController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
 
 				// Propagate HTTP session ID only — do NOT overwrite MCP session ID.
 				// Same reasoning as main controller above: eval controller needs its own
@@ -1238,6 +1255,7 @@ func RegisterRunFullWorkflowTool(
 			if session.executionNotifier != nil {
 				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: workflowDisplayName, Cancel: cancel})
 			}
+			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
 			go func() {
 				var result string
@@ -1342,7 +1360,7 @@ func RegisterRunFullWorkflowTool(
 				// runner controller appear in the session's stepRegistry and are visible
 				// via list_executions/query_step. Without this, hcpo.subAgentNotifier is
 				// nil inside controller_todo_task.go and sub-agent tracking is silently skipped.
-				workflowController.SetSubAgentNotifier(&workshopSubAgentNotifier{registry: session.StepRegistry})
+				workflowController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
 				workflowController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
 
 				// Propagate session context

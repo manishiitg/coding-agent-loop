@@ -18,6 +18,7 @@ import type {
   GetActiveSessionsResponse,
   ReconnectSessionResponse,
   SessionStatusResponse,
+  SessionExecutionTreeResponse,
   LLMGuidanceResponse,
   LLMGuidanceRequest,
   HumanFeedbackResponse,
@@ -76,6 +77,7 @@ export type {
   GetActiveSessionsResponse,
   ReconnectSessionResponse,
   SessionStatusResponse,
+  SessionExecutionTreeResponse,
   LLMGuidanceResponse,
   HumanFeedbackResponse,
   SummarizeConversationRequest,
@@ -418,6 +420,11 @@ export const agentApi = {
   // Get session status (active, completed, or not found)
   getSessionStatus: async (sessionId: string): Promise<SessionStatusResponse> => {
     const response = await api.get(`/api/sessions/${sessionId}/status`)
+    return response.data
+  },
+
+  getSessionExecutionTree: async (sessionId: string): Promise<SessionExecutionTreeResponse> => {
+    const response = await api.get(`/api/sessions/${sessionId}/execution-tree`)
     return response.data
   },
 

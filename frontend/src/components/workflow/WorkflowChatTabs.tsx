@@ -1,12 +1,10 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, Square, List, ListTree, Radio } from 'lucide-react'
+import { X, ArrowDown, List, ListTree, Radio } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { agentApi } from '../../services/api'
-import { logger } from '../../utils/logger'
 
 // ---------------------------------------------------------------------------
 // WorkflowTabItem — per-tab component with narrow store subscriptions
@@ -18,7 +16,6 @@ interface WorkflowTabItemProps {
   sessionStatus: TabSessionStatus | undefined
   onTabClick: (tabId: string) => void
   onTabClose: (e: React.MouseEvent, tabId: string) => void
-  onStopSession: (e: React.MouseEvent, tab: ChatTab) => void
 }
 
 const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
@@ -27,16 +24,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   sessionStatus,
   onTabClick,
   onTabClose,
-  onStopSession,
 }) => {
-  // Narrow selector for streaming status — uses isStreaming flag directly.
-  // pollingInterval is null in SSE mode, so we can't use it as the sole indicator.
-  const isTabStreaming = useChatStore(state => {
-    const storeTab = state.chatTabs[tab.tabId]
-    if (!storeTab || storeTab.isCompleted) return false
-    return storeTab.isStreaming === true
-  })
-
   const indicatorColor = useMemo(() => {
     if (tab.isStreaming) return 'bg-green-500 animate-pulse'
 
@@ -54,8 +42,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
     if (tab.isCompleted) return 'bg-gray-400'
     return 'bg-gray-400'
   }, [tab.isStreaming, tab.isCompleted, sessionStatus?.status])
-
-  const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
 
   return (
     <div
@@ -81,21 +67,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
       {/* Tab Name */}
       <span className="whitespace-nowrap">{tab.name}</span>
-
-      {/* Stop Button - show for tabs with sessionId that are streaming/running */}
-      {canStop && (
-        <button
-          onClick={(e) => onStopSession(e, tab)}
-          className={`
-            ml-0.5 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30
-            ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-            transition-opacity
-          `}
-          title="Stop session"
-        >
-          <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
-        </button>
-      )}
 
       {/* Close Button */}
       <button
@@ -132,7 +103,6 @@ export const WorkflowChatTabs: React.FC = () => {
     tabSessionStatus,
     autoScroll,
     setAutoScroll,
-    setTabStreaming,
     setTabViewMode,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
@@ -142,7 +112,6 @@ export const WorkflowChatTabs: React.FC = () => {
     tabSessionStatus: state.tabSessionStatus,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
-    setTabStreaming: state.setTabStreaming,
     setTabViewMode: state.setTabViewMode,
   })))
 
@@ -180,23 +149,6 @@ export const WorkflowChatTabs: React.FC = () => {
     await closeTab(tabId)
   }, [closeTab])
 
-  const handleStopSession = useCallback(async (e: React.MouseEvent, tab: ChatTab) => {
-    e.stopPropagation()
-
-    if (!tab.sessionId) {
-      logger.warn('WorkflowChatTabs', 'No session ID to stop for tab:', tab.tabId)
-      return
-    }
-
-    try {
-      await agentApi.stopSession(tab.sessionId, true)
-      logger.debug('WorkflowChatTabs', `Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
-      setTabStreaming(tab.tabId, false)
-    } catch (error) {
-      logger.error('WorkflowChatTabs', 'Failed to stop session:', error)
-    }
-  }, [setTabStreaming])
-
   // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
     if (!hasRenderedRef.current) {
@@ -223,7 +175,6 @@ export const WorkflowChatTabs: React.FC = () => {
           sessionStatus={tabSessionStatus[tab.tabId]}
           onTabClick={handleTabClick}
           onTabClose={handleTabClose}
-          onStopSession={handleStopSession}
         />
       ))}
 

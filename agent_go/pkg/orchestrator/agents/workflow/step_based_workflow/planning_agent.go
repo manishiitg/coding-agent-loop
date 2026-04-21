@@ -207,7 +207,7 @@ type ConsistencyRule struct {
 type AgentConfigs struct {
 	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
 	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
-	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 100
+	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 500
 	LearningObjective            string          `json:"learning_objective,omitempty"`              // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.
 	LearningsAccess              string          `json:"learnings_access,omitempty"`                // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't contribute. "read-write": reads and also writes — requires learning_objective to be non-empty. "none": no read, no write, no learning agent. Empty = legacy auto-migration (see resolveLearningsAccess).
 	LockLearnings                *bool           `json:"lock_learnings,omitempty"`                  // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)

@@ -48,7 +48,7 @@ export const NodeConfigFooter = memo(({
   evalLLM: _evalLLM,
   decisionQuestion,
   executionLLM: _executionLLM,
-  executionMaxTurns = 100,
+  executionMaxTurns = 500,
   learningLLM: _learningLLM,
   lockLearnings = false,
   effectiveServers = [],
@@ -101,7 +101,7 @@ export const NodeConfigFooter = memo(({
         {/* Badges - only shown when expanded */}
         {isExpanded && (
           <>
-        {executionMaxTurns !== 100 && (
+        {executionMaxTurns !== 500 && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-gray-600 dark:text-gray-400">
             {executionMaxTurns} turns
           </span>

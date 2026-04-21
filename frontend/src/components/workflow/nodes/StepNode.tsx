@@ -225,9 +225,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return locked && !learningDisabled
   }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings, learningDisabled])
 
-  // Execution max turns: override > step config (defaults to 100)
+  // Execution max turns: override > step config (defaults to 500)
   const executionMaxTurns = useMemo(() => {
-    return stepOverride?.execution_max_turns || stepConfig?.agent_configs?.execution_max_turns || 100
+    return stepOverride?.execution_max_turns || stepConfig?.agent_configs?.execution_max_turns || 500
   }, [stepOverride?.execution_max_turns, stepConfig?.agent_configs?.execution_max_turns])
 
   const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset?.selectedServers])

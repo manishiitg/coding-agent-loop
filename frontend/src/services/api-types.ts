@@ -425,6 +425,41 @@ export interface SessionStatusResponse {
   can_steer?: boolean
 }
 
+export interface SessionExecutionTreeNode {
+  execution_id: string
+  parent_execution_id?: string
+  session_id: string
+  source?: string
+  kind: string
+  name: string
+  status: string
+  started_at: string
+  completed_at?: string
+  error?: string
+  metadata?: Record<string, string>
+  children?: SessionExecutionTreeNode[]
+}
+
+export interface SessionExecutionTreeSummary {
+  session_id: string
+  session_status: string
+  display_status: 'busy' | 'idle' | 'stopped'
+  is_session_busy: boolean
+  running_count: number
+  completed_count: number
+  failed_count: number
+  canceled_count: number
+  has_running_main_agent: boolean
+  has_running_background_agents: boolean
+  has_running_tracked_executions: boolean
+}
+
+export interface SessionExecutionTreeResponse {
+  session_id: string
+  root: SessionExecutionTreeNode
+  summary: SessionExecutionTreeSummary
+}
+
 // Define MCPServerConfig type to match backend
 export type MCPServerConfig = {
   command: string;

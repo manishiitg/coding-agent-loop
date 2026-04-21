@@ -229,12 +229,18 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 	// Register in the background agent registry so list_agents/terminate_agent see it
 	agentID := registry.NextID(agentName)
+	parentExecutionID := ""
+	if parentID, ok := ctx.Value(virtualtools.BackgroundAgentIDKey).(string); ok {
+		parentExecutionID = parentID
+	}
 	bgAgent := &BackgroundAgent{
-		ID:        agentID,
-		Name:      agentName,
-		SessionID: sessionID,
+		ID:                agentID,
+		ParentExecutionID: parentExecutionID,
+		Name:              agentName,
+		SessionID:         sessionID,
 		Instruction: fmt.Sprintf("workflow_path=%s group=%s step=%s",
 			workflowPath, groupName, stepID),
+		Kind:      "workflow_run_tool",
 		Status:    BGAgentRunning,
 		CreatedAt: time.Now(),
 		cancel:    cancel,

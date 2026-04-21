@@ -1106,10 +1106,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 	return readPaths, writePaths
 }
 
-// getLearningMaxTurns determines max turns for learning agents
-// Fixed to 50 (not configurable)
+// getLearningMaxTurns determines max turns for learning agents.
+// Fixed to 500 (not configurable)
 func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *AgentConfigs) int {
-	return 50
+	return 500
 }
 
 // selectLearningLLM selects the LLM config for learning agents

@@ -24,6 +24,10 @@ func getToolNamesByCategory(category string) map[string]bool {
 		for toolName := range imageExecutors {
 			toolNames[toolName] = true
 		}
+		videoExecutors := virtualtools.CreateWorkspaceVideoToolExecutors(virtualtools.VideoGenExecutorConfig{})
+		for toolName := range videoExecutors {
+			toolNames[toolName] = true
+		}
 		browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
 		for toolName := range browserExecutors {
 			toolNames[toolName] = true
@@ -32,6 +36,14 @@ func getToolNamesByCategory(category string) map[string]bool {
 		// LLM-visible advanced workspace tools
 		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
 		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+		imageExecutors := virtualtools.CreateWorkspaceImageToolExecutors(virtualtools.ImageGenExecutorConfig{})
+		for toolName := range imageExecutors {
+			toolNames[toolName] = true
+		}
+		videoExecutors := virtualtools.CreateWorkspaceVideoToolExecutors(virtualtools.VideoGenExecutorConfig{})
+		for toolName := range videoExecutors {
 			toolNames[toolName] = true
 		}
 	case "workspace_image":
@@ -81,7 +93,7 @@ func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []stri
 
 	// Convert specific tools - need to determine category for each tool
 	allCategoryTools := make(map[string]string) // toolName -> category
-	for _, category := range []string{"workspace_tools", "workspace_browser", "human_tools", "workspace_image"} {
+	for _, category := range []string{"workspace_tools", "workspace_advanced", "workspace_browser", "human_tools", "workspace_image"} {
 		categoryToolNames := getToolNamesByCategory(category)
 		for toolName := range categoryToolNames {
 			allCategoryTools[toolName] = category

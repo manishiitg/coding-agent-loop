@@ -189,8 +189,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       const fileName = resolvedPath.split('/').pop() || resolvedPath
       const ext = fileName.split('.').pop()?.toLowerCase() || ''
 
-      // Check if binary viewable file (xlsx, docx, pdf)
-      const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf'].includes(ext)
+      // Check if binary viewable file
+      const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4', 'mov'].includes(ext)
       // Check if image file (workspace API returns base64 data URL for these)
       const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
 

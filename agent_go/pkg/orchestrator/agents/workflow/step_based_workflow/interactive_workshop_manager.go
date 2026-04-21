@@ -407,9 +407,11 @@ type WorkshopStepExecution struct {
 
 // WorkshopExecutionStart carries the canonical information needed to register a running execution.
 type WorkshopExecutionStart struct {
-	ID     string
-	Name   string
-	Cancel context.CancelFunc
+	ID                string
+	ParentExecutionID string
+	Name              string
+	Kind              string
+	Cancel            context.CancelFunc
 }
 
 // WorkshopStepSnapshot is a read-only copy of a tracked execution for external callers.
@@ -2835,6 +2837,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if iwm.executionNotifier != nil {
 					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: stepDisplayName, Cancel: cancel})
 				}
+				execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
 				// Variables captured after execution for metadata
 				var isOptimized bool
@@ -3049,6 +3052,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iwm.executionNotifier != nil {
 				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: name, Cancel: cancel})
 			}
+			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
 			go func() {
 				var result string
@@ -4678,7 +4682,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(configuredCustomTools) == 0 {
 						suggestions++
 						result.WriteString("⚠️ No `enabled_custom_tools` set — default includes **all** workspace_advanced + human_tools:\n")
-						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm, search_web_llm\n")
+						result.WriteString("   - `workspace_advanced:*` → execute_shell_command, diff_patch_workspace_file, read_image, read_pdf, generate_text_llm, search_web_llm, generate_video\n")
 						result.WriteString("   - `human_tools:*` → human_feedback\n")
 						result.WriteString("   Consider: does this step need `read_image`? `read_pdf`? `generate_text_llm`? `search_web_llm`? `human_feedback`?\n")
 						result.WriteString("   If not, set `enabled_custom_tools` to only what's needed, e.g.:\n")

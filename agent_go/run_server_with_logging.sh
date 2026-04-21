@@ -966,7 +966,7 @@ if [ "$BACKGROUND_MODE" = true ]; then
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
-        --max-turns 50 \
+        --max-turns 500 \
         --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1 &
     
     SERVER_PID=$!
@@ -1023,7 +1023,7 @@ elif [ "$WITH_FRONTEND" = true ]; then
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
-        --max-turns 50 \
+        --max-turns 500 \
         --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1 &
 
     SERVER_PID=$!
@@ -1056,7 +1056,7 @@ else
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
-        --max-turns 50 \
+        --max-turns 500 \
         --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1
     
     EXIT_CODE=$?

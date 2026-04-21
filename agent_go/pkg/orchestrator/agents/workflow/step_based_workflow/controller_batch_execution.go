@@ -260,6 +260,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			result.FailedGroupNames = append(result.FailedGroupNames, group.Name)
 			continue
 		}
+		hcpo.markRunMetadataStarted(ctx, runFolder)
 
 		// Use ExecutionManager to prepare and apply cleanup for this group
 		// Pass isFirstGroup=true only for the first group (groupIndex == 0)
@@ -387,6 +388,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			if result.Error == "" {
 				result.Error = err.Error() // Capture first failure reason
 			}
+			hcpo.finalizeRunMetadata(ctx, runFolder, "failed", groupStartTime, groupStartTime.Add(groupDuration))
 			hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 			// Check if we should stop on first failure
@@ -397,6 +399,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Batch execution: group %s completed successfully", group.Name))
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
+		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, groupStartTime.Add(groupDuration))
 		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists

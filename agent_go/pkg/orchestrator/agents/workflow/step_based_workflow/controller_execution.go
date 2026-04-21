@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -759,6 +760,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	executionResult string, executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
 	executionAgent agents.OrchestratorAgent,
+	toolCalls []orchestrator.ToolCallEntry,
+	attemptStartedAt time.Time,
+	attemptCompletedAt time.Time,
+	attemptDuration time.Duration,
 ) {
 	// Use background context so saves succeed even when execution was canceled/stopped by user
 	saveCtx := context.Background()
@@ -771,17 +776,53 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	}
 	logDir := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 	filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
+	toolTiming := normalizeToolTimingEntries(toolCalls)
+	agentName := ""
+	if executionAgent != nil && executionAgent.GetBaseAgent() != nil {
+		agentName = executionAgent.GetBaseAgent().GetName()
+	}
+	if attemptCompletedAt.IsZero() {
+		attemptCompletedAt = time.Now().UTC()
+	}
+	if attemptStartedAt.IsZero() {
+		attemptStartedAt = attemptCompletedAt.Add(-attemptDuration)
+	}
+	timingData := map[string]interface{}{
+		"step_index":     stepIndex + 1,
+		"step_id":        stepID,
+		"step_path":      stepPath,
+		"retry_attempt":  retryAttempt,
+		"loop_iteration": loopIterationCount,
+		"run_folder":     hcpo.selectedRunFolder,
+		"agent": map[string]interface{}{
+			"name":         agentName,
+			"model":        executionLLM,
+			"started_at":   formatRFC3339UTC(attemptStartedAt),
+			"completed_at": formatRFC3339UTC(attemptCompletedAt),
+			"duration_ns":  int64(attemptDuration),
+			"duration_ms":  durationToMillis(attemptDuration),
+		},
+		"tools": toolTiming,
+	}
 
 	// Save execution result
 	resultPath := fmt.Sprintf("%s/%s.json", logDir, filenameBase)
 	resultData := map[string]interface{}{
 		"step_index":       stepIndex + 1,
+		"step_id":          stepID,
 		"step_path":        stepPath,
 		"retry_attempt":    retryAttempt,
 		"loop_iteration":   loopIterationCount,
 		"execution_result": executionResult,
 		"model":            executionLLM,
-		"timestamp":        time.Now().Format(time.RFC3339),
+		"started_at":       formatRFC3339UTC(attemptStartedAt),
+		"completed_at":     formatRFC3339UTC(attemptCompletedAt),
+		"duration_ms":      durationToMillis(attemptDuration),
+		"duration_ns":      int64(attemptDuration),
+		"tool_call_count":  toolTiming.Count,
+		"tool_duration_ms": toolTiming.TotalDurationMs,
+		"timing":           timingData,
+		"timestamp":        attemptCompletedAt.Format(time.RFC3339),
 	}
 	if resultJSON, err := json.MarshalIndent(resultData, "", "  "); err == nil {
 		if err := hcpo.WriteWorkspaceFile(saveCtx, resultPath, string(resultJSON)); err != nil {
@@ -793,11 +834,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	convPath := fmt.Sprintf("%s/%s-conversation.json", logDir, filenameBase)
 	convData := map[string]interface{}{
 		"step_index":           stepIndex + 1,
+		"step_id":              stepID,
 		"step_path":            stepPath,
 		"retry_attempt":        retryAttempt,
 		"loop_iteration":       loopIterationCount,
 		"conversation_history": conversationHistory,
-		"timestamp":            time.Now().Format(time.RFC3339),
+		"tool_calls":           toolCalls,
+		"tool_call_count":      toolTiming.Count,
+		"timing":               timingData,
+		"timestamp":            attemptCompletedAt.Format(time.RFC3339),
 	}
 	if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 		if err := hcpo.WriteWorkspaceFile(saveCtx, convPath, string(convJSON)); err != nil {
@@ -815,14 +860,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	promptsPath := fmt.Sprintf("%s/%s-prompts.json", logDir, filenameBase)
 	promptsData := map[string]interface{}{
 		"step_index":    stepIndex + 1,
+		"step_id":       stepID,
 		"step_path":     stepPath,
 		"system_prompt": capturedSystemPrompt,
 		"saved_at":      "post_execution",
-		"timestamp":     time.Now().Format(time.RFC3339),
+		"timestamp":     attemptCompletedAt.Format(time.RFC3339),
 	}
 	if promptsJSON, err := json.MarshalIndent(promptsData, "", "  "); err == nil {
 		if err := hcpo.WriteWorkspaceFile(saveCtx, promptsPath, string(promptsJSON)); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write prompts to %s: %v", promptsPath, err))
+		}
+	}
+
+	timingPath := fmt.Sprintf("%s/%s-timing.json", logDir, filenameBase)
+	if timingJSON, err := json.MarshalIndent(timingData, "", "  "); err == nil {
+		if err := hcpo.WriteWorkspaceFile(saveCtx, timingPath, string(timingJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write timing summary to %s: %v", timingPath, err))
 		}
 	}
 
@@ -1628,6 +1681,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
 				attemptTier := adaptiveTier
+				var capturedToolCalls []orchestrator.ToolCallEntry
+				var attemptStartedAt time.Time
+				var attemptCompletedAt time.Time
+				var attemptDuration time.Duration
 
 				// Track learn_code presence to poison continuation in future attempts.
 				if isLearnCodeMode {
@@ -1710,6 +1767,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 
+					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+						cab.StartToolCallCapture()
+					}
+					attemptStartedAt = time.Now().UTC()
 					// Execute execution-only agent with learning history (reused from learning reading above)
 					executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
 				} else {
@@ -1725,7 +1786,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if ba == nil {
 						return "", updatedContextFiles, fmt.Errorf("execution agent has no base agent for continuation on step %d attempt %d", stepIndex+1, retryAttempt)
 					}
+					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+						cab.StartToolCallCapture()
+					}
+					attemptStartedAt = time.Now().UTC()
 					executionResult, executionConversationHistory, err = ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
+				}
+				attemptCompletedAt = time.Now().UTC()
+				attemptDuration = attemptCompletedAt.Sub(attemptStartedAt)
+				if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+					capturedToolCalls = cab.DrainToolCalls()
 				}
 
 				// Capture conversation history for callers that need it (e.g., get_sub_agent_conversation tool)
@@ -1762,7 +1832,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if len(executionConversationHistory) > 0 {
 						hcpo.GetLogger().Info(fmt.Sprintf("[PARTIAL-LOGS] Saving partial execution logs for step %d (%s) — %d conversation entries, error: %v", stepIndex+1, stepPath, len(executionConversationHistory), err))
 						hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
-							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent)
+							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 					} else {
 						hcpo.GetLogger().Warn(fmt.Sprintf("[PARTIAL-LOGS] No conversation history to save for step %d (%s) — execution failed before any LLM turns", stepIndex+1, stepPath))
 					}
@@ -1778,7 +1848,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				// Save execution logs (result, conversation history, system prompt)
 				hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
-					executionResult, executionLLM, executionConversationHistory, executionAgent)
+					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
 				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
 				// in the same conversation chain (no new agent, no system-prompt reset).

@@ -326,6 +326,13 @@ func readRunMetadata(ctx context.Context, metadataFilePath string) (*RunMetadata
 	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 		return nil, nil
 	}
+	if metadata.StartedAt.IsZero() {
+		metadata.StartedAt = metadata.CreatedAt
+	}
+	if metadata.DurationMs == nil && metadata.CompletedAt != nil && !metadata.StartedAt.IsZero() {
+		durationMs := metadata.CompletedAt.Sub(metadata.StartedAt).Milliseconds()
+		metadata.DurationMs = &durationMs
+	}
 	return &metadata, nil
 }
 
@@ -351,12 +358,15 @@ func inferRunMetadata(ctx context.Context, workspacePath, folderName string, pro
 	if metadata.CreatedAt.IsZero() {
 		metadata.CreatedAt = progress.LastUpdated
 	}
+	metadata.StartedAt = metadata.CreatedAt
 
 	// Determine completion
 	if progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
 		completedAt := progress.LastUpdated
 		metadata.Status = "completed"
 		metadata.CompletedAt = &completedAt
+		durationMs := completedAt.Sub(metadata.StartedAt).Milliseconds()
+		metadata.DurationMs = &durationMs
 	}
 
 	return metadata
@@ -627,8 +637,10 @@ type RunMetadataModels struct {
 // RunMetadata stores lifecycle information for a run folder
 type RunMetadata struct {
 	CreatedAt   time.Time          `json:"created_at"`
+	StartedAt   time.Time          `json:"started_at,omitempty"`
 	CompletedAt *time.Time         `json:"completed_at,omitempty"`
-	Status      string             `json:"status"`                 // "running", "completed"
+	DurationMs  *int64             `json:"duration_ms,omitempty"`
+	Status      string             `json:"status"`                 // "running", "completed", "failed", "canceled"
 	TriggeredBy string             `json:"triggered_by,omitempty"` // "manual", "cron", "workflow_builder"
 	Models      *RunMetadataModels `json:"models,omitempty"`       // LLM config used for this run
 }

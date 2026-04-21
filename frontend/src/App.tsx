@@ -795,6 +795,7 @@ function App() {
     // user came from (e.g. multi-agent) and the ChatArea inside WorkflowLayout shows wrong content.
     if (selectedModeCategory === 'workflow') {
       const chatStore = useChatStore.getState()
+      const workflowStore = useWorkflowStore.getState()
       const activeTabId = chatStore.activeTabId
       const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
       const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -804,26 +805,44 @@ function App() {
         activeTab.metadata?.mode === 'workflow' &&
         activeTab.metadata?.presetQueryId === activePresetId
 
-      if (!hasValidActiveTab) {
-        // Find the most recent workflow tab for the active preset
-        let workflowTabs = Object.values(chatStore.chatTabs)
-          .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
-          .sort((a, b) => b.createdAt - a.createdAt)
+      // Prefer the workflow tab the user last had active for this preset.
+      let workflowTabs = Object.values(chatStore.chatTabs)
+        .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
+        .sort((a, b) => b.createdAt - a.createdAt)
 
-        // Prefer tabs matching the active preset
-        if (activePresetId) {
-          const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
-          if (presetTabs.length > 0) workflowTabs = presetTabs
+      if (activePresetId) {
+        const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
+        if (presetTabs.length > 0) workflowTabs = presetTabs
+      }
+
+      const rememberedWorkflowTab = workflowStore.activeWorkflowTabId
+        ? chatStore.getTab(workflowStore.activeWorkflowTabId)
+        : null
+      const rememberedWorkflowTabMatchesPreset = rememberedWorkflowTab &&
+        rememberedWorkflowTab.metadata?.mode === 'workflow' &&
+        rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
+      const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
+      const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
+      const targetWorkflowTab = hasValidActiveTab
+        ? activeTab
+        : (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : (builderTab || streamingTab || workflowTabs[0]))
+
+      if (targetWorkflowTab) {
+        if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {
+          chatStore.switchTab(targetWorkflowTab.tabId)
         }
 
-        if (workflowTabs.length > 0) {
-          chatStore.switchTab(workflowTabs[0].tabId)
-          useWorkflowStore.getState().setShowChatArea(true)
-        } else {
-          // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
-          // doesn't display content from another mode
-          useChatStore.setState({ activeTabId: null })
+        const shouldShowWorkflowChat =
+          workflowStore.showChatArea ||
+          targetWorkflowTab.metadata?.phaseId === 'workflow-builder'
+
+        if (shouldShowWorkflowChat) {
+          workflowStore.setShowChatArea(true)
         }
+      } else {
+        // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
+        // doesn't display content from another mode
+        useChatStore.setState({ activeTabId: null })
       }
       return
     }

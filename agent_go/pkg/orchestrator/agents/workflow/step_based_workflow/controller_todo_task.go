@@ -260,11 +260,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		orchestratorLearningHistory,
 	)
 
-	// Start capturing tool calls from the event bridge
+	// Capture tool calls and wall-clock duration per attempt so persisted logs show
+	// where todo orchestration time was spent.
 	var capturedToolCalls []orchestrator.ToolCallEntry
-	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.StartToolCallCapture()
-	}
 
 	// Retry loop: execute with validation feedback on pre-validation failure
 	maxRetryAttempts := 3
@@ -289,6 +287,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 
 		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing todo task orchestrator (attempt %d/%d)", retryAttempt, maxRetryAttempts))
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			cab.StartToolCallCapture()
+		}
+		attemptStartedAt := time.Now().UTC()
 
 		_, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
 			ctx,
@@ -300,6 +302,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			allSteps,
 			progress,
 		)
+		attemptCompletedAt := time.Now().UTC()
+		attemptDuration := attemptCompletedAt.Sub(attemptStartedAt)
 
 		// Drain captured tool calls regardless of error
 		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
@@ -311,7 +315,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 
 		// Log execution
-		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls)
+		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
 		// Run pre-validation if schema exists
 		if validationSchema != nil {
@@ -1187,6 +1191,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 	executionLLM string,
 	conversationHistory []llmtypes.MessageContent,
 	toolCalls []orchestrator.ToolCallEntry,
+	attemptStartedAt time.Time,
+	attemptCompletedAt time.Time,
+	attemptDuration time.Duration,
 ) {
 	// Use background context so logs are persisted even if execution was canceled.
 	saveCtx := context.Background()
@@ -1201,6 +1208,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 
 	// Get execution logs folder path
 	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
+	toolTiming := normalizeToolTimingEntries(toolCalls)
+	if attemptCompletedAt.IsZero() {
+		attemptCompletedAt = time.Now().UTC()
+	}
+	if attemptStartedAt.IsZero() {
+		attemptStartedAt = attemptCompletedAt.Add(-attemptDuration)
+	}
+	timingData := map[string]interface{}{
+		"step_id":    stepID,
+		"step_path":  stepPath,
+		"run_folder": hcpo.selectedRunFolder,
+		"agent": map[string]interface{}{
+			"model":        executionLLM,
+			"started_at":   formatRFC3339UTC(attemptStartedAt),
+			"completed_at": formatRFC3339UTC(attemptCompletedAt),
+			"duration_ns":  int64(attemptDuration),
+			"duration_ms":  durationToMillis(attemptDuration),
+		},
+		"tools": toolTiming,
+	}
 
 	// Create filename: execution-attempt-1-iteration-{iteration}.json
 	// Use attempt=1 since todo task orchestrator doesn't have retry attempts like regular steps
@@ -1231,7 +1258,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 		"model":            executionLLM,
 		"execution_result": executionSummary,
 		"message_count":    len(conversationHistory),
-		"timestamp":        time.Now().Format(time.RFC3339),
+		"started_at":       formatRFC3339UTC(attemptStartedAt),
+		"completed_at":     formatRFC3339UTC(attemptCompletedAt),
+		"duration_ms":      durationToMillis(attemptDuration),
+		"duration_ns":      int64(attemptDuration),
+		"tool_call_count":  toolTiming.Count,
+		"tool_duration_ms": toolTiming.TotalDurationMs,
+		"timing":           timingData,
+		"timestamp":        attemptCompletedAt.Format(time.RFC3339),
 	}
 
 	// Marshal to JSON
@@ -1257,7 +1291,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 		"conversation_history": conversationHistory,
 		"tool_calls":           toolCalls,
 		"tool_call_count":      len(toolCalls),
-		"timestamp":            time.Now().Format(time.RFC3339),
+		"timing":               timingData,
+		"timestamp":            attemptCompletedAt.Format(time.RFC3339),
 	}
 	conversationJSON, err := json.MarshalIndent(conversationLog, "", "  ")
 	if err != nil {
@@ -1269,6 +1304,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save todo task conversation log to %s: %v", conversationPath, err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("💬 Todo task conversation log saved to: %s", conversationPath))
+	}
+
+	timingPath := strings.TrimSuffix(filePath, ".json") + "-timing.json"
+	timingJSON, err := json.MarshalIndent(timingData, "", "  ")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal todo task timing log: %v", err))
+		return
+	}
+	if err := hcpo.WriteWorkspaceFile(saveCtx, timingPath, string(timingJSON)); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save todo task timing log to %s: %v", timingPath, err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏱️ Todo task timing log saved to: %s", timingPath))
 	}
 }
 

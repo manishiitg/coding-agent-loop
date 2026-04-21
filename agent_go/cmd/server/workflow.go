@@ -1068,6 +1068,13 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 				completedAt := progress.LastUpdated
 				metadata.Status = "completed"
 				metadata.CompletedAt = &completedAt
+				startedAt := metadata.StartedAt
+				if startedAt.IsZero() {
+					startedAt = metadata.CreatedAt
+					metadata.StartedAt = startedAt
+				}
+				durationMs := completedAt.Sub(startedAt).Milliseconds()
+				metadata.DurationMs = &durationMs
 				_ = writeRunMetadata(r.Context(), metadataPath, metadata)
 			}
 
@@ -1549,8 +1556,10 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 	if triggeredBy == "" {
 		triggeredBy = "manual"
 	}
+	now := time.Now()
 	metadata := &RunMetadata{
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
+		StartedAt:   now,
 		Status:      "running",
 		TriggeredBy: triggeredBy,
 	}
@@ -3729,6 +3738,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 											"iteration":         iteration,
 											"file_path":         execPath,
 											"conversation_path": strings.Replace(execPath, ".json", "-conversation.json", 1),
+											"timing_path":       strings.Replace(execPath, ".json", "-timing.json", 1),
 											"content":           execData,
 										})
 

@@ -1487,8 +1487,10 @@ export interface RunMetadataModels {
 
 export interface RunMetadata {
   created_at: string;
+  started_at?: string;
   completed_at?: string;
-  status: string; // "running", "completed"
+  duration_ms?: number;
+  status: string; // "running", "completed", "failed", "canceled"
   triggered_by?: string; // "manual", "cron", "workflow_builder"
   models?: RunMetadataModels;
 }

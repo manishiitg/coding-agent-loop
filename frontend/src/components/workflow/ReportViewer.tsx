@@ -2550,13 +2550,16 @@ function RunsWidget({
 
   const normalisedRuns = useMemo(() => {
     return selectedRuns.map(run => {
-      const startedAt = run.metadata?.created_at ?? ''
+      const startedAt = run.metadata?.started_at ?? run.metadata?.created_at ?? ''
       const completedAt = run.metadata?.completed_at ?? ''
       const startedMs = parseTimestamp(startedAt)
       const completedMs = parseTimestamp(completedAt)
-      const durationMs = startedMs == null
-        ? 0
-        : Math.max(0, (completedMs ?? now) - startedMs)
+      const explicitDurationMs = run.metadata?.duration_ms
+      const durationMs = explicitDurationMs != null
+        ? Math.max(0, explicitDurationMs)
+        : startedMs == null
+          ? 0
+          : Math.max(0, (completedMs ?? now) - startedMs)
       return {
         run,
         run_folder: run.name,

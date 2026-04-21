@@ -2272,8 +2272,10 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 ### Execution Logs (per run, per group, per step)
 | Path | Contents |
 |------|----------|
+| runs/{iter}/{group}/run_metadata.json | **Workflow-level timing**: `+"`started_at`"+`, `+"`completed_at`"+`, `+"`duration_ms`"+`, `+"`status`"+` |
 | runs/{iter}/{group}/logs/{step-id}/execution/*-conversation.json | Full conversation log: `+"`conversation_history`"+` (messages) + `+"`tool_calls[]`"+` (each with `+"`tool_name`"+`, `+"`args`"+`, `+"`result`"+`, `+"`duration`"+`) |
-| runs/{iter}/{group}/logs/{step-id}/execution/*-iteration-*.json | Execution summary: model, result text, step path |
+| runs/{iter}/{group}/logs/{step-id}/execution/*-iteration-*.json | Execution summary: model, result text, step path, `+"`duration_ms`"+`, `+"`tool_call_count`"+`, `+"`tool_duration_ms`"+` |
+| runs/{iter}/{group}/logs/{step-id}/execution/*-timing.json | **Clear timing breakdown**: `+"`agent.duration_ms`"+`, `+"`tools.total_duration_ms`"+`, `+"`tools.max_duration_ms`"+`, per-tool `+"`calls[]`"+` with `+"`duration_ms`"+` and status |
 | runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json | **Code exec steps**: main.py result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+`, `+"`success`"+`, `+"`script_path`"+` |
 | runs/{iter}/{group}/logs/{step-id}/pre_validation.json | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
 
@@ -9002,9 +9004,11 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 ### Per-group logs
 | Path | Contents |
 |------|----------|
+| `+"`runs/{iter}/{group}/run_metadata.json`"+` | **Workflow-level timing**: `+"`started_at`"+`, `+"`completed_at`"+`, `+"`duration_ms`"+`, `+"`status`"+` |
 | `+"`runs/{iter}/{group}/logs/{step-id}/execution/`"+` | Execution logs folder for a step |
 | `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-conversation.json`"+` | Full conversation log with `+"`conversation_history`"+` (system/human/AI messages) and `+"`tool_calls`"+` array (each entry has `+"`tool_name`"+`, `+"`args`"+`, `+"`result`"+`, `+"`duration`"+`) |
-| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}.json`"+` | Execution summary: model used, result text, step path |
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}.json`"+` | Execution summary: model used, result text, step path, `+"`duration_ms`"+`, `+"`tool_call_count`"+`, `+"`tool_duration_ms`"+` |
+| `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-timing.json`"+` | **Clear timing breakdown**: `+"`agent.duration_ms`"+`, `+"`tools.total_duration_ms`"+`, `+"`tools.max_duration_ms`"+`, per-tool `+"`calls[]`"+` with `+"`duration_ms`"+` and status |
 | `+"`runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` | **Code exec steps only**: main.py execution result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+` (stderr), `+"`success`"+`, `+"`script_path`"+`, `+"`validation_error`"+`. This is the fastest way to see what main.py did. |
 | `+"`runs/{iter}/{group}/logs/{step-id}/pre_validation.json`"+` | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
 

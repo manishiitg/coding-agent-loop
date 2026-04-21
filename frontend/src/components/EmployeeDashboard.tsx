@@ -1,11 +1,23 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
-  X, UserCircle2, Workflow,
-  PlayCircle, Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, Activity, ChevronDown, ChevronRight
+  X, UserCircle2,
+  PlayCircle, Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight
 } from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
-import type { DiscoveredWorkflow, Employee, EvaluationReportEntry, TokenUsageFile } from '../services/api-types'
+import type { DiscoveredWorkflow, Employee, EvaluationAggregate, EvaluationReportEntry, PhaseTokenUsageFile, TokenUsageFile, WorkflowPhaseDailyCostsEntry, WorkflowRunCostsEntry } from '../services/api-types'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
@@ -47,9 +59,13 @@ interface SelectedWorkflowEntry {
 interface WorkflowReviewState {
   loading: boolean
   evaluation: EvaluationReportEntry | null
+  evaluations: EvaluationReportEntry[]
+  evaluationAggregate: EvaluationAggregate | null
   evaluationError: string | null
   tokenUsage: TokenUsageFile | null
   evaluationTokenUsage: TokenUsageFile | null
+  costRuns: WorkflowRunCostsEntry[]
+  phaseDailyCosts: WorkflowPhaseDailyCostsEntry[]
   costError: string | null
 }
 
@@ -83,15 +99,52 @@ const StatusDot: React.FC<{ status: string }> = ({ status }) => {
 const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   loading: false,
   evaluation: null,
+  evaluations: [],
+  evaluationAggregate: null,
   evaluationError: null,
   tokenUsage: null,
   evaluationTokenUsage: null,
+  costRuns: [],
+  phaseDailyCosts: [],
   costError: null,
 }
 
 const runFolderMatches = (candidate: string | null | undefined, requested: string | null | undefined): boolean => {
   if (!candidate || !requested) return false
   return candidate === requested || candidate.startsWith(`${requested}/`) || requested.startsWith(`${candidate}/`)
+}
+
+// Merge N TokenUsageFile entries into one by summing per-model numeric fields.
+// Mirrors what the workflows CostsPopup does client-side.
+const mergeTokenUsageFiles = (files: Array<TokenUsageFile | null | undefined>): TokenUsageFile | null => {
+  const nonNull = files.filter((f): f is TokenUsageFile => !!f)
+  if (nonNull.length === 0) return null
+
+  const merged: TokenUsageFile = {
+    created_at: nonNull[0].created_at,
+    updated_at: nonNull[0].updated_at,
+    by_model: {},
+  }
+
+  for (const file of nonNull) {
+    for (const [model, stats] of Object.entries(file.by_model || {})) {
+      const existing = merged.by_model[model]
+      if (!existing) {
+        merged.by_model[model] = { ...stats }
+        continue
+      }
+      existing.input_tokens = (existing.input_tokens || 0) + (stats.input_tokens || 0)
+      existing.output_tokens = (existing.output_tokens || 0) + (stats.output_tokens || 0)
+      existing.cache_tokens = (existing.cache_tokens || 0) + (stats.cache_tokens || 0)
+      existing.reasoning_tokens = (existing.reasoning_tokens || 0) + (stats.reasoning_tokens || 0)
+      existing.llm_call_count = (existing.llm_call_count || 0) + (stats.llm_call_count || 0)
+      existing.total_cost_usd = (existing.total_cost_usd || 0) + (stats.total_cost_usd || 0)
+      existing.input_cost_usd = (existing.input_cost_usd || 0) + (stats.input_cost_usd || 0)
+      existing.output_cost_usd = (existing.output_cost_usd || 0) + (stats.output_cost_usd || 0)
+    }
+  }
+
+  return merged
 }
 
 const getTokenUsageTotal = (usage: TokenUsageFile | null | undefined): number | null => {
@@ -104,24 +157,6 @@ const getTokenUsageTotal = (usage: TokenUsageFile | null | undefined): number | 
     if (cost > 0) found = true
   })
   return found || total > 0 ? total : null
-}
-
-const getModelUsageRows = (usage: TokenUsageFile | null | undefined): Array<{
-  model: string
-  totalCostUsd: number
-  inputTokens: number
-  outputTokens: number
-}> => {
-  if (!usage) return []
-
-  return Object.entries(usage.by_model || {})
-    .map(([model, stats]) => ({
-      model,
-      totalCostUsd: stats.total_cost_usd || 0,
-      inputTokens: stats.input_tokens || 0,
-      outputTokens: stats.output_tokens || 0,
-    }))
-    .sort((a, b) => b.totalCostUsd - a.totalCostUsd)
 }
 
 const formatUsd = (value: number | null): string => {
@@ -147,14 +182,33 @@ const ReviewTabButton: React.FC<{
   </button>
 )
 
-const getEvalBadgeClasses = (evalPercent: number): string => {
-  if (evalPercent >= 80) {
-    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-1 dark:ring-emerald-500/20'
-  }
-  if (evalPercent >= 50) {
-    return 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-1 dark:ring-amber-500/20'
-  }
-  return 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-1 dark:ring-rose-500/20'
+const getEvalBadgeClasses = (_evalPercent: number): string => {
+  return 'bg-muted text-muted-foreground ring-1 ring-inset ring-border'
+}
+
+const formatPercent = (value: number): string => `${value.toFixed(1)}%`
+
+const getScoreTextColor = (_percentage: number): string => 'text-foreground'
+
+const getScoreBarColor = (_percentage: number): string => 'bg-muted-foreground/40'
+
+// Line colors for multi-group trend chart. Cycled by group index.
+const GROUP_LINE_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#a855f7', '#ef4444', '#84cc16']
+
+// run_folder looks like "iteration-0/default-group". Split into iteration + group.
+// If there's no "/", treat the whole thing as the iteration and use "default" as group.
+interface ParsedRun {
+  iteration: string
+  group: string
+  iterationIndex: number
+}
+const parseRunFolder = (runFolder: string): ParsedRun => {
+  const slash = runFolder.indexOf('/')
+  const iteration = slash >= 0 ? runFolder.slice(0, slash) : runFolder
+  const group = slash >= 0 ? runFolder.slice(slash + 1) : 'default'
+  const match = iteration.match(/(\d+)/)
+  const iterationIndex = match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER
+  return { iteration, group, iterationIndex }
 }
 
 export const EmployeeDashboard: React.FC = () => {
@@ -168,6 +222,8 @@ export const EmployeeDashboard: React.FC = () => {
   const [collapsedEmployeeIds, setCollapsedEmployeeIds] = useState<Set<string>>(new Set())
   const [reviewTab, setReviewTab] = useState<ReviewTab>('report')
   const [reviewState, setReviewState] = useState<WorkflowReviewState>(EMPTY_REVIEW_STATE)
+  const [selectedEvalRunFolder, setSelectedEvalRunFolder] = useState<string | null>(null)
+  const [expandedEvalSteps, setExpandedEvalSteps] = useState<Set<string>>(new Set())
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -365,10 +421,13 @@ export const EmployeeDashboard: React.FC = () => {
       const costsResponse = reviewData.costs
 
       let evaluation: EvaluationReportEntry | null = null
+      let evaluations: EvaluationReportEntry[] = []
+      let evaluationAggregate: EvaluationAggregate | null = null
       let evaluationError: string | null = null
       if (evaluationResponse?.success) {
-        const reports = Array.isArray(evaluationResponse.reports) ? evaluationResponse.reports : []
-        evaluation = reports.find(item => runFolderMatches(item.run_folder, runFolder)) || reports[0] || null
+        evaluations = Array.isArray(evaluationResponse.reports) ? evaluationResponse.reports : []
+        evaluationAggregate = evaluationResponse.aggregate || null
+        evaluation = evaluations.find(item => runFolderMatches(item.run_folder, runFolder)) || evaluations[0] || null
       } else if (evaluationResponse?.error) {
         evaluationError = evaluationResponse.error
       } else {
@@ -377,11 +436,14 @@ export const EmployeeDashboard: React.FC = () => {
 
       let tokenUsage: TokenUsageFile | null = null
       let evaluationTokenUsage: TokenUsageFile | null = null
+      let costRuns: WorkflowRunCostsEntry[] = []
+      let phaseDailyCosts: WorkflowPhaseDailyCostsEntry[] = []
       let costError: string | null = null
       if (costsResponse?.success) {
-        const runCosts = (costsResponse.runs || []).find(item => runFolderMatches(item.run_folder, runFolder)) || null
-        tokenUsage = runCosts?.token_usage || null
-        evaluationTokenUsage = runCosts?.evaluation_token_usage || null
+        costRuns = costsResponse.runs || []
+        phaseDailyCosts = costsResponse.phase_daily_costs || []
+        tokenUsage = mergeTokenUsageFiles(costRuns.map(r => r.token_usage))
+        evaluationTokenUsage = mergeTokenUsageFiles(costRuns.map(r => r.evaluation_token_usage))
       } else {
         costError = 'Failed to load cost data'
       }
@@ -389,18 +451,26 @@ export const EmployeeDashboard: React.FC = () => {
       setReviewState({
         loading: false,
         evaluation,
+        evaluations,
+        evaluationAggregate,
         evaluationError,
         tokenUsage,
         evaluationTokenUsage,
+        costRuns,
+        phaseDailyCosts,
         costError,
       })
     } catch (err) {
       setReviewState({
         loading: false,
         evaluation: null,
+        evaluations: [],
+        evaluationAggregate: null,
         evaluationError: err instanceof Error ? err.message : 'Failed to load evaluation',
         tokenUsage: null,
         evaluationTokenUsage: null,
+        costRuns: [],
+        phaseDailyCosts: [],
         costError: err instanceof Error ? err.message : 'Failed to load cost data',
       })
     }
@@ -409,6 +479,18 @@ export const EmployeeDashboard: React.FC = () => {
   useEffect(() => {
     loadWorkflowReview(selectedWorkflowEntry)
   }, [loadWorkflowReview, selectedWorkflowEntry])
+
+  // Default the selected iteration to the matched/latest one when evaluations load
+  useEffect(() => {
+    if (reviewState.evaluations.length === 0) {
+      setSelectedEvalRunFolder(null)
+      return
+    }
+    const exists = reviewState.evaluations.some(e => e.run_folder === selectedEvalRunFolder)
+    if (!exists) {
+      setSelectedEvalRunFolder(reviewState.evaluation?.run_folder || reviewState.evaluations[0].run_folder)
+    }
+  }, [reviewState.evaluations, reviewState.evaluation, selectedEvalRunFolder])
 
   const handleAssign = useCallback(async (workspacePath: string | null, employeeId: string | null) => {
     if (!workspacePath) return
@@ -436,24 +518,184 @@ export const EmployeeDashboard: React.FC = () => {
   const executionCost = getTokenUsageTotal(reviewState.tokenUsage)
   const evaluationCost = getTokenUsageTotal(reviewState.evaluationTokenUsage)
   const totalKnownCost = (executionCost || 0) + (evaluationCost || 0)
-  const executionModelRows = getModelUsageRows(reviewState.tokenUsage)
-  const evaluationModelRows = getModelUsageRows(reviewState.evaluationTokenUsage)
-  const realEmployees = useMemo(
-    () => employeeWorkflows.filter(({ employee }) => employee.id !== '__unassigned__'),
-    [employeeWorkflows]
-  )
-  const totalWorkflowCount = useMemo(
-    () => employeeWorkflows.reduce((sum, entry) => sum + entry.workflows.length, 0),
-    [employeeWorkflows]
-  )
-  const runningWorkflowCount = useMemo(
-    () => employeeWorkflows.reduce((sum, entry) => sum + entry.runningNow, 0),
-    [employeeWorkflows]
-  )
-  const unassignedWorkflowCount = useMemo(
-    () => employeeWorkflows.find(({ employee }) => employee.id === '__unassigned__')?.workflows.length || 0,
-    [employeeWorkflows]
-  )
+
+  // Latest-run figures for the header chips. "Latest" = the run_folder the
+  // workspace reports as most recent, with a fallback to the run whose cost
+  // file has the newest updated_at if that folder isn't present in costs.
+  const latestRunFolder = selectedWorkflow?.latestRunFolder || null
+  const latestEvalPercent = useMemo(() => {
+    if (reviewState.evaluations.length === 0) return null
+    const matched = latestRunFolder
+      ? reviewState.evaluations.find(e => runFolderMatches(e.run_folder, latestRunFolder))
+      : null
+    const entry = matched || [...reviewState.evaluations].sort((a, b) =>
+      (Date.parse(b.report.generated_at) || 0) - (Date.parse(a.report.generated_at) || 0)
+    )[0]
+    return entry ? Math.round(entry.report.score_percentage) : null
+  }, [reviewState.evaluations, latestRunFolder])
+
+  const latestRunCost = useMemo(() => {
+    if (reviewState.costRuns.length === 0) return null
+    const sumCost = (usage: TokenUsageFile | null | undefined): number => {
+      if (!usage) return 0
+      let total = 0
+      for (const m of Object.values(usage.by_model || {})) total += m.total_cost_usd || 0
+      return total
+    }
+    const pickTs = (run: WorkflowRunCostsEntry): number => {
+      const stamps = [
+        run.token_usage?.updated_at,
+        run.evaluation_token_usage?.updated_at,
+        run.token_usage?.created_at,
+        run.evaluation_token_usage?.created_at,
+      ].map(s => (s ? Date.parse(s) : 0))
+      return Math.max(0, ...stamps)
+    }
+    const matched = latestRunFolder
+      ? reviewState.costRuns.find(r => runFolderMatches(r.run_folder, latestRunFolder))
+      : null
+    const run = matched || [...reviewState.costRuns].sort((a, b) => pickTs(b) - pickTs(a))[0]
+    if (!run) return null
+    return sumCost(run.token_usage) + sumCost(run.evaluation_token_usage)
+  }, [reviewState.costRuns, latestRunFolder])
+  // Evaluation trend data: one point per report. X is a numeric timestamp so
+  // points land at their real time (including multiple same-day runs).
+  // recharts needs one row per distinct x; same-timestamp rows are merged.
+  const evalTrend = useMemo(() => {
+    type Row = { ts: number; [group: string]: number | null }
+    const rowByTs = new Map<number, Row>()
+    const groupSet = new Set<string>()
+
+    for (const entry of reviewState.evaluations) {
+      const parsed = parseRunFolder(entry.run_folder)
+      groupSet.add(parsed.group)
+
+      const parsedDate = new Date(entry.report.generated_at)
+      if (Number.isNaN(parsedDate.getTime())) continue
+      const ts = parsedDate.getTime()
+      const row = rowByTs.get(ts) || { ts }
+      row[parsed.group] = entry.report.score_percentage
+      rowByTs.set(ts, row)
+    }
+
+    const rows = Array.from(rowByTs.values()).sort((a, b) => a.ts - b.ts)
+    const groups = Array.from(groupSet).sort()
+    return { rows, groups }
+  }, [reviewState.evaluations])
+
+  // Cost trend: daily totals per day, split into execution / evaluation / phase
+  // (phase = workflow-builder/planning/etc, not tied to a specific run).
+  const costTrend = useMemo(() => {
+    type Row = { date: string; dateLabel: string; ts: number; total: number; execution: number; evaluation: number; phase: number }
+    const rowByDate = new Map<string, Row>()
+
+    const sumCost = (usage: TokenUsageFile | PhaseTokenUsageFile | null | undefined): number => {
+      if (!usage) return 0
+      let total = 0
+      for (const m of Object.values(usage.by_model || {})) {
+        total += m.total_cost_usd || 0
+      }
+      return total
+    }
+
+    const pickTimestamp = (usage: TokenUsageFile | PhaseTokenUsageFile | null | undefined): number | null => {
+      const ts = usage?.updated_at || usage?.created_at
+      if (!ts) return null
+      const parsed = new Date(ts)
+      return Number.isNaN(parsed.getTime()) ? null : parsed.getTime()
+    }
+
+    const parseDateKey = (key: string): number | null => {
+      const parsed = new Date(`${key}T00:00:00Z`)
+      return Number.isNaN(parsed.getTime()) ? null : parsed.getTime()
+    }
+
+    const bump = (ts: number | null, field: 'execution' | 'evaluation' | 'phase', amount: number) => {
+      if (ts === null || amount <= 0) return
+      const d = new Date(ts)
+      const date = d.toISOString().slice(0, 10)
+      const dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      const row = rowByDate.get(date) || { date, dateLabel, ts: d.getTime(), total: 0, execution: 0, evaluation: 0, phase: 0 }
+      row[field] += amount
+      row.total += amount
+      if (d.getTime() > row.ts) row.ts = d.getTime()
+      rowByDate.set(date, row)
+    }
+
+    for (const run of reviewState.costRuns) {
+      bump(pickTimestamp(run.token_usage), 'execution', sumCost(run.token_usage))
+      bump(pickTimestamp(run.evaluation_token_usage), 'evaluation', sumCost(run.evaluation_token_usage))
+    }
+
+    for (const entry of reviewState.phaseDailyCosts) {
+      // The phase daily file's own date key is authoritative (e.g. "2026-04-21");
+      // its token_usage timestamp may drift if the file was rewritten later.
+      const ts = parseDateKey(entry.date) ?? pickTimestamp(entry.token_usage)
+      bump(ts, 'phase', sumCost(entry.token_usage))
+    }
+
+    const rows = Array.from(rowByDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+    return { rows }
+  }, [reviewState.costRuns, reviewState.phaseDailyCosts])
+
+  const currentEvalEntry = useMemo(() => {
+    if (!selectedEvalRunFolder) return reviewState.evaluation
+    return reviewState.evaluations.find(e => e.run_folder === selectedEvalRunFolder) || reviewState.evaluation
+  }, [reviewState.evaluation, reviewState.evaluations, selectedEvalRunFolder])
+
+  // Per-group summary: one row per group with runs, latest, best, avg. Sorted
+  // by latest score descending (worst-performing groups sink so they're easy
+  // to scan for issues; ties fall back to group name).
+  const evalGroupsSummary = useMemo(() => {
+    type GroupStats = {
+      group: string
+      runs: number
+      latest: number
+      latestRunFolder: string
+      latestGeneratedAt: string
+      best: number
+      avg: number
+    }
+    const byGroup = new Map<string, EvaluationReportEntry[]>()
+    for (const entry of reviewState.evaluations) {
+      const { group } = parseRunFolder(entry.run_folder)
+      const list = byGroup.get(group) || []
+      list.push(entry)
+      byGroup.set(group, list)
+    }
+
+    const rows: GroupStats[] = []
+    for (const [group, entries] of byGroup.entries()) {
+      const sorted = [...entries].sort((a, b) => {
+        const ta = Date.parse(a.report.generated_at) || 0
+        const tb = Date.parse(b.report.generated_at) || 0
+        return tb - ta
+      })
+      const latest = sorted[0]
+      const scores = entries.map(e => e.report.score_percentage)
+      rows.push({
+        group,
+        runs: entries.length,
+        latest: latest.report.score_percentage,
+        latestRunFolder: latest.run_folder,
+        latestGeneratedAt: latest.report.generated_at,
+        best: Math.max(...scores),
+        avg: scores.reduce((s, v) => s + v, 0) / scores.length,
+      })
+    }
+
+    rows.sort((a, b) => b.latest - a.latest || a.group.localeCompare(b.group))
+    return rows
+  }, [reviewState.evaluations])
+
+  const toggleEvalStep = useCallback((stepKey: string) => {
+    setExpandedEvalSteps(prev => {
+      const next = new Set(prev)
+      if (next.has(stepKey)) next.delete(stepKey)
+      else next.add(stepKey)
+      return next
+    })
+  }, [])
 
   if (loading) {
     return (
@@ -464,41 +706,8 @@ export const EmployeeDashboard: React.FC = () => {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h3 className="text-2xl font-semibold tracking-tight text-foreground">Employees</h3>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Review each employee through their latest workflow report, evaluation, and cost.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Employees
-          </div>
-          <div className="mt-2 text-2xl font-semibold text-foreground">{realEmployees.length}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Workflows
-          </div>
-          <div className="mt-2 text-2xl font-semibold text-foreground">{totalWorkflowCount}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Activity
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold text-foreground">{runningWorkflowCount}</span>
-            <span className="text-sm text-muted-foreground">{unassignedWorkflowCount} unassigned</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+    <div className="space-y-3">
+      <div className="grid gap-5 xl:grid-cols-[minmax(320px,4fr)_minmax(0,6fr)]">
           <div className="space-y-4">
             {employeeWorkflows.length === 0 && (
               <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center">
@@ -519,7 +728,6 @@ export const EmployeeDashboard: React.FC = () => {
                 <div className="bg-muted/30 px-5 py-4">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex min-w-0 items-center gap-3">
-                      <EmployeeAvatar name={employee.name} color={employee.avatar_color} />
                       <div className="min-w-0">
                         <h4 className="font-semibold text-foreground">{employee.name}</h4>
                         {employee.description && (
@@ -534,10 +742,6 @@ export const EmployeeDashboard: React.FC = () => {
                           {runningNow} running
                         </span>
                       )}
-                      <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground">
-                        <Workflow className="h-3.5 w-3.5" />
-                        {workflows.length} workflow{workflows.length !== 1 ? 's' : ''}
-                      </span>
                       <button
                         type="button"
                         onClick={() => toggleEmployeeCollapsed(employee.id)}
@@ -571,11 +775,6 @@ export const EmployeeDashboard: React.FC = () => {
                               <div className="flex items-center gap-2 min-w-0">
                                 <StatusDot status={wf.latestStatus} />
                                 <span className="truncate text-sm font-medium text-foreground">{wf.label}</span>
-                                {wf.evalPercent !== null && (
-                                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${getEvalBadgeClasses(wf.evalPercent)}`}>
-                                    Eval {wf.evalPercent}%
-                                  </span>
-                                )}
                                 {isSelected && (
                                   <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                                     Selected
@@ -605,24 +804,6 @@ export const EmployeeDashboard: React.FC = () => {
                             </div>
 
                             <div className="flex items-center gap-2 flex-wrap justify-end" onClick={e => e.stopPropagation()}>
-                              <button
-                                onClick={() => handleSelectWorkflow(wf.workspacePath, 'report')}
-                                className="rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
-                              >
-                                Report
-                              </button>
-                              <button
-                                onClick={() => handleSelectWorkflow(wf.workspacePath, 'evaluation')}
-                                className="rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
-                              >
-                                Eval
-                              </button>
-                              <button
-                                onClick={() => handleSelectWorkflow(wf.workspacePath, 'cost')}
-                                className="rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
-                              >
-                                Cost
-                              </button>
                               {employees.length > 0 && (
                                 <div className="relative">
                                   <button
@@ -680,7 +861,6 @@ export const EmployeeDashboard: React.FC = () => {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-3">
-                          <EmployeeAvatar name={selectedEmployee.name} color={selectedEmployee.avatar_color} size="sm" />
                           <div className="min-w-0">
                             <h4 className="truncate text-base font-semibold text-foreground">
                               {selectedWorkflow.label}
@@ -714,16 +894,22 @@ export const EmployeeDashboard: React.FC = () => {
                           No runs yet
                         </span>
                       )}
-                      {selectedWorkflow.evalPercent !== null && (
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${getEvalBadgeClasses(selectedWorkflow.evalPercent)}`}>
+                      {latestEvalPercent !== null && (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${getEvalBadgeClasses(latestEvalPercent)}`}
+                          title="Evaluation score of the latest run"
+                        >
                           <BarChart3 className="w-3 h-3" />
-                          Eval {selectedWorkflow.evalPercent}%
+                          Eval {latestEvalPercent}%
                         </span>
                       )}
-                      {totalKnownCost > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-1 text-warning">
+                      {latestRunCost !== null && latestRunCost > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-1 text-warning"
+                          title="Cost of the latest run (execution + evaluation)"
+                        >
                           <DollarSign className="w-3 h-3" />
-                          {formatUsd(totalKnownCost)}
+                          {formatUsd(latestRunCost)}
                         </span>
                       )}
                       {selectedWorkflow.nextScheduleAt && (
@@ -777,42 +963,221 @@ export const EmployeeDashboard: React.FC = () => {
                     <ReportView workspacePath={selectedWorkflow.workspacePath} />
                   </div>
                 ) : reviewTab === 'evaluation' ? (
-                  reviewState.evaluation ? (
-                    <div className="space-y-4">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Overall Score</div>
-                          <div className="mt-2 text-2xl font-semibold text-foreground">
-                            {reviewState.evaluation.report.score_percentage}%
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {reviewState.evaluation.report.total_score} / {reviewState.evaluation.report.max_possible_score}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Generated</div>
-                          <div className="mt-2 text-sm font-medium text-foreground">
-                            {formatScheduleTime(reviewState.evaluation.report.generated_at)}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            Run {reviewState.evaluation.run_folder}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        {reviewState.evaluation.report.step_scores.map(step => (
-                          <div key={step.step_id} className="rounded-xl border border-border px-4 py-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-medium text-foreground">{step.step_id}</div>
-                              <div className="text-xs font-semibold text-muted-foreground">
-                                {step.max_score > 0 ? Math.round((step.score / step.max_score) * 100) : 0}%
+                  currentEvalEntry ? (
+                    (() => {
+                      const current = currentEvalEntry
+                      const currentParsed = parseRunFolder(current.run_folder)
+                      const pct = current.report.score_percentage
+                      const agg = reviewState.evaluationAggregate
+                      return (
+                        <div className="space-y-4">
+                          {/* Selected iteration/group header */}
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                              <div className="flex items-center justify-between">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Overall Score</div>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getEvalBadgeClasses(pct)}`}>
+                                  {formatPercent(pct)}
+                                </span>
+                              </div>
+                              <div className={`mt-2 text-2xl font-semibold ${getScoreTextColor(pct)}`}>
+                                {formatPercent(pct)}
+                              </div>
+                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className={`h-full transition-all ${getScoreBarColor(pct)}`}
+                                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                                />
+                              </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                {current.report.total_score} / {current.report.max_possible_score}
                               </div>
                             </div>
-                            <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{step.reasoning}</p>
+                            <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Selected run</div>
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <span className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-foreground ring-1 ring-border">
+                                  {currentParsed.iteration}
+                                </span>
+                                <span className="text-muted-foreground">/</span>
+                                <span className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-foreground ring-1 ring-border">
+                                  {currentParsed.group}
+                                </span>
+                              </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                {formatScheduleTime(current.report.generated_at)}
+                              </div>
+                              {agg && agg.total_runs > 1 && (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {agg.total_runs} runs · avg {formatPercent(agg.average_percentage)}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+
+                          {/* Trend over time (line per group) */}
+                          {evalTrend.rows.length >= 1 && (
+                            <div className="rounded-xl border border-border bg-card px-4 py-3">
+                              <div className="mb-2 flex items-center justify-between">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scores over time</div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {evalTrend.rows.length} run{evalTrend.rows.length !== 1 ? 's' : ''} · {evalTrend.groups.length} group{evalTrend.groups.length !== 1 ? 's' : ''}
+                                </div>
+                              </div>
+                              <div className="h-52 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart data={evalTrend.rows} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" opacity={0.3} />
+                                    <XAxis
+                                      dataKey="ts"
+                                      type="number"
+                                      scale="time"
+                                      domain={['dataMin', 'dataMax']}
+                                      tickFormatter={v => new Date(v).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                      fontSize={11}
+                                      tick={{ fill: 'currentColor' }}
+                                      className="text-muted-foreground"
+                                    />
+                                    <YAxis domain={[0, 100]} fontSize={11} tick={{ fill: 'currentColor' }} className="text-muted-foreground" tickFormatter={v => `${v}%`} />
+                                    <Tooltip
+                                      labelFormatter={(v: unknown) => typeof v === 'number' ? new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : String(v)}
+                                      formatter={(value: unknown, name: unknown) => [
+                                        typeof value === 'number' ? `${value.toFixed(1)}%` : String(value),
+                                        String(name),
+                                      ]}
+                                      contentStyle={{ fontSize: 12, borderRadius: 6 }}
+                                    />
+                                    {evalTrend.groups.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                                    {evalTrend.groups.map((g, idx) => (
+                                      <Line
+                                        key={g}
+                                        type="monotone"
+                                        dataKey={g}
+                                        stroke={GROUP_LINE_COLORS[idx % GROUP_LINE_COLORS.length]}
+                                        strokeWidth={2}
+                                        dot={{ r: 3 }}
+                                        activeDot={{ r: 5 }}
+                                        connectNulls
+                                      />
+                                    ))}
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Per-group summary */}
+                          {evalGroupsSummary.length > 0 && (
+                            <div className="overflow-hidden rounded-xl border border-border bg-card">
+                              <div className="flex items-center justify-between border-b border-border px-4 py-2">
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Groups
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {evalGroupsSummary.length} group{evalGroupsSummary.length !== 1 ? 's' : ''}
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 border-b border-border bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                <div>Group</div>
+                                <div className="text-right">Runs</div>
+                                <div className="text-right">Latest</div>
+                                <div className="text-right">Best</div>
+                                <div className="text-right">Avg</div>
+                              </div>
+                              <div className="divide-y divide-border">
+                                {evalGroupsSummary.map(row => {
+                                  const isCurrent = row.latestRunFolder === current.run_folder
+                                  return (
+                                    <button
+                                      key={row.group}
+                                      type="button"
+                                      onClick={() => setSelectedEvalRunFolder(row.latestRunFolder)}
+                                      className={`grid w-full grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50 ${
+                                        isCurrent ? 'bg-primary/5' : ''
+                                      }`}
+                                      title={`Latest: ${row.latestRunFolder} (${new Date(row.latestGeneratedAt).toLocaleString()})`}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-foreground">{row.group}</span>
+                                        {isCurrent && (
+                                          <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">Selected</span>
+                                        )}
+                                      </div>
+                                      <div className="text-right text-muted-foreground">{row.runs}</div>
+                                      <div className="text-right font-medium text-foreground">{formatPercent(row.latest)}</div>
+                                      <div className="text-right text-muted-foreground">{formatPercent(row.best)}</div>
+                                      <div className="text-right text-muted-foreground">{formatPercent(row.avg)}</div>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Step breakdown */}
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Step scores ({current.report.step_scores.length})
+                            </div>
+                            {current.report.step_scores.map((step, idx) => {
+                              const stepPct = step.max_score > 0 ? (step.score / step.max_score) * 100 : 0
+                              const stepKey = `${current.run_folder}-${step.step_id}-${idx}`
+                              const isExpanded = expandedEvalSteps.has(stepKey)
+                              return (
+                                <div key={stepKey} className="overflow-hidden rounded-xl border border-border bg-card">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleEvalStep(stepKey)}
+                                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">#{idx + 1}</span>
+                                        <span className="truncate text-sm font-medium text-foreground">{step.step_id}</span>
+                                      </div>
+                                      <div className="mt-1.5 flex items-center gap-2">
+                                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                                          <div
+                                            className={`h-full transition-all ${getScoreBarColor(stepPct)}`}
+                                            style={{ width: `${Math.min(100, Math.max(0, stepPct))}%` }}
+                                          />
+                                        </div>
+                                        <span className={`text-[11px] font-medium ${getScoreTextColor(stepPct)}`}>
+                                          {step.score}/{step.max_score}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </button>
+                                  {isExpanded && (step.reasoning || step.evidence) && (
+                                    <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
+                                      {step.reasoning && (
+                                        <div>
+                                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
+                                          <p className="whitespace-pre-wrap text-xs text-foreground">{step.reasoning}</p>
+                                        </div>
+                                      )}
+                                      {step.evidence && (
+                                        <div>
+                                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Evidence</div>
+                                          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-background p-2 text-[11px]">
+                                            {step.evidence}
+                                          </pre>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })()
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                       {reviewState.evaluationError || 'No evaluation report exists for the latest run yet.'}
@@ -820,20 +1185,19 @@ export const EmployeeDashboard: React.FC = () => {
                   )
                 ) : (
                   <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Execution</div>
-                        <div className="mt-2 text-xl font-semibold text-foreground">{formatUsd(executionCost)}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Evaluation</div>
-                        <div className="mt-2 text-xl font-semibold text-foreground">{formatUsd(evaluationCost)}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Known Total</div>
-                        <div className="mt-2 text-xl font-semibold text-foreground">{formatUsd(totalKnownCost > 0 ? totalKnownCost : null)}</div>
-                      </div>
-                    </div>
+                    {(() => {
+                      const phaseCostTotal = costTrend.rows.reduce((sum, r) => sum + r.phase, 0)
+                      const grandTotal = (totalKnownCost || 0) + phaseCostTotal
+                      return (
+                        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total cost</div>
+                          <div className="mt-2 text-2xl font-semibold text-foreground">{formatUsd(grandTotal > 0 ? grandTotal : null)}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {formatUsd(executionCost)} execution · {formatUsd(evaluationCost)} evaluation · {formatUsd(phaseCostTotal > 0 ? phaseCostTotal : null)} builder
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                     {reviewState.costError && !reviewState.tokenUsage && !reviewState.evaluationTokenUsage && (
                       <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
@@ -847,42 +1211,54 @@ export const EmployeeDashboard: React.FC = () => {
                       </div>
                     )}
 
-                    {reviewState.tokenUsage && (
-                      <div className="overflow-hidden rounded-xl border border-border">
-                        <div className="border-b border-border bg-muted/30 px-4 py-3">
-                          <div className="text-sm font-medium text-foreground">Execution cost by model</div>
+                    {costTrend.rows.length >= 1 && (
+                      <div className="rounded-xl border border-border bg-card px-4 py-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cost over time</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {costTrend.rows.length} day{costTrend.rows.length !== 1 ? 's' : ''}
+                          </div>
                         </div>
-                        <div className="divide-y divide-border">
-                          {executionModelRows.map(model => (
-                            <div key={model.model} className="flex items-center justify-between gap-3 px-4 py-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm text-foreground">{model.model}</div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {model.inputTokens.toLocaleString()} in · {model.outputTokens.toLocaleString()} out
-                                </div>
-                              </div>
-                              <div className="text-sm font-medium text-foreground">{formatUsd(model.totalCostUsd)}</div>
-                            </div>
-                          ))}
+                        <div className="h-52 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={costTrend.rows} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" opacity={0.3} />
+                              <XAxis dataKey="dateLabel" fontSize={11} tick={{ fill: 'currentColor' }} className="text-muted-foreground" />
+                              <YAxis fontSize={11} tick={{ fill: 'currentColor' }} className="text-muted-foreground" tickFormatter={v => `$${v}`} />
+                              <Tooltip
+                                formatter={(value: unknown, name: unknown) => [
+                                  typeof value === 'number' ? `$${value.toFixed(2)}` : String(value),
+                                  String(name),
+                                ]}
+                                contentStyle={{ fontSize: 12, borderRadius: 6 }}
+                              />
+                              <Bar dataKey="total" name="Total" fill="#6366f1" />
+                            </BarChart>
+                          </ResponsiveContainer>
                         </div>
                       </div>
                     )}
 
-                    {reviewState.evaluationTokenUsage && (
+                    {costTrend.rows.length >= 1 && (
                       <div className="overflow-hidden rounded-xl border border-border">
                         <div className="border-b border-border bg-muted/30 px-4 py-3">
-                          <div className="text-sm font-medium text-foreground">Evaluation cost by model</div>
+                          <div className="text-sm font-medium text-foreground">Cost by day</div>
+                        </div>
+                        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 border-b border-border bg-muted/20 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <div>Date</div>
+                          <div className="text-right">Execution</div>
+                          <div className="text-right">Evaluation</div>
+                          <div className="text-right">Builder</div>
+                          <div className="text-right">Total</div>
                         </div>
                         <div className="divide-y divide-border">
-                          {evaluationModelRows.map(model => (
-                            <div key={model.model} className="flex items-center justify-between gap-3 px-4 py-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm text-foreground">{model.model}</div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {model.inputTokens.toLocaleString()} in · {model.outputTokens.toLocaleString()} out
-                                </div>
-                              </div>
-                              <div className="text-sm font-medium text-foreground">{formatUsd(model.totalCostUsd)}</div>
+                          {[...costTrend.rows].reverse().map(row => (
+                            <div key={row.date} className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-6 px-4 py-2.5 text-sm">
+                              <div className="text-foreground">{row.dateLabel}</div>
+                              <div className="text-right text-muted-foreground">{row.execution > 0 ? formatUsd(row.execution) : '-'}</div>
+                              <div className="text-right text-muted-foreground">{row.evaluation > 0 ? formatUsd(row.evaluation) : '-'}</div>
+                              <div className="text-right text-muted-foreground">{row.phase > 0 ? formatUsd(row.phase) : '-'}</div>
+                              <div className="text-right font-medium text-foreground">{formatUsd(row.total)}</div>
                             </div>
                           ))}
                         </div>

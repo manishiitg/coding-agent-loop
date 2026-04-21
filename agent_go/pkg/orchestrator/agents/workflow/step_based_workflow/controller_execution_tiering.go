@@ -51,6 +51,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) shouldUseAdaptiveExecutionTiering(ctx
 	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 		return false
 	}
+	if stepConfig != nil && NormalizeTierOverride(stepConfig.ExecutionTier) != "" {
+		return false
+	}
 	if stepConfig != nil && stepConfig.DisableTierOptimization != nil && *stepConfig.DisableTierOptimization {
 		return false
 	}

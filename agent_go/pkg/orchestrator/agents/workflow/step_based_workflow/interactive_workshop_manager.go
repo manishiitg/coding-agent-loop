@@ -2835,7 +2835,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 				if iwm.executionNotifier != nil {
-					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: stepDisplayName, Cancel: cancel})
+					iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+						ID:                execID,
+						ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+						Name:              stepDisplayName,
+						Cancel:            cancel,
+					})
 				}
 				execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
@@ -3050,7 +3055,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: name, Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              name,
+					Cancel:            cancel,
+				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
@@ -3576,7 +3586,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, knowledgebase_access, knowledgebase_contribution, learnings_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, knowledgebase_access, knowledgebase_contribution, learnings_access, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3660,6 +3670,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						"provider": map[string]interface{}{"type": "string", "description": "LLM provider (e.g., 'openai', 'anthropic', 'bedrock', 'openrouter', 'vertex', 'azure')"},
 						"model_id": map[string]interface{}{"type": "string", "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')"},
 					},
+				},
+				"execution_tier": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"high", "medium", "low"},
+					"description": "Persistent execution tier override for this step in tiered mode. Use this when you want the step to default to a specific tier without pinning an exact model. execution_llm still takes precedence, and execute_step(..., tier=...) can still override this for a single run.",
 				},
 				"validation_llm": map[string]interface{}{
 					"type":        "object",
@@ -3929,6 +3944,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					targetConfig.AgentConfigs.ReviewNotes = strings.TrimSpace(s)
 				}
 			}
+			if val, ok := args["execution_tier"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					targetConfig.AgentConfigs.ExecutionTier = strings.ToLower(strings.TrimSpace(s))
+				}
+			}
 
 			// If the caller declared a mode, sync the low-level mode flags to match it.
 			syncDeclaredExecutionModeConfig(targetConfig.AgentConfigs)
@@ -4114,6 +4134,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 				if targetConfig.AgentConfigs.LearningLLM != nil && effectiveAccess != LearningsAccessReadWrite {
 					errors = append(errors, "learning_llm override is meaningful only for write-capable learnings_access. Set learnings_access=\"read-write\" and learning_objective to opt in to writing.")
+				}
+			}
+
+			// 6b. Validate execution_tier.
+			if rawExecutionTier := strings.TrimSpace(targetConfig.AgentConfigs.ExecutionTier); rawExecutionTier != "" {
+				if NormalizeTierOverride(rawExecutionTier) == "" {
+					errors = append(errors, fmt.Sprintf("execution_tier %q is not recognized. Valid values: \"high\", \"medium\", \"low\".", rawExecutionTier))
+				}
+				if targetConfig.AgentConfigs.ExecutionLLM != nil {
+					warnings = append(warnings, "execution_tier is set but execution_llm takes precedence, so the tier override will be ignored until execution_llm is cleared.")
 				}
 			}
 
@@ -4834,7 +4864,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Organize Global Learnings", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Organize Global Learnings",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5095,7 +5130,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: startDisplayName, Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              startDisplayName,
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5282,7 +5322,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Optimize Workflow Structure", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Optimize Workflow Structure",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5409,7 +5454,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Review Workflow Plan", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Review Workflow Plan",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5540,7 +5590,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Review Workflow Results", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Review Workflow Results",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5659,7 +5714,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Review Step Code", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Review Step Code",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5795,7 +5855,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Replan Workflow From Results", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Replan Workflow From Results",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {
@@ -5926,7 +5991,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: "Harden Workflow", Cancel: cancel})
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Harden Workflow",
+					Cancel:            cancel,
+				})
 			}
 
 			go func() {

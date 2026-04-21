@@ -155,7 +155,7 @@ func BuildMainPyAuthoringRules() string {
 	sb.WriteString("- `os.environ['KEY']` ALWAYS. NEVER `os.environ.get('KEY', 'fallback')`. A missing env var must raise KeyError — silent fallbacks hide misconfig.\n")
 	sb.WriteString("- Workflow variables → `VAR_<NAME>` (config: user IDs, sheet IDs, URLs).\n")
 	sb.WriteString("- Secrets → `SECRET_<NAME>` (passwords, API keys, tokens).\n")
-	sb.WriteString("- Special vars: `STEP_OUTPUT_DIR` (write output here), `STEP_EXECUTION_DIR` (parent), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).\n")
+	sb.WriteString("- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; use for sibling-step reads only, never as a write target), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).\n")
 	sb.WriteString("- NO hardcoded user IDs, account numbers, URLs, paths, or credentials. Every dynamic value flows from env or sys.argv.\n")
 	sb.WriteString("- **The step description shows RESOLVED current-run values.** Those are for context only. NEVER copy any name, ID, or literal value from the description into the script — or into any `export` you issue manually. The same script runs for every group/user; a copied value from one run breaks the others.\n\n")
 
@@ -319,7 +319,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 	sb.WriteString("my_password = os.environ['SECRET_MY_PASSWORD']\n")
 	sb.WriteString("\n# Special vars always available:\n")
 	sb.WriteString("output_dir    = os.environ['STEP_OUTPUT_DIR']      # write all output files here\n")
-	sb.WriteString("execution_dir = os.environ['STEP_EXECUTION_DIR']  # parent folder (fallback only — prefer sys.argv for input data)\n")
+	sb.WriteString("execution_dir = os.environ['STEP_EXECUTION_DIR']  # parent folder for sibling-step reads only (fallback only — prefer sys.argv for input data)\n")
 	sb.WriteString("mcp_url       = os.environ['MCP_API_URL']\n")
 	sb.WriteString("mcp_token     = os.environ['MCP_API_TOKEN']\n")
 	sb.WriteString("group_name    = os.environ.get('VAR_GROUP_NAME', '')  # current group name (e.g., 'production'); empty if no group\n")

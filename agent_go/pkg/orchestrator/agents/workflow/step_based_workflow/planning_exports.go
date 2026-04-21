@@ -950,7 +950,12 @@ func RegisterRunFullEvaluationTool(
 			displayName := formatWorkshopExecutionName("Evaluation", targetRunFolder)
 			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: displayName, Cancel: cancel})
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              displayName,
+					Cancel:            cancel,
+				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
@@ -1086,7 +1091,12 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 
 				// Notify so backgroundCompletionLoop picks it up
 				if b.session.executionNotifier != nil {
-					b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: progressID, Name: fmt.Sprintf("step-%s", stepName), Cancel: nil})
+					b.session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+						ID:                progressID,
+						ParentExecutionID: b.parentID,
+						Name:              fmt.Sprintf("step-%s", stepName),
+						Cancel:            nil,
+					})
 					if endEvent.Success {
 						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil, nil)
 					} else {
@@ -1253,7 +1263,12 @@ func RegisterRunFullWorkflowTool(
 				workflowDisplayName = fmt.Sprintf("full-workflow [%s]", enabledGroupNames[0])
 			}
 			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: workflowDisplayName, Cancel: cancel})
+				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              workflowDisplayName,
+					Cancel:            cancel,
+				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 

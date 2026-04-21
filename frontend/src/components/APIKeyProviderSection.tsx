@@ -10,7 +10,7 @@ import { ModelOptionsConfig } from './llm/ModelOptionsConfig'
 
 type APIKeyProvider = Extract<
   LLMProvider,
-  'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'minimax' | 'minimax-coding-plan'
+  'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan'
 >
 
 interface APIKeyProviderSectionProps {

@@ -2966,9 +2966,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Auto-enable code execution mode for claude-code provider.
 		// Claude Code accesses MCP tools via the HTTP bridge (mcpbridge stdio binary),
 		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "claude-code" {
+		if req.Provider == "claude-code" || req.Provider == "kimi" {
 			useCodeExecutionMode = true
-			log.Printf("[CLAUDE CODE] Code execution mode enforced for MCP tool access via bridge")
+			log.Printf("[CLAUDE CODE FAMILY] Code execution mode enforced for MCP tool access via bridge")
 		}
 
 		// Auto-enable code execution mode for gemini-cli provider.
@@ -2992,7 +2992,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		if !isWorkflowPhase {
-			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
+			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "kimi" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
@@ -3999,7 +3999,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add CLI-specific tool mapping for providers that use the api-bridge.
 			// These providers can only call mcp__api-bridge__* tools directly;
 			// delegation/memory tools must be called via curl through execute_shell_command.
-			if req.Provider == "claude-code" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
+			if req.Provider == "claude-code" || req.Provider == "kimi" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
 			}
@@ -4135,7 +4135,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;
 				// all others default to tool search mode for the workshop agent.
 				// This mirrors the logic in interactive_workshop_manager.go:730-732.
-				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
+				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "kimi" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
 				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v", finalProvider, phaseIsCodeExec)
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
@@ -4888,6 +4888,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
 			}
 			workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
+		}
+
+		// Store the fully configured agent before streaming starts so ultra-fast background
+		// completions (for example learn_code fast-path runs) can trigger a synthetic turn
+		// immediately. Waiting until the end of the first streamed turn creates a race where
+		// the completion loop sees no stored agent and drops the auto-notification.
+		{
+			api.sessionAgentsMux.Lock()
+			api.sessionAgents[sessionID] = llmAgent
+			api.sessionAgentsMux.Unlock()
+			log.Printf("[BG AGENT] Stored agent for session %s for synthetic turn reuse (pre-stream)", sessionID)
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
@@ -6324,6 +6335,13 @@ type workshopExecutionBgNotifier struct {
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human.WorkshopExecutionStart) {
+	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+		log.Printf("[BG AGENT] OnExecutionStart ignored for stopped session %s (exec=%s)", n.sessionID, start.ID)
+		if start.Cancel != nil {
+			start.Cancel()
+		}
+		return
+	}
 	kind := strings.TrimSpace(start.Kind)
 	if kind == "" {
 		kind = "workshop_background"
@@ -6360,6 +6378,11 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
+	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "session stopped", meta)
+		log.Printf("[BG AGENT] OnExecutionComplete ignored for stopped session %s (exec=%s)", n.sessionID, execID)
+		return
+	}
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
 	if agent == nil {
 		return
@@ -6417,6 +6440,10 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string) {
+	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "session stopped", nil)
+		return
+	}
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
 	if agent == nil {
 		return
@@ -6442,6 +6469,12 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 	if n == nil || n.api == nil || strings.TrimSpace(start.ID) == "" {
 		return
 	}
+	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
+		if start.Cancel != nil {
+			start.Cancel()
+		}
+		return
+	}
 	kind := strings.TrimSpace(start.Kind)
 	if kind == "" {
 		kind = "workflow_sub_agent"
@@ -6461,6 +6494,9 @@ func (n *workflowSubAgentTrackingNotifier) OnSubAgentStart(start todo_creation_h
 
 func (n *workflowSubAgentTrackingNotifier) OnSubAgentComplete(agentID, _ string, result string, err error) {
 	if n == nil || n.api == nil || strings.TrimSpace(agentID) == "" {
+		return
+	}
+	if n.api.isSessionMarkedStopped(n.sessionID) || n.api.isSessionStoppedOrInactive(n.sessionID) {
 		return
 	}
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, agentID)

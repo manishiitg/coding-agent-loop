@@ -11,6 +11,7 @@ export type LLMProvider =
   | 'anthropic'
   | 'azure'
   | 'z-ai'
+  | 'kimi'
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
@@ -76,6 +77,7 @@ export interface LLMConfiguration {
     }
     anthropic?: string
     vertex?: string
+    kimi?: string
     azure?: {
       endpoint: string
       api_key: string
@@ -194,6 +196,7 @@ export interface LLMDefaultsResponse {
   anthropic_config?: ExtendedLLMConfiguration
   azure_config?: ExtendedLLMConfiguration
   zai_config?: ExtendedLLMConfiguration
+  kimi_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
   minimax_coding_plan_config?: ExtendedLLMConfiguration
   available_models: {
@@ -204,6 +207,7 @@ export interface LLMDefaultsResponse {
     anthropic?: string[]
     azure?: string[]
     'z-ai'?: string[]
+    kimi?: string[]
     minimax?: string[]
     'minimax-coding-plan'?: string[]
   }

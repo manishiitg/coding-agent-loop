@@ -519,8 +519,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 //  1. step config ExecutionLLM   — explicit per-step override; always wins when set
 //  2. parent ExecutionLLM via context — propagated when the parent todo-task step
 //     has an ExecutionLLM set; when present, tier selection is skipped entirely
-//  3. tiered mode                — preferred_tier from context, workshop override,
-//     or the default tier
+//  3. tiered mode                — workshop override, persistent step execution_tier,
+//     preferred_tier from context, or the default tier
 //  4. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
@@ -578,6 +578,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 					workshopTier, TierLevelLabel(tier), stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 			}
 			return llmConfig
+		}
+		if stepConfig != nil {
+			if fixedTier, ok := ParseTierOverride(stepConfig.ExecutionTier); ok {
+				llmConfig := hcpo.tierResolver.ResolveTier(fixedTier)
+				if llmConfig != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using fixed execution_tier=%s: %s/%s",
+						stepPath, NormalizeTierOverride(stepConfig.ExecutionTier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+				}
+				return llmConfig
+			}
+			if strings.TrimSpace(stepConfig.ExecutionTier) != "" {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid execution_tier=%q for step %s — ignoring and continuing with normal tier selection", stepConfig.ExecutionTier, stepPath))
+			}
 		}
 		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
 			tier := TierLevel(preferredTier)
@@ -657,7 +670,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	// virtual tool — without these, the LLM has to guess MCP server/tool names when writing main.py.
 	actualProvider := config.LLMConfig.Primary.Provider
 	isLearnCode := isScriptedExecutionModeConfig(stepConfig)
-	if actualProvider == "claude-code" || actualProvider == "gemini-cli" || actualProvider == "codex-cli" {
+	if actualProvider == "claude-code" || actualProvider == "kimi" || actualProvider == "gemini-cli" || actualProvider == "codex-cli" {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
 	} else if isLearnCode {
@@ -1254,6 +1267,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	hcpo.disableParentAgentTimeout(config, "execution-only agent")
 
+	// Execution-only steps can run in parallel inside a group. If they all reuse the
+	// group MCP session, the session-level folder guard becomes last-writer-wins and one
+	// step can end up executing another step's commands under the wrong write scope.
+	// Give each execution step its own session-level guard, just like learning/KB agents.
+	// Dedicated tool session for this execution step's shell/filesystem calls.
+	execSessionID := hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths)
+	config.MCPSessionID = execSessionID
+	// Keep browser-sharing behavior unchanged: bind the per-step execution session to the
+	// same shared browser session the group session uses. If a caller later requests
+	// share_browser=false, the isolated browser session override below still wins.
+	// Re-bind the new tool session onto the group's shared browser session so shell
+	// isolation does not accidentally disable browser reuse for share_browser=true.
+	sharedBrowserSessionID := hcpo.resolveWorkshopBrowserSessionID(hcpo.currentGroupName)
+	hcpo.bindWorkshopBrowserSession(execSessionID, sharedBrowserSessionID)
+
 	// Set per-agent folder guard paths on config to avoid race conditions with parallel sub-agents.
 	// These take precedence over the shared BaseOrchestrator.folderGuardReadPaths/WritePaths
 	// in registerCustomToolsForAgent, ensuring each agent gets its own correct paths.
@@ -1534,7 +1562,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Rule 2: Step config if explicitly set
 	// Rule 3: Non-CLI providers default to false
 	conditionalProvider := config.LLMConfig.Primary.Provider
-	if conditionalProvider == "claude-code" || conditionalProvider == "gemini-cli" || conditionalProvider == "codex-cli" {
+	if conditionalProvider == "claude-code" || conditionalProvider == "kimi" || conditionalProvider == "gemini-cli" || conditionalProvider == "codex-cli" {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for conditional agent CLI provider '%s'", conditionalProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
@@ -1781,7 +1809,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Enable code execution mode for CLI providers (claude-code, gemini-cli) that need HTTP bridge for tool routing
 	// Non-CLI providers use simple agent mode (no code execution)
-	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "gemini-cli" || llmConfig.Primary.Provider == "codex-cli"
+	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "kimi" || llmConfig.Primary.Provider == "gemini-cli" || llmConfig.Primary.Provider == "codex-cli"
 	config.UseCodeExecutionMode = isCodeExecutionMode
 	if isCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Todo task orchestrator: code execution mode enabled for CLI provider '%s'", llmConfig.Primary.Provider))

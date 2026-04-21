@@ -498,10 +498,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       return []
     }
 
-    const items: ActiveAgentInfo[] = []
-    const visit = (node: typeof root, depth: number) => {
+    type VisibleExecutionNode = {
+      id: string
+      name: string
+      type: 'agent' | 'delegation'
+      children: VisibleExecutionNode[]
+    }
+
+    const collectVisibleNodes = (node: typeof root): VisibleExecutionNode[] => {
       const children = node.children || []
+      const result: VisibleExecutionNode[] = []
+
       for (const child of children) {
+        const descendants = collectVisibleNodes(child)
         const isVisible =
           child.status === 'running' &&
           child.kind !== 'session' &&
@@ -509,18 +518,47 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           child.kind !== 'synthetic_turn'
 
         if (isVisible) {
-          items.push({
+          result.push({
+            id: child.execution_id,
             name: child.name || child.kind || 'Execution',
             type: child.kind === 'delegation' ? 'delegation' : 'agent',
-            depth,
+            children: descendants,
           })
+          continue
         }
 
-        visit(child, isVisible ? depth + 1 : depth)
+        result.push(...descendants)
       }
+
+      return result
     }
 
-    visit(root, 0)
+    const items: ActiveAgentInfo[] = []
+    const flattenVisibleNodes = (
+      nodes: VisibleExecutionNode[],
+      depth: number,
+      ancestorHasNext: boolean[],
+    ) => {
+      nodes.forEach((node, index) => {
+        const hasNextSibling = index < nodes.length - 1
+        const treePrefix =
+          depth === 0
+            ? ''
+            : `${ancestorHasNext.map(hasNext => (hasNext ? '│ ' : '  ')).join('')}${hasNextSibling ? '├ ' : '└ '}`
+
+        items.push({
+          id: node.id,
+          name: node.name,
+          type: node.type,
+          depth,
+          treePrefix,
+        })
+
+        flattenVisibleNodes(node.children, depth + 1, [...ancestorHasNext, hasNextSibling])
+      })
+    }
+
+    flattenVisibleNodes(collectVisibleNodes(root), 0, [])
     return items
   }, [sessionExecutionTree])
 

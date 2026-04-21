@@ -27,6 +27,7 @@ var supportedLLMProviders = []string{
 	"anthropic",
 	"azure",
 	"z-ai",
+	"kimi",
 	"minimax",
 	"minimax-coding-plan",
 	"claude-code",
@@ -178,6 +179,7 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	setProviderKeyFromEnv(llm.ProviderOpenAI, "OPENAI_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderAnthropic, "ANTHROPIC_API_KEY")
 	setProviderKeyFromEnv(llm.ProviderZAI, "ZAI_API_KEY")
+	setProviderKeyFromEnv(llm.ProviderKimi, "KIMI_API_KEY")
 	if s := os.Getenv("VERTEX_API_KEY"); s != "" {
 		keys.Vertex = &s
 	} else if s := os.Getenv("GOOGLE_API_KEY"); s != "" {
@@ -269,7 +271,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "z-ai", "minimax", "minimax-coding-plan"}
+	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "z-ai", "kimi", "minimax", "minimax-coding-plan"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -327,6 +329,8 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 			entry["api_key"] = key
 		} else if key := os.Getenv("ZAI_API_KEY"); provider == "z-ai" && key != "" {
 			entry["api_key"] = key
+		} else if key := os.Getenv("KIMI_API_KEY"); provider == "kimi" && key != "" {
+			entry["api_key"] = key
 		}
 	}
 	return []map[string]interface{}{entry}
@@ -350,6 +354,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"anthropic_config":           defaults.AnthropicConfig,
 		"azure_config":               defaults.AzureConfig,
 		"zai_config":                 defaults.ZAIConfig,
+		"kimi_config":                defaults.KimiConfig,
 		"minimax_config":             defaults.MinimaxConfig,
 		"minimax_coding_plan_config": defaults.MinimaxCodingPlanConfig,
 		"available_models":           defaults.AvailableModels,
@@ -386,6 +391,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("azure_config")
 			case "z-ai":
 				stripSecrets("zai_config")
+			case "kimi":
+				stripSecrets("kimi_config")
 			case "vertex":
 				stripSecrets("vertex_config")
 			case "minimax":

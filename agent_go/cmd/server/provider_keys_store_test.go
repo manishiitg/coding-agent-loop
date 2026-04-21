@@ -6,6 +6,7 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	existing := &StoredProviderKeys{
 		OpenAI:            "openai-existing",
 		ZAI:               "zai-existing",
+		Kimi:              "kimi-existing",
 		MiniMax:           "minimax-existing",
 		MiniMaxCodingPlan: "coding-existing",
 	}
@@ -22,6 +23,9 @@ func TestMergeStoredProviderKeyValuesPreservesAndUpdatesProviderKeys(t *testing.
 	}
 	if merged.ZAI != "zai-new" {
 		t.Fatalf("expected ZAI key to be updated, got %q", merged.ZAI)
+	}
+	if merged.Kimi != "kimi-existing" {
+		t.Fatalf("expected Kimi key to be preserved, got %q", merged.Kimi)
 	}
 	if merged.MiniMax != "" {
 		t.Fatalf("expected MiniMax key to be deleted, got %q", merged.MiniMax)

@@ -138,3 +138,82 @@ func TestSelectExecutionLLM_UsesTierResolverWhenStepExecutionLLMIsUnset(t *testi
 		t.Fatalf("expected tier-1 model for no learnings path, got %q", llm.Primary.ModelID)
 	}
 }
+
+func TestSelectExecutionLLM_UsesFixedExecutionTier(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		tierResolver: NewTierResolver(&TieredLLMConfig{
+			Tier1: &AgentLLMConfig{Provider: "openai", ModelID: "tier-1"},
+			Tier2: &AgentLLMConfig{Provider: "openai", ModelID: "tier-2"},
+			Tier3: &AgentLLMConfig{Provider: "openai", ModelID: "tier-3"},
+		}, nil),
+	}
+
+	llm := hcpo.selectExecutionLLM(context.Background(), &AgentConfigs{ExecutionTier: "medium"}, "step-1")
+	if llm == nil {
+		t.Fatal("expected execution llm config, got nil")
+	}
+	if llm.Primary.ModelID != "tier-2" {
+		t.Fatalf("expected tier-2 model for fixed medium execution_tier, got %q", llm.Primary.ModelID)
+	}
+}
+
+func TestSelectExecutionLLM_WorkshopTierOverrideBeatsFixedExecutionTier(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		tierResolver: NewTierResolver(&TieredLLMConfig{
+			Tier1: &AgentLLMConfig{Provider: "openai", ModelID: "tier-1"},
+			Tier2: &AgentLLMConfig{Provider: "openai", ModelID: "tier-2"},
+			Tier3: &AgentLLMConfig{Provider: "openai", ModelID: "tier-3"},
+		}, nil),
+	}
+
+	ctx := context.WithValue(context.Background(), workshopTierContextKey{}, int(TierLow))
+	llm := hcpo.selectExecutionLLM(ctx, &AgentConfigs{ExecutionTier: "medium"}, "step-1")
+	if llm == nil {
+		t.Fatal("expected execution llm config, got nil")
+	}
+	if llm.Primary.ModelID != "tier-3" {
+		t.Fatalf("expected workshop override to win with tier-3 model, got %q", llm.Primary.ModelID)
+	}
+}

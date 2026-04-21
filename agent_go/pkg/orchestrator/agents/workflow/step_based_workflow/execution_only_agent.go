@@ -47,7 +47,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 
 ## Workspace & Paths
 
-All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the directory may not exist. Wrap paths in single quotes in shell commands (folder names may contain spaces).
+All paths are absolute. Write primary outputs under `+"`"+`STEP_OUTPUT_DIR`+"`"+`. That folder already exists — do **not** `+"`"+`mkdir`+"`"+` it. Only create subdirectories beneath it when needed (for example `+"`"+`mkdir -p "$STEP_OUTPUT_DIR/db/research/current"`+"`"+`). Wrap paths in single quotes in shell commands (folder names may contain spaces).
 
 | Path | Location |
 |------|----------|
@@ -87,10 +87,10 @@ cat knowledgebase/notes/company-acme.md
 {{else if eq .KbAccess "write"}} Write-scoped: the folder guard allows writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` / `+"`"+`notes/`+"`"+` yourself; emit facts in your step output and let the KB agent merge.{{end}}
 {{end}}
 ## EXECUTION RULES
-1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
-{{if .UseCodeStyleRules}}2. Use absolute paths in code. E.g., `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
+1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` under `+"`"+`$STEP_OUTPUT_DIR`+"`"+` (step folder: `+"`"+`{{.StepExecutionPath}}/`+"`"+`).
+{{if .UseCodeStyleRules}}2. Derive output paths from `+"`"+`os.environ['STEP_OUTPUT_DIR']`+"`"+` in code. E.g., `+"`"+`open(os.path.join(os.environ['STEP_OUTPUT_DIR'], '{{.StepContextOutput}}'), "w")`+"`"+`.
 3. **No env var fallbacks in Python**: always `+"`"+`os.environ['KEY']`+"`"+` — never `+"`"+`os.environ.get('KEY', 'default')`+"`"+`. Variables use `+"`"+`VAR_<NAME>`+"`"+`, secrets use `+"`"+`SECRET_<NAME>`+"`"+`. Missing var must raise KeyError, not silently use a hardcoded value.
-{{else}}2. Use absolute paths in shell commands. E.g., `+"`"+`echo '...' > '{{.StepExecutionPath}}/{{.StepContextOutput}}'`+"`"+`.
+{{else}}2. Derive output paths from `+"`"+`$STEP_OUTPUT_DIR`+"`"+` in shell commands. E.g., `+"`"+`mkdir -p "$(dirname "$STEP_OUTPUT_DIR/{{.StepContextOutput}}")" && echo '...' > "$STEP_OUTPUT_DIR/{{.StepContextOutput}}"`+"`"+`.
 {{end}}
 
 {{/* Previous Steps Summary disabled — step dependencies provide sufficient context

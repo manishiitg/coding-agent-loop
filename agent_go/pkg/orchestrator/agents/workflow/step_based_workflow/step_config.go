@@ -295,6 +295,9 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.ExecutionLLM != nil {
 		target.ExecutionLLM = source.ExecutionLLM
 	}
+	if source.ExecutionTier != "" {
+		target.ExecutionTier = source.ExecutionTier
+	}
 	if source.LearningLLM != nil {
 		target.LearningLLM = source.LearningLLM
 	}

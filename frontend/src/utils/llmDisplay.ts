@@ -10,6 +10,7 @@ export type ProviderType =
   | 'anthropic'
   | 'azure'
   | 'z-ai'
+  | 'kimi'
   | 'claude-code'
   | 'gemini-cli'
   | 'codex-cli'
@@ -58,6 +59,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'API Key',
     colorClass: 'text-fuchsia-600 dark:text-fuchsia-400',
   },
+  kimi: {
+    name: 'Kimi',
+    authDescription: 'API Key via Claude Code',
+    colorClass: 'text-rose-600 dark:text-rose-400',
+  },
   'claude-code': {
     name: 'Claude Code',
     authDescription: 'Local CLI (no API key)',
@@ -93,6 +99,7 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'anthropic',
   'azure',
   'z-ai',
+  'kimi',
   'minimax',
   'minimax-coding-plan',
   'claude-code',

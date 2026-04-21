@@ -1206,11 +1206,11 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   </TooltipProvider>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 min-w-0">
-                  <LLMSelectionDropdown
-                    availableLLMs={availableLLMs}
-                    selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
+	              <div className="flex items-center gap-2">
+	                <div className="flex-1 min-w-0">
+	                  <LLMSelectionDropdown
+	                    availableLLMs={availableLLMs}
+	                    selectedLLM={llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption()}
                     onLLMSelect={handleExecutionLLMSelect}
                     onRefresh={loadDefaultsFromBackend}
                     inModal={false}
@@ -1229,10 +1229,40 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         {value}
                       </option>
                     ))}
-                  </select>
-                </div>
-              </div>
-            </div>
+	                  </select>
+	                </div>
+	              </div>
+	              {presetLLMConfig?.llm_allocation_mode === 'tiered' && (
+	                <div>
+	                  <label className="text-xs text-gray-600 dark:text-gray-400">Execution Tier</label>
+	                  <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-1">
+	                    Persistent tier override for this step in tiered mode
+	                  </p>
+	                  {agentConfigs.execution_llm?.provider && agentConfigs.execution_llm?.model_id ? (
+	                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+	                      ⚠️ Execution LLM is set — it takes precedence over execution tier. Clear Execution LLM above to use tier-based selection.
+	                    </p>
+	                  ) : (
+	                    <select
+	                      value={agentConfigs.execution_tier ?? ''}
+	                      onChange={(e) => {
+	                        const val = e.target.value as AgentConfigs['execution_tier'] | '';
+	                        setAgentConfigs((prev) => ({
+	                          ...prev,
+	                          execution_tier: val || undefined,
+	                        }));
+	                      }}
+	                      className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+	                    >
+	                      <option value="">Auto (adaptive/default)</option>
+	                      <option value="high">Tier 1 - High Reasoning</option>
+	                      <option value="medium">Tier 2 - Medium Reasoning</option>
+	                      <option value="low">Tier 3 - Low Reasoning</option>
+	                    </select>
+	                  )}
+	                </div>
+	              )}
+	            </div>
 
             {/* Todo Task Tier Controls (only in tiered mode for todo_task steps) */}
             {isTodoTask && presetLLMConfig?.llm_allocation_mode === 'tiered' && (

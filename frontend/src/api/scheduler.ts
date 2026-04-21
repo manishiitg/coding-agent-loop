@@ -69,6 +69,7 @@ export interface StoredProviderKeys {
   openai?: string
   anthropic?: string
   zai?: string
+  kimi?: string
   vertex?: string
   gemini_cli?: string
   minimax?: string

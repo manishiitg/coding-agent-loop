@@ -206,6 +206,7 @@ type ConsistencyRule struct {
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
 	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
+	ExecutionTier                string          `json:"execution_tier,omitempty"`                  // Persistent execution tier override in tiered mode: "high" | "medium" | "low"
 	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
 	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 500
 	LearningObjective            string          `json:"learning_objective,omitempty"`              // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.

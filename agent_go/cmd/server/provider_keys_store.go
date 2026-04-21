@@ -24,6 +24,7 @@ type StoredProviderKeys struct {
 	OpenAI            string               `json:"openai,omitempty"`
 	Anthropic         string               `json:"anthropic,omitempty"`
 	ZAI               string               `json:"zai,omitempty"`
+	Kimi              string               `json:"kimi,omitempty"`
 	Vertex            string               `json:"vertex,omitempty"`
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
@@ -109,6 +110,9 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.ZAI != "" {
 		m["z-ai"] = keys.ZAI
 	}
+	if keys.Kimi != "" {
+		m["kimi"] = keys.Kimi
+	}
 	if keys.Vertex != "" {
 		m["vertex"] = keys.Vertex
 	}
@@ -160,6 +164,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.ZAI != "" {
 		result.ZAI = &keys.ZAI
 	}
+	if keys.Kimi != "" {
+		result.Kimi = &keys.Kimi
+	}
 	if keys.Vertex != "" {
 		result.Vertex = &keys.Vertex
 	}
@@ -199,6 +206,9 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	if result.ZAI != nil {
 		loaded = append(loaded, "z-ai")
+	}
+	if result.Kimi != nil {
+		loaded = append(loaded, "kimi")
 	}
 	if result.Vertex != nil {
 		loaded = append(loaded, "vertex")
@@ -247,6 +257,7 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		OpenAI:            pick(envKeys.OpenAI, wsKeys.OpenAI),
 		Anthropic:         pick(envKeys.Anthropic, wsKeys.Anthropic),
 		ZAI:               pick(envKeys.ZAI, wsKeys.ZAI),
+		Kimi:              pick(envKeys.Kimi, wsKeys.Kimi),
 		Vertex:            pick(envKeys.Vertex, wsKeys.Vertex),
 		GeminiCLI:         pick(envKeys.GeminiCLI, wsKeys.GeminiCLI),
 		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),
@@ -385,6 +396,7 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		OpenAI:            pick(existing.OpenAI, incoming.OpenAI),
 		Anthropic:         pick(existing.Anthropic, incoming.Anthropic),
 		ZAI:               pick(existing.ZAI, incoming.ZAI),
+		Kimi:              pick(existing.Kimi, incoming.Kimi),
 		Vertex:            pick(existing.Vertex, incoming.Vertex),
 		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
 		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),

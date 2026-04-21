@@ -212,6 +212,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			return true, todoTaskStep.NextStepID, nil
 		}
 
+		// Stop must be terminal. If the builder-authored fast path failed because the
+		// parent context was canceled, do not fall back into a fresh LLM orchestrator run.
+		if ctx.Err() != nil {
+			return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
+		}
+
 		if fastResult.RanScript {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [orchestrator_learn_code] Builder-authored script failed for step %d — falling back to LLM orchestrator (fresh start)", stepIndex+1))
 		}

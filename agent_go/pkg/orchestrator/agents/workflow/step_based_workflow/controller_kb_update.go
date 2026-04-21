@@ -88,7 +88,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 		hcpo.workshopStepRegistry.Register(exec)
 	}
 	if hcpo.workshopExecutionNotifier != nil {
-		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{
+			ID:                execID,
+			ParentExecutionID: currentWorkshopParentExecutionID(baseCtx),
+			Name:              execLabel,
+			Cancel:            cancel,
+		})
 	}
 
 	enqueueKBUpdateJob(func() {
@@ -273,7 +278,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) RunKBReorganize(ctx context.Context, 
 		hcpo.workshopStepRegistry.Register(exec)
 	}
 	if hcpo.workshopExecutionNotifier != nil {
-		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{
+			ID:                execID,
+			ParentExecutionID: currentWorkshopParentExecutionID(ctx),
+			Name:              execLabel,
+			Cancel:            cancel,
+		})
 	}
 
 	done := make(chan reorgResult, 1)
@@ -407,7 +417,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) RunKBConsolidate(ctx context.Context,
 		hcpo.workshopStepRegistry.Register(exec)
 	}
 	if hcpo.workshopExecutionNotifier != nil {
-		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{ID: execID, Name: execLabel, Cancel: cancel})
+		hcpo.workshopExecutionNotifier.OnExecutionStart(WorkshopExecutionStart{
+			ID:                execID,
+			ParentExecutionID: currentWorkshopParentExecutionID(ctx),
+			Name:              execLabel,
+			Cancel:            cancel,
+		})
 	}
 
 	done := make(chan consolidateResult, 1)

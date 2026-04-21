@@ -1,6 +1,8 @@
 package step_based_workflow
 
 import (
+	"strings"
+
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
@@ -30,6 +32,30 @@ func TierLevelLabel(tier TierLevel) string {
 		return "Low"
 	default:
 		return "Unknown"
+	}
+}
+
+// NormalizeTierOverride normalizes user/config-provided tier strings.
+func NormalizeTierOverride(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "high", "medium", "low":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return ""
+	}
+}
+
+// ParseTierOverride converts normalized tier strings into TierLevel values.
+func ParseTierOverride(v string) (TierLevel, bool) {
+	switch NormalizeTierOverride(v) {
+	case "high":
+		return TierHigh, true
+	case "medium":
+		return TierMedium, true
+	case "low":
+		return TierLow, true
+	default:
+		return TierHigh, false
 	}
 }
 

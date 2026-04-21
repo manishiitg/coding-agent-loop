@@ -20,14 +20,22 @@ func TestClearStepConfigField(t *testing.T) {
 		prep           func(*StepConfig)
 		assertJSONGone string // JSON key that must disappear after clearing
 	}{
-		{
-			name:  "clears LLM pointer override",
-			field: "learning_llm",
-			prep: func(sc *StepConfig) {
-				sc.AgentConfigs = &AgentConfigs{LearningLLM: &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-opus"}}
+			{
+				name:  "clears LLM pointer override",
+				field: "learning_llm",
+				prep: func(sc *StepConfig) {
+					sc.AgentConfigs = &AgentConfigs{LearningLLM: &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-opus"}}
+				},
+				assertJSONGone: "learning_llm",
 			},
-			assertJSONGone: "learning_llm",
-		},
+			{
+				name:  "clears execution tier override",
+				field: "execution_tier",
+				prep: func(sc *StepConfig) {
+					sc.AgentConfigs = &AgentConfigs{ExecutionTier: "medium"}
+				},
+				assertJSONGone: "execution_tier",
+			},
 		{
 			name:  "clears slice selection",
 			field: "servers",

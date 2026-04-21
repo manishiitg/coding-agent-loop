@@ -1357,7 +1357,7 @@ func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 	if config == nil {
 		return false
 	}
-	return config.Provider == "claude-code" || config.Provider == "gemini-cli" || config.Provider == "codex-cli"
+	return config.Provider == "claude-code" || config.Provider == "kimi" || config.Provider == "gemini-cli" || config.Provider == "codex-cli"
 }
 
 // isCliProviderForPrompt checks if the given provider is a CLI-based provider (claude-code, gemini-cli, or codex-cli)
@@ -1365,7 +1365,7 @@ func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 // CLI providers have their own tool-calling capabilities and don't need code execution prompt instructions,
 // even though code execution mode is technically enabled for HTTP bridge/tool routing.
 func isCliProviderForPrompt(provider string) bool {
-	return provider == "claude-code" || provider == "gemini-cli" || provider == "codex-cli"
+	return provider == "claude-code" || provider == "kimi" || provider == "gemini-cli" || provider == "codex-cli"
 }
 
 // preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.

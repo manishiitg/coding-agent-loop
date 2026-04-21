@@ -552,6 +552,10 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.ZAI = &v
 	}
+	if value, ok := rawKeys["kimi"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.Kimi = &v
+	}
 	if value, ok := rawKeys["vertex"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
 		keys.Vertex = &v

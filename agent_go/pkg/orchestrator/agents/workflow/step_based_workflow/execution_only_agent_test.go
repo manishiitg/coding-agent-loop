@@ -28,7 +28,7 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 
 	requiredSnippets := []string{
 		"CODE EXECUTION MODE",
-		"Use absolute paths in code.",
+		"Derive output paths from `os.environ['STEP_OUTPUT_DIR']` in code.",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {

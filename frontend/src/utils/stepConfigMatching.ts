@@ -10,6 +10,7 @@ export interface AgentLLMConfig {
 // AgentConfigs represents per-agent configuration for a step
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
+  execution_tier?: 'high' | 'medium' | 'low';
   learning_llm?: AgentLLMConfig;
   conditional_llm?: AgentLLMConfig;
   execution_max_turns?: number;

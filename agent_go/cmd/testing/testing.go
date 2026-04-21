@@ -87,4 +87,5 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(geminiResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(codexResumeAfterCancelTestCmd)
 	TestingCmd.AddCommand(zaiTestCmd)
+	TestingCmd.AddCommand(kimiTestCmd)
 }

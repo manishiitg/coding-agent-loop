@@ -26,7 +26,7 @@ interface LLMConfigurationModalProps {
 }
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
-type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'minimax' | 'minimax-coding-plan'
+type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan'
 
 // Tab type for the modal
 type TabType = 'library' | ProviderType
@@ -65,9 +65,11 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropicConfig,
     azureConfig,
     zaiConfig,
+    kimiConfig,
     minimaxConfig,
     minimaxCodingPlanConfig,
     availableZAIModels,
+    availableKimiModels,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
@@ -75,6 +77,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     setAnthropicConfig,
     setAzureConfig,
     setZaiConfig,
+    setKimiConfig,
     setMinimaxConfig,
     setMinimaxCodingPlanConfig,
     testAPIKey,
@@ -125,10 +128,11 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
     azure: { config: azureConfig, setConfig: setAzureConfig },
     'z-ai': { config: zaiConfig, setConfig: setZaiConfig },
+    kimi: { config: kimiConfig, setConfig: setKimiConfig },
     minimax: { config: minimaxConfig, setConfig: setMinimaxConfig },
     'minimax-coding-plan': { config: minimaxCodingPlanConfig, setConfig: setMinimaxCodingPlanConfig }
-  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, zaiConfig, minimaxConfig, minimaxCodingPlanConfig,
-      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setZaiConfig, setMinimaxConfig, setMinimaxCodingPlanConfig])
+  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, zaiConfig, kimiConfig, minimaxConfig, minimaxCodingPlanConfig,
+      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setZaiConfig, setKimiConfig, setMinimaxConfig, setMinimaxCodingPlanConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -198,6 +202,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropic: 'idle',
     azure: 'idle',
     'z-ai': 'idle',
+    kimi: 'idle',
     minimax: 'idle',
     'minimax-coding-plan': 'idle'
   })
@@ -210,6 +215,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropic: null,
     azure: null,
     'z-ai': null,
+    kimi: null,
     minimax: null,
     'minimax-coding-plan': null
   })
@@ -224,7 +230,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
+  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -584,6 +590,25 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('z-ai', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus['z-ai']}
                   apiKeyError={apiKeyErrors['z-ai']}
+                  metadata={metadata}
+                />
+              )}
+
+              {activeTab === 'kimi' && !isProviderLocked('kimi') && (
+                <APIKeyProviderSection
+                  provider="kimi"
+                  providerLabel="Kimi"
+                  modelPlaceholder="Select a Kimi model"
+                  publishErrorLabel="Kimi"
+                  config={kimiConfig}
+                  models={Array.from(new Set([
+                    ...(metadata?.filter(m => m.provider === 'kimi').map(m => m.model_id) || []),
+                    ...availableKimiModels
+                  ]))}
+                  onUpdate={(config) => handleProviderConfigUpdate('kimi', config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('kimi', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.kimi}
+                  apiKeyError={apiKeyErrors.kimi}
                   metadata={metadata}
                 />
               )}

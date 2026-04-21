@@ -620,7 +620,7 @@ func CreateWorkspaceImageToolExecutors(cfg ImageGenExecutorConfig) map[string]fu
 }
 
 // MergeImageToolExecutors creates image tool executors from cfg and merges them
-// into executors (typed map). If categories is non-nil, each tool is also categorised.
+// into executors (typed map). If categories is non-nil, each tool is also categorized.
 func MergeImageToolExecutors(cfg ImageGenExecutorConfig, executors map[string]func(ctx context.Context, args map[string]any) (string, error), categories map[string]string) {
 	cat := GetWorkspaceImageToolCategory()
 	for name, exec := range CreateWorkspaceImageToolExecutors(cfg) {

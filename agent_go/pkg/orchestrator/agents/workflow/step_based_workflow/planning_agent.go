@@ -205,32 +205,32 @@ type ConsistencyRule struct {
 
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                        *AgentLLMConfig `json:"execution_llm,omitempty"`
-	LearningLLM                         *AgentLLMConfig `json:"learning_llm,omitempty"`
-	ExecutionMaxTurns                   *int            `json:"execution_max_turns,omitempty"`                    // default: 100
-	LearningObjective                   string          `json:"learning_objective,omitempty"`                     // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.
-	LearningsAccess                     string          `json:"learnings_access,omitempty"`                       // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't contribute. "read-write": reads and also writes — requires learning_objective to be non-empty. "none": no read, no write, no learning agent. Empty = legacy auto-migration (see resolveLearningsAccess).
-	LockLearnings                       *bool           `json:"lock_learnings,omitempty"`                         // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LockCode                            *bool           `json:"lock_code,omitempty"`                              // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	SelectedServers                     []string        `json:"selected_servers,omitempty"`                       // step-level MCP server selection (subset of preset servers)
-	SelectedTools                       []string        `json:"selected_tools,omitempty"`                         // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomTools                  []string        `json:"enabled_custom_tools,omitempty"`                   // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableContextOffloading             *bool           `json:"enable_context_offloading,omitempty"`              // Enable/disable context offloading (default: true if nil)
-	UseCodeExecutionMode                *bool           `json:"use_code_execution_mode,omitempty"`                // Step-level code execution mode override (nil = use preset default, true/false = override)
-	EnabledSkills                       []string        `json:"enabled_skills,omitempty"`                         // Step-level skill selection (skill folder names, overrides preset if specified)
-	KnowledgebaseAccess                 string          `json:"knowledgebase_access,omitempty"`                   // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none").
-	KnowledgebaseContribution           string          `json:"knowledgebase_contribution,omitempty"`             // User-authored instruction for the KB update agent — what to extract from this step's output. Required trigger for KB update agent; if empty, KB update is skipped for this step even with write access.
-	TodoTaskOrchestratorTier            *int            `json:"todo_task_orchestrator_tier,omitempty"`            // Tier for todo task orchestrator agent (1/2/3) in tiered mode
-	DisableParallelToolExecution        *bool           `json:"disable_parallel_tool_execution,omitempty"`        // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
-	DisableTierOptimization             *bool           `json:"disable_tier_optimization,omitempty"`              // If true, execution and conditional agents always use Tier 1 (high reasoning)
-	Optimized                           *bool           `json:"optimized,omitempty"`                              // If true, step is considered optimized — retained for readiness tracking, no longer affects tier selection
-	SuccessfulRuns                      *int            `json:"successful_runs,omitempty"`                        // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
-	LearnCodeMaxFixIter                 *int            `json:"learn_code_max_fix_iterations,omitempty"`          // Max LLM fix iterations when main.py execution fails (default: 5)
-	DeclaredExecutionMode               string          `json:"declared_execution_mode,omitempty"`                // Required mode decision for the step: "learn_code" or "code_exec"
-	DeclaredExecutionModeReason         string          `json:"declared_execution_mode_reason,omitempty"`         // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
-	DescriptionReviewed                 *bool           `json:"description_reviewed,omitempty"`                   // True when the step description has been reviewed — clarity AND secrets/hardcoded values. Single flag consolidating the previous description_optimized + description_no_secrets booleans.
-	ReviewNotes                         string          `json:"review_notes,omitempty"`                           // Free-form rationale covering why the step is optimized and/or why the description is considered reviewed. Replaces the previous optimized_reason + description_optimization_reason string fields.
-	GlobalSkillObjective                string          `json:"global_skill_objective,omitempty"`                 // Objective for the global skill — what domain knowledge should it capture and why
+	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
+	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
+	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 100
+	LearningObjective            string          `json:"learning_objective,omitempty"`              // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.
+	LearningsAccess              string          `json:"learnings_access,omitempty"`                // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't contribute. "read-write": reads and also writes — requires learning_objective to be non-empty. "none": no read, no write, no learning agent. Empty = legacy auto-migration (see resolveLearningsAccess).
+	LockLearnings                *bool           `json:"lock_learnings,omitempty"`                  // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LockCode                     *bool           `json:"lock_code,omitempty"`                       // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	SelectedServers              []string        `json:"selected_servers,omitempty"`                // step-level MCP server selection (subset of preset servers)
+	SelectedTools                []string        `json:"selected_tools,omitempty"`                  // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomTools           []string        `json:"enabled_custom_tools,omitempty"`            // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableContextOffloading      *bool           `json:"enable_context_offloading,omitempty"`       // Enable/disable context offloading (default: true if nil)
+	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
+	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)
+	KnowledgebaseAccess          string          `json:"knowledgebase_access,omitempty"`            // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none").
+	KnowledgebaseContribution    string          `json:"knowledgebase_contribution,omitempty"`      // User-authored instruction for the KB update agent — what to extract from this step's output. Required trigger for KB update agent; if empty, KB update is skipped for this step even with write access.
+	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
+	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
+	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, execution and conditional agents always use Tier 1 (high reasoning)
+	Optimized                    *bool           `json:"optimized,omitempty"`                       // If true, step is considered optimized — retained for readiness tracking, no longer affects tier selection
+	SuccessfulRuns               *int            `json:"successful_runs,omitempty"`                 // System-managed counter. Written by syncSuccessfulRunsToStepConfig after each successful validation; mirrors the authoritative count in learning metadata. Read by the readiness checklist to gauge optimization progress (3+ = ready). Agents must NOT set this directly.
+	LearnCodeMaxFixIter          *int            `json:"learn_code_max_fix_iterations,omitempty"`   // Max LLM fix iterations when main.py execution fails (default: 5)
+	DeclaredExecutionMode        string          `json:"declared_execution_mode,omitempty"`         // Required mode decision for the step: "learn_code" or "code_exec"
+	DeclaredExecutionModeReason  string          `json:"declared_execution_mode_reason,omitempty"`  // Audit trail: why the declared mode is the best fit. Not consumed by Go runtime, but preserved so future LLM reviewers (harden, replan) reading raw step_config.json see the original decision rationale.
+	DescriptionReviewed          *bool           `json:"description_reviewed,omitempty"`            // True when the step description has been reviewed — clarity AND secrets/hardcoded values. Single flag consolidating the previous description_optimized + description_no_secrets booleans.
+	ReviewNotes                  string          `json:"review_notes,omitempty"`                    // Free-form rationale covering why the step is optimized and/or why the description is considered reviewed. Replaces the previous optimized_reason + description_optimization_reason string fields.
+	GlobalSkillObjective         string          `json:"global_skill_objective,omitempty"`          // Objective for the global skill — what domain knowledge should it capture and why
 }
 
 // ============================================================================
@@ -567,7 +567,7 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 // NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
 // Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
 type TodoTaskPlanStep struct {
-	Type             StepType                 `json:"type"`                        // Always "todo_task" - required for JSON marshaling/unmarshaling
+	Type             StepType                 `json:"type"` // Always "todo_task" - required for JSON marshaling/unmarshaling
 	CommonStepFields                          // Embeds ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, ValidationSchema
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Predefined sub-agents (with learning/prevalidation)
 	NextStepID       string                   `json:"next_step_id,omitempty"`      // ID of step after todo task completes (or "end")
@@ -3610,6 +3610,7 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 	return nil
 }
 
+//nolint:unused // kept for the deferred todo-route ID migration rollout.
 type todoRouteIDMigration struct {
 	ParentStepID string
 	RouteID      string
@@ -3619,6 +3620,7 @@ type todoRouteIDMigration struct {
 	NewTitle     string
 }
 
+//nolint:unused // kept for the deferred todo-route ID migration rollout.
 func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, changes *[]todoRouteIDMigration) error {
 	switch s := step.(type) {
 	case *TodoTaskPlanStep:
@@ -3668,6 +3670,7 @@ func migrateTodoRouteIDsInStep(step PlanStepInterface, parentStepFilter string, 
 	return nil
 }
 
+//nolint:unused // kept for the deferred todo-route ID migration rollout.
 func migrateTodoRouteIDsInPlan(plan *PlanningResponse, parentStepFilter string) ([]todoRouteIDMigration, error) {
 	var changes []todoRouteIDMigration
 	for _, step := range plan.Steps {
@@ -3683,6 +3686,7 @@ func migrateTodoRouteIDsInPlan(plan *PlanningResponse, parentStepFilter string) 
 	return changes, nil
 }
 
+//nolint:unused // kept for the deferred todo-route ID migration rollout.
 func updateStepConfigIDsForTodoRouteMigration(configs []StepConfig, migrations []todoRouteIDMigration) error {
 	idMap := make(map[string]string)
 	for _, migration := range migrations {
@@ -3713,6 +3717,7 @@ func updateStepConfigIDsForTodoRouteMigration(configs []StepConfig, migrations [
 	return nil
 }
 
+//nolint:unused // kept for the deferred todo-route ID migration rollout.
 func writeStepConfigsFile(ctx context.Context, writeFile func(context.Context, string, string) error, configs []StepConfig) error {
 	configFile := StepConfigFile{Steps: configs}
 	jsonData, err := json.MarshalIndent(configFile, "", "  ")

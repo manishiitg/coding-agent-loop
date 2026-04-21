@@ -27,10 +27,6 @@ type workspaceAPIResponse struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-type workspaceFileData struct {
-	Content string `json:"content"`
-}
-
 // WorkspaceAPIStore persists operator state through the workspace API instead
 // of writing directly to the host filesystem. This keeps workspace ownership
 // inside the workspace service even when agent_go runs outside Docker.

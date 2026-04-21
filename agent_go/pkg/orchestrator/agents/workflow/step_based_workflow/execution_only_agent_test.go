@@ -28,7 +28,7 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 
 	requiredSnippets := []string{
 		"CODE EXECUTION MODE",
-		"Use absolute paths in shell commands.",
+		"Use absolute paths in code.",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {

@@ -83,7 +83,7 @@ func drainKBUpdateQueue() {
 	}
 }
 
-// WaitForBackgroundJobs blocks until both queues drain or the context is cancelled
+// WaitForBackgroundJobs blocks until both queues drain or the context is canceled
 // or the optional timeout elapses. Returns an error only when the wait is cut short.
 //
 // Intended for whole-workflow completion points (e.g. end of run_full_workflow) where
@@ -110,7 +110,7 @@ func WaitForBackgroundJobs(ctx context.Context, timeout time.Duration) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		log.Printf("[BG_WAIT] context cancelled while waiting for background learning/KB queues: %v", ctx.Err())
+		log.Printf("[BG_WAIT] context canceled while waiting for background learning/KB queues: %v", ctx.Err())
 		return ctx.Err()
 	case <-timeoutCh:
 		log.Printf("[BG_WAIT] timeout (%s) elapsed waiting for background learning/KB queues to drain — returning with jobs still in flight", timeout)

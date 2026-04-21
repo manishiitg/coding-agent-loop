@@ -64,13 +64,13 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 {{if .ValidationSchema}}
 ### Required Output Files (Pre-Validation Schema)
 
-The following files MUST exist under ` + "`" + `{{.StepExecutionPath}}/` + "`" + ` and match this structure. Pre-validation runs these checks after execution — produce them on the first attempt to avoid a retry:
+The following files MUST exist under `+"`"+`{{.StepExecutionPath}}/`+"`"+` and match this structure. Pre-validation runs these checks after execution — produce them on the first attempt to avoid a retry:
 
-` + "```json" + `
+`+"```json"+`
 {{printf "%s" .ValidationSchema}}
-` + "```" + `
+`+"```"+`
 
-When delegating to a sub-agent, pass the exact output file paths and required structure in the ` + "`" + `instructions` + "`" + ` field. Sub-agents cannot see this schema directly.
+When delegating to a sub-agent, pass the exact output file paths and required structure in the `+"`"+`instructions`+"`"+` field. Sub-agents cannot see this schema directly.
 {{end}}
 
 **Three persistent stores — keep them separate when instructing sub-agents:**
@@ -101,7 +101,7 @@ Do NOT use call_generic_agent to patch or normalize the declared output file of 
 - 2 (Medium): Routine, well-defined tasks
 - 3 (Low): Simple, repetitive tasks
 
-**How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section and use those when available. Otherwise, judge from the route's description and the task difficulty: favour tier 1 for first attempts on novel/complex work, tier 2 for routine work with an established recipe, tier 3 for purely mechanical/validation sub-tasks. There is no automatic fallback — calls without preferred_tier are rejected.
+**How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section and use those when available. Otherwise, judge from the route's description and the task difficulty: favor tier 1 for first attempts on novel/complex work, tier 2 for routine work with an established recipe, tier 3 for purely mechanical/validation sub-tasks. There is no automatic fallback — calls without preferred_tier are rejected.
 
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
 
@@ -178,16 +178,16 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 {{if .LearningsPath}}
 ## Learnings Folder (Reference Only)
 
-Path: ` + "`" + `{{.LearningsPath}}/` + "`" + `
+Path: `+"`"+`{{.LearningsPath}}/`+"`"+`
 
 This folder contains the global skill file and sub-agent saved scripts from previous runs. Sub-agents read and update their skills automatically — you do NOT need to read or pass these routinely.
 
 **Only access this folder when**:
 - Debugging a sub-agent failure and you need to understand what it learned previously
 - Doing work yourself and you want to check for known pitfalls{{if .IsCodeExecutionMode}}
-- Inspecting a saved ` + "`" + `main.py` + "`" + ` script to understand how a sub-agent executes its task{{end}}
+- Inspecting a saved `+"`"+`main.py`+"`"+` script to understand how a sub-agent executes its task{{end}}
 
-Structure: ` + "`" + `_global/SKILL.md` + "`" + ` (global skill){{if .IsCodeExecutionMode}}, ` + "`" + `{step-id}/main.py` + "`" + ` (saved scripts per step){{end}}
+Structure: `+"`"+`_global/SKILL.md`+"`"+` (global skill){{if .IsCodeExecutionMode}}, `+"`"+`{step-id}/main.py`+"`"+` (saved scripts per step){{end}}
 {{end}}
 
 {{if .LearningHistory}}
@@ -308,30 +308,30 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 	now := time.Now()
 
 	templateData := map[string]interface{}{
-		"CurrentDate":                now.Format("2006-01-02"),
-		"CurrentTime":                now.Format("15:04:05"),
-		"PredefinedRoutes": templateVars["PredefinedRoutes"],
-		"VariableNames":    templateVars["VariableNames"],
-		"VariableValues":             templateVars["VariableValues"],
-		"LearningHistory":            templateVars["LearningHistory"],
-		"StepExecutionPath":          templateVars["StepExecutionPath"],
-		"DownloadsPath":              templateVars["DownloadsPath"],
-		"ExecutionFolderPath":        templateVars["ExecutionFolderPath"],
-		"WorkspacePath":              templateVars["WorkspacePath"],
-		"WorkflowRoot":               templateVars["WorkflowRoot"],
-		"KnowledgebasePath":          templateVars["KnowledgebasePath"],
-		"DBPath":                     templateVars["DBPath"],
-		"FolderGuardReadPaths":       templateVars["FolderGuardReadPaths"],
-		"FolderGuardWritePaths":      templateVars["FolderGuardWritePaths"],
-		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
-		"KbAccess":                   templateVars["KbAccess"],
-		"KbAccessLabel":              templateVars["KbAccessLabel"],
-		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",
-		"CodeExecutionSection":       BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["WorkspacePath"]),
-		"PreviousStepsSummary":       templateVars["PreviousStepsSummary"],
-		"StepTitle":                  templateVars["StepTitle"],
-		"StepDescription":            templateVars["StepDescription"],
-		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
+		"CurrentDate":                   now.Format("2006-01-02"),
+		"CurrentTime":                   now.Format("15:04:05"),
+		"PredefinedRoutes":              templateVars["PredefinedRoutes"],
+		"VariableNames":                 templateVars["VariableNames"],
+		"VariableValues":                templateVars["VariableValues"],
+		"LearningHistory":               templateVars["LearningHistory"],
+		"StepExecutionPath":             templateVars["StepExecutionPath"],
+		"DownloadsPath":                 templateVars["DownloadsPath"],
+		"ExecutionFolderPath":           templateVars["ExecutionFolderPath"],
+		"WorkspacePath":                 templateVars["WorkspacePath"],
+		"WorkflowRoot":                  templateVars["WorkflowRoot"],
+		"KnowledgebasePath":             templateVars["KnowledgebasePath"],
+		"DBPath":                        templateVars["DBPath"],
+		"FolderGuardReadPaths":          templateVars["FolderGuardReadPaths"],
+		"FolderGuardWritePaths":         templateVars["FolderGuardWritePaths"],
+		"ShowToolsSection":              templateVars["ShowToolsSection"] == "true",
+		"KbAccess":                      templateVars["KbAccess"],
+		"KbAccessLabel":                 templateVars["KbAccessLabel"],
+		"IsCodeExecutionMode":           templateVars["IsCodeExecutionMode"] == "true",
+		"CodeExecutionSection":          BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["WorkspacePath"]),
+		"PreviousStepsSummary":          templateVars["PreviousStepsSummary"],
+		"StepTitle":                     templateVars["StepTitle"],
+		"StepDescription":               templateVars["StepDescription"],
+		"StepSuccessCriteria":           templateVars["StepSuccessCriteria"],
 		"ValidationSchema":              templateVars["ValidationSchema"],
 		"HasBrowserAccess":              templateVars["HasBrowserAccess"] == "true",
 		"MaxBrowserSessionsPerWorkflow": browser.MaxBrowserSessionsPerWorkflow,

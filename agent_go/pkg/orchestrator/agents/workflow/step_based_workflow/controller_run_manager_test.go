@@ -91,6 +91,8 @@ func TestCreateRunFolderStructureDoesNotCreateGitignore(t *testing.T) {
 		runPath,
 		runPath + "/execution",
 		runPath + "/execution/Downloads",
+		"Workflow/test/db",
+		"Workflow/test/soul",
 	}
 	if len(createdFolders) != len(expectedFolders) {
 		t.Fatalf("expected %d folder creation requests, got %d (%v)", len(expectedFolders), len(createdFolders), createdFolders)

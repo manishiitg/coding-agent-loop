@@ -373,7 +373,7 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 	return string(resultJSON), nil
 }
 
-// handleEnrichMemory spawns a background agent that (a) distils chat history into memories
+// handleEnrichMemory spawns a background agent that (a) distills chat history into memories
 // and then (b) consolidates and deduplicates the memory files.
 func handleEnrichMemory(ctx context.Context, args map[string]interface{}) (string, error) {
 	focus, _ := args["focus"].(string)
@@ -408,13 +408,13 @@ func handleEnrichMemory(ctx context.Context, args map[string]interface{}) (strin
 	currentDate := now.Format("2006-01-02")
 	dateDir := fmt.Sprintf("%s/%s", memoryFolder, currentDate)
 
-	sb.WriteString(`## Your Task: Enrich Memory (Distil Chats + Consolidate)
+	sb.WriteString(`## Your Task: Enrich Memory (Distill Chats + Consolidate)
 
 You are a memory enrichment agent. Your job has two halves:
 - **Phase 0** — turn recent chat sessions into durable memories, then delete the ones that are too old to keep around.
 - **Phases 1–4** — read all memory files, dedupe/merge/rewrite them, and regenerate index.md.
 
-### Phase 0 — Distil Chat History
+### Phase 0 — Distill Chat History
 The user's raw chat sessions live in ` + chatHistoryFolder + `/ (each session is a folder containing conversation.json).
 
 **File shape** — each conversation.json is a JSON object with this structure:
@@ -643,7 +643,7 @@ Persistent memory across sessions. The goal is to build a **user model** — pre
 
 - **save_memory(content, context?)** — Save user preferences, communication style, recurring use cases, dislikes, patterns, decisions (with reasoning), and project context. Be detailed: include WHY and alternatives.
 - **recall_memory(query)** — Search and retrieve relevant memories. Start with recall_memory(query: "index") to read the high-level snapshot, then recall specific topics for depth.
-- **enrich_memory(focus?, delete_older_than_days?)** — Distil recent chat sessions into memories, consolidate/deduplicate all memory files, and delete chat sessions older than the threshold (default 7 days). Use to keep the user model current from conversations and to prune accumulated entries.
+- **enrich_memory(focus?, delete_older_than_days?)** — Distill recent chat sessions into memories, consolidate/deduplicate all memory files, and delete chat sessions older than the threshold (default 7 days). Use to keep the user model current from conversations and to prune accumulated entries.
 
 ### Storage
 ` + "```" + `
@@ -679,7 +679,7 @@ Memory is a **user model** — optimize for understanding the user in future ses
 - Write as if explaining to a future self with no session context.
 
 ### Enrichment
-- Use enrich_memory to distil recent chat history into memories and consolidate existing ones in one shot.
+- Use enrich_memory to distill recent chat history into memories and consolidate existing ones in one shot.
   It reads every session in ` + "`" + memoryFolder + `/../chat_history/` + "`" + `, extracts insights into today's date folder and entity files, deletes chat sessions older than the threshold (default 7 days), and then dedupes/merges and regenerates ` + "`index.md`" + `.
 - Pass ` + "`focus`" + ` to limit consolidation to a topic. Pass ` + "`delete_older_than_days: 0`" + ` to skip deletion.
 - The agent only saves things with lasting value (preferences, decisions, what worked/failed, project context, recurring patterns, key facts). It skips greetings and trivial one-off lookups.

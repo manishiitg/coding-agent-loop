@@ -38,7 +38,7 @@ func DefaultBuiltinSchedules() []WorkflowSchedule {
 		{
 			ID:             builtinAutoEnrichMemoryID,
 			Name:           "Auto-enrich memory (every 3h)",
-			Description:    "Distil new chat sessions into memory on a schedule. Uses a Go-side pre-check so no LLM runs when there is nothing to enrich.",
+			Description:    "Distill new chat sessions into memory on a schedule. Uses a Go-side pre-check so no LLM runs when there is nothing to enrich.",
 			CronExpression: "0 */3 * * *",
 			Timezone:       "UTC",
 			Enabled:        true,

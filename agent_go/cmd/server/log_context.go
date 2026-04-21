@@ -179,14 +179,3 @@ func formatContextLog(logCtx serverLogContext, format string, args ...interface{
 func logfWithContext(logCtx serverLogContext, format string, args ...interface{}) {
 	log.Print(formatContextLog(logCtx, format, args...))
 }
-
-func (api *StreamingAPI) loggerWithContext(logCtx serverLogContext) loggerv2.Logger {
-	if api == nil || api.logger == nil {
-		return nil
-	}
-	fields := logCtx.Fields()
-	if len(fields) == 0 {
-		return api.logger
-	}
-	return api.logger.With(fields...)
-}

@@ -98,7 +98,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryScoringFastPath(
 	cmd.Dir = filepath.Join(docsRoot, workspacePath, EvaluationScoringLearningsDir)
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
-		return nil, true, fmt.Errorf("scoring main.py failed (%v):\n%s", runErr, truncateForLog(string(out), 4000))
+		return nil, true, fmt.Errorf("scoring main.py failed: %w\n%s", runErr, truncateForLog(string(out), 4000))
 	}
 	if len(out) > 0 {
 		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scoring learn_code] main.py output:\n%s", truncateForLog(string(out), 1000)))

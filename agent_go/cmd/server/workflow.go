@@ -27,6 +27,8 @@ import (
 
 // resolveWorkflowLLMConfigForWorkspace reads the workflow.json manifest at workspacePath
 // and extracts the LLM configuration for use in workflow execution.
+//
+//nolint:unused // retained for the workflow-manifest execution path while routes are being migrated.
 func (api *StreamingAPI) resolveWorkflowLLMConfigForWorkspace(
 	ctx context.Context,
 	workspacePath string,
@@ -80,6 +82,8 @@ func getWorkspaceAPIURL() string {
 }
 
 // getWorkspaceDocsAbsPath returns the absolute filesystem path to the workspace docs root.
+//
+//nolint:unused // kept as a shared helper for upcoming absolute-path route cleanup.
 func getWorkspaceDocsAbsPath() string {
 	return fsutil.WorkspaceDocsRoot()
 }

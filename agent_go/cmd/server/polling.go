@@ -8,26 +8,8 @@ import (
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 
-	pkgevents "github.com/manishiitg/mcpagent/events"
-
 	"github.com/gorilla/mux"
 )
-
-// flatEventData is a custom EventData type that serializes event-specific fields directly
-// without BaseEventData fields or nested "data" field, matching what the frontend expects
-type flatEventData struct {
-	eventData map[string]interface{}
-	eventType pkgevents.EventType
-}
-
-func (f *flatEventData) GetEventType() pkgevents.EventType {
-	return f.eventType
-}
-
-// MarshalJSON serializes only the event-specific fields (no BaseEventData, no nested "data")
-func (f *flatEventData) MarshalJSON() ([]byte, error) {
-	return json.Marshal(f.eventData)
-}
 
 // getSessionStatusString returns the session status for a given session ID
 // from the in-memory active sessions map. Returns "" if not found, and

@@ -140,6 +140,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) pruneOldIterations(ctx context.Contex
 }
 
 // nextAvailableIteration finds the next available iteration-N name (N >= 1) under runsPath.
+//
+//nolint:unused // kept for future non-destructive iteration allocation work.
 func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIteration(ctx context.Context, runsPath string) (string, error) {
 	existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
 	if err != nil {

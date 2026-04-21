@@ -42,7 +42,7 @@ This workflow's KB shape is **{{.KBShape}}**.
 ## Files you own
 
 **`+"`"+`knowledgebase/graph.json`+"`"+`** — source of truth. Schema:
-` + "```" + `json
+`+"```"+`json
 {
   "version": "1",
   "updated_at": "<RFC3339>",
@@ -70,10 +70,10 @@ This workflow's KB shape is **{{.KBShape}}**.
     }
   ]
 }
-` + "```" + `
+`+"```"+`
 
 **`+"`"+`knowledgebase/index.json`+"`"+`** — lightweight summary. Schema:
-` + "```" + `json
+`+"```"+`json
 {
   "entity_count": <int>,
   "relationship_count": <int>,
@@ -82,19 +82,19 @@ This workflow's KB shape is **{{.KBShape}}**.
   "last_updated": "<RFC3339>",
   "last_updated_by": { "step": "<step-id>", "run": "<run-folder>" }
 }
-` + "```" + `
+`+"```"+`
 
 **`+"`"+`knowledgebase/notes/`+"`"+`** — per-topic narrative markdown files plus a registry. Layout:
-` + "```" + `
+`+"```"+`
 knowledgebase/notes/
 ├── _index.json                  # registry — gatekeeper, read first
 ├── <topic-id>.md                # one markdown file per topic
 ├── <topic-id>.md
 └── pattern-<slug>.md            # cross-cutting patterns use the pattern- prefix
-` + "```" + `
+`+"```"+`
 
 `+"`"+`_index.json`+"`"+` schema:
-` + "```" + `json
+`+"```"+`json
 {
   "topics": [
     {
@@ -108,10 +108,10 @@ knowledgebase/notes/
     }
   ]
 }
-` + "```" + `
+`+"```"+`
 
 Per-topic markdown shape (loose convention, not enforced):
-` + "```" + `markdown
+`+"```"+`markdown
 # <topic-id>
 
 <topic-level introduction — 1-2 sentences>
@@ -122,7 +122,7 @@ Per-topic markdown shape (loose convention, not enforced):
 
 ## <next section>
 ...
-` + "```" + `
+`+"```"+`
 
 Topic ID conventions:
 - **Entity-scoped narrative** → topic id = entity id (`+"`"+`company-acme.md`+"`"+`, `+"`"+`person-jane-doe.md`+"`"+`). The `+"`"+`covers`+"`"+` array contains just that entity id.
@@ -149,7 +149,7 @@ Read only what the contribution instruction needs. Skipping files unrelated to t
    - Entities: `+"`"+`company-<slug>`+"`"+`, `+"`"+`person-<slug>`+"`"+`, `+"`"+`product-<slug>`+"`"+`. Slug = lowercase, dashes, no punctuation.
    - Relationships: `+"`"+`rel-<from-id>-<type>-<to-id>`+"`"+`. Same input → same id → natural deduplication across runs.
 3. **Stamp provenance on everything you add or update.** Every entity and relationship MUST carry:
-   ` + "`" + `"source": { "step": "{{.StepID}}", "run": "{{.RunFolder}}" }` + "`" + `
+   `+"`"+`"source": { "step": "{{.StepID}}", "run": "{{.RunFolder}}" }`+"`"+`
 4. **Preserve prior runs' data.** NEVER delete entities or relationships written by earlier steps/runs. You only add new facts or refine existing ones.
 5. **Timestamps:** set `+"`"+`created_at`+"`"+` on new records and `+"`"+`updated_at`+"`"+` on modified ones. Use current UTC in RFC3339 (`+"`"+`date -u +%Y-%m-%dT%H:%M:%SZ`+"`"+`).
 6. **Sync `+"`"+`index.json`+"`"+`** after every graph change. Recompute:
@@ -192,12 +192,12 @@ If the contribution instruction says to extract something you cannot find in the
 After your writes, print exactly one summary line.
 {{if eq .KBShape "notes-only"}}
 Form:
-` + "`" + `KB updated (notes-only): notes touched: [<topic-id>, ...]; sections added: <N>; new topics: [<topic-id>, ...]` + "`" + `
+`+"`"+`KB updated (notes-only): notes touched: [<topic-id>, ...]; sections added: <N>; new topics: [<topic-id>, ...]`+"`"+`
 
 Omit `+"`"+`new topics`+"`"+` if none were created. If no notes were touched at all (e.g. shape-mismatch no-op), print `+"`"+`KB updated (notes-only): no-op; reason: <short reason>`+"`"+`.
 {{else}}
 Form:
-` + "`" + `KB updated: +<N> entities, +<M> relationships; total now <E>/<R>; types: [<entity_types>] / [<relationship_types>]; notes touched: [<topic-id>, ...]` + "`" + `
+`+"`"+`KB updated: +<N> entities, +<M> relationships; total now <E>/<R>; types: [<entity_types>] / [<relationship_types>]; notes touched: [<topic-id>, ...]`+"`"+`
 
 If no notes were written, end the summary at `+"`"+`relationship_types`+"`"+` and omit the `+"`"+`notes touched`+"`"+` clause.
 {{end}}
@@ -304,7 +304,7 @@ point. But only when the user's instruction explicitly calls for it.
 This workflow's KB shape is **{{.KBShape}}**.
 {{if eq .KBShape "notes-only"}}
 - `+"`"+`graph.json`+"`"+` and `+"`"+`index.json`+"`"+` do not exist in this workspace — ignore every reference to them below and DO NOT create them. All reorganization work must target `+"`"+`{{.NotesFolderPath}}/`+"`"+` and `+"`"+`{{.NotesIndexPath}}`+"`"+` only.
-- If the user's instruction names entities/relationships that would live in the graph, translate that intent into notes-side work: merge/split/rename topic files, rewrite `+"`"+`covers`+"`"+` on topics, compact sections. Reply with an explanation if the instruction has no meaningful notes-only analogue (e.g. "delete all relationships of type X" is a no-op here).
+- If the user's instruction names entities/relationships that would live in the graph, translate that intent into notes-side work: merge/split/rename topic files, rewrite `+"`"+`covers`+"`"+` on topics, compact sections. Reply with an explanation if the instruction has no meaningful notes-only analog (e.g. "delete all relationships of type X" is a no-op here).
 - Skip the graph.json schema/read-first checklist rules. Follow only the notes-side rules.
 {{else}}
 - Both graph and notes are in scope. Follow all rules below.
@@ -313,7 +313,7 @@ This workflow's KB shape is **{{.KBShape}}**.
 ## Files
 
 **`+"`"+`graph.json`+"`"+` schema** — preserve this shape under every write:
-` + "```" + `json
+`+"```"+`json
 {
   "version": "1",
   "updated_at": "<RFC3339>",
@@ -330,10 +330,10 @@ This workflow's KB shape is **{{.KBShape}}**.
       "source": { "step": "<step-id>", "run": "<run-folder>" } }
   ]
 }
-` + "```" + `
+`+"```"+`
 
 **`+"`"+`index.json`+"`"+` schema** — resync after every graph change:
-` + "```" + `json
+`+"```"+`json
 {
   "entity_count": <int>,
   "relationship_count": <int>,
@@ -342,18 +342,18 @@ This workflow's KB shape is **{{.KBShape}}**.
   "last_updated": "<RFC3339>",
   "last_updated_by": { "step": "builder-reorganize", "run": "manual" }
 }
-` + "```" + `
+`+"```"+`
 
 **`+"`"+`{{.NotesFolderPath}}/`+"`"+`** — per-topic narrative markdown files plus a registry. Layout:
-` + "```" + `
+`+"```"+`
 notes/
 ├── _index.json                  # registry — `+"`"+`{{.NotesIndexPath}}`+"`"+`
 ├── <topic-id>.md                # one markdown file per topic (entity-id or pattern-<slug>)
 └── ...
-` + "```" + `
+`+"```"+`
 
 `+"`"+`_index.json`+"`"+` schema:
-` + "```" + `json
+`+"```"+`json
 {
   "topics": [
     {
@@ -367,7 +367,7 @@ notes/
     }
   ]
 }
-` + "```" + `
+`+"```"+`
 
 Notes operations the user may ask for:
 - **Merge two topics** (`+"`"+`merge notes/company-acme.md and notes/company-acme-corp.md`+"`"+`) — concatenate sections, dedupe near-duplicates, update `+"`"+`covers`+"`"+` to the union, drop the obsolete file from `+"`"+`_index.json`+"`"+`.
@@ -425,12 +425,12 @@ Notes operations the user may ask for:
 Print exactly one summary line.
 {{if eq .KBShape "notes-only"}}
 Form:
-` + "`" + `KB reorganized (notes-only): <short description of what changed>; notes touched: [<topic-id>, ...]` + "`" + `
+`+"`"+`KB reorganized (notes-only): <short description of what changed>; notes touched: [<topic-id>, ...]`+"`"+`
 
-If no notes were touched (e.g. graph-only instruction with no notes-side analogue), print `+"`"+`KB reorganized (notes-only): no-op; reason: <short reason>`+"`"+`.
+If no notes were touched (e.g. graph-only instruction with no notes-side analog), print `+"`"+`KB reorganized (notes-only): no-op; reason: <short reason>`+"`"+`.
 {{else}}
 Form:
-` + "`" + `KB reorganized: <short description of what changed>; entities <before>→<after>, relationships <before>→<after>; notes touched: [<topic-id>, ...]` + "`" + `
+`+"`"+`KB reorganized: <short description of what changed>; entities <before>→<after>, relationships <before>→<after>; notes touched: [<topic-id>, ...]`+"`"+`
 
 If no notes were touched, omit the `+"`"+`notes touched`+"`"+` clause entirely.
 {{end}}
@@ -551,17 +551,17 @@ This workflow's KB shape is **{{.KBShape}}**.
 ## What you do (and don't)
 
 **Do — cross-step work only, with holistic view as justification:**
-- **Type-name consolidation.** If multiple step contributions produce overlapping entity types with different names (e.g. ` + "`" + `company` + "`" + ` vs ` + "`" + `organization` + "`" + `, ` + "`" + `product` + "`" + ` vs ` + "`" + `offering` + "`" + `), merge to one canonical name. Rewrite entity ` + "`" + `type` + "`" + ` values in graph.json; rewrite affected cross-references in notes.
-- **Property-name consolidation.** Same concept with different property names across steps (` + "`" + `industry` + "`" + ` vs ` + "`" + `sector` + "`" + `, ` + "`" + `headcount` + "`" + ` vs ` + "`" + `employees` + "`" + `) — pick one, rewrite rows.
+- **Type-name consolidation.** If multiple step contributions produce overlapping entity types with different names (e.g. `+"`"+`company`+"`"+` vs `+"`"+`organization`+"`"+`, `+"`"+`product`+"`"+` vs `+"`"+`offering`+"`"+`), merge to one canonical name. Rewrite entity `+"`"+`type`+"`"+` values in graph.json; rewrite affected cross-references in notes.
+- **Property-name consolidation.** Same concept with different property names across steps (`+"`"+`industry`+"`"+` vs `+"`"+`sector`+"`"+`, `+"`"+`headcount`+"`"+` vs `+"`"+`employees`+"`"+`) — pick one, rewrite rows.
 - **Entity dedupe by label.** If the graph has two entities that are clearly the same real-world thing under different ids, merge them (preserve all properties; union the relationships; update cross-references in notes).
-- **Cross-step pattern narratives.** Write or update ` + "`" + `notes/pattern-<slug>.md` + "`" + ` when a pattern is only visible with multiple step outputs side-by-side (e.g. *"pattern-balance-anomaly: three accounts show the same dip-then-recover shape across quarter-end weeks"*). Populate ` + "`" + `covers` + "`" + ` with every entity id the pattern touches.
-- **Contested-property surfacing.** If two steps write different values for the same property on the same entity and the graph currently shows only one (silent clobber), add a ` + "`" + `notes/<entity-id>.md` + "`" + ` section dated today documenting both values with step provenance. Do NOT edit the graph property itself — that's the reorganize agent's job if the user decides which wins.
+- **Cross-step pattern narratives.** Write or update `+"`"+`notes/pattern-<slug>.md`+"`"+` when a pattern is only visible with multiple step outputs side-by-side (e.g. *"pattern-balance-anomaly: three accounts show the same dip-then-recover shape across quarter-end weeks"*). Populate `+"`"+`covers`+"`"+` with every entity id the pattern touches.
+- **Contested-property surfacing.** If two steps write different values for the same property on the same entity and the graph currently shows only one (silent clobber), add a `+"`"+`notes/<entity-id>.md`+"`"+` section dated today documenting both values with step provenance. Do NOT edit the graph property itself — that's the reorganize agent's job if the user decides which wins.
 
 **Don't — atomic-fact extraction or cleanup scope:**
-- Do NOT extract new atomic facts from step outputs that a step's own KB update agent should have extracted. If a step has a ` + "`" + `knowledgebase_contribution` + "`" + ` but nothing from it landed in the graph, report that as a diagnostic — do not silently re-run the extraction.
-- Do NOT rename topics, compact notes files, or do per-file cleanup that isn't cross-step in nature. Those belong to ` + "`" + `reorganize_knowledgebase` + "`" + `.
-- Do NOT touch ` + "`" + `learnings/` + "`" + ` or ` + "`" + `db/` + "`" + `.
-- Do NOT modify provenance (` + "`" + `source.step` + "`" + `, ` + "`" + `source.run` + "`" + `) when merging — keep the earliest ` + "`" + `created_at` + "`" + ` and refresh ` + "`" + `updated_at` + "`" + `. If a merged entity came from multiple steps, pick the step that set the defining property; note the other provenance inline in the entity's properties under a ` + "`" + `_provenance_notes` + "`" + ` field.
+- Do NOT extract new atomic facts from step outputs that a step's own KB update agent should have extracted. If a step has a `+"`"+`knowledgebase_contribution`+"`"+` but nothing from it landed in the graph, report that as a diagnostic — do not silently re-run the extraction.
+- Do NOT rename topics, compact notes files, or do per-file cleanup that isn't cross-step in nature. Those belong to `+"`"+`reorganize_knowledgebase`+"`"+`.
+- Do NOT touch `+"`"+`learnings/`+"`"+` or `+"`"+`db/`+"`"+`.
+- Do NOT modify provenance (`+"`"+`source.step`+"`"+`, `+"`"+`source.run`+"`"+`) when merging — keep the earliest `+"`"+`created_at`+"`"+` and refresh `+"`"+`updated_at`+"`"+`. If a merged entity came from multiple steps, pick the step that set the defining property; note the other provenance inline in the entity's properties under a `+"`"+`_provenance_notes`+"`"+` field.
 
 ## Inputs available to you
 
@@ -569,15 +569,15 @@ This workflow's KB shape is **{{.KBShape}}**.
 - `+"`"+`{{.GraphFilePath}}`+"`"+` — current graph.
 - `+"`"+`{{.IndexFilePath}}`+"`"+` — lightweight graph summary.
 - `+"`"+`{{.NotesIndexPath}}`+"`"+` — notes topic registry. Read this FIRST to know which topics exist.
-- Step contributions block below (in the user message) — every step's ` + "`" + `knowledgebase_contribution` + "`" + ` string concatenated, with step ids. This is the declared schema across the workflow.
-- Step output folders — enumerated in the user message. You MAY ` + "`" + `cat` + "`" + ` specific files to verify a pattern, but NEVER glob-read everything. Pick targeted files after the contributions block tells you what to look for.
+- Step contributions block below (in the user message) — every step's `+"`"+`knowledgebase_contribution`+"`"+` string concatenated, with step ids. This is the declared schema across the workflow.
+- Step output folders — enumerated in the user message. You MAY `+"`"+`cat`+"`"+` specific files to verify a pattern, but NEVER glob-read everything. Pick targeted files after the contributions block tells you what to look for.
 
 **Objective (from user):** the consolidation goal for this invocation. Scope your work to it — do not opportunistically do other consolidation.
 
 ## Files
 
-**` + "`" + `graph.json` + "`" + ` schema** — preserve shape under every write:
-` + "```" + `json
+**`+"`"+`graph.json`+"`"+` schema** — preserve shape under every write:
+`+"```"+`json
 {
   "version": "1",
   "updated_at": "<RFC3339>",
@@ -588,28 +588,28 @@ This workflow's KB shape is **{{.KBShape}}**.
                        "created_at": "...", "updated_at": "...",
                        "source": { "step": "...", "run": "..." } } ]
 }
-` + "```" + `
+`+"```"+`
 
-**` + "`" + `index.json` + "`" + ` shape** — resync after any graph change: entity/relationship counts grouped by type, plus ` + "`" + `updated_at` + "`" + `.
+**`+"`"+`index.json`+"`"+` shape** — resync after any graph change: entity/relationship counts grouped by type, plus `+"`"+`updated_at`+"`"+`.
 
-**` + "`" + `notes/_index.json` + "`" + ` shape** — resync after any notes change: per-topic ` + "`" + `{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}` + "`" + `.
+**`+"`"+`notes/_index.json`+"`"+` shape** — resync after any notes change: per-topic `+"`"+`{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}`+"`"+`.
 
 ## Tools
-- ` + "`" + `execute_shell_command` + "`" + ` — read/jq files, write back via redirect. All paths are absolute and pre-approved by folder guard.
-- ` + "`" + `diff_patch_workspace_file` + "`" + ` — surgical edits for big graph.json or notes files.
+- `+"`"+`execute_shell_command`+"`"+` — read/jq files, write back via redirect. All paths are absolute and pre-approved by folder guard.
+- `+"`"+`diff_patch_workspace_file`+"`"+` — surgical edits for big graph.json or notes files.
 
 ## Safety rails
 - Apply changes incrementally. If the objective calls for three consolidation actions, do them as three reads + three writes, not one megabatch.
-- When renaming an entity ` + "`" + `type` + "`" + `, scan notes bodies for literal mentions of the old type and rewrite them too — otherwise cross-references drift.
+- When renaming an entity `+"`"+`type`+"`"+`, scan notes bodies for literal mentions of the old type and rewrite them too — otherwise cross-references drift.
 - If you cannot confidently resolve a consolidation action (ambiguous type mapping, unclear canonical label), SKIP it and include it in the summary as "deferred: <reason>" — do not guess.
 - Print ONE summary line at the end.
 {{if eq .KBShape "notes-only"}}
 Form:
-` + "`" + `KB consolidated (notes-only): <short description>; pattern notes written: [<topic-id>, ...]; topics merged: [<old>→<new>, ...]; deferred: [<reason>, ...]` + "`" + `
+`+"`"+`KB consolidated (notes-only): <short description>; pattern notes written: [<topic-id>, ...]; topics merged: [<old>→<new>, ...]; deferred: [<reason>, ...]`+"`"+`
 Omit any clause whose list is empty.
 {{else}}
 Form:
-` + "`" + `KB consolidated: <short description>; entity types merged: [<old>→<new>, ...]; properties merged: [<old>→<new>, ...]; pattern notes written: [<topic-id>, ...]; contested surfaced: <count>; deferred: [<reason>, ...]` + "`" + `
+`+"`"+`KB consolidated: <short description>; entity types merged: [<old>→<new>, ...]; properties merged: [<old>→<new>, ...]; pattern notes written: [<topic-id>, ...]; contested surfaced: <count>; deferred: [<reason>, ...]`+"`"+`
 Omit any clause whose count is zero.
 {{end}}
 `)
@@ -626,11 +626,11 @@ var kbConsolidateUserMessageTemplate = MustRegisterTemplate("kbConsolidateUserMe
 {{.StepOutputFoldersBlock}}
 
 ## Your task
-1. Read ` + "`" + `{{.GraphFilePath}}` + "`" + ` (skip in notes-only shape), ` + "`" + `{{.IndexFilePath}}` + "`" + ` (skip in notes-only shape), and ` + "`" + `{{.NotesIndexPath}}` + "`" + `. Form a picture of the current KB state.
+1. Read `+"`"+`{{.GraphFilePath}}`+"`"+` (skip in notes-only shape), `+"`"+`{{.IndexFilePath}}`+"`"+` (skip in notes-only shape), and `+"`"+`{{.NotesIndexPath}}`+"`"+`. Form a picture of the current KB state.
 2. Cross-reference against the step contributions block above. Look for: type-name drift, property-name drift, entity dedupe candidates, missing pattern narratives implied by overlapping contributions, contested properties.
 3. Scope work to the stated objective. State your plan briefly (which consolidations you will and won't attempt, and why).
-4. Apply the consolidations. For each type/property rename, ` + "`" + `jq` + "`" + ` the graph to see the magnitude of the change before writing. For pattern notes, ` + "`" + `cat` + "`" + ` only the specific step output files that substantiate the pattern.
-5. Resync ` + "`" + `{{.IndexFilePath}}` + "`" + ` if the graph changed. Resync ` + "`" + `{{.NotesIndexPath}}` + "`" + ` if any notes file changed.
+4. Apply the consolidations. For each type/property rename, `+"`"+`jq`+"`"+` the graph to see the magnitude of the change before writing. For pattern notes, `+"`"+`cat`+"`"+` only the specific step output files that substantiate the pattern.
+5. Resync `+"`"+`{{.IndexFilePath}}`+"`"+` if the graph changed. Resync `+"`"+`{{.NotesIndexPath}}`+"`"+` if any notes file changed.
 6. Print the final summary line.
 `)
 

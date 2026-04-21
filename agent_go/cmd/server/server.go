@@ -176,6 +176,7 @@ type StreamingAPI struct {
 	activeSessions    map[string]*ActiveSessionInfo
 	activeSessionsMux sync.RWMutex
 
+	//nolint:unused // kept for the pending session-reactivation path during the tracker refactor.
 	// Session reactivation lock: prevents race conditions when calculating baseIndex
 	// and initializing the event store for reactivated sessions
 	sessionReactivationMux sync.Mutex
@@ -7376,6 +7377,8 @@ func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrato
 // --- LLM GUIDANCE API HANDLERS ---
 
 // deserializeSerializedMessage converts a SerializedMessage (typed) back to llmtypes.MessageContent
+//
+//nolint:unused // kept for the serialized-history rehydration path during polling refactors.
 func deserializeSerializedMessage(serialized unifiedevents.SerializedMessage) *llmtypes.MessageContent {
 	var role llmtypes.ChatMessageType
 	switch serialized.Role {

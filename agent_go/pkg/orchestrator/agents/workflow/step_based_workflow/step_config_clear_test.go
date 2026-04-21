@@ -37,12 +37,12 @@ func TestClearStepConfigField(t *testing.T) {
 			assertJSONGone: "selected_servers",
 		},
 		{
-			name:  "clears bool pointer (disable_learning)",
-			field: "disable_learning",
+			name:  "clears bool pointer (lock_learnings)",
+			field: "lock_learnings",
 			prep: func(sc *StepConfig) {
-				sc.AgentConfigs = &AgentConfigs{DisableLearning: &truePtr}
+				sc.AgentConfigs = &AgentConfigs{LockLearnings: &truePtr}
 			},
-			assertJSONGone: "disable_learning",
+			assertJSONGone: "lock_learnings",
 		},
 		{
 			name:  "clearing lock_learnings also clears Optimized (setter couples them)",

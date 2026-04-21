@@ -55,7 +55,7 @@ func reportPlanIsPlausibleColor(v string) bool {
 }
 
 type reportPlanWidget struct {
-	Kind   string            // "text" | "table" | "chart"
+	Kind   string // "text" | "table" | "chart"
 	Source string
 	Path   string
 	Filter string
@@ -108,20 +108,20 @@ type reportPlanAPIWidgetCapability struct {
 }
 
 type reportPlanCapabilitiesResult struct {
-	FilePath              string                                     `json:"file_path"`
-	ValidationTool        string                                     `json:"validation_tool"`
-	PreviewTool           string                                     `json:"preview_tool"`
-	WidgetKinds           []string                                   `json:"widget_kinds"`
-	SourceBackedWidgets   []string                                   `json:"source_backed_widgets"`
-	APIBackedWidgets      map[string]reportPlanAPIWidgetCapability   `json:"api_backed_widgets"`
-	ValidSourcePatterns   []string                                   `json:"valid_source_patterns"`
-	CommonFields          []string                                   `json:"common_fields"`
-	SourceBackedRequired  []string                                   `json:"source_backed_required_fields"`
-	APIBackedRules        []string                                   `json:"api_backed_rules"`
-	WidgetSpecificFields  map[string][]string                        `json:"widget_specific_fields"`
-	RowSyntax             map[string]string                          `json:"row_syntax"`
-	WorkflowRules         []string                                   `json:"workflow_rules"`
-	Examples              []reportPlanCapabilityExample              `json:"examples"`
+	FilePath             string                                   `json:"file_path"`
+	ValidationTool       string                                   `json:"validation_tool"`
+	PreviewTool          string                                   `json:"preview_tool"`
+	WidgetKinds          []string                                 `json:"widget_kinds"`
+	SourceBackedWidgets  []string                                 `json:"source_backed_widgets"`
+	APIBackedWidgets     map[string]reportPlanAPIWidgetCapability `json:"api_backed_widgets"`
+	ValidSourcePatterns  []string                                 `json:"valid_source_patterns"`
+	CommonFields         []string                                 `json:"common_fields"`
+	SourceBackedRequired []string                                 `json:"source_backed_required_fields"`
+	APIBackedRules       []string                                 `json:"api_backed_rules"`
+	WidgetSpecificFields map[string][]string                      `json:"widget_specific_fields"`
+	RowSyntax            map[string]string                        `json:"row_syntax"`
+	WorkflowRules        []string                                 `json:"workflow_rules"`
+	Examples             []reportPlanCapabilityExample            `json:"examples"`
 }
 
 func getReportPlanCapabilities() reportPlanCapabilitiesResult {
@@ -176,19 +176,19 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 		},
 		Examples: []reportPlanCapabilityExample{
 			{
-				Name: "Source-backed KPI row",
+				Name:     "Source-backed KPI row",
 				Markdown: "## Key Metrics\n\n```widget:row\n- stat | source: db/sync_runs.json | path: runs.0.employee_sync.total\n- stat | source: db/sync_runs.json | path: runs.0.payslip_sync.total_records\n```",
 			},
 			{
-				Name: "Workflow cost summary",
+				Name:     "Workflow cost summary",
 				Markdown: "## Workflow Costs\n\n```widget:costs\ntitle: Workflow cost overview\nview: summary\nscope: all\nmetric: cost\n```",
 			},
 			{
-				Name: "Evaluation scores",
+				Name:     "Evaluation scores",
 				Markdown: "## Evaluation Quality\n\n```widget:evals\ntitle: Eval scores by run\nview: run-chart\nmetric: score_percentage\n```",
 			},
 			{
-				Name: "Run history",
+				Name:     "Run history",
 				Markdown: "## Run History\n\n```widget:runs\ntitle: Recent runs\nview: table\n```",
 			},
 		},
@@ -201,28 +201,28 @@ type reportPlanParsedSection struct {
 }
 
 type reportPlanParsedWidget struct {
-	Kind     string            `json:"kind"`
-	Source   string            `json:"source"`
-	Path     string            `json:"path,omitempty"`
-	Filter   string            `json:"filter,omitempty"`
-	ShowIf   string            `json:"show_if,omitempty"`
-	Line     int               `json:"line,omitempty"`
-	InRow    bool              `json:"in_row,omitempty"`
-	RowIndex int               `json:"row_index,omitempty"`
+	Kind     string `json:"kind"`
+	Source   string `json:"source"`
+	Path     string `json:"path,omitempty"`
+	Filter   string `json:"filter,omitempty"`
+	ShowIf   string `json:"show_if,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	InRow    bool   `json:"in_row,omitempty"`
+	RowIndex int    `json:"row_index,omitempty"`
 	// Options captures all non-standard fields the parser saw — so the builder
-	// can spot e.g. `type: stat_row` (unrecognised key) or `chrt_type: bar`
+	// can spot e.g. `type: stat_row` (unrecognized key) or `chrt_type: bar`
 	// (typo) being silently ignored.
 	Options map[string]string `json:"options,omitempty"`
 }
 
 type reportPlanRenderPreviewResult struct {
-	Valid           bool                          `json:"valid"`
-	Sections        int                           `json:"sections"`
-	Widgets         int                           `json:"widgets"`
-	PlanMarkdown    string                        `json:"plan_markdown"`
-	PreviewMarkdown string                        `json:"preview_markdown"`
-	Validation      *reportPlanValidationResult   `json:"validation,omitempty"`
-	SectionsPreview []reportPlanPreviewSection    `json:"sections_preview,omitempty"`
+	Valid           bool                        `json:"valid"`
+	Sections        int                         `json:"sections"`
+	Widgets         int                         `json:"widgets"`
+	PlanMarkdown    string                      `json:"plan_markdown"`
+	PreviewMarkdown string                      `json:"preview_markdown"`
+	Validation      *reportPlanValidationResult `json:"validation,omitempty"`
+	SectionsPreview []reportPlanPreviewSection  `json:"sections_preview,omitempty"`
 }
 
 type reportPlanPreviewSection struct {
@@ -255,12 +255,12 @@ type reportPlanCostsPreviewData struct {
 }
 
 type reportPlanEvalPreviewItem struct {
-	RunFolder         string  `json:"run_folder"`
-	GeneratedAt       string  `json:"generated_at,omitempty"`
-	ScorePercentage   float64 `json:"score_percentage"`
-	TotalScore        int     `json:"total_score"`
-	MaxPossibleScore  int     `json:"max_possible_score"`
-	StepCount         int     `json:"step_count"`
+	RunFolder        string  `json:"run_folder"`
+	GeneratedAt      string  `json:"generated_at,omitempty"`
+	ScorePercentage  float64 `json:"score_percentage"`
+	TotalScore       int     `json:"total_score"`
+	MaxPossibleScore int     `json:"max_possible_score"`
+	StepCount        int     `json:"step_count"`
 }
 
 type reportPlanRunPreviewItem struct {
@@ -269,7 +269,7 @@ type reportPlanRunPreviewItem struct {
 }
 
 // parseReportPlan walks the markdown and returns sections+widgets. Intentionally
-// forgiving — matches the frontend parser behaviour so we flag what would silently
+// forgiving — matches the frontend parser behavior so we flag what would silently
 // fail to render rather than refusing to parse.
 func parseReportPlan(markdown string) []reportPlanSection {
 	if strings.TrimSpace(markdown) == "" {
@@ -658,7 +658,7 @@ func validateReportPlanMarkdown(
 	// Dump the parsed plan so the LLM sees exactly what the parser extracted —
 	// surfaces the common failure mode where a widget block "looks right" but
 	// the fence tag didn't match and every field silently lands in `options`
-	// instead of the recognised keys.
+	// instead of the recognized keys.
 	result.Parsed = buildReportPlanParsedDump(sections)
 
 	// Global advice for builder on how to read the result.
@@ -1175,7 +1175,7 @@ func validateReportPlanColorList(
 }
 
 // Converts parsed sections into the JSON-friendly dump returned as
-// `result.parsed`. Fields captured in the dump mirror the parser's recognised
+// `result.parsed`. Fields captured in the dump mirror the parser's recognized
 // keys; anything else the builder wrote in the block lands in `options` so
 // typos like `chrt_type` or `show-if` surface visibly.
 func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedSection {
@@ -1183,9 +1183,9 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 		return nil
 	}
 	// Keys the parser consumes into named widget fields. Everything outside this
-	// set is surfaced under `options` — that's where typos and unrecognised
+	// set is surfaced under `options` — that's where typos and unrecognized
 	// keys become visible.
-	recognised := map[string]struct{}{
+	recognized := map[string]struct{}{
 		"source": {}, "path": {}, "filter": {}, "show_if": {}, "showif": {},
 	}
 	out := make([]reportPlanParsedSection, 0, len(sections))
@@ -1206,7 +1206,7 @@ func buildReportPlanParsedDump(sections []reportPlanSection) []reportPlanParsedS
 			// read but didn't promote to a named struct field.
 			var opts map[string]string
 			for k, v := range w.Fields {
-				if _, known := recognised[k]; known {
+				if _, known := recognized[k]; known {
 					continue
 				}
 				if v == "" {

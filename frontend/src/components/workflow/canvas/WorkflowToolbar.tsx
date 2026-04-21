@@ -759,6 +759,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isPlanWorkspace = showWorkspacePane && canvasViewMode === 'plan'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
+  const workflowActivityStatus = useMemo(() => {
+    if (isExecutionRunning || status === 'running' || status === 'waiting_feedback' || status === 'paused') {
+      return {
+        label: 'Busy',
+        className: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300',
+      }
+    }
+    if (status === 'completed' || status === 'failed') {
+      return {
+        label: 'Stopped',
+        className: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300',
+      }
+    }
+    return {
+      label: 'Idle',
+      className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+    }
+  }, [isExecutionRunning, status])
 
   // Handle creating new iteration
   const handleCreateIteration = useCallback(async () => {
@@ -1290,6 +1308,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               >
                 Report
               </button>
+          </div>
+        </div>
+
+        <div className="h-5 w-px bg-border" />
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Status
+          </span>
+          <div
+            className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold ${workflowActivityStatus.className}`}
+          >
+            {workflowActivityStatus.label}
           </div>
         </div>
       </div>

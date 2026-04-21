@@ -36,7 +36,7 @@ const (
 	KBShapeNotesOnly = "notes-only"
 )
 
-// ValidKBShape reports whether s is a recognised kb_shape value. Empty is valid
+// ValidKBShape reports whether s is a recognized kb_shape value. Empty is valid
 // (means "use default").
 func ValidKBShape(s string) bool {
 	switch s {

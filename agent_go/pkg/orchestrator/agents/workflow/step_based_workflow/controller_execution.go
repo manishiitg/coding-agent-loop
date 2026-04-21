@@ -97,11 +97,15 @@ const SoulFileName = "soul.md"
 
 // getSoulPath returns the full path to the soul folder.
 // Path format: {workspaceRoot}/soul/
+//
+//nolint:unused // reserved for the upcoming soul-store read/write helpers.
 func getSoulPath(workspaceRoot string) string {
 	return fmt.Sprintf("%s/%s", workspaceRoot, SoulFolderName)
 }
 
 // getSoulFilePath returns the full path to soul/soul.md.
+//
+//nolint:unused // reserved for the upcoming soul-store read/write helpers.
 func getSoulFilePath(workspaceRoot string) string {
 	return fmt.Sprintf("%s/%s/%s", workspaceRoot, SoulFolderName, SoulFileName)
 }
@@ -164,6 +168,8 @@ func kbAccessLabel(mode string) string {
 // isValidationFailure checks if validation failed (triggers human feedback)
 // Returns true only if ExecutionStatus is "FAILED"
 // Does NOT trigger on PARTIAL, COMPLETED, or INCOMPLETE status
+//
+//nolint:unused // retained for follow-up validation routing cleanup.
 func isValidationFailure(validationResponse *ValidationResponse) bool {
 	if validationResponse == nil {
 		return false

@@ -17,7 +17,7 @@ type ScheduledJobResponse struct {
 	ID                  string          `json:"id"`
 	Name                string          `json:"name"`
 	Description         string          `json:"description"`
-	EntityType          string          `json:"entity_type"`           // "workflow" or "multi-agent"
+	EntityType          string          `json:"entity_type"` // "workflow" or "multi-agent"
 	WorkspacePath       string          `json:"workspace_path"`
 	WorkflowID          string          `json:"workflow_id,omitempty"`
 	WorkflowLabel       string          `json:"workflow_label,omitempty"`
@@ -46,7 +46,7 @@ type ScheduledJobResponse struct {
 
 // CreateScheduleRequest is the request body for creating a schedule.
 type CreateScheduleRequest struct {
-	WorkspacePath  string          `json:"workspace_path"`          // Required for workflow/workshop mode
+	WorkspacePath  string          `json:"workspace_path"` // Required for workflow/workshop mode
 	Name           string          `json:"name"`
 	Description    string          `json:"description,omitempty"`
 	CronExpression string          `json:"cron_expression"`
@@ -612,7 +612,6 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		state := svc.GetRuntimeState(id)
 		var resp ScheduledJobResponse
 
 		if result.SourceType == "multi-agent" {
@@ -624,7 +623,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if err := svc.ReloadMultiAgentSchedule(r.Context(), result.UserID, id); err != nil {
 				scheduleLogf("[SCHEDULER] Failed to reload multi-agent schedule %s after enable: %v", id, err)
 			}
-			state = svc.GetRuntimeState(id)
+			state := svc.GetRuntimeState(id)
 			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state)
 		} else {
 			result.Manifest.Schedules[result.Index].Enabled = true
@@ -635,7 +634,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			if err := svc.ReloadSchedule(r.Context(), result.WorkspacePath, id); err != nil {
 				scheduleLogf("[SCHEDULER] Failed to reload schedule %s after enable: %v", id, err)
 			}
-			state = svc.GetRuntimeState(id)
+			state := svc.GetRuntimeState(id)
 			resp = buildJobResponse(result.WorkspacePath, result.Manifest, result.Manifest.Schedules[result.Index], state)
 		}
 

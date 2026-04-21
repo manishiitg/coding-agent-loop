@@ -119,7 +119,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			}
 
 			// Per-agent limit: if this agent already has too many sessions, evict its
-			// oldest one so the new open can proceed. Mirrors the global-evict behaviour.
+			// oldest one so the new open can proceed. Mirrors the global-evict behavior.
 			if agentSessionID != "" && tracker.CountForAgent(agentSessionID) >= MaxBrowserSessionsPerAgent {
 				oldest := tracker.GetOldestSessionForAgent(agentSessionID)
 				if oldest != "" && oldest != session {

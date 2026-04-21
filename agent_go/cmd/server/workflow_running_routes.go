@@ -17,6 +17,8 @@ import (
 
 // runningWorkflowBySessionLocked returns the most recent execution for a
 // given sessionID. api.trackedWorkflowExecutionsMux must already be held.
+//
+//nolint:unused // preserved for callers still being migrated off the legacy active-workflow map.
 func (api *StreamingAPI) runningWorkflowBySessionLocked(sessionID string) *ActiveWorkflowExecution {
 	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
 	if exec == nil {

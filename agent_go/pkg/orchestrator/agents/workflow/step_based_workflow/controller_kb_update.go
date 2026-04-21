@@ -249,7 +249,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 
 // RunKBReorganize enqueues a reorganize job through kbUpdateQueue and blocks until the
 // worker finishes. Serializing against kbUpdateQueue prevents races with live post-step
-// updates. Returns early if ctx is cancelled (e.g. workshop session closed).
+// updates. Returns early if ctx is canceled (e.g. workshop session closed).
 //
 // Wraps the job in a tracked WorkshopStepExecution so the workshop UI surfaces it
 // alongside learning, harden, replan, etc. — same pattern as maybeEnqueueKBUpdate.
@@ -383,7 +383,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBConsolidatePhase(ctx context.Con
 
 // RunKBConsolidate enqueues a consolidate job through kbUpdateQueue and blocks until the
 // worker finishes. Serialized against per-step KB updates AND reorganize so graph/notes
-// writes can't interleave. Returns early if ctx is cancelled (e.g. workshop session closed).
+// writes can't interleave. Returns early if ctx is canceled (e.g. workshop session closed).
 //
 // Wraps the job in a tracked WorkshopStepExecution so the workshop UI surfaces it
 // alongside learning, harden, reorganize, etc.

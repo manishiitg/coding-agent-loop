@@ -3972,7 +3972,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// --- Code-level validations ---
 			// Collect errors (block save) and warnings (save but inform).
 			var errors []string
-			var warnings []string
+			warnings := make([]string, 0)
 
 			// 1. Validate step ID exists in the plan
 			if iwm.controller.approvedPlan != nil {
@@ -9228,6 +9228,7 @@ type WorkflowInferObjectiveAgent struct {
 	*agents.BaseOrchestratorAgent
 }
 
+//nolint:unused // objective-inference tooling is parked until the workshop UI wires it back in.
 func newWorkflowInferObjectiveAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowInferObjectiveAgent {
 	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
 	return &WorkflowInferObjectiveAgent{BaseOrchestratorAgent: baseAgent}
@@ -9807,6 +9808,8 @@ func (iwm *InteractiveWorkshopManager) runOptimizeEvalStepAgent(ctx context.Cont
 }
 
 // runInferObjectiveAgent reads the plan and proposes an inferred workflow objective for user confirmation.
+//
+//nolint:unused // objective-inference tooling is parked until the workshop UI wires it back in.
 func (iwm *InteractiveWorkshopManager) runInferObjectiveAgent(ctx context.Context, focus string) (string, error) {
 	workspacePath := iwm.controller.GetWorkspacePath()
 

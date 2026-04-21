@@ -963,6 +963,16 @@ func getDeletePlanStepsSchema() string {
 	}`
 }
 
+// getCreatePlanSchema returns the JSON schema for the create_plan tool.
+// The tool takes no arguments — it initializes an empty planning/plan.json
+// so that subsequent add_*_step tools have a file to modify.
+func getCreatePlanSchema() string {
+	return `{
+		"type": "object",
+		"properties": {}
+	}`
+}
+
 // getAddRegularStepSchema returns the JSON schema for add_regular_step tool
 func getAddRegularStepSchema() string {
 	return `{
@@ -3933,6 +3943,35 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 	}
 }
 
+// createCreatePlanExecutor returns an executor for the create_plan tool, which
+// initializes an empty planning/plan.json for workflows that don't have one yet.
+// Fails if plan.json already exists so we never silently clobber a live plan.
+func createCreatePlanExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		planPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "plan.json"), workspacePath)
+
+		planFileMutex.Lock()
+		defer planFileMutex.Unlock()
+
+		if existing, err := readFile(ctx, planPath); err == nil && strings.TrimSpace(existing) != "" {
+			return "", fmt.Errorf("plan.json already exists at %s — use add_regular_step / update_* / delete_plan_steps to modify it instead of recreating it", planPath)
+		}
+
+		emptyPlan := &PlanningResponse{}
+		data, err := json.MarshalIndent(emptyPlan, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal empty plan: %w", err)
+		}
+
+		if err := writeFile(ctx, planPath, string(data)); err != nil {
+			return "", fmt.Errorf("failed to write plan.json: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("🆕 Created new empty plan.json at %s", planPath))
+		return fmt.Sprintf("Created empty plan.json at %s. Add steps with add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step. For the first step, pass insert_after_step_id=\"\" to insert at the beginning.", planPath), nil
+	}
+}
+
 // registerPlanModificationTools registers all plan modification tools (plan update tools only)
 // Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
 // This shared function is used by planning agent, code exec debugging agent, etc.
@@ -3949,6 +3988,23 @@ func registerPlanModificationTools(
 ) error {
 	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
 	// No need to register it again here to avoid duplicate registration errors
+
+	// Register create_plan first — it's the only way to initialize planning/plan.json for a new
+	// workflow so that the add_* tools (which require an existing plan) can run.
+	createPlanSchema := getCreatePlanSchema()
+	createPlanParams, err := parseSchemaForToolParameters(createPlanSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse create plan schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"create_plan",
+		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: objective and success_criteria live in soul/soul.md — edit that file separately; plan.json no longer stores them.",
+		createPlanParams,
+		createCreatePlanExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register create_plan tool: %w", err)
+	}
 
 	// Register workflow-specific plan update tools with "workflow" category
 	// Individual update tools for each step type

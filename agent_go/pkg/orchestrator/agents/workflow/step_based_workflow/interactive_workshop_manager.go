@@ -2279,6 +2279,23 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 | runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json | **Code exec steps**: main.py result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+`, `+"`success`"+`, `+"`script_path`"+` |
 | runs/{iter}/{group}/logs/{step-id}/pre_validation.json | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
 
+### Best Way To Read Timing
+Use this order when debugging latency:
+1. Read `+"`run_metadata.json`"+` first to get the total workflow wall-clock and whether the run finished or failed.
+2. Read each step's `+"`execution-attempt-{N}-iteration-{M}.json`"+` next to rank slow steps quickly using `+"`duration_ms`"+`, `+"`llm_duration_ms`"+`, and `+"`tool_duration_ms`"+`.
+3. Open the matching `+"`execution-attempt-{N}-iteration-{M}-timing.json`"+` for the slowest step.
+4. In that timing file, interpret fields in this order:
+   - `+"`agent.duration_ms`"+` = full wall-clock time for the step attempt.
+   - `+"`llm.total_duration_ms`"+` = total time spent waiting on LLM calls across the attempt.
+   - `+"`llm.time_to_first_response_ms`"+` = delay before the model produced its first visible response signal.
+   - `+"`llm.time_to_first_content_ms`"+` = delay before the first text content arrived.
+   - `+"`llm.time_to_first_tool_call_ms`"+` = delay before the model decided to invoke a tool.
+   - `+"`tools.total_duration_ms`"+` = total time spent inside tools.
+5. Use `+"`llm.calls[]`"+` to see whether one LLM call dominated latency or whether many smaller calls accumulated.
+6. Use `+"`tools.calls[]`"+` to find the exact slow tool. Prefer `+"`duration_ms`"+` for cost/time ranking and `+"`offset_from_agent_start_ms`"+` to understand when it happened inside the step.
+7. If `+"`agent.duration_ms`"+` is much larger than both `+"`llm.total_duration_ms`"+` and `+"`tools.total_duration_ms`"+`, infer the remaining gap is orchestration overhead, prompt construction, validation, file IO, or other non-LLM/non-tool work.
+8. Use the conversation log only after timing isolation, to explain *why* the slow LLM/tool call happened rather than to discover *which* one was slow.
+
 ### Learnings (persistent across runs)
 | Path | Contents |
 |------|----------|
@@ -9011,6 +9028,28 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 | `+"`runs/{iter}/{group}/logs/{step-id}/execution/execution-attempt-{N}-iteration-{M}-timing.json`"+` | **Clear timing breakdown**: workflow builder should read `+"`agent.*`"+` for agent wall-clock, `+"`llm.*`"+` for LLM timing (`+"`time_to_first_response_ms`"+`, `+"`time_to_first_content_ms`"+`, `+"`time_to_first_tool_call_ms`"+`), and `+"`tools.calls[]`"+` for per-tool durations/offsets |
 | `+"`runs/{iter}/{group}/logs/{step-id}/execution/learn_code_fast_path.json`"+` | **Code exec steps only**: main.py execution result — `+"`exit_code`"+`, `+"`output`"+` (stdout), `+"`error`"+` (stderr), `+"`success`"+`, `+"`script_path`"+`, `+"`validation_error`"+`. This is the fastest way to see what main.py did. |
 | `+"`runs/{iter}/{group}/logs/{step-id}/pre_validation.json`"+` | Pre-validation result: `+"`overall_pass`"+`, `+"`errors[]`"+`, `+"`files_checked[]`"+`, `+"`schema_used`"+` |
+
+### Timing Read Order
+When the task is to explain workflow slowness, read timing in this order:
+1. `+"`runs/{iter}/{group}/run_metadata.json`"+` for workflow total duration.
+2. Each step's `+"`execution-attempt-{N}-iteration-{M}.json`"+` to identify the slowest step attempt quickly.
+3. The matching `+"`execution-attempt-{N}-iteration-{M}-timing.json`"+` for the slowest step.
+
+Inside `+"`*-timing.json`"+`, interpret fields this way:
+- `+"`agent.duration_ms`"+`: full step-attempt wall-clock.
+- `+"`llm.total_duration_ms`"+`: total time spent in LLM calls.
+- `+"`llm.time_to_first_response_ms`"+`: model startup / first-response latency.
+- `+"`llm.time_to_first_content_ms`"+`: first text-token/content latency.
+- `+"`llm.time_to_first_tool_call_ms`"+`: how long the model thought before deciding to use a tool.
+- `+"`llm.calls[]`"+`: per-call breakdown; use this to find whether a single call or many calls caused the slowdown.
+- `+"`tools.total_duration_ms`"+`: total tool time for the attempt.
+- `+"`tools.calls[]`"+`: per-tool breakdown; use `+"`duration_ms`"+` to rank slow tools and `+"`offset_from_agent_start_ms`"+` to place them in sequence.
+
+Analysis rules:
+- If `+"`llm.total_duration_ms`"+` dominates, the bottleneck is model time.
+- If `+"`tools.total_duration_ms`"+` dominates, the bottleneck is tool execution.
+- If `+"`agent.duration_ms`"+` is much larger than both, the remaining gap is non-tool/non-LLM overhead such as orchestration, validation, file operations, or waiting between phases.
+- Read the conversation log last, only to explain the reason for the slow call after the timing files already identified it.
 
 ### Evaluation data
 | Path | Contents |

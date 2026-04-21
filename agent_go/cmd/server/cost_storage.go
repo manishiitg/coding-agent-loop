@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
+	"os"
 	pathpkg "path"
 	"path/filepath"
 	"sort"
@@ -61,6 +63,24 @@ func migrateLegacyCostFiles(ctx context.Context, workspacePath string) error {
 }
 
 func listWorkspaceFilesRecursive(ctx context.Context, folderPath string) ([]string, error) {
+	if stat, err := os.Stat(folderPath); err == nil && stat.IsDir() {
+		filePaths := make([]string, 0)
+		err = filepath.WalkDir(folderPath, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			filePaths = append(filePaths, filepath.ToSlash(path))
+			return nil
+		})
+		if err == nil {
+			sort.Strings(filePaths)
+			return filePaths, nil
+		}
+	}
+
 	listing, _, err := listWorkspaceFolder(ctx, folderPath, 100)
 	if err != nil {
 		return nil, err

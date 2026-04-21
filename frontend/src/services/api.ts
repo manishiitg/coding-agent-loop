@@ -35,6 +35,7 @@ import type {
   SlackTestReplyResponse,
   ExecutionLogsResponse,
   EvaluationReportsResponse,
+  WorkflowReviewDataResponse,
   TokenUsageFile,
   WorkflowCostsResponse,
   WorkspaceStateResponse,
@@ -1068,6 +1069,24 @@ export const agentApi = {
       params: { workspace_path: workspacePath }
     })
     return response.data
+  },
+
+  getWorkflowReviewData: async (workspacePath: string, runFolder?: string): Promise<WorkflowReviewDataResponse> => {
+    const response = await api.get('/api/workflow/review-data', {
+      params: { workspace_path: workspacePath, run_folder: runFolder || '' }
+    })
+    return {
+      ...response.data,
+      costs: {
+        ...response.data?.costs,
+        runs: Array.isArray(response.data?.costs?.runs) ? response.data.costs.runs : [],
+        phase_daily_costs: Array.isArray(response.data?.costs?.phase_daily_costs) ? response.data.costs.phase_daily_costs : [],
+      },
+      evaluations: {
+        ...response.data?.evaluations,
+        reports: Array.isArray(response.data?.evaluations?.reports) ? response.data.evaluations.reports : [],
+      },
+    }
   },
 
   // Get content of a specific log file

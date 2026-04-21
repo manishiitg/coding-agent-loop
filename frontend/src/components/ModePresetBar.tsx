@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -756,7 +756,7 @@ export const ModePresetBar: React.FC = () => {
                             : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
                         }`}
                       >
-                        <CalendarDays className="w-4 h-4 flex-shrink-0" />
+                        <Workflow className="w-4 h-4 flex-shrink-0" />
                         <span className="text-xs font-medium whitespace-nowrap">
                           {runningScheduledWorkflowCount}/{workflowScheduleCount} schedules
                         </span>
@@ -784,7 +784,7 @@ export const ModePresetBar: React.FC = () => {
                       onClick={() => setShowMultiAgentSchedules(true)}
                       className="flex items-center gap-2 px-2 py-1 rounded-md transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200"
                     >
-                      <CalendarDays className="w-4 h-4 flex-shrink-0" />
+                      <Users className="w-4 h-4 flex-shrink-0" />
                       <span className="text-xs font-medium whitespace-nowrap">
                         {multiAgentScheduleCount > 0 ? `${multiAgentScheduleCount} schedule${multiAgentScheduleCount !== 1 ? 's' : ''}` : 'Schedules'}
                       </span>

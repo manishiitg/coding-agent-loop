@@ -135,6 +135,10 @@ type StreamingAPI struct {
 	activeWorkflowExecutions    map[string]*ActiveWorkflowExecution // queryID -> execution info
 	activeWorkflowExecutionsMux sync.RWMutex
 
+	// Unified execution tracker for top-level workflow runs and workflow-builder background work.
+	trackedWorkflowExecutions    map[string]*TrackedWorkflowExecution
+	trackedWorkflowExecutionsMux sync.RWMutex
+
 	// Mapping of sessionID -> []queryID to track which executions belong to which session
 	// Used by handleStopSession to cancel all executions for a session
 	sessionQueryIDs   map[string][]string
@@ -663,6 +667,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		agentCancelFuncs:             make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
 		activeWorkflowExecutions:     make(map[string]*ActiveWorkflowExecution),
+		trackedWorkflowExecutions:    make(map[string]*TrackedWorkflowExecution),
 		sessionQueryIDs:              make(map[string][]string),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
@@ -1097,6 +1102,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/review-data", api.handleGetWorkflowReviewData).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
@@ -2416,6 +2422,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.activeWorkflowExecutionsMux.Lock()
 				delete(api.activeWorkflowExecutions, queryID)
 				api.activeWorkflowExecutionsMux.Unlock()
+				api.finalizeTrackedExecutionIfRunning(queryID, trackedExecutionStatusCanceled, "workflow execution ended before completion was recorded")
 
 				// Remove queryID from session tracking
 				api.sessionQueryIDMux.Lock()
@@ -2695,6 +2702,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				)
 				agentEvent := unifiedevents.NewAgentEvent(errorEventData)
 				agentEvent.SessionID = sessionID
+				status := trackedExecutionStatusFailed
+				if strings.Contains(fullError, "context canceled") || strings.Contains(fullError, "context deadline exceeded") {
+					status = trackedExecutionStatusCanceled
+				}
+				api.completeTrackedExecution(queryID, status, rootCauseError, nil)
 				completionEvent := events.Event{
 					ID:        fmt.Sprintf("workflow_completion_error_%s_%d", queryID, time.Now().UnixNano()),
 					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
@@ -2735,6 +2747,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
+				api.completeTrackedExecution(queryID, trackedExecutionStatusCompleted, "", nil)
 
 				// Update active session status to completed
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to completed", sessionID)
@@ -4557,7 +4570,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						//
 						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/harden_workflow
 						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
-						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
+						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
+							api:           api,
+							sessionID:     sessionID,
+							workspacePath: phaseWorkspacePath,
+							presetQueryID: req.PresetQueryID,
+							userID:        currentUserID,
+						})
 						workshopSession.SetExecutionStateChecks(
 							func() bool {
 								api.pendingMu.RLock()
@@ -4677,7 +4696,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if evalSession != nil {
-						evalSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
+						evalSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
+							api:           api,
+							sessionID:     sessionID,
+							workspacePath: phaseWorkspacePath,
+							presetQueryID: req.PresetQueryID,
+							userID:        currentUserID,
+						})
 						evalSession.SetExecutionStateChecks(
 							func() bool {
 								api.pendingMu.RLock()
@@ -5263,6 +5288,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 			delete(api.activeWorkflowExecutions, qid)
 		}
 		api.activeWorkflowExecutionsMux.Unlock()
+		api.cancelTrackedExecutionsForSession(sessionID)
 		log.Printf("[SESSION DEBUG] Canceled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
 	}
 
@@ -6262,8 +6288,11 @@ func (q *bgAgentQuerierImpl) TerminateAgent(sessionID, agentID string) error {
 // workshop step/background executions in bgAgentRegistry so that HasRunningAgents()
 // returns true and the frontend keeps polling for events.
 type workshopExecutionBgNotifier struct {
-	api       *StreamingAPI
-	sessionID string
+	api           *StreamingAPI
+	sessionID     string
+	workspacePath string
+	presetQueryID string
+	userID        string
 }
 
 func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human.WorkshopExecutionStart) {
@@ -6276,6 +6305,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		cancel:    start.Cancel,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
+	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.presetQueryID, n.userID, start.ID, start.Name)
 
 	// Pre-create the channel so NotifyCompletion never drops a completion
 	n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
@@ -6313,6 +6343,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 	// agent yet (e.g. it was registered after CancelAll ran).
 	if err != nil && (strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded")) {
 		agent.SetCanceled()
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, err.Error(), meta)
 		log.Printf("[BG AGENT] OnExecutionComplete treating context-canceled agent %s as terminated", execID)
 		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
 			"agent_id": execID,
@@ -6327,6 +6358,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 	}
 	if err != nil {
 		agent.SetError(err.Error())
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusFailed, err.Error(), meta)
 		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
 			"agent_id": execID,
 			"name":     name,
@@ -6336,6 +6368,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 		})
 	} else {
 		agent.SetResult(result) // Store full result — truncation only happens at display/notification time
+		n.api.completeTrackedExecution(execID, trackedExecutionStatusCompleted, "", meta)
 		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
 			"agent_id": execID,
 			"name":     name,
@@ -6355,6 +6388,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string)
 		return
 	}
 	agent.SetCanceled()
+	n.api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "execution terminated", nil)
 	n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
 		"agent_id": execID,
 		"name":     name,

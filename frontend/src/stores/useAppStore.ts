@@ -14,6 +14,7 @@ interface AppState {
   // UI state
   sidebarMinimized: boolean
   workspaceMinimized: boolean
+  workspaceMinimizedByMode: Record<'workflow' | 'multi-agent', boolean>
   showWorkflowsOverview: boolean
   
   // Code execution mode (for multi-agent mode when no preset is active)
@@ -60,6 +61,10 @@ export const useAppStore = create<AppState>()(
           selectedPresetId: null,
           sidebarMinimized: false,
           workspaceMinimized: false,
+          workspaceMinimizedByMode: {
+            workflow: false,
+            'multi-agent': false,
+          },
           showWorkflowsOverview: false,
           useCodeExecutionMode: true, // Default to enabled
           // Actions
@@ -126,7 +131,17 @@ export const useAppStore = create<AppState>()(
         },
 
         setWorkspaceMinimized: (minimized) => {
-          set({ workspaceMinimized: minimized })
+          const currentCategory = useModeStore.getState().selectedModeCategory
+          set((state) => {
+            const updatedByMode = { ...state.workspaceMinimizedByMode }
+            if (currentCategory === 'workflow' || currentCategory === 'multi-agent') {
+              updatedByMode[currentCategory] = minimized
+            }
+            return {
+              workspaceMinimized: minimized,
+              workspaceMinimizedByMode: updatedByMode,
+            }
+          })
         },
 
         setShowWorkflowsOverview: (show) => {
@@ -154,6 +169,7 @@ export const useAppStore = create<AppState>()(
         agentMode: state.agentMode,
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
+        workspaceMinimizedByMode: state.workspaceMinimizedByMode,
         showWorkflowsOverview: state.showWorkflowsOverview,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
@@ -165,13 +181,20 @@ export const useAppStore = create<AppState>()(
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),
-        // Drop legacy `delegationMode` persisted from v2 — multi-agent is the default now.
-        version: 3,
+        // Drop legacy `delegationMode` persisted from v2 and add per-mode workspace state.
+        version: 4,
         migrate: (persistedState: unknown, _version: number) => {
           const state = persistedState as Record<string, unknown>
           delete state.delegationMode
           if (state.showWorkflowsOverview === undefined) {
             state.showWorkflowsOverview = false
+          }
+          if (!state.workspaceMinimizedByMode || typeof state.workspaceMinimizedByMode !== 'object') {
+            const legacyWorkspaceMinimized = Boolean(state.workspaceMinimized)
+            state.workspaceMinimizedByMode = {
+              workflow: legacyWorkspaceMinimized,
+              'multi-agent': legacyWorkspaceMinimized,
+            }
           }
           return state as unknown as AppState
         }

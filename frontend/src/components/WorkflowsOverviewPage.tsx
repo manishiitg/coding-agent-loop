@@ -3,7 +3,6 @@ import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Cl
 import { agentApi } from '../services/api'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
-import { useAppStore } from '../stores/useAppStore'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
@@ -686,58 +685,13 @@ const PopupGroup: React.FC<{ p: ReturnType<typeof usePopupState> }> = ({ p }) =>
 
 // Full page view
 export const WorkflowsOverviewPage: React.FC = () => {
-  const { rows, loading, loadData } = useWorkflowRows()
-  const { applyPreset } = usePresetApplication()
-  const { setModeCategory, selectedModeCategory } = useModeStore()
-  const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
-  const popups = usePopupState()
-  const [activeTab, setActiveTab] = useState<'workflows' | 'employees'>('employees')
-
-  useEffect(() => { loadData() }, [loadData])
-
-  const handleOpenWorkflow = useCallback((preset: CustomPreset | PredefinedPreset) => {
-    if (selectedModeCategory !== 'workflow') setModeCategory('workflow')
-    applyPreset(preset, 'workflow')
-    setShowWorkflowsOverview(false)
-  }, [applyPreset, selectedModeCategory, setModeCategory, setShowWorkflowsOverview])
-
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-      <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 w-fit">
-          <button
-            onClick={() => setActiveTab('workflows')}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-              activeTab === 'workflows'
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400'
-            }`}
-          >
-            Runs
-          </button>
-          <button
-            onClick={() => setActiveTab('employees')}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-              activeTab === 'employees'
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400'
-            }`}
-          >
-            Employees
-          </button>
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="p-6">
+          <EmployeeDashboard />
         </div>
       </div>
-
-      <div className="flex-1 min-h-0 overflow-auto">
-        {activeTab === 'workflows' ? (
-          <WorkflowTable rows={rows} loading={loading} onOpenWorkflow={handleOpenWorkflow} onOpenLogs={popups.handleOpenLogs} onOpenEval={popups.handleOpenEval} onOpenCost={popups.handleOpenCost} />
-        ) : (
-          <div className="p-6">
-            <EmployeeDashboard />
-          </div>
-        )}
-      </div>
-      <PopupGroup p={popups} />
     </div>
   )
 }

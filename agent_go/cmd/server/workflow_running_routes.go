@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -11,29 +10,24 @@ import (
 
 // Workflow running-session API
 // ============================
-// These endpoints expose the in-memory ActiveWorkflowExecution registry as a
-// workflow-owned read/write surface, so the workflow UI doesn't have to read
-// chat session metadata to find running workflows or track minimization
-// state. Chat and workflow share no persistence; this is how they stay
-// separate.
+// These endpoints expose the unified execution tracker as a workflow-owned
+// read/write surface, so the workflow UI doesn't have to read chat session
+// metadata to find running workflows or track minimization state. Chat and
+// workflow share no persistence; this is how they stay separate.
 
 // runningWorkflowBySessionLocked returns the most recent execution for a
-// given sessionID. api.activeWorkflowExecutionsMux must already be held.
+// given sessionID. api.trackedWorkflowExecutionsMux must already be held.
 func (api *StreamingAPI) runningWorkflowBySessionLocked(sessionID string) *ActiveWorkflowExecution {
-	var best *ActiveWorkflowExecution
-	for _, exec := range api.activeWorkflowExecutions {
-		if exec == nil || exec.SessionID != sessionID {
-			continue
-		}
-		if best == nil || exec.StartedAt.After(best.StartedAt) {
-			best = exec
-		}
+	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
+	if exec == nil {
+		return nil
 	}
-	return best
+	out := trackedExecutionToActive(exec)
+	return &out
 }
 
-// registerRunningWorkflow inserts an execution into the in-memory registry
-// and returns it. Intended for the workflow start paths that previously
+// registerRunningWorkflow inserts an execution into the legacy running map and
+// the unified tracker. Intended for the workflow start paths that previously
 // called trackActiveSession + wrote workflow_metadata into session.config.
 func (api *StreamingAPI) registerRunningWorkflow(exec *ActiveWorkflowExecution) {
 	if exec == nil || exec.QueryID == "" {
@@ -48,6 +42,7 @@ func (api *StreamingAPI) registerRunningWorkflow(exec *ActiveWorkflowExecution) 
 	api.activeWorkflowExecutionsMux.Lock()
 	api.activeWorkflowExecutions[exec.QueryID] = exec
 	api.activeWorkflowExecutionsMux.Unlock()
+	api.trackWorkflowRunStart(exec)
 }
 
 // handleListRunningWorkflows returns all currently-running workflow
@@ -55,23 +50,7 @@ func (api *StreamingAPI) registerRunningWorkflow(exec *ActiveWorkflowExecution) 
 // GET /api/workflow/running
 func (api *StreamingAPI) handleListRunningWorkflows(w http.ResponseWriter, r *http.Request) {
 	userID := GetUserIDFromContext(r.Context())
-
-	api.activeWorkflowExecutionsMux.RLock()
-	list := make([]ActiveWorkflowExecution, 0, len(api.activeWorkflowExecutions))
-	for _, exec := range api.activeWorkflowExecutions {
-		if exec == nil {
-			continue
-		}
-		if userID != "" && exec.UserID != "" && exec.UserID != userID {
-			continue
-		}
-		list = append(list, *exec)
-	}
-	api.activeWorkflowExecutionsMux.RUnlock()
-
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].StartedAt.After(list[j].StartedAt)
-	})
+	list := api.listRunningWorkflowExecutions(userID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -88,14 +67,14 @@ func (api *StreamingAPI) handleGetRunningWorkflow(w http.ResponseWriter, r *http
 		return
 	}
 
-	api.activeWorkflowExecutionsMux.RLock()
-	exec := api.runningWorkflowBySessionLocked(sessionID)
+	api.trackedWorkflowExecutionsMux.RLock()
+	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
 	var out ActiveWorkflowExecution
 	found := exec != nil
 	if found {
-		out = *exec
+		out = trackedExecutionToActive(exec)
 	}
-	api.activeWorkflowExecutionsMux.RUnlock()
+	api.trackedWorkflowExecutionsMux.RUnlock()
 
 	if !found {
 		http.Error(w, `{"error":"running workflow not found"}`, http.StatusNotFound)
@@ -137,10 +116,10 @@ func (api *StreamingAPI) handleUpdateRunningWorkflow(w http.ResponseWriter, r *h
 		return
 	}
 
-	api.activeWorkflowExecutionsMux.Lock()
-	exec := api.runningWorkflowBySessionLocked(sessionID)
+	api.trackedWorkflowExecutionsMux.Lock()
+	exec := api.runningWorkflowExecutionBySessionLocked(sessionID)
 	if exec == nil {
-		api.activeWorkflowExecutionsMux.Unlock()
+		api.trackedWorkflowExecutionsMux.Unlock()
 		http.Error(w, `{"error":"running workflow not found"}`, http.StatusNotFound)
 		return
 	}
@@ -165,8 +144,8 @@ func (api *StreamingAPI) handleUpdateRunningWorkflow(w http.ResponseWriter, r *h
 	if req.CurrentStepTitle != nil {
 		exec.CurrentStepTitle = *req.CurrentStepTitle
 	}
-	out := *exec
-	api.activeWorkflowExecutionsMux.Unlock()
+	out := trackedExecutionToActive(exec)
+	api.trackedWorkflowExecutionsMux.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

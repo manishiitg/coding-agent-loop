@@ -119,14 +119,8 @@ func (api *StreamingAPI) handleLoadWorkspaceState(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Populate active executions from in-memory registry
-	api.activeWorkflowExecutionsMux.RLock()
-	for _, exec := range api.activeWorkflowExecutions {
-		if exec.WorkspacePath == workspacePath {
-			state.ActiveExecutions = append(state.ActiveExecutions, *exec)
-		}
-	}
-	api.activeWorkflowExecutionsMux.RUnlock()
+	// Populate active executions from the unified execution tracker.
+	state.ActiveExecutions = api.listRunningWorkflowExecutionsForWorkspace(workspacePath)
 
 	// Success - return all data
 	response := WorkspaceStateResponse{
@@ -332,14 +326,7 @@ func (api *StreamingAPI) handleGetActiveExecutions(w http.ResponseWriter, r *htt
 
 	workspacePath := r.URL.Query().Get("workspace_path")
 
-	api.activeWorkflowExecutionsMux.RLock()
-	var executions []ActiveWorkflowExecution
-	for _, exec := range api.activeWorkflowExecutions {
-		if workspacePath == "" || exec.WorkspacePath == workspacePath {
-			executions = append(executions, *exec)
-		}
-	}
-	api.activeWorkflowExecutionsMux.RUnlock()
+	executions := api.listRunningWorkflowExecutionsForWorkspace(workspacePath)
 
 	if executions == nil {
 		executions = []ActiveWorkflowExecution{}
@@ -370,6 +357,66 @@ type RunSummary struct {
 	TotalSteps     int     `json:"total_steps"`
 }
 
+func selectWorkflowSummaryFolder(ctx context.Context, workspacePath string, folders []string, activeRunFolder string) (string, *RunMetadata) {
+	if len(folders) == 0 {
+		return "", nil
+	}
+
+	iterationZeroFolders := make([]string, 0, len(folders))
+	for _, folder := range folders {
+		if extractIterationNumber(folder) == 0 {
+			iterationZeroFolders = append(iterationZeroFolders, folder)
+		}
+	}
+
+	candidates := iterationZeroFolders
+	if len(candidates) == 0 {
+		candidates = folders
+	}
+
+	metadataByFolder := make(map[string]*RunMetadata, len(candidates))
+	for _, folder := range candidates {
+		metadataPath := workspacePath + "/runs/" + folder + "/run_metadata.json"
+		metadata, _ := readRunMetadata(ctx, metadataPath)
+		metadataByFolder[folder] = metadata
+	}
+
+	if activeRunFolder != "" {
+		if _, ok := metadataByFolder[activeRunFolder]; ok {
+			return activeRunFolder, metadataByFolder[activeRunFolder]
+		}
+	}
+
+	bestFolder := candidates[0]
+	bestMetadata := metadataByFolder[bestFolder]
+	bestTime := runSummarySortTime(bestMetadata)
+
+	for _, folder := range candidates[1:] {
+		metadata := metadataByFolder[folder]
+		candidateTime := runSummarySortTime(metadata)
+		if candidateTime > bestTime || (candidateTime == bestTime && folder < bestFolder) {
+			bestFolder = folder
+			bestMetadata = metadata
+			bestTime = candidateTime
+		}
+	}
+
+	return bestFolder, bestMetadata
+}
+
+func runSummarySortTime(metadata *RunMetadata) int64 {
+	if metadata == nil {
+		return 0
+	}
+	if metadata.CompletedAt != nil && !metadata.CompletedAt.IsZero() {
+		return metadata.CompletedAt.UnixNano()
+	}
+	if !metadata.CreatedAt.IsZero() {
+		return metadata.CreatedAt.UnixNano()
+	}
+	return 0
+}
+
 // handleGetWorkflowsSummary returns lightweight summaries for multiple workflows in one call.
 // GET /api/workflows/summary?workspace_paths=path1,path2,...
 func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *http.Request) {
@@ -390,11 +437,9 @@ func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *htt
 
 	// Build active executions lookup from in-memory registry
 	activeByWorkspace := map[string]string{} // workspace_path -> run_folder
-	api.activeWorkflowExecutionsMux.RLock()
-	for _, exec := range api.activeWorkflowExecutions {
+	for _, exec := range api.listRunningWorkflowExecutions("") {
 		activeByWorkspace[exec.WorkspacePath] = exec.RunFolder
 	}
-	api.activeWorkflowExecutionsMux.RUnlock()
 
 	// Fetch summaries in parallel with bounded concurrency
 	summaries := make([]WorkflowSummary, len(workspacePaths))
@@ -424,15 +469,11 @@ func (api *StreamingAPI) handleGetWorkflowsSummary(w http.ResponseWriter, r *htt
 			}
 			summary.TotalRuns = len(folders)
 
-			// Sort by iteration number descending to find the latest
-			sort.Slice(folders, func(a, b int) bool {
-				return extractIterationNumber(folders[a]) > extractIterationNumber(folders[b])
-			})
-
-			// Read metadata only for the latest folder (1 HTTP call)
-			latestFolder := folders[0]
-			metadataPath := workspacePath + "/runs/" + latestFolder + "/run_metadata.json"
-			metadata, _ := readRunMetadata(ctx, metadataPath)
+			latestFolder, metadata := selectWorkflowSummaryFolder(ctx, workspacePath, folders, summary.ActiveRunFolder)
+			if latestFolder == "" {
+				summaries[idx] = summary
+				return
+			}
 
 			run := &RunSummary{Folder: latestFolder}
 			if metadata != nil {

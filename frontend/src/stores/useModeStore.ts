@@ -71,6 +71,17 @@ export const useModeStore = create<ModeState>()(
                 const agentMode = getAgentModeFromCategory(normalizedCategory)
                 const appStore = useAppStore.getState()
 
+                if (normalizedCategory === 'workflow' || normalizedCategory === 'multi-agent') {
+                  const workspaceByMode = appStore.workspaceMinimizedByMode ?? {
+                    workflow: appStore.workspaceMinimized,
+                    'multi-agent': appStore.workspaceMinimized,
+                  }
+                  const nextWorkspaceMinimized = workspaceByMode[normalizedCategory]
+                  if (appStore.workspaceMinimized !== nextWorkspaceMinimized) {
+                    useAppStore.setState({ workspaceMinimized: nextWorkspaceMinimized })
+                  }
+                }
+
                 // Only update if agentMode would be different
                 if (appStore.agentMode !== agentMode) {
               // Call setAgentMode to sync AppStore

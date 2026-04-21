@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -1099,26 +1098,23 @@ func (s *SchedulerService) waitForWorkflowComplete(ctx context.Context, sessionI
 	defer ticker.Stop()
 
 	runFolderWritten := false
+	detectedFolder := ""
 
 	for {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-ticker.C:
-			// Try to capture run folder from active execution registry
+			// Try to capture the run folder from the unified execution tracker.
 			if !runFolderWritten {
-				s.api.activeWorkflowExecutionsMux.RLock()
-				for _, exec := range s.api.activeWorkflowExecutions {
-					if exec.SessionID == sessionID && exec.RunFolder != "" {
-						runFolderWritten = true
-						if runID != "" {
-							_ = UpdateScheduleRun(ctx, workspacePath, runID, "running", "", nil, exec.RunFolder, "")
-							scheduleLogf("[SCHEDULER] 📁 Detected run folder: %s (session %s)", exec.RunFolder, sessionID)
-						}
-						break
+				if folder := s.api.latestTrackedRunFolderForSession(sessionID); folder != "" {
+					detectedFolder = folder
+					runFolderWritten = true
+					if runID != "" {
+						_ = UpdateScheduleRun(ctx, workspacePath, runID, "running", "", nil, folder, "")
+						scheduleLogf("[SCHEDULER] 📁 Detected run folder: %s (session %s)", folder, sessionID)
 					}
 				}
-				s.api.activeWorkflowExecutionsMux.RUnlock()
 			}
 
 			// Check if all queries are done
@@ -1128,16 +1124,8 @@ func (s *SchedulerService) waitForWorkflowComplete(ctx context.Context, sessionI
 
 			if len(queryIDs) == 0 {
 				// All orchestrator queries finished
-				detectedFolder := ""
-				if runFolderWritten {
-					s.api.activeWorkflowExecutionsMux.RLock()
-					for _, exec := range s.api.activeWorkflowExecutions {
-						if exec.SessionID == sessionID && exec.RunFolder != "" {
-							detectedFolder = exec.RunFolder
-							break
-						}
-					}
-					s.api.activeWorkflowExecutionsMux.RUnlock()
+				if detectedFolder == "" {
+					detectedFolder = s.api.latestTrackedRunFolderForSession(sessionID)
 				}
 				return detectedFolder, nil
 			}
@@ -1172,22 +1160,12 @@ func (s *SchedulerService) findActiveExecutionForWorkspace(workspacePath string)
 		return nil
 	}
 
-	normalizedWorkspace := filepath.Clean(workspacePath)
-
-	s.api.activeWorkflowExecutionsMux.RLock()
-	defer s.api.activeWorkflowExecutionsMux.RUnlock()
-
-	for _, exec := range s.api.activeWorkflowExecutions {
-		if exec == nil || strings.TrimSpace(exec.WorkspacePath) == "" {
-			continue
-		}
-		if filepath.Clean(exec.WorkspacePath) == normalizedWorkspace {
-			execCopy := *exec
-			return &execCopy
-		}
+	tracked := s.api.findRunningTrackedExecutionForWorkspace(workspacePath)
+	if tracked == nil {
+		return nil
 	}
-
-	return nil
+	active := trackedExecutionToActive(tracked)
+	return &active
 }
 
 // ScheduleSearchResult holds the result of finding a schedule by ID.

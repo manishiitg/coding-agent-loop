@@ -707,6 +707,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       try {
         const { createChatTab, switchTab, getTabEvents, setTabStreaming } = useChatStore.getState()
         const { getPhaseById } = useWorkflowStore.getState()
+        const getExistingWorkflowTabsForPreset = () =>
+          Object.values(useChatStore.getState().chatTabs)
+            .filter(t =>
+              t.metadata?.mode === 'workflow' &&
+              t.metadata?.presetQueryId === activePresetId
+            )
+            .sort((a, b) => b.createdAt - a.createdAt)
 
         // 1. Get active (running) sessions from in-memory cache
         //    Include both 'workflow' (execution) and 'workflow_phase' (workflow builder, plan-improvement)
@@ -804,10 +811,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           })
         }
 
-        if (sessionsToRestore.length === 0) {
-          return
-        }
-
         // 3. Split sessions into (a) those we need to create a tab for and
         //    (b) those whose tab is already persisted in localStorage but whose
         //    events were never hydrated (workflow events live only in the
@@ -827,9 +830,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           return getTabEvents(s.sessionId).length === 0
         })
 
-        if (newSessions.length === 0 && rehydrateSessions.length === 0) {
-          return
-        }
         // Only restore sessions that don't have tabs yet
         const sessionsToActuallyRestore = newSessions
 
@@ -902,9 +902,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         //    If not, auto-create a default "Workflow Builder" tab so the user sees something.
         if (!lastTabId) {
           const store = useChatStore.getState()
-          const existingWorkflowTabs = Object.values(store.chatTabs).filter(t =>
-            t.metadata?.mode === 'workflow' && t.metadata?.presetQueryId === activePresetId
-          )
+          const existingWorkflowTabs = getExistingWorkflowTabsForPreset()
           if (existingWorkflowTabs.length === 0) {
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
@@ -915,9 +913,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             switchTab(defaultTabId)
             setShowChatArea(true)
           } else {
-            // Tabs exist (from localStorage), make sure chat is visible and switch to the latest
-            const latest = existingWorkflowTabs.sort((a, b) => b.createdAt - a.createdAt)[0]
-            switchTab(latest.tabId)
+            // Tabs exist (from localStorage). Prefer the already-active tab when it belongs to
+            // this preset; otherwise prefer builder, then a streaming tab, then newest.
+            const activeWorkflowTab = store.activeTabId ? store.chatTabs[store.activeTabId] : null
+            const activeMatchesPreset =
+              activeWorkflowTab?.metadata?.mode === 'workflow' &&
+              activeWorkflowTab.metadata?.presetQueryId === activePresetId
+            const builderTab = existingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+            const streamingTab = existingWorkflowTabs.find(t => t.isStreaming)
+            const targetTab = activeMatchesPreset
+              ? activeWorkflowTab
+              : (builderTab || streamingTab || existingWorkflowTabs[0])
+            switchTab(targetTab.tabId)
             setShowChatArea(true)
           }
         }

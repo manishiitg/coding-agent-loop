@@ -105,7 +105,7 @@ This is a plan/design review. Use review_workflow_results() when the question is
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
       const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -426,32 +426,6 @@ Summarize:
     }
   },
   {
-    command: 'tune-step',
-    description: 'Run a step, evaluate it, and fix any issues',
-    icon: <Wrench className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    validate: (ctx) => ctx.beforeSlash.trim() ? null : 'Usage: /tune-step <step-id>',
-    source: 'builtin',
-    execute: (ctx) => {
-      const stepId = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Tune step "${stepId}". Do all of this autonomously without pausing for confirmation:
-
-1. Read variables.json to get a group ID. Find the latest iteration from runs/.
-2. Run execute_step(step_id="${stepId}", group_name=<group>, iteration=<iter>). Wait for completion.
-3. Check the result. If it failed, read the execution logs (learn_code_fast_path.json or conversation log) to understand why.
-4. Read the step's current description, validation_schema, and learnings (main.py or SKILL.md).
-5. Fix any issues found:
-   - If main.py has a bug → patch it with diff_patch_workspace_file
-   - If description is vague → tighten it with update_regular_step or update_todo_task_route
-   - If validation_schema is missing checks → add them with update_validation_schema
-   - If step config is wrong (wrong mode, missing servers) → fix with update_step_config
-6. Re-run the step to verify the fix works.
-7. Give a final summary of what was wrong and what changed.`)
-    }
-  },
-  {
     command: 'improve-workflow',
     description: 'Run structural review, replan if needed, then execute → eval → harden',
     icon: <RefreshCw className="w-4 h-4" />,
@@ -578,7 +552,7 @@ End with a summary table of all steps and their status.${focusText}`)
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
+    requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

@@ -6,7 +6,6 @@ import {
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import type { DiscoveredWorkflow, Employee, EvaluationReportEntry, TokenUsageFile } from '../services/api-types'
-import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { ReportView } from './workflow/ReportViewer'
 import { useAppStore } from '../stores/useAppStore'
@@ -90,6 +89,11 @@ const EMPTY_REVIEW_STATE: WorkflowReviewState = {
   costError: null,
 }
 
+const runFolderMatches = (candidate: string | null | undefined, requested: string | null | undefined): boolean => {
+  if (!candidate || !requested) return false
+  return candidate === requested || candidate.startsWith(`${requested}/`) || requested.startsWith(`${candidate}/`)
+}
+
 const getTokenUsageTotal = (usage: TokenUsageFile | null | undefined): number | null => {
   if (!usage) return null
   let total = 0
@@ -159,7 +163,6 @@ export const EmployeeDashboard: React.FC = () => {
   const [employeeWorkflows, setEmployeeWorkflows] = useState<EmployeeWithWorkflows[]>([])
   const [loading, setLoading] = useState(true)
   const [assigningWorkflow, setAssigningWorkflow] = useState<string | null>(null) // workspace path being assigned
-  const [showAllSchedules, setShowAllSchedules] = useState(false)
   const [logsState, setLogsState] = useState<{ workspacePath: string; runFolder: string } | null>(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   const [collapsedEmployeeIds, setCollapsedEmployeeIds] = useState<Set<string>>(new Set())
@@ -356,48 +359,51 @@ export const EmployeeDashboard: React.FC = () => {
       loading: true,
     })
 
-    const [evaluationResult, costResult] = await Promise.allSettled([
-      agentApi.getEvaluationReports(workspacePath, runFolder),
-      agentApi.getCosts(workspacePath),
-    ])
+    try {
+      const reviewData = await agentApi.getWorkflowReviewData(workspacePath, runFolder)
+      const evaluationResponse = reviewData.evaluations
+      const costsResponse = reviewData.costs
 
-    let evaluation: EvaluationReportEntry | null = null
-    let evaluationError: string | null = null
-    if (evaluationResult.status === 'fulfilled') {
-      const response = evaluationResult.value
-      if (response.success) {
-        const reports = Array.isArray(response.reports) ? response.reports : []
-        evaluation = reports.find(item => item.run_folder === runFolder) || reports[0] || null
-      } else if (response.error) {
-        evaluationError = response.error
+      let evaluation: EvaluationReportEntry | null = null
+      let evaluationError: string | null = null
+      if (evaluationResponse?.success) {
+        const reports = Array.isArray(evaluationResponse.reports) ? evaluationResponse.reports : []
+        evaluation = reports.find(item => runFolderMatches(item.run_folder, runFolder)) || reports[0] || null
+      } else if (evaluationResponse?.error) {
+        evaluationError = evaluationResponse.error
+      } else {
+        evaluationError = 'Failed to load evaluation'
       }
-    } else {
-      evaluationError = evaluationResult.reason instanceof Error ? evaluationResult.reason.message : 'Failed to load evaluation'
-    }
 
-    let tokenUsage: TokenUsageFile | null = null
-    let evaluationTokenUsage: TokenUsageFile | null = null
-    let costError: string | null = null
-    if (costResult.status === 'fulfilled') {
-      if (costResult.value.success) {
-        const runCosts = (costResult.value.runs || []).find(item => item.run_folder === runFolder) || null
+      let tokenUsage: TokenUsageFile | null = null
+      let evaluationTokenUsage: TokenUsageFile | null = null
+      let costError: string | null = null
+      if (costsResponse?.success) {
+        const runCosts = (costsResponse.runs || []).find(item => runFolderMatches(item.run_folder, runFolder)) || null
         tokenUsage = runCosts?.token_usage || null
         evaluationTokenUsage = runCosts?.evaluation_token_usage || null
       } else {
         costError = 'Failed to load cost data'
       }
-    } else {
-      costError = costResult.reason instanceof Error ? costResult.reason.message : 'Failed to load cost data'
-    }
 
-    setReviewState({
-      loading: false,
-      evaluation,
-      evaluationError,
-      tokenUsage,
-      evaluationTokenUsage,
-      costError,
-    })
+      setReviewState({
+        loading: false,
+        evaluation,
+        evaluationError,
+        tokenUsage,
+        evaluationTokenUsage,
+        costError,
+      })
+    } catch (err) {
+      setReviewState({
+        loading: false,
+        evaluation: null,
+        evaluationError: err instanceof Error ? err.message : 'Failed to load evaluation',
+        tokenUsage: null,
+        evaluationTokenUsage: null,
+        costError: err instanceof Error ? err.message : 'Failed to load cost data',
+      })
+    }
   }, [])
 
   useEffect(() => {
@@ -466,14 +472,6 @@ export const EmployeeDashboard: React.FC = () => {
             Review each employee through their latest workflow report, evaluation, and cost.
           </p>
         </div>
-
-        <button
-          onClick={() => setShowAllSchedules(true)}
-          className="inline-flex items-center gap-2 self-start rounded-xl border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-        >
-          <Calendar className="h-4 w-4" />
-          View Schedules
-        </button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -896,10 +894,6 @@ export const EmployeeDashboard: React.FC = () => {
             </div>
           </div>
       </div>
-
-      {showAllSchedules && (
-        <WorkflowScheduleRunsPanel onClose={() => setShowAllSchedules(false)} />
-      )}
 
       {logsState && (
         <ExecutionLogsPopup

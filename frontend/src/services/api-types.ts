@@ -1257,6 +1257,12 @@ export interface EvaluationReportsResponse {
   error?: string;
 }
 
+export interface WorkflowReviewDataResponse {
+  success: boolean;
+  costs: WorkflowCostsResponse;
+  evaluations: EvaluationReportsResponse;
+}
+
 export interface EvaluationReportEntry {
   run_folder: string;
   report: EvaluationReport;

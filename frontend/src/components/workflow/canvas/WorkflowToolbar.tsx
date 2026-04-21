@@ -979,6 +979,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     `}>
       {/* Left side - workflow context */}
       <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Mode
@@ -1026,75 +1027,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
           </div>
         </div>
-
-        <div className="h-5 w-px bg-border" />
-
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            View
-          </span>
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'flow' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('flow')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('flow')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isFlowWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Flow
-              </button>
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'plan' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('plan')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('plan')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isPlanWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Plan
-              </button>
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'report' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('report')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('report')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isReportWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Report
-              </button>
-          </div>
         </div>
 
-        <>
+        <div className="flex items-center gap-3">
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
@@ -1289,8 +1224,74 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 })()}
               </>
             )}
+        </div>
 
-        </>
+        <div className="h-5 w-px bg-border" />
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            View
+          </span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 shadow-sm">
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'flow' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
+                  store.setWorkflowWorkspaceView('flow')
+                  store.setShowWorkspacePane(true)
+                  store.setCanvasViewMode('flow')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isFlowWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Flow
+              </button>
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'plan' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
+                  store.setWorkflowWorkspaceView('plan')
+                  store.setShowWorkspacePane(true)
+                  store.setCanvasViewMode('plan')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isPlanWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Plan
+              </button>
+              <button
+                onClick={() => {
+                  const store = useWorkflowStore.getState()
+                  if (canvasViewMode === 'report' && showWorkspacePane && showChatArea) {
+                    store.setShowWorkspacePane(false)
+                    return
+                  }
+                  store.setWorkflowWorkspaceView('report')
+                  store.setShowWorkspacePane(true)
+                  store.setCanvasViewMode('report')
+                }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  isReportWorkspace
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                Report
+              </button>
+          </div>
+        </div>
       </div>
 
       {/* Center - Status indicator */}

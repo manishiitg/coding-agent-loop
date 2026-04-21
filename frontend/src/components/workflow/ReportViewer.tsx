@@ -974,76 +974,95 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   }, [workspacePath, referencedSourcesKey, refreshNonce])
 
   useEffect(() => {
-    if (!workspacePath || !hasCostsWidget) {
-      setCostsData(null)
-      setCostsError(null)
-      setCostsLoading(false)
+    if (!workspacePath || (!hasCostsWidget && !hasEvalsWidget)) {
+      if (!hasCostsWidget) {
+        setCostsData(null)
+        setCostsError(null)
+        setCostsLoading(false)
+      }
+      if (!hasEvalsWidget) {
+        setEvalsData(null)
+        setEvalsError(null)
+        setEvalsLoading(false)
+      }
       return
     }
+
     let cancelled = false
-    setCostsLoading(true)
-    setCostsError(null)
-    agentApi.getCosts(workspacePath)
+    if (hasCostsWidget) {
+      setCostsLoading(true)
+      setCostsError(null)
+    }
+    if (hasEvalsWidget) {
+      setEvalsLoading(true)
+      setEvalsError(null)
+    }
+
+    agentApi.getWorkflowReviewData(workspacePath)
       .then(async response => {
         if (cancelled) return
-        if ((response.runs?.length ?? 0) > 0) {
-          setCostsData(response)
-          return
+
+        if (hasCostsWidget) {
+          const costsResponse = response.costs
+          if (costsResponse?.success) {
+            if ((costsResponse.runs?.length ?? 0) > 0) {
+              setCostsData(costsResponse)
+            } else {
+              const fallback = await loadCostsDataFallback(workspacePath)
+              if (cancelled) return
+              setCostsData(fallback ?? costsResponse)
+            }
+          } else {
+            const fallback = await loadCostsDataFallback(workspacePath)
+            if (cancelled) return
+            if (fallback) {
+              setCostsData(fallback)
+              setCostsError(null)
+            } else {
+              setCostsData(null)
+              setCostsError('Failed to load workflow costs.')
+            }
+          }
         }
 
-        const fallback = await loadCostsDataFallback(workspacePath)
-        if (cancelled) return
-        setCostsData(fallback ?? response)
+        if (hasEvalsWidget) {
+          const evalsResponse = response.evaluations
+          if (evalsResponse?.success) {
+            setEvalsData(evalsResponse)
+          } else {
+            setEvalsData(null)
+            setEvalsError(evalsResponse?.error || 'Failed to load evaluation reports.')
+          }
+        }
       })
       .catch(async () => {
         if (cancelled) return
-        const fallback = await loadCostsDataFallback(workspacePath)
-        if (cancelled) return
-        if (fallback) {
-          setCostsData(fallback)
-          setCostsError(null)
-          return
+        if (hasCostsWidget) {
+          const fallback = await loadCostsDataFallback(workspacePath)
+          if (cancelled) return
+          if (fallback) {
+            setCostsData(fallback)
+            setCostsError(null)
+          } else {
+            setCostsData(null)
+            setCostsError('Failed to load workflow costs.')
+          }
         }
-        setCostsData(null)
-        setCostsError('Failed to load workflow costs.')
+        if (hasEvalsWidget) {
+          setEvalsData(null)
+          setEvalsError('Failed to load evaluation reports.')
+        }
       })
       .finally(() => {
-        if (!cancelled) setCostsLoading(false)
+        if (cancelled) return
+        if (hasCostsWidget) setCostsLoading(false)
+        if (hasEvalsWidget) setEvalsLoading(false)
       })
 
     return () => {
       cancelled = true
     }
-  }, [workspacePath, hasCostsWidget, refreshNonce])
-
-  useEffect(() => {
-    if (!workspacePath || !hasEvalsWidget) {
-      setEvalsData(null)
-      setEvalsError(null)
-      setEvalsLoading(false)
-      return
-    }
-    let cancelled = false
-    setEvalsLoading(true)
-    setEvalsError(null)
-    agentApi.getEvaluationReports(workspacePath)
-      .then(response => {
-        if (cancelled) return
-        setEvalsData(response)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setEvalsData(null)
-        setEvalsError('Failed to load evaluation reports.')
-      })
-      .finally(() => {
-        if (!cancelled) setEvalsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [workspacePath, hasEvalsWidget, refreshNonce])
+  }, [workspacePath, hasCostsWidget, hasEvalsWidget, refreshNonce])
 
   useEffect(() => {
     if (!workspacePath || !hasRunsWidget) {

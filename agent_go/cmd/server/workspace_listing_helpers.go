@@ -42,16 +42,30 @@ func listWorkspaceChildFolderNames(ctx context.Context, folderPath string) ([]st
 }
 
 func extractWorkspaceChildFolders(listing virtualtools.WorkspaceFolderListing, folderPath string) []virtualtools.WorkspaceFolderItem {
+	// The workspace API can return the listing in a hybrid shape: the root
+	// folder with its children nested AND the same child folders repeated as
+	// flat top-level entries. Dedupe by FilePath so each folder is emitted
+	// exactly once.
 	out := make([]virtualtools.WorkspaceFolderItem, 0)
+	seen := make(map[string]struct{})
 	for _, item := range listing {
 		switch {
 		case item.FilePath == folderPath:
 			for _, child := range item.Children {
-				if child.Type == "folder" {
-					out = append(out, child)
+				if child.Type != "folder" {
+					continue
 				}
+				if _, ok := seen[child.FilePath]; ok {
+					continue
+				}
+				seen[child.FilePath] = struct{}{}
+				out = append(out, child)
 			}
 		case item.Type == "folder":
+			if _, ok := seen[item.FilePath]; ok {
+				continue
+			}
+			seen[item.FilePath] = struct{}{}
 			out = append(out, item)
 		}
 	}

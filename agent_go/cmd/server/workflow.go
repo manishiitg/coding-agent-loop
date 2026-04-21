@@ -4497,12 +4497,13 @@ func listWorkspaceFolder(ctx context.Context, folderPath string, maxDepth int) (
 
 func collectWorkspaceFilePaths(items []virtualtools.WorkspaceFolderItem, out *[]string) {
 	for _, item := range items {
-		switch item.Type {
-		case "file":
-			*out = append(*out, item.FilePath)
-		case "folder":
+		// Workspace API omits `type` for files — treat "folder" as folder and
+		// everything else (including items with an empty type) as a file.
+		if item.Type == "folder" {
 			collectWorkspaceFilePaths(item.Children, out)
+			continue
 		}
+		*out = append(*out, item.FilePath)
 	}
 }
 

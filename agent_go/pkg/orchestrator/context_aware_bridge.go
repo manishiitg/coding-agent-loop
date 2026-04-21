@@ -39,14 +39,48 @@ type orchestratorContext struct {
 
 // ToolCallEntry represents a captured tool call for logging purposes.
 type ToolCallEntry struct {
-	ToolCallID string        `json:"tool_call_id"`
-	ToolName   string        `json:"tool_name"`
-	Args       string        `json:"args,omitempty"`
-	Result     string        `json:"result,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	Duration   time.Duration `json:"duration,omitempty"`
-	StepID     string        `json:"step_id,omitempty"`
-	Timestamp  time.Time     `json:"timestamp"`
+	ToolCallID  string        `json:"tool_call_id"`
+	ToolName    string        `json:"tool_name"`
+	Args        string        `json:"args,omitempty"`
+	Result      string        `json:"result,omitempty"`
+	Error       string        `json:"error,omitempty"`
+	Duration    time.Duration `json:"duration,omitempty"`
+	StepID      string        `json:"step_id,omitempty"`
+	Timestamp   time.Time     `json:"timestamp"`
+	StartedAt   time.Time     `json:"started_at,omitempty"`
+	CompletedAt time.Time     `json:"completed_at,omitempty"`
+}
+
+// LLMCallEntry represents a captured LLM call for timing/debug logging.
+type LLMCallEntry struct {
+	Turn                  int           `json:"turn,omitempty"`
+	ModelID               string        `json:"model_id,omitempty"`
+	Status                string        `json:"status"`
+	Error                 string        `json:"error,omitempty"`
+	StartedAt             time.Time     `json:"started_at"`
+	CompletedAt           time.Time     `json:"completed_at,omitempty"`
+	Duration              time.Duration `json:"duration,omitempty"`
+	FirstResponseAt       time.Time     `json:"first_response_at,omitempty"`
+	TimeToFirstResponse   time.Duration `json:"time_to_first_response,omitempty"`
+	FirstContentAt        time.Time     `json:"first_content_at,omitempty"`
+	TimeToFirstContent    time.Duration `json:"time_to_first_content,omitempty"`
+	FirstToolCallAt       time.Time     `json:"first_tool_call_at,omitempty"`
+	TimeToFirstToolCall   time.Duration `json:"time_to_first_tool_call,omitempty"`
+	ToolCalls             int           `json:"tool_calls,omitempty"`
+	PromptTokens          int           `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int           `json:"completion_tokens,omitempty"`
+	TotalTokens           int           `json:"total_tokens,omitempty"`
+	CacheTokens           int           `json:"cache_tokens,omitempty"`
+	ReasoningTokens       int           `json:"reasoning_tokens,omitempty"`
+	ContextUsagePercent   float64       `json:"context_usage_percent,omitempty"`
+	ModelContextWindow    int           `json:"model_context_window,omitempty"`
+	FixedThresholdPercent float64       `json:"fixed_threshold_percent,omitempty"`
+}
+
+// TimingCaptureSnapshot is a per-attempt timing snapshot used by workflow logs.
+type TimingCaptureSnapshot struct {
+	ToolCalls []ToolCallEntry `json:"tool_calls,omitempty"`
+	LLMCalls  []LLMCallEntry  `json:"llm_calls,omitempty"`
 }
 
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
@@ -64,10 +98,12 @@ type ContextAwareEventBridge struct {
 	totalGroups      int    // Total number of groups in batch
 	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
 	contextStack []orchestratorContext
-	// Tool call collector — captures tool_call_start/end events for workspace logging
+	// Timing collector — captures tool and LLM timing events for workspace logging
 	toolCalls       map[string]*ToolCallEntry // keyed by ToolCallID
 	toolCallOrder   []string                  // insertion order
-	toolCallCapture bool                      // whether to capture tool calls
+	llmCalls        []*LLMCallEntry
+	activeLLMCalls  []*LLMCallEntry
+	toolCallCapture bool // whether to capture tool calls
 	mu              sync.RWMutex
 	logger          loggerv2.Logger
 }
@@ -458,39 +494,92 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	return err
 }
 
-// StartToolCallCapture enables tool call capture. Call DrainToolCalls to retrieve and reset.
-func (c *ContextAwareEventBridge) StartToolCallCapture() {
+// StartTimingCapture enables per-attempt timing capture. Call DrainTimingCapture to retrieve and reset.
+func (c *ContextAwareEventBridge) StartTimingCapture() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.toolCallCapture = true
 	c.toolCalls = make(map[string]*ToolCallEntry)
 	c.toolCallOrder = nil
+	c.llmCalls = nil
+	c.activeLLMCalls = nil
 }
 
-// DrainToolCalls returns all captured tool calls in order and resets the collector.
-func (c *ContextAwareEventBridge) DrainToolCalls() []ToolCallEntry {
+// StartToolCallCapture enables tool call capture. Call DrainToolCalls to retrieve and reset.
+// Deprecated: use StartTimingCapture for tool + LLM timing.
+func (c *ContextAwareEventBridge) StartToolCallCapture() {
+	c.StartTimingCapture()
+}
+
+// DrainTimingCapture returns all captured timing data in order and resets the collector.
+func (c *ContextAwareEventBridge) DrainTimingCapture() TimingCaptureSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.toolCallCapture = false
-	result := make([]ToolCallEntry, 0, len(c.toolCallOrder))
+
+	result := TimingCaptureSnapshot{
+		ToolCalls: make([]ToolCallEntry, 0, len(c.toolCallOrder)),
+		LLMCalls:  make([]LLMCallEntry, 0, len(c.llmCalls)),
+	}
 	for _, id := range c.toolCallOrder {
 		if tc, ok := c.toolCalls[id]; ok {
-			result = append(result, *tc)
+			result.ToolCalls = append(result.ToolCalls, *tc)
 		}
 	}
+	for _, llmCall := range c.llmCalls {
+		if llmCall != nil {
+			result.LLMCalls = append(result.LLMCalls, *llmCall)
+		}
+	}
+
 	c.toolCalls = nil
 	c.toolCallOrder = nil
+	c.llmCalls = nil
+	c.activeLLMCalls = nil
 	return result
+}
+
+// DrainToolCalls returns all captured tool calls in order and resets the collector.
+// Deprecated: use DrainTimingCapture for tool + LLM timing.
+func (c *ContextAwareEventBridge) DrainToolCalls() []ToolCallEntry {
+	return c.DrainTimingCapture().ToolCalls
 }
 
 func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.toolCalls == nil {
+	if c.toolCalls == nil && c.llmCalls == nil {
 		return
 	}
 
+	eventTime := event.Timestamp
+	if eventTime.IsZero() {
+		eventTime = time.Now()
+	}
+
 	switch d := event.Data.(type) {
+	case *events.LLMGenerationStartEvent:
+		entry := &LLMCallEntry{
+			Turn:      d.Turn,
+			ModelID:   d.ModelID,
+			Status:    "running",
+			StartedAt: eventTime,
+		}
+		c.llmCalls = append(c.llmCalls, entry)
+		c.activeLLMCalls = append(c.activeLLMCalls, entry)
+	case *events.StreamingChunkEvent:
+		if len(c.activeLLMCalls) == 0 || d.Content == "" {
+			return
+		}
+		current := c.activeLLMCalls[0]
+		if current.FirstResponseAt.IsZero() {
+			current.FirstResponseAt = eventTime
+			current.TimeToFirstResponse = eventTime.Sub(current.StartedAt)
+		}
+		if current.FirstContentAt.IsZero() {
+			current.FirstContentAt = eventTime
+			current.TimeToFirstContent = eventTime.Sub(current.StartedAt)
+		}
 	case *events.ToolCallStartEvent:
 		if _, exists := c.toolCalls[d.ToolCallID]; !exists {
 			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
@@ -500,37 +589,204 @@ func (c *ContextAwareEventBridge) captureToolCallEvent(event *events.AgentEvent)
 			ToolName:   d.ToolName,
 			Args:       d.ToolParams.Arguments,
 			StepID:     c.currentStepID,
-			Timestamp:  time.Now(),
+			Timestamp:  eventTime,
+			StartedAt:  eventTime,
+		}
+		if len(c.activeLLMCalls) > 0 {
+			current := c.activeLLMCalls[0]
+			if current.FirstResponseAt.IsZero() {
+				current.FirstResponseAt = eventTime
+				current.TimeToFirstResponse = eventTime.Sub(current.StartedAt)
+			}
+			if current.FirstToolCallAt.IsZero() {
+				current.FirstToolCallAt = eventTime
+				current.TimeToFirstToolCall = eventTime.Sub(current.StartedAt)
+			}
 		}
 	case *events.ToolCallEndEvent:
 		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
 			tc.Result = d.Result
 			tc.Duration = d.Duration
+			tc.CompletedAt = eventTime
 		} else {
 			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
 			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
-				ToolCallID: d.ToolCallID,
-				ToolName:   d.ToolName,
-				Result:     d.Result,
-				Duration:   d.Duration,
-				StepID:     c.currentStepID,
-				Timestamp:  time.Now(),
+				ToolCallID:  d.ToolCallID,
+				ToolName:    d.ToolName,
+				Result:      d.Result,
+				Duration:    d.Duration,
+				StepID:      c.currentStepID,
+				Timestamp:   eventTime,
+				StartedAt:   eventTime.Add(-d.Duration),
+				CompletedAt: eventTime,
 			}
 		}
 	case *events.ToolCallErrorEvent:
 		if tc, ok := c.toolCalls[d.ToolCallID]; ok {
 			tc.Error = d.Error
 			tc.Duration = d.Duration
+			tc.CompletedAt = eventTime
 		} else {
 			c.toolCallOrder = append(c.toolCallOrder, d.ToolCallID)
 			c.toolCalls[d.ToolCallID] = &ToolCallEntry{
-				ToolCallID: d.ToolCallID,
-				ToolName:   d.ToolName,
-				Error:      d.Error,
-				Duration:   d.Duration,
-				StepID:     c.currentStepID,
-				Timestamp:  time.Now(),
+				ToolCallID:  d.ToolCallID,
+				ToolName:    d.ToolName,
+				Error:       d.Error,
+				Duration:    d.Duration,
+				StepID:      c.currentStepID,
+				Timestamp:   eventTime,
+				StartedAt:   eventTime.Add(-d.Duration),
+				CompletedAt: eventTime,
+			}
+		}
+	case *events.LLMGenerationEndEvent:
+		entry := c.consumeActiveLLMCall()
+		if entry == nil {
+			entry = &LLMCallEntry{
+				Status:    "success",
+				StartedAt: eventTime.Add(-d.Duration),
+			}
+			c.llmCalls = append(c.llmCalls, entry)
+		}
+		entry.Status = "success"
+		if d.Turn != 0 {
+			entry.Turn = d.Turn
+		}
+		entry.CompletedAt = eventTime
+		entry.Duration = d.Duration
+		entry.ToolCalls = d.ToolCalls
+		entry.PromptTokens = d.UsageMetrics.PromptTokens
+		entry.CompletionTokens = d.UsageMetrics.CompletionTokens
+		entry.TotalTokens = d.UsageMetrics.TotalTokens
+		entry.CacheTokens = d.UsageMetrics.CacheTokens
+		entry.ReasoningTokens = d.UsageMetrics.ReasoningTokens
+		if entry.ModelID == "" {
+			entry.ModelID = extractStringMetadata(d.Metadata, "resolved_model", "model_id", "gemini_model", "claude_code_model")
+		}
+		entry.ContextUsagePercent = extractFloatMetadata(d.Metadata, "context_usage_percent")
+		entry.FixedThresholdPercent = extractFloatMetadata(d.Metadata, "fixed_threshold_percent")
+		entry.ModelContextWindow = extractIntMetadata(d.Metadata, "model_context_window")
+		c.finalizeLLMEntryTiming(entry)
+	case *events.LLMGenerationErrorEvent:
+		entry := c.consumeActiveLLMCall()
+		if entry == nil {
+			entry = &LLMCallEntry{
+				StartedAt: eventTime.Add(-d.Duration),
+			}
+			c.llmCalls = append(c.llmCalls, entry)
+		}
+		entry.Status = "error"
+		if d.Turn != 0 {
+			entry.Turn = d.Turn
+		}
+		if entry.ModelID == "" {
+			entry.ModelID = d.ModelID
+		}
+		entry.Error = d.Error
+		entry.CompletedAt = eventTime
+		entry.Duration = d.Duration
+		c.finalizeLLMEntryTiming(entry)
+	case *events.ContextCancelledEvent:
+		entry := c.consumeActiveLLMCall()
+		if entry == nil {
+			return
+		}
+		entry.Status = "canceled"
+		if d.Turn != 0 {
+			entry.Turn = d.Turn
+		}
+		entry.Error = d.Reason
+		entry.CompletedAt = eventTime
+		entry.Duration = d.Duration
+		c.finalizeLLMEntryTiming(entry)
+	}
+}
+
+func (c *ContextAwareEventBridge) consumeActiveLLMCall() *LLMCallEntry {
+	if len(c.activeLLMCalls) == 0 {
+		return nil
+	}
+	entry := c.activeLLMCalls[0]
+	c.activeLLMCalls = c.activeLLMCalls[1:]
+	return entry
+}
+
+func (c *ContextAwareEventBridge) finalizeLLMEntryTiming(entry *LLMCallEntry) {
+	if entry == nil {
+		return
+	}
+	if entry.CompletedAt.IsZero() {
+		entry.CompletedAt = entry.StartedAt
+	}
+	if entry.Duration <= 0 && !entry.StartedAt.IsZero() && !entry.CompletedAt.IsZero() {
+		entry.Duration = entry.CompletedAt.Sub(entry.StartedAt)
+	}
+	if entry.TimeToFirstResponse <= 0 && !entry.FirstResponseAt.IsZero() && !entry.StartedAt.IsZero() {
+		entry.TimeToFirstResponse = entry.FirstResponseAt.Sub(entry.StartedAt)
+	}
+	if entry.TimeToFirstContent <= 0 && !entry.FirstContentAt.IsZero() && !entry.StartedAt.IsZero() {
+		entry.TimeToFirstContent = entry.FirstContentAt.Sub(entry.StartedAt)
+	}
+	if entry.TimeToFirstToolCall <= 0 && !entry.FirstToolCallAt.IsZero() && !entry.StartedAt.IsZero() {
+		entry.TimeToFirstToolCall = entry.FirstToolCallAt.Sub(entry.StartedAt)
+	}
+	if entry.FirstResponseAt.IsZero() && !entry.CompletedAt.IsZero() && (entry.ToolCalls > 0 || entry.Duration > 0) {
+		entry.FirstResponseAt = entry.CompletedAt
+		entry.TimeToFirstResponse = entry.CompletedAt.Sub(entry.StartedAt)
+	}
+	if entry.FirstContentAt.IsZero() && !entry.CompletedAt.IsZero() && entry.CompletionTokens > 0 {
+		entry.FirstContentAt = entry.CompletedAt
+		entry.TimeToFirstContent = entry.CompletedAt.Sub(entry.StartedAt)
+	}
+	if entry.FirstToolCallAt.IsZero() && !entry.CompletedAt.IsZero() && entry.ToolCalls > 0 {
+		entry.FirstToolCallAt = entry.CompletedAt
+		entry.TimeToFirstToolCall = entry.CompletedAt.Sub(entry.StartedAt)
+	}
+}
+
+func extractStringMetadata(meta map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := meta[key]; ok {
+			if asString, ok := value.(string); ok && strings.TrimSpace(asString) != "" {
+				return asString
 			}
 		}
 	}
+	return ""
+}
+
+func extractFloatMetadata(meta map[string]interface{}, keys ...string) float64 {
+	for _, key := range keys {
+		if value, ok := meta[key]; ok {
+			switch v := value.(type) {
+			case float64:
+				return v
+			case float32:
+				return float64(v)
+			case int:
+				return float64(v)
+			case int64:
+				return float64(v)
+			}
+		}
+	}
+	return 0
+}
+
+func extractIntMetadata(meta map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		if value, ok := meta[key]; ok {
+			switch v := value.(type) {
+			case int:
+				return v
+			case int64:
+				return int(v)
+			case float64:
+				return int(v)
+			case float32:
+				return int(v)
+			}
+		}
+	}
+	return 0
 }

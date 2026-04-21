@@ -761,6 +761,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	conversationHistory []llmtypes.MessageContent,
 	executionAgent agents.OrchestratorAgent,
 	toolCalls []orchestrator.ToolCallEntry,
+	llmCalls []orchestrator.LLMCallEntry,
 	attemptStartedAt time.Time,
 	attemptCompletedAt time.Time,
 	attemptDuration time.Duration,
@@ -776,16 +777,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	}
 	logDir := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 	filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
-	toolTiming := normalizeToolTimingEntries(toolCalls)
-	agentName := ""
-	if executionAgent != nil && executionAgent.GetBaseAgent() != nil {
-		agentName = executionAgent.GetBaseAgent().GetName()
-	}
 	if attemptCompletedAt.IsZero() {
 		attemptCompletedAt = time.Now().UTC()
 	}
 	if attemptStartedAt.IsZero() {
 		attemptStartedAt = attemptCompletedAt.Add(-attemptDuration)
+	}
+	toolTiming := normalizeToolTimingEntries(toolCalls, attemptStartedAt)
+	llmTiming := normalizeLLMTimingEntries(llmCalls, attemptStartedAt)
+	agentName := ""
+	if executionAgent != nil && executionAgent.GetBaseAgent() != nil {
+		agentName = executionAgent.GetBaseAgent().GetName()
 	}
 	timingData := map[string]interface{}{
 		"step_index":     stepIndex + 1,
@@ -795,34 +797,41 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		"loop_iteration": loopIterationCount,
 		"run_folder":     hcpo.selectedRunFolder,
 		"agent": map[string]interface{}{
-			"name":         agentName,
-			"model":        executionLLM,
-			"started_at":   formatRFC3339UTC(attemptStartedAt),
-			"completed_at": formatRFC3339UTC(attemptCompletedAt),
-			"duration_ns":  int64(attemptDuration),
-			"duration_ms":  durationToMillis(attemptDuration),
+			"name":                          agentName,
+			"model":                         executionLLM,
+			"started_at":                    formatRFC3339UTC(attemptStartedAt),
+			"completed_at":                  formatRFC3339UTC(attemptCompletedAt),
+			"duration_ns":                   int64(attemptDuration),
+			"duration_ms":                   durationToMillis(attemptDuration),
+			"llm_call_count":                llmTiming.Count,
+			"llm_duration_ms":               llmTiming.TotalDurationMs,
+			"llm_time_to_first_response_ms": llmTiming.TimeToFirstResponseMs,
 		},
+		"llm":   llmTiming,
 		"tools": toolTiming,
 	}
 
 	// Save execution result
 	resultPath := fmt.Sprintf("%s/%s.json", logDir, filenameBase)
 	resultData := map[string]interface{}{
-		"step_index":       stepIndex + 1,
-		"step_id":          stepID,
-		"step_path":        stepPath,
-		"retry_attempt":    retryAttempt,
-		"loop_iteration":   loopIterationCount,
-		"execution_result": executionResult,
-		"model":            executionLLM,
-		"started_at":       formatRFC3339UTC(attemptStartedAt),
-		"completed_at":     formatRFC3339UTC(attemptCompletedAt),
-		"duration_ms":      durationToMillis(attemptDuration),
-		"duration_ns":      int64(attemptDuration),
-		"tool_call_count":  toolTiming.Count,
-		"tool_duration_ms": toolTiming.TotalDurationMs,
-		"timing":           timingData,
-		"timestamp":        attemptCompletedAt.Format(time.RFC3339),
+		"step_index":                    stepIndex + 1,
+		"step_id":                       stepID,
+		"step_path":                     stepPath,
+		"retry_attempt":                 retryAttempt,
+		"loop_iteration":                loopIterationCount,
+		"execution_result":              executionResult,
+		"model":                         executionLLM,
+		"started_at":                    formatRFC3339UTC(attemptStartedAt),
+		"completed_at":                  formatRFC3339UTC(attemptCompletedAt),
+		"duration_ms":                   durationToMillis(attemptDuration),
+		"duration_ns":                   int64(attemptDuration),
+		"llm_call_count":                llmTiming.Count,
+		"llm_duration_ms":               llmTiming.TotalDurationMs,
+		"llm_time_to_first_response_ms": llmTiming.TimeToFirstResponseMs,
+		"tool_call_count":               toolTiming.Count,
+		"tool_duration_ms":              toolTiming.TotalDurationMs,
+		"timing":                        timingData,
+		"timestamp":                     attemptCompletedAt.Format(time.RFC3339),
 	}
 	if resultJSON, err := json.MarshalIndent(resultData, "", "  "); err == nil {
 		if err := hcpo.WriteWorkspaceFile(saveCtx, resultPath, string(resultJSON)); err != nil {
@@ -839,7 +848,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		"retry_attempt":        retryAttempt,
 		"loop_iteration":       loopIterationCount,
 		"conversation_history": conversationHistory,
+		"llm_calls":            llmCalls,
 		"tool_calls":           toolCalls,
+		"llm_call_count":       llmTiming.Count,
 		"tool_call_count":      toolTiming.Count,
 		"timing":               timingData,
 		"timestamp":            attemptCompletedAt.Format(time.RFC3339),
@@ -1682,6 +1693,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				executionAgentCtx := ctx
 				attemptTier := adaptiveTier
 				var capturedToolCalls []orchestrator.ToolCallEntry
+				var capturedLLMCalls []orchestrator.LLMCallEntry
 				var attemptStartedAt time.Time
 				var attemptCompletedAt time.Time
 				var attemptDuration time.Duration
@@ -1768,7 +1780,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 
 					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-						cab.StartToolCallCapture()
+						cab.StartTimingCapture()
 					}
 					attemptStartedAt = time.Now().UTC()
 					// Execute execution-only agent with learning history (reused from learning reading above)
@@ -1787,7 +1799,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						return "", updatedContextFiles, fmt.Errorf("execution agent has no base agent for continuation on step %d attempt %d", stepIndex+1, retryAttempt)
 					}
 					if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-						cab.StartToolCallCapture()
+						cab.StartTimingCapture()
 					}
 					attemptStartedAt = time.Now().UTC()
 					executionResult, executionConversationHistory, err = ba.Execute(ctx, feedbackUserMsg, executionConversationHistory, "", false)
@@ -1795,7 +1807,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				attemptCompletedAt = time.Now().UTC()
 				attemptDuration = attemptCompletedAt.Sub(attemptStartedAt)
 				if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-					capturedToolCalls = cab.DrainToolCalls()
+					timingCapture := cab.DrainTimingCapture()
+					capturedToolCalls = timingCapture.ToolCalls
+					capturedLLMCalls = timingCapture.LLMCalls
 				}
 
 				// Capture conversation history for callers that need it (e.g., get_sub_agent_conversation tool)
@@ -1832,7 +1846,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if len(executionConversationHistory) > 0 {
 						hcpo.GetLogger().Info(fmt.Sprintf("[PARTIAL-LOGS] Saving partial execution logs for step %d (%s) — %d conversation entries, error: %v", stepIndex+1, stepPath, len(executionConversationHistory), err))
 						hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
-							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+							fmt.Sprintf("FAILED: %v", err), executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 					} else {
 						hcpo.GetLogger().Warn(fmt.Sprintf("[PARTIAL-LOGS] No conversation history to save for step %d (%s) — execution failed before any LLM turns", stepIndex+1, stepPath))
 					}
@@ -1848,7 +1862,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				// Save execution logs (result, conversation history, system prompt)
 				hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
-					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
+					executionResult, executionLLM, executionConversationHistory, executionAgent, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
 
 				// Learn code mode: inner fix loop — run main.py and feed errors back as user messages
 				// in the same conversation chain (no new agent, no system-prompt reset).

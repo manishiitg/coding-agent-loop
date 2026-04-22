@@ -66,10 +66,16 @@ func clearStepConfigField(sc *StepConfig, name string) bool {
 	// String fields (empty string + omitempty drops the key)
 	case "learnings_access":
 		ac.LearningsAccess = ""
+	case "learnings_write_method":
+		ac.LearningsWriteMethod = ""
 	case "knowledgebase_access":
 		ac.KnowledgebaseAccess = ""
 	case "knowledgebase_contribution":
 		ac.KnowledgebaseContribution = ""
+	case "knowledgebase_write_method":
+		ac.KnowledgebaseWriteMethod = ""
+	case "knowledgebase_contribution_type":
+		ac.KnowledgebaseContributionType = ""
 	case "review_notes":
 		ac.ReviewNotes = ""
 	case "declared_execution_mode":
@@ -98,6 +104,8 @@ func isKnownAgentConfigClearField(name string) bool {
 		"disable_parallel_tool_execution", "optimized",
 		"description_reviewed",
 		"learning_mode", "knowledgebase_access", "knowledgebase_contribution",
+		"knowledgebase_write_method", "knowledgebase_contribution_type",
+		"learnings_write_method",
 		"review_notes", "declared_execution_mode", "declared_execution_mode_reason",
 		"global_skill_objective":
 		return true

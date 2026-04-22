@@ -12,19 +12,32 @@ func TestValidateReportPlanStatArrayIsError(t *testing.T) {
 
 	workspacePath := "Workflow/linkedin"
 	files := map[string]string{
-		"Workflow/linkedin/reports/report_plan.md": "## Overview\n\n" +
-			"```widget:stat\n" +
-			"title: Active Strategies\n" +
-			"source: db/strategies.json\n" +
-			"path: active_strategies\n" +
-			"format: count\n" +
-			"```",
+		"Workflow/linkedin/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Active Strategies",
+								"source": "db/strategies.json",
+								"path": "active_strategies",
+								"format": "count"
+							}
+						}
+					]
+				}
+			]
+		}`,
 		"Workflow/linkedin/db/strategies.json": `{"active_strategies":[{"id":"s-1"},{"id":"s-2"}]}`,
 	}
 
-	result, err := validateReportPlanMarkdown(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
 	if err != nil {
-		t.Fatalf("validateReportPlanMarkdown returned error: %v", err)
+		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
 
 	if result.Valid {
@@ -46,19 +59,32 @@ func TestValidateReportPlanStatUnknownFormatWarns(t *testing.T) {
 
 	workspacePath := "Workflow/linkedin"
 	files := map[string]string{
-		"Workflow/linkedin/reports/report_plan.md": "## Overview\n\n" +
-			"```widget:stat\n" +
-			"title: Total Posts\n" +
-			"source: db/summary.json\n" +
-			"path: total_posts\n" +
-			"format: count\n" +
-			"```",
+		"Workflow/linkedin/reports/report_plan.json": `{
+			"version": 1,
+			"sections": [
+				{
+					"heading": "Overview",
+					"entries": [
+						{
+							"kind": "single",
+							"widget": {
+								"kind": "stat",
+								"title": "Total Posts",
+								"source": "db/summary.json",
+								"path": "total_posts",
+								"format": "count"
+							}
+						}
+					]
+				}
+			]
+		}`,
 		"Workflow/linkedin/db/summary.json": `{"total_posts":14}`,
 	}
 
-	result, err := validateReportPlanMarkdown(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	result, err := validateReportPlan(context.Background(), workspacePath, fakeReportPlanReadFile(files))
 	if err != nil {
-		t.Fatalf("validateReportPlanMarkdown returned error: %v", err)
+		t.Fatalf("validateReportPlan returned error: %v", err)
 	}
 
 	if !result.Valid {

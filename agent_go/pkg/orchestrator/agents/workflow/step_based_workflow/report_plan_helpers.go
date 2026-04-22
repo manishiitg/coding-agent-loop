@@ -36,7 +36,7 @@ var (
 	reportPlanKnownPivotAggregates = map[string]struct{}{
 		"sum": {}, "avg": {}, "count": {}, "min": {}, "max": {}, "first": {},
 	}
-	reportPlanValidSourceRE = regexp.MustCompile(`^(db/[^/]+\.json|knowledgebase/graph\.json|knowledgebase/index\.json)$`)
+	reportPlanValidSourceRE = regexp.MustCompile(`^db/[^/]+\.json$`)
 	reportPlanFenceRE       = regexp.MustCompile("^```\\s*widget:([\\w-]+)\\s*$")
 	reportPlanHexColorRE    = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 	reportPlanCSSNamedRE    = regexp.MustCompile(`^[a-zA-Z]+$`)
@@ -164,7 +164,7 @@ type reportPlanDiagnostic struct {
 	Severity string `json:"severity"` // "error" | "warning" | "info"
 	Section  string `json:"section,omitempty"`
 	Line     int    `json:"line,omitempty"`
-	Widget   string `json:"widget,omitempty"` // short locator e.g. "chart@knowledgebase/graph.json"
+	Widget   string `json:"widget,omitempty"` // short locator e.g. "table@db/companies.json"
 	Message  string `json:"message"`
 	Hint     string `json:"hint,omitempty"`
 }
@@ -233,7 +233,7 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 				Views: []string{"summary", "duration-chart", "status-chart", "table"},
 			},
 		},
-		ValidSourcePatterns:  []string{"db/<file>.json", "knowledgebase/graph.json", "knowledgebase/index.json"},
+		ValidSourcePatterns:  []string{"db/<file>.json"},
 		CommonFields:         []string{"title", "description", "height", "filter", "show_if"},
 		SourceBackedRequired: []string{"source", "path"},
 		APIBackedRules: []string{
@@ -1210,7 +1210,7 @@ func validateReportPlan(
 				result.Errors = append(result.Errors, reportPlanDiagnostic{
 					Severity: "error", Section: section.Heading, Line: w.LineNum, Widget: locator,
 					Message: fmt.Sprintf("source %q is not a valid widget source.", w.Source),
-					Hint:    "Use db/<file>.json, knowledgebase/graph.json, or knowledgebase/index.json.",
+					Hint:    "Use db/<file>.json.",
 				})
 				continue
 			}

@@ -166,12 +166,13 @@ func kbAccessAllowsWrite(mode string) bool {
 const (
 	// KBWriteMethodAgent is the default: the step executes, and the post-step KB
 	// update agent (controller_kb_update.go) reads the step's tool trail plus its
-	// knowledgebase_contribution and merges facts into graph.json / notes/.
+	// knowledgebase_contribution and merges observations into the relevant notes/
+	// topic file(s).
 	KBWriteMethodAgent = "agent"
 	// KBWriteMethodDirect gives the step agent itself direct write authority:
-	// kb_upsert_entity / kb_upsert_relationship tools are registered on the agent
-	// and notes/ is added to its folder-guard writePaths. The post-step KB update
-	// agent does NOT run for steps using this method.
+	// notes/ is added to its folder-guard writePaths and it writes narrative via
+	// shell + diff_patch_workspace_file inline, with a post-completion self-review
+	// turn. The post-step KB update agent does NOT run for steps using this method.
 	KBWriteMethodDirect = "direct"
 )
 
@@ -190,53 +191,6 @@ func resolveKnowledgebaseWriteMethod(stepConfig *AgentConfigs) string {
 	default:
 		return KBWriteMethodAgent
 	}
-}
-
-// Knowledgebase contribution surfaces — picked per step, only consulted in direct
-// write mode to scope which KB surfaces (graph, notes, or both) the step is
-// expected to write. Agent-mode KB extraction ignores this and continues to read
-// the freeform knowledgebase_contribution string.
-const (
-	// KBContributionTypeBoth enables both graph (kb_upsert_* tools) and notes
-	// (shell + diff_patch under knowledgebase/notes/). This is the default when
-	// the field is unset — full direct-mode capability.
-	KBContributionTypeBoth = "both"
-	// KBContributionTypeGraphOnly registers kb_upsert_entity / kb_upsert_relationship
-	// but does NOT add knowledgebase/notes/ to writePaths. Step contributes only
-	// atomic facts; narrative notes are out of scope.
-	KBContributionTypeGraphOnly = "graph_only"
-	// KBContributionTypeNotesOnly adds knowledgebase/notes/ to writePaths but does
-	// NOT register kb_upsert_*. Step contributes only narrative; graph entries are
-	// out of scope.
-	KBContributionTypeNotesOnly = "notes_only"
-)
-
-// resolveKnowledgebaseContributionType returns the scoped contribution type.
-// Empty or unknown values fall back to "both" to preserve full capability.
-func resolveKnowledgebaseContributionType(stepConfig *AgentConfigs) string {
-	if stepConfig == nil {
-		return KBContributionTypeBoth
-	}
-	switch stepConfig.KnowledgebaseContributionType {
-	case KBContributionTypeGraphOnly:
-		return KBContributionTypeGraphOnly
-	case KBContributionTypeNotesOnly:
-		return KBContributionTypeNotesOnly
-	case KBContributionTypeBoth, "":
-		return KBContributionTypeBoth
-	default:
-		return KBContributionTypeBoth
-	}
-}
-
-// kbContributionAllowsGraph reports whether the contribution type includes graph writes.
-func kbContributionAllowsGraph(contribType string) bool {
-	return contribType == KBContributionTypeGraphOnly || contribType == KBContributionTypeBoth
-}
-
-// kbContributionAllowsNotes reports whether the contribution type includes notes writes.
-func kbContributionAllowsNotes(contribType string) bool {
-	return contribType == KBContributionTypeNotesOnly || contribType == KBContributionTypeBoth
 }
 
 // kbAccessLabel returns a human-readable label for prompt display.
@@ -992,11 +946,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadSingleStepResultFromLogs(ctx cont
 
 	stepPath := fmt.Sprintf("step-%d", stepNumber)
 	stepID := stepPath
+	var plannedStep PlanStepInterface
 	if hcpo.approvedPlan != nil && stepNumber >= 1 && stepNumber <= len(hcpo.approvedPlan.Steps) {
-		if id := hcpo.approvedPlan.Steps[stepNumber-1].GetID(); id != "" {
+		plannedStep = hcpo.approvedPlan.Steps[stepNumber-1]
+		if id := plannedStep.GetID(); id != "" {
 			stepID = id
 		}
 	}
+
+	// Human-input steps don't write execution-attempt-*.json files. Their answer
+	// is saved to the step's context_output file (e.g. step-N.json) with schema
+	// {"response": "...", ...}. Without this branch, downstream routing steps
+	// that run in a separate invocation (e.g. workshop execute_step) would see
+	// an empty prior result and route blindly.
+	if plannedStep != nil && plannedStep.StepType() == StepTypeHumanInput {
+		executionWorkspacePath := fmt.Sprintf("%s/execution", validationWorkspacePath)
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
+		contextOutput := plannedStep.GetContextOutput().String()
+		if contextOutput == "" {
+			contextOutput = fmt.Sprintf("step-%d.json", stepNumber)
+		}
+		resolvedContextOutput := ResolveVariables(contextOutput, hcpo.variableValues)
+		responseFilePath := filepath.Join(stepExecutionPath, resolvedContextOutput)
+		if content, err := hcpo.ReadWorkspaceFile(ctx, responseFilePath); err == nil {
+			var responseData map[string]interface{}
+			if err := json.Unmarshal([]byte(content), &responseData); err == nil {
+				if response, ok := responseData["response"].(string); ok && response != "" {
+					hcpo.GetLogger().Info(fmt.Sprintf("Loaded human_input response for step %d from %s (length=%d)", stepNumber, responseFilePath, len(response)))
+					return response, true
+				}
+			}
+		}
+		// Fall through to the execution-attempt scan below — harmless, won't find anything.
+	}
+
 	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepID, stepPath)
 
 	var latestExecutionResult string
@@ -1225,8 +1208,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		narrowAgentCfg := getAgentConfigs(step)
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
 		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
-		narrowKBContribType := resolveKnowledgebaseContributionType(narrowAgentCfg)
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowKBWriteMethod, narrowKBContribType)
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowKBWriteMethod)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1339,7 +1321,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Resolve KB access mode for this step (explicit step config > preset default)
 		kbAccess := resolveKnowledgebaseAccess(agentConfigs, hcpo.UseKnowledgebase())
 		kbWriteMethod := resolveKnowledgebaseWriteMethod(agentConfigs)
-		kbContribType := resolveKnowledgebaseContributionType(agentConfigs)
 		useKnowledgebase := kbAccess != KBAccessNone
 		knowledgebasePath := ""
 		if useKnowledgebase {
@@ -1347,7 +1328,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, kbWriteMethod, kbContribType)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, kbWriteMethod)
 
 		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
 		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.
@@ -1433,9 +1414,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"KbAccess":              kbAccess,                                                  // KB access mode: "read" | "write" | "read-write" | "none"
 			"KbAccessLabel":         kbAccessLabel(kbAccess),                                   // Human-readable label for prompt display
 			"KbWriteMethod":         kbWriteMethod,                                             // "agent" | "direct" — who writes KB
-			"KbContributionType":    kbContribType,                                             // "graph_only" | "notes_only" | "both" — direct-mode scope
 			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                 // Author's contribution instruction (direct mode surfaces it to the step)
-			"KBGuidanceBlock":       BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContribType, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance, scoped by type
+			"KBGuidanceBlock":       BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                    // Code execution mode flag (step-specific or preset)
 			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
@@ -2317,13 +2297,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// asking the step agent to verify it fulfilled its knowledgebase_contribution
 					// contract. Does NOT consume a retry slot, does NOT re-run pre-validation,
 					// and fires at most once per step execution. The agent's follow-up tool
-					// calls (if any) land via the normal kb_upsert_* / notes-write pipeline.
+					// calls (if any) land via the normal notes-write pipeline.
 					if !kbReviewPerformed && executionAgent != nil {
 						stepCfgForReview := getAgentConfigs(step)
 						reviewMsg := BuildKBContributionReviewMessage(
 							resolveKnowledgebaseAccess(stepCfgForReview, hcpo.UseKnowledgebase()),
 							resolveKnowledgebaseWriteMethod(stepCfgForReview),
-							resolveKnowledgebaseContributionType(stepCfgForReview),
 							kbContributionForPrompt(stepCfgForReview),
 						)
 						if reviewMsg != "" {
@@ -2577,7 +2556,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				//   - the three conditions inside maybeEnqueueKBUpdate (KB enabled +
 				//     not workflow-locked + per-step write access + non-empty contribution)
 				// Serialized through kbUpdateQueue so concurrent step completions don't
-				// race on graph.json writes. See docs/workflow/persistent_stores_design.md.
+				// race on knowledgebase/notes/ writes.
 				if validationResponse.IsSuccessCriteriaMet && populatedTodoStep != nil {
 					hcpo.maybeEnqueueKBUpdate(stepIndex, stepPath, populatedTodoStep)
 				}

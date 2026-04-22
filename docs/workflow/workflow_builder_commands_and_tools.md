@@ -452,7 +452,7 @@ Review and improve the workflow knowledgebase. Use builder/improve.md as the sha
 DISCOVERY
 1. Read soul/soul.md to understand the objective and success criteria.
 2. Read planning/plan.json and planning/step_config.json so you understand which steps should read from or contribute to the KB.
-3. Read knowledgebase/graph.json and index.json.
+3. Read knowledgebase/notes/_index.json and any topic files the task references.
 4. <run-text>
 
 DECISION

@@ -9,7 +9,7 @@ import (
 
 // Single-writer queues serialize learning agents and KB update agents so concurrent
 // step completions don't race on their respective shared files (learnings/_global/ and
-// knowledgebase/graph.json). Two independent queues — learning and KB write different
+// knowledgebase/notes/). Two independent queues — learning and KB write different
 // files, so one-of-each can run in parallel; what's serialized is same-class agents.
 //
 // Full buffer applies backpressure to the step-completion handler rather than dropping
@@ -63,7 +63,7 @@ var (
 
 // enqueueKBUpdateJob serializes KB update work to a single worker. Shared by the
 // post-step trigger and the reorganize_knowledgebase tool so those two flows can't
-// race on graph.json.
+// race on notes/ files.
 func enqueueKBUpdateJob(job func()) {
 	kbUpdateQueueOnce.Do(func() {
 		kbUpdateQueue = make(chan kbUpdateJob, queueBufferSize)

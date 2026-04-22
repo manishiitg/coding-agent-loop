@@ -110,8 +110,8 @@ type StepBasedWorkflowOrchestrator struct {
 
 	// Preset-level feature toggles
 	useKnowledgebase  bool   // Whether to create and reference knowledgebase folder (default: true)
-	lockKnowledgebase bool   // When true, post-step KB update agent never enqueues — graph.json only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
-	kbShape           string // "graph+notes" | "notes-only"; empty resolves to "graph+notes". Controls which KB artifacts exist.
+	lockKnowledgebase bool   // When true, post-step KB update agent never enqueues — notes/ only mutates via explicit reorganize_knowledgebase calls. Reads unaffected.
+	kbShape           string // Legacy field. Only "notes-only" is supported; legacy "graph+notes" values collapse to notes-only at runtime (see workflowtypes.ResolveKBShape).
 
 	// Tiered LLM allocation mode
 	tierResolver *TierResolver // nil when no tiered config
@@ -1208,7 +1208,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) UseKnowledgebase() bool {
 }
 
 // LockKnowledgebase returns whether the post-step KB update agent is frozen.
-// When true, graph.json only mutates via explicit reorganize_knowledgebase calls.
+// When true, notes/ only mutates via explicit reorganize_knowledgebase calls.
 func (hcpo *StepBasedWorkflowOrchestrator) LockKnowledgebase() bool {
 	return hcpo.lockKnowledgebase
 }
@@ -1218,16 +1218,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetLockKnowledgebase(v bool) {
 	hcpo.lockKnowledgebase = v
 }
 
-// KBShape returns the effective KB shape (defaulting empty → "graph+notes"),
-// i.e. which knowledgebase artifacts this workflow maintains. Callers that
-// need raw config use the field directly; most callers want the resolved form.
+// KBShape returns the raw stored shape value. Retained for config compatibility;
+// the runtime effective shape is always "notes-only" (see workflowtypes.ResolveKBShape).
 func (hcpo *StepBasedWorkflowOrchestrator) KBShape() string {
 	return hcpo.kbShape
 }
 
-// SetKBShape sets the workflow's KB shape. Empty string is accepted and means
-// "use default" (graph+notes). Invalid shapes are accepted silently here —
-// validation happens at preset-load time.
+// SetKBShape stores the workflow's KB shape value. Accepted for config compatibility
+// with existing presets; runtime behavior is always notes-only regardless.
 func (hcpo *StepBasedWorkflowOrchestrator) SetKBShape(v string) {
 	hcpo.kbShape = v
 }

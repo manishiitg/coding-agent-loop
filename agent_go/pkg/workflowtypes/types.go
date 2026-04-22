@@ -19,25 +19,23 @@ const (
 	WorkflowStatusEvalBuilder      = "evaluation-builder"
 )
 
-// Knowledgebase shape — how the workflow's cross-run memory is laid out.
-// Picked once by the builder per workflow; controls which artifacts get seeded
-// into knowledgebase/ on init and which ones the KB update agent maintains.
-//
-// Empty string is treated as KBShapeGraphNotes for backward compatibility with
-// workflows authored before this field existed.
+// Knowledgebase shape — only one shape supported: notes-only (per-topic
+// markdown files under knowledgebase/notes/ plus notes/_index.json). The
+// legacy graph+notes shape has been removed. KBShapeGraphNotes is kept as a
+// recognized-but-deprecated value so existing workflow configs don't fail to
+// parse; everything resolves to KBShapeNotesOnly at runtime.
 const (
-	// KBShapeGraphNotes (default) — graph.json + index.json + notes/_index.json.
-	// Right when the workflow answers entity/relationship queries ("what do we
-	// know about company X", "which services depend on Y").
-	KBShapeGraphNotes = "graph+notes"
-	// KBShapeNotesOnly — only notes/_index.json + notes/*.md. Right when the
-	// workflow accumulates narrative observations across runs but has no need
-	// for typed entities/relationships (e.g. cost-analysis, research summaries).
+	// KBShapeNotesOnly — per-topic markdown files + notes/_index.json registry.
+	// The only supported shape.
 	KBShapeNotesOnly = "notes-only"
+	// KBShapeGraphNotes is retained as a recognized legacy value for config
+	// compatibility. ResolveKBShape collapses it to KBShapeNotesOnly.
+	KBShapeGraphNotes = "graph+notes"
 )
 
 // ValidKBShape reports whether s is a recognized kb_shape value. Empty is valid
-// (means "use default").
+// (resolves to notes-only). Legacy "graph+notes" is accepted but collapsed to
+// notes-only at runtime.
 func ValidKBShape(s string) bool {
 	switch s {
 	case "", KBShapeGraphNotes, KBShapeNotesOnly:
@@ -46,12 +44,13 @@ func ValidKBShape(s string) bool {
 	return false
 }
 
-// ResolveKBShape returns the effective shape, defaulting empty to KBShapeGraphNotes.
+// ResolveKBShape always returns KBShapeNotesOnly. The graph surface has been
+// removed; empty and legacy "graph+notes" values both resolve here for
+// backward compatibility with configs on disk, but the runtime behavior is
+// always notes-only.
 func ResolveKBShape(s string) string {
-	if s == "" {
-		return KBShapeGraphNotes
-	}
-	return s
+	_ = s
+	return KBShapeNotesOnly
 }
 
 // PresetLLMConfig represents LLM configuration stored with workflow presets.

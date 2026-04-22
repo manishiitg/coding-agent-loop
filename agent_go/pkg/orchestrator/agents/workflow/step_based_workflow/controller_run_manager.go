@@ -258,8 +258,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
 		}
-		// Seed the KB artifacts the declared shape calls for. Graph+notes seeds graph.json/index.json/notes/_index.json;
-		// notes-only seeds only notes/_index.json. Pre-existing files are left untouched either way.
+		// Seed knowledgebase/notes/_index.json so the first agent read sees a valid registry.
+		// Pre-existing files are left untouched. kbShape is retained for config compatibility
+		// but runtime behavior is always notes-only (see workflowtypes.ResolveKBShape).
 		kbShape := hcpo.KBShape()
 		if err := InitKBGraphFiles(ctx, hcpo.BaseOrchestrator, workspacePath, kbShape); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize KB files: %v (continuing)", err))

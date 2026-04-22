@@ -42,6 +42,7 @@ var knownWorkspaceToolNames = map[string]bool{
 	"generate_text_llm":         true,
 	"search_web_llm":            true,
 	"human_feedback":            true,
+	"submit_human_answer":       true,
 	"agent_browser":             true,
 	"search_tools":              true,
 	"add_tool":                  true,
@@ -813,8 +814,10 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"image_gen", "image_edit",
 		// Secret management tools (user-scoped; global secrets are read-only)
 		"list_secrets", "set_user_secret", "delete_user_secret",
-		// Human tools
-		"human_feedback",
+		// Human tools — the builder is already in a chat, so it asks users
+		// directly instead of calling human_feedback. submit_human_answer is
+		// how it resolves human_input steps from workflows it launches.
+		"submit_human_answer",
 		// Browser (if registered)
 		"agent_browser",
 		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)
@@ -1440,27 +1443,21 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Shape: SKILL.md + references/ + scripts/ (Anthropic skill-creator format).
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
-**knowledgebase/ — decisions, facts, strategies, and narrative analysis built up over time**
-- Current workflow shape: **kb_shape={{.KBShape}}** (see the KB shape block below to change it).
-- Two formats are available; which ones exist on disk depends on `+"`kb_shape`"+`:
-  - `+"`graph.json`"+` (+ `+"`index.json`"+`) — atomic facts as entities/relationships with provenance. Use for facts you'll query later by id/type. **Only exists when kb_shape=graph+notes.**
-  - `+"`notes/`"+` — per-topic narrative markdown. One file per topic (entity-id or `+"`pattern-<slug>`"+`), plus `+"`notes/_index.json`"+` as a registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns — anything too prosaic to fit cleanly as an entity property but durable across runs. **Exists in both shapes.**
-- Both formats are written at runtime by one of two mechanisms per step, picked via `+"`knowledgebase_write_method`"+`:
-  - `+"`agent`"+` (default) — **post-step KB update agent** reads the step's tool trail + knowledgebase_contribution after completion, merges into graph.json / notes/. Step code CANNOT write graph.json / index.json / notes/ directly even with knowledgebase_access=write; the folder guard blocks shell writes.
-  - `+"`direct`"+` — the **step agent itself writes KB inline** via the `+"`kb_upsert_entity`"+` / `+"`kb_upsert_relationship`"+` tools (for graph) and shell + `+"`diff_patch_workspace_file`"+` (for notes/). `+"`graph.json`"+` / `+"`index.json`"+` are NEVER shell-writable — the tools are the sole writers. A dedicated post-completion self-review turn fires automatically to verify contribution against the contract. No post-step KB update agent runs for direct-mode steps.
-- **Written by (runtime):** see the two-method list above; the writer depends on `+"`knowledgebase_write_method`"+`.
-- **Written by (design time — you):** YOU (the builder) MAY shell-write these files directly for bootstrap/repair work — seeding initial entities before first run, fixing a corrupt graph.json, hand-curating a topic note. Your FolderGuard allows it. Use with care: keep the schema valid (entities[], relationships[], ids unique, provenance present) so the KB update agent's merge logic still works. Prefer `+"`knowledgebase_contribution`"+` instructions on steps when the data comes from step output — that's what keeps growth automatic and consistent.
-- Read as: step agents shell-read on demand if knowledgebase_access grants read. For graph: `+"`jq`"+` on graph.json. For notes: ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob notes/*.md.
+**knowledgebase/ — durable narrative observations built up over time**
+- Single surface: `+"`notes/`"+` — per-topic narrative markdown, one file per topic (entity-scoped like `+"`company-acme.md`"+` or cross-cutting like `+"`pattern-<slug>.md`"+`), plus `+"`notes/_index.json`"+` as the registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns, and any durable subject-matter knowledge. No structured graph — entity references inside notes are just markdown (`+"`company-acme`"+`) that consolidation tools can resolve by slug.
+- Writes are picked per step via `+"`knowledgebase_write_method`"+`:
+  - `+"`agent`"+` (default) — **post-step KB update agent** reads the step's tool trail + knowledgebase_contribution after completion and merges into the right topic file under notes/. Step code CANNOT write notes/ directly; the folder guard blocks shell writes.
+  - `+"`direct`"+` — the **step agent itself writes notes inline** via shell + `+"`diff_patch_workspace_file`"+`. A dedicated post-completion self-review turn fires automatically to verify contribution against the contract. No post-step KB update agent runs for direct-mode steps.
+- **Written by (design time — you):** YOU (the builder) MAY shell-write notes files directly for bootstrap/repair work — seeding an initial topic file, fixing a malformed `+"`_index.json`"+`, hand-curating a note. Your FolderGuard allows it. Prefer `+"`knowledgebase_contribution`"+` instructions on steps when the content comes from step output — that's what keeps growth automatic and consistent.
+- Read as: step agents shell-read on demand if knowledgebase_access grants read. ALWAYS read `+"`notes/_index.json`"+` first to find which topics exist and what they cover, then `+"`cat`"+` only the relevant topic files. NEVER glob `+"`notes/*.md`"+`.
 - Shape:
-  - graph.json: entities[], relationships[], each with stable id + provenance (step + run).
-  - notes/<topic-id>.md: H1 = topic-id; sections = `+"`## YYYY-MM-DD`"+` or topical subhead; cross-reference graph entities by id inline.
-  - notes/_index.json: `+"`{topics: [{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}]}`"+`.
-- Opt-in per step: set knowledgebase_contribution (a natural-language extraction instruction). In `+"`knowledgebase_write_method=\"agent\"`"+` (default), it triggers the KB update agent and tells it what to extract — mention narrative explicitly (e.g. "extract entities X AND write a paragraph in notes/ about Y") if you want notes too. In `+"`knowledgebase_write_method=\"direct\"`"+`, the same string becomes the step agent's contribution contract, injected into the automatic post-completion self-review turn.
+  - `+"`notes/<topic-id>.md`"+`: H1 = topic-id; sections = `+"`## YYYY-MM-DD`"+` or topical subhead; cross-reference entities by slug inline.
+  - `+"`notes/_index.json`"+`: `+"`{topics: [{id, file, covers, last_updated, last_updated_by, size_bytes, section_count}]}`"+`.
+- Opt-in per step: set `+"`knowledgebase_contribution`"+` (a natural-language instruction). In agent method (default), it tells the post-step agent what to extract and which topic(s) to update. In direct method, the same string becomes the step agent's contribution contract, injected into the automatic self-review turn.
 - Compaction: notes files compact themselves when they exceed 20KB or 30 sections — older sections get condensed into a "Historical context" preamble, recent sections stay verbatim. Bounded growth without losing the long-range narrative.
 - Examples:
-  - graph.json: "Company ACME-CORP is a SaaS vendor, 150 employees, CEO Jane Doe", "Company X competes with Company Y".
-  - notes/company-acme.md: "## 2026-04 quarter — ACME's hiring slowed by 40% relative to peers; pattern matches the pattern-saas-belt-tightening narrative."
-  - notes/pattern-tax-cycle.md: "Three accounts (acme, beta, gamma) all show dip-then-recover during quarter-end weeks. Confidence: high. Covers: company-acme, company-beta, company-gamma."
+  - `+"`notes/company-acme.md`"+`: "## 2026-04 quarter — ACME's hiring slowed by 40% relative to peers; pattern matches pattern-saas-belt-tightening narrative."
+  - `+"`notes/pattern-tax-cycle.md`"+`: "Three accounts (acme, beta, gamma) all show dip-then-recover during quarter-end weeks. Confidence: high. Covers: company-acme, company-beta, company-gamma."
 
 **db/*.json — workflow state and results**
 - The workflow's actual output data: rows the workflow produces or consumes this run (processed records, cursors, cumulative output, per-group tallies).
@@ -1470,26 +1467,22 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Shape: JSON with per-file schema (primary key + merge rule) decided by the builder at design time.
 - Examples: "db/processed_companies.json with rows keyed by company_id", "db/monthly_totals.json aggregated across all months", "db/cursors.json tracking last-processed dates".
 
-**KB shape — pick once per workflow (workflow-level setting `+"`kb_shape`"+`):**
-- `+"`graph+notes`"+` (default) — graph.json + index.json + notes/. Use when the workflow answers **entity/relationship/traversal** queries across runs: "what do we know about company X", "which services depend on Y", "has this entity changed since last run". The graph is genuinely load-bearing.
-- `+"`notes-only`"+` — only notes/*.md + notes/_index.json (no graph.json / index.json). Use when the workflow accumulates **narrative observations** but doesn't need typed entities or relationship traversal: cost-analysis over time, research summaries, recommendation-history tracking. Shipping an empty graph.json here is dead weight — a stale "looks like memory but isn't" artifact. Pick this and save yourself the mental tax.
-- The current workflow is configured as `+"`kb_shape={{.KBShape}}`"+`. Change it via `+"`update_workflow_config(kb_shape=\"notes-only\")`"+` if the graph isn't earning its keep — e.g. if no step has a `+"`knowledgebase_contribution`"+` that mentions entities or relationships, or if graph.json is still at bootstrap provenance after several runs.
+**KB shape:** notes-only. Per-topic markdown files under `+"`knowledgebase/notes/`"+` plus `+"`notes/_index.json`"+` as the registry. There is no graph/entity surface — cross-step reasoning happens through markdown consolidation, not typed-relationship traversal.
 
 **When to use which — deciding questions:**
 - *Does it tell the agent HOW to do the task?* → learnings/ (the learning agent writes it; you rarely do)
-- *Is it a decision, fact, or strategy the workflow has discovered about its subject matter?* → knowledgebase/ (write a knowledgebase_contribution; the KB update agent extracts into graph.json when kb_shape=graph+notes, or into notes/ when kb_shape=notes-only)
+- *Is it a durable observation, decision, or pattern about the workflow's subject matter?* → knowledgebase/notes/ (write a knowledgebase_contribution; the KB update agent appends to the right topic file, or the step writes directly in direct-mode)
 - *Is it the workflow's actual output data — rows, records, results this run produced?* → db/ (the step writes JSON directly; upsert by key, never overwrite wholesale)
 
 **Rule of thumb on the split:**
 - learnings = HOW (methods, patterns, quirks of the target system)
-- knowledgebase = WHAT we know about the domain (facts, decisions, strategies)
+- knowledgebase = WHAT we know about the domain (narrative observations, patterns)
 - db = WHAT the workflow produced (state, results, rows)
 
 **Step config knobs for KB (use update_step_config):**
-- knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB facts, 'read-write' (or 'write') on steps that produce KB facts via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
-- knowledgebase_contribution — natural-language instruction: what to contribute to KB from this step. In agent-write-method (default) it's the extraction instruction for the post-step KB update agent; in direct-write-method it's the contract for the step agent's self-review turn. If empty, NO KB writes happen regardless of access.
-- knowledgebase_write_method — `+"`agent`"+` (default) OR `+"`direct`"+`. Picks WHO writes. **Rule of thumb:** prefer `+"`direct`"+` when the step's output is clearly structured (entities + relationships are obvious from the work, not buried) and the author wants inline fact capture — e.g. "look up 10 companies and record them" is a clear direct-mode fit. Prefer `+"`agent`"+` when the step's output is narrative/messy (research notes, investigation traces, long tool sequences) — the post-step reviewer can extract facts from the full trail, which the step agent mid-task often doesn't have bandwidth to do cleanly. Direct mode also trades one extra LLM turn (the self-review) for zero post-step agent cost and clearer provenance.
-- knowledgebase_contribution_type — `+"`both`"+` (default) / `+"`graph_only`"+` / `+"`notes_only`"+`. Only meaningful in direct mode. Scopes which KB surfaces the step is expected to write: `+"`graph_only`"+` registers `+"`kb_upsert_*`"+` tools but not notes/ writes; `+"`notes_only`"+` gives shell access to notes/ but no graph tools; `+"`both`"+` enables the full direct-mode capability. Use `+"`notes_only`"+` for narrative-capture steps, `+"`graph_only`"+` for pure entity/relationship extraction steps. Ignored in agent mode.
+- knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB notes, 'read-write' (or 'write') on steps that produce KB narrative via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
+- knowledgebase_contribution — natural-language instruction: what to contribute to notes/ from this step (which topic file(s), what observations). In agent-write-method (default) it's the instruction handed to the post-step KB update agent; in direct-write-method it's the contract for the step agent's self-review turn. If empty, NO KB writes happen regardless of access.
+- knowledgebase_write_method — `+"`agent`"+` (default) OR `+"`direct`"+`. Picks WHO writes. **Rule of thumb:** prefer `+"`direct`"+` when the narrative contribution is clear from the step's work and the author wants inline capture. Prefer `+"`agent`"+` when the step's output is messy or verbose (research notes, investigation traces, long tool sequences) — the post-step reviewer can extract durable observations from the full trail, which the step agent mid-task often doesn't have bandwidth to do cleanly. Direct mode trades one extra LLM turn (the self-review) for zero post-step agent cost and tighter provenance.
 {{if eq .UseKnowledgebase "false"}}
 **Note:** Knowledgebase is currently disabled at the preset level. Steps can still write to db/ but knowledgebase/ is unavailable until the preset is re-enabled.
 {{end}}
@@ -1498,7 +1491,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 Every non-trivial step has a `+"`"+`context_output`+"`"+` file (e.g. `+"`"+`extracted_data.json`+"`"+`). That's the forward-pipe to the next step and the target of `+"`"+`validation_schema`+"`"+`. It lives under `+"`"+`runs/{iteration}/{group}/execution/{step-id}/`+"`"+` and is **volatile** — deleted on re-execution.
 
-`+"`"+`db/*.json`+"`"+` is different: workspace-level, persistent across runs and groups, and the **only** place report widgets can bind to (`+"`"+`reports/report_plan.json`+"`"+` sources must be `+"`"+`db/*.json`+"`"+` or `+"`"+`knowledgebase/graph.json`+"`"+`/`+"`"+`index.json`+"`"+` — never `+"`"+`runs/...`+"`"+`).
+`+"`"+`db/*.json`+"`"+` is different: workspace-level, persistent across runs and groups, and the **only** place report widgets can bind to (`+"`"+`reports/report_plan.json`+"`"+` sources must be `+"`"+`db/*.json`+"`"+` — never `+"`"+`runs/...`+"`"+`).
 
 **When to introduce a db/ file:**
 - (a) You want (or might plausibly want) this data to appear in the Report UI — db/ is the only option; migrating later means rewriting step code + schema notes, so lean toward db/ up front.
@@ -1507,7 +1500,7 @@ Every non-trivial step has a `+"`"+`context_output`+"`"+` file (e.g. `+"`"+`extr
 
 **When NOT to use db/:**
 - Data is pure forward-pipe between consecutive steps within one run → `+"`"+`context_output`+"`"+` alone is correct.
-- Data is durable **facts about the subject matter** (entities, relationships, decisions) → that belongs in the knowledgebase via `+"`"+`knowledgebase_contribution`+"`"+`, not in `+"`"+`db/`+"`"+`.
+- Data is durable **narrative knowledge about the subject matter** (observations, decisions, patterns) → that belongs in the knowledgebase via `+"`"+`knowledgebase_contribution`+"`"+`, not in `+"`"+`db/`+"`"+`.
 
 **A step often writes both:**
 - Full data → `+"`"+`db/<file>.json`+"`"+` with upsert-by-key (preserves rows from other groups and prior runs).
@@ -1535,12 +1528,12 @@ Every non-trivial step has a `+"`"+`context_output`+"`"+` file (e.g. `+"`"+`extr
 
 ### Deciding which steps opt in to learning and KB — your call, per step
 
-Both learning and knowledgebase are **off by default** for every step. Running them is YOUR deliberate decision, not a passive default — and you are expected to justify both the opt-in and the opt-out. The runtime will flatly refuse writes to SKILL.md or knowledgebase/graph.json when the opt-in field is empty, so these aren't advisory flags; they're the on/off switch.
+Both learning and knowledgebase are **off by default** for every step. Running them is YOUR deliberate decision, not a passive default — and you are expected to justify both the opt-in and the opt-out. The runtime will flatly refuse writes to SKILL.md or knowledgebase/notes/ when the opt-in field is empty, so these aren't advisory flags; they're the on/off switch.
 
 **For each step, ask yourself three questions:**
 
 1. **Should this step build up SKILL.md?** — Every step by default READS `+"`"+`learnings/_global/SKILL.md`+"`"+` into its prompt (learnings_access defaults to `+"`\"read\"`"+`). The question is whether it should also WRITE. Only if the step has HOW-to-run knowledge worth capturing across runs: selectors, timings, auth/login flows, tool-call patterns, API quirks, format pitfalls. If yes, set `+"`learnings_access: \"read-write\"`"+` AND `+"`"+`learning_objective`+"`"+` to a concrete instruction naming exactly what SKILL.md should capture. Then pick `+"`learnings_write_method`"+`: default `+"`\"agent\"`"+` runs a post-step learning agent that reads the full conversation trail — best for complex pattern-extraction across a long step; `+"`\"direct\"`"+` fires a dedicated post-completion turn where the step agent itself writes SKILL.md — best when the lesson is simple and self-evident from the step's work (one extra LLM turn, no separate agent). For plumbing steps (send email, generate PDF, upload to S3), leave access at `+"`\"read\"`"+`. For fully invisible steps, set `+"`learnings_access: \"none\"`"+`.
-2. **Should this step contribute to knowledgebase/graph.json?** — Only if the step produces durable facts about the subject matter of the workflow: entities discovered, relationships, decisions, cross-run strategies. If yes, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`write`+"`"+` or `+"`"+`read-write`+"`"+` AND set `+"`"+`knowledgebase_contribution`+"`"+` to a concrete extraction instruction. Then pick `+"`knowledgebase_write_method`"+`: default `+"`\"agent\"`"+` runs the post-step KB update agent; `+"`\"direct\"`"+` gives the step agent `+"`kb_upsert_*`"+` tools + notes/ shell access inline, with an automatic self-review turn. Scope direct mode with `+"`knowledgebase_contribution_type`"+` (`+"`graph_only`"+` / `+"`notes_only`"+` / `+"`both`"+`). Rule of thumb: direct when the output is clearly structured (entities + relationships readable from the work), agent when the output is narrative/messy and needs extraction. Access without a contribution is a validation error.
+2. **Should this step contribute to knowledgebase/notes/?** — Only if the step produces durable narrative knowledge about the workflow's subject matter (observations, decisions, patterns, cross-run findings). If yes, set `+"`"+`knowledgebase_access`+"`"+` to `+"`"+`write`+"`"+` or `+"`"+`read-write`+"`"+` AND set `+"`"+`knowledgebase_contribution`+"`"+` to a concrete instruction naming the topic(s) and what to record. Then pick `+"`knowledgebase_write_method`"+`: default `+"`\"agent\"`"+` runs the post-step KB update agent (extracts from the step's trail and appends to the right topic file); `+"`\"direct\"`"+` gives the step agent shell + `+"`diff_patch_workspace_file`"+` access under `+"`notes/`"+` inline, with an automatic self-review turn. Rule of thumb: direct when the narrative contribution is clear from the step's work, agent when the output is messy and needs post-hoc extraction. Access without a contribution is a validation error.
 3. **Should this step write to `+"`"+`db/`+"`"+`?** — Only if the step produces rows the workflow will persist across runs/groups or bind to the Report UI. If yes, **before you set the step's description or code**, ensure `+"`"+`db/README.md`+"`"+` has an entry for the target file declaring primary_key, merge_rule, writers, and shape. Reference that schema in the step description so the step agent reads the same contract you wrote. Skip db/ for pure forward-pipe data — use `+"`"+`context_output`+"`"+` instead. KB ≠ db: facts about the subject go through `+"`"+`knowledgebase_contribution`+"`"+`, not `+"`"+`db/`+"`"+`.
 
 **Record your reasoning.** When you set `+"`"+`learning_objective`+"`"+` or `+"`"+`knowledgebase_contribution`+"`"+`, or designate the step as a `+"`"+`db/`+"`"+` writer, also update `+"`"+`review_notes`+"`"+` with one sentence explaining WHY — future hardening passes and other LLM reviewers will read it. Example: *"Opted into learning: ICICI login selectors change quarterly so auth-flow drift must be captured. Opted into KB: account nicknames surface here and nowhere else. Writes db/accounts.json (PK=account_id, merge=latest-wins) per schema in db/README.md — consumed by the balances widget."*
@@ -1635,7 +1628,7 @@ For **structural changes** (add/remove/reorder steps), use `+"`replan_workflow_f
 **Inspecting prior runs (read-only investigate):**
 - **debug_step(step_id)** — analysis of a step's recent execution (logs, validation, learning status).
 - **query_step / list_executions** — look up running or recent agent activity.
-- Read files directly: `+"`cat runs/{run_folder}/execution/{step}/output.json`"+`, `+"`cat learnings/_global/SKILL.md`"+`, `+"`cat evaluation/runs/{run}/evaluation_report.json`"+`, `+"`cat knowledgebase/graph.json | jq ...`"+`.
+- Read files directly: `+"`cat runs/{run_folder}/execution/{step}/output.json`"+`, `+"`cat learnings/_global/SKILL.md`"+`, `+"`cat evaluation/runs/{run}/evaluation_report.json`"+`, `+"`cat knowledgebase/notes/_index.json | jq ...`"+`.
 - Inspect step_config: `+"`jq '.steps[] | select(.id==\"X\")' planning/step_config.json`"+`.
 - Read-only audit slash commands (`+"`/audit-config`"+`, `+"`/audit-skills`"+`, `+"`/kb-review`"+`, `+"`/review-plan`"+`) are available.
 
@@ -1864,7 +1857,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 | --- | --- | --- | --- | --- |
 | `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after 3 successful runs with the same description hash. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
 | `+"`lock_code`"+` | Per-step (learn_code only) | `+"`learnings/{step-id}/main.py`"+` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | You hand-patched main.py and want it used exactly as-is, OR the script is stable and code_exec is the declared mode |
-| `+"`lock_knowledgebase`"+` | Workflow-level | `+"`knowledgebase/graph.json`"+` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `+"`reorganize_knowledgebase`"+` for intentional curation but stop paying per-step LLM cost |
+| `+"`lock_knowledgebase`"+` | Workflow-level | `+"`knowledgebase/notes/`"+` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `+"`reorganize_knowledgebase`"+` for intentional curation but stop paying per-step LLM cost |
 
 **Rule of thumb after hand-editing an artifact**: always lock the matching artifact immediately. Otherwise the corresponding agent will overwrite your edit on the next run.
 
@@ -1875,7 +1868,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 - Pure **rewording** (clarifying existing instructions without changing intent) typically preserves the hash only if whitespace differs; any material character change flips the hash. If you want to reword without triggering the reset, minimize the edit.
 - When you meaningfully change a step's description, clear `+"`description_reviewed`"+` so future reviewers know the description needs a fresh eyeballing.
 
-**Workflow-level KB lock**: Separate from the per-step locks, the workflow as a whole can be frozen against KB drift with `+"`update_workflow_config(lock_knowledgebase=true)`"+`. This is the right move once the domain is well-understood and the post-step update agent mostly produces no-op confirmations. While locked, you can still curate `+"`knowledgebase/graph.json`"+` intentionally via the `+"`reorganize_knowledgebase`"+` tool or direct edits; only the automatic per-step updater is suppressed.
+**Workflow-level KB lock**: Separate from the per-step locks, the workflow as a whole can be frozen against KB drift with `+"`update_workflow_config(lock_knowledgebase=true)`"+`. This is the right move once the domain is well-understood and the post-step update agent mostly produces no-op confirmations. While locked, you can still curate `+"`knowledgebase/notes/`"+` intentionally via the `+"`reorganize_knowledgebase`"+` tool or direct edits; only the automatic per-step updater is suppressed.
 
 ### 3. Managing Learnings
 Learnings are stored as SKILL.md files in the workspace at 'learnings/_global/SKILL.md'. Each learning file MUST use YAML frontmatter format:
@@ -2054,15 +2047,14 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 - Only lock code when the script has been stable across multiple runs AND multiple groups (if the workflow is multi-group). Flaky scripts should be fixed first, not frozen.
 
 **When the knowledgebase stops changing, lock it workflow-wide**:
-- After several successful runs where the post-step KB update agent produces only trivial/no-op edits to `+"`knowledgebase/graph.json`"+`, set `+"`update_workflow_config(lock_knowledgebase=true)`"+`. Reads keep working; the automatic writer stops. This is a pure cost-saver — no output quality regression.
+- After several successful runs where the post-step KB update agent produces only trivial/no-op edits under `+"`knowledgebase/notes/`"+`, set `+"`update_workflow_config(lock_knowledgebase=true)`"+`. Reads keep working; the automatic writer stops. This is a pure cost-saver — no output quality regression.
 - If you later add a new step that needs to capture new domain facts, either unlock temporarily (`+"`lock_knowledgebase=false`"+`) for a few runs, or just call `+"`reorganize_knowledgebase`"+` explicitly after running it.
 
-**Framing `+"`reorganize_knowledgebase`"+` instructions for the current KB shape (kb_shape={{.KBShape}}):**
-- If `+"`kb_shape=graph+notes`"+` — instructions can target entities, relationships, and notes. Examples: *"merge company-acme and company-acme-corp into one entity"*, *"drop all relationships where source.run starts with iteration-0/abandoned"*, *"compact notes/pattern-tax-cycle.md"*.
-- If `+"`kb_shape=notes-only`"+` — `+"`graph.json`"+` / `+"`index.json`"+` do not exist. Only notes-side instructions make sense: *"merge notes/architecture.md and notes/topology.md"*, *"drop sections in notes/recommendation-history.md that mention iteration-0/abandoned"*, *"rename topic company-acme to company-acme-corp"*, *"compact notes/architecture.md to under 10KB"*. Graph-targeted instructions (entities, relationships, types) will be reported back as no-ops by the reorganize agent — don't waste the call.
+**Framing `+"`reorganize_knowledgebase`"+` instructions:**
+- Instructions target topic markdown files and the `+"`notes/_index.json`"+` registry. Examples: *"merge notes/architecture.md and notes/topology.md"*, *"drop sections in notes/recommendation-history.md that mention iteration-0/abandoned"*, *"rename topic company-acme to company-acme-corp and rewrite cross-references"*, *"compact notes/architecture.md to under 10KB"*.
 - Always phrase the instruction in one sentence referencing concrete ids/filenames; the agent follows instructions literally and will not opportunistically clean up adjacent data.
 
-**`+"`"+`consolidate_knowledgebase`+"`"+` — the cross-step pass (distinct from reorganize).** Per-step KB updates see one step's output at a time, so they can't catch drift like *"step A extracts type=company, step B extracts type=organization for the same concept"* or *"a pattern only visible when you look at step-5 and step-7 outputs side by side."* Run `+"`"+`consolidate_knowledgebase(objective=...)`+"`"+` after several contributing steps have run to do exactly that cross-step work: canonicalize type/property names across contributions, dedupe entities that different steps created under different ids, write `+"`"+`notes/pattern-*.md`+"`"+` files that span steps, surface contested properties that got silently clobbered.
+**`+"`"+`consolidate_knowledgebase`+"`"+` — the cross-step pass (distinct from reorganize).** Per-step KB updates see one step's output at a time, so they can't catch drift like *"step A and step B both created topic files for the same company under different slugs"* or *"a pattern only visible when you look at step-5 and step-7 outputs side by side."* Run `+"`"+`consolidate_knowledgebase(objective=...)`+"`"+` after several contributing steps have run to do exactly that cross-step work: merge duplicate topics, canonicalize entity slugs across notes, write `+"`"+`notes/pattern-*.md`+"`"+` files that span steps, surface contradictions between steps' observations on the same subject.
 - The agent is given every step's `+"`"+`knowledgebase_contribution`+"`"+` + the list of step output folders from the selected run, so it has the holistic view the per-step agent never does.
 - Good objective examples: *"reconcile company/organization type-name drift across step contributions; canonicalize to company"*, *"write a pattern-*.md for any repeating shape across the per-account steps"*, *"surface contested employee-count values where step-extract and step-enrich disagree — annotate in entity notes without rewriting graph properties"*.
 - Boundary: consolidate is for **cross-step work with holistic view as justification**. Use `+"`"+`reorganize_knowledgebase`+"`"+` when the operation is a single targeted transformation (*"merge these two topic files"*, *"drop this bad run's entries"*). If you can describe the instruction without referencing multiple steps or patterns, you want reorganize.
@@ -2343,8 +2335,8 @@ Use this order when debugging latency:
 |------|----------|
 | builder/session-{id}-conversation.json | Previous builder chat sessions |
 | db/*.json | Workflow state and results (JSON rows produced by steps; upsert-by-key; see §Three persistent stores) |
-| knowledgebase/graph.json | Accumulated domain facts — entities + relationships. Written only by the post-step KB update agent. |
-| knowledgebase/index.json | Lightweight summary (counts, types, last-updated) kept in sync with graph.json |
+| knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations about the workflow's subject matter. Written by the post-step KB update agent or by step agents in direct-write mode. |
+| knowledgebase/notes/_index.json | Topic registry (covers, size_bytes, section_count, last_updated) kept in sync with notes/*.md |
 | soul/soul.md | Builder's long-term memory across chat sessions (why, decisions, references) |
 
 **Cleanup**: Delete old builder conversation files when >3 exist (`+"`ls -t builder/session-*.json`"+`, keep latest).
@@ -3613,7 +3605,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"clear_fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, knowledgebase_contribution_type, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
+					"description": "Field names to CLEAR (remove from step_config.json) so the step inherits preset/default behavior again. Use this when you want to UNDO a prior override, e.g. remove a learning_llm override so the step uses the preset's learning LLM instead. Only fields with a corresponding setter in this tool are clearable. Valid names: execution_llm, execution_tier, learning_llm, servers, tools, enabled_custom_tools, enabled_skills, learning_objective, lock_learnings, lock_code, use_code_execution_mode, disable_parallel_tool_execution, optimized, description_reviewed, knowledgebase_access, knowledgebase_contribution, knowledgebase_write_method, learnings_access, learnings_write_method, review_notes, declared_execution_mode, declared_execution_mode_reason, global_skill_objective, validation_schema. Unknown names are reported as errors; nothing else in the same call is applied.",
 				},
 				"servers": map[string]interface{}{
 					"type":        "array",
@@ -3650,7 +3642,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"knowledgebase_access": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"read", "write", "read-write", "none"},
-					"description": "Access mode for this step against knowledgebase/ (graph.json + index.json + per-topic notes/). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing facts and narrative (read graph via jq, read notes via index-first then selective cat); 'write' / 'read-write' — may contribute (writer is decided by knowledgebase_write_method: agent = post-step KB update agent merges after execution, direct = step agent writes kb_upsert_* tools + notes/ shell inline); 'none' — no access. Omit to keep the default.",
+					"description": "Access mode for this step against knowledgebase/ (per-topic notes/ + notes/_index.json registry). Defaults to 'none' — KB is opt-in per step. 'read' — may consume existing narrative (read notes via index-first then selective cat); 'write' / 'read-write' — may contribute (writer is decided by knowledgebase_write_method: agent = post-step KB update agent appends to the right topic file after execution, direct = step agent writes notes/ via shell + diff_patch_workspace_file inline); 'none' — no access. Omit to keep the default.",
 				},
 				"learnings_access": map[string]interface{}{
 					"type":        "string",
@@ -3664,12 +3656,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"knowledgebase_write_method": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"agent", "direct"},
-					"description": "How KB writes happen when knowledgebase_access permits them. 'agent' (default): the post-step KB update agent reads the step's tool trail plus knowledgebase_contribution and merges into graph.json / notes/. 'direct': the step agent writes directly via kb_upsert_entity / kb_upsert_relationship tools (for graph) and shell + diff_patch_workspace_file (for notes/), with an automatic post-completion self-review turn that enumerates contributions against the contract. Direct mode is best for steps whose output is clearly structured (entities + relationships) and where the author wants inline fact capture instead of post-hoc extraction; agent mode is better for narrative-heavy or messy step outputs.",
-				},
-				"knowledgebase_contribution_type": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"graph_only", "notes_only", "both"},
-					"description": "Scopes direct-mode KB contributions to a subset of surfaces. 'both' (default): graph tools AND notes/ writes. 'graph_only': registers kb_upsert_* tools, but notes/ is NOT in the folder-guard writePaths — prompt tells the agent narrative is out of scope. 'notes_only': notes/ writable, kb_upsert_* tools NOT registered — graph entries are out of scope. Ignored when knowledgebase_write_method is 'agent'; the post-step reviewer reads knowledgebase_contribution as before.",
+					"description": "How KB writes happen when knowledgebase_access permits them. 'agent' (default): the post-step KB update agent reads the step's tool trail plus knowledgebase_contribution and writes per-topic markdown under knowledgebase/notes/. 'direct': the step agent writes notes/ itself via shell + diff_patch_workspace_file during execution, with an automatic post-completion self-review turn that enumerates contributions against the contract. Direct mode is best for steps whose narrative contribution is clear from the work; agent mode is better for messy step outputs that need post-hoc extraction.",
 				},
 				"learnings_write_method": map[string]interface{}{
 					"type":        "string",
@@ -3866,11 +3853,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["knowledgebase_write_method"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					targetConfig.AgentConfigs.KnowledgebaseWriteMethod = s
-				}
-			}
-			if val, ok := args["knowledgebase_contribution_type"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					targetConfig.AgentConfigs.KnowledgebaseContributionType = s
 				}
 			}
 			if val, ok := args["learnings_access"]; ok && val != nil {
@@ -4215,20 +4197,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				errors = append(errors, fmt.Sprintf("knowledgebase_access=%q requires a non-empty knowledgebase_contribution. Write access without an extraction instruction means the post-step KB update agent never runs; set knowledgebase_contribution or drop access to \"read\"/\"none\".", targetConfig.AgentConfigs.KnowledgebaseAccess))
 			}
 
-			// 8. Validate KB write-method + contribution-type enums, and enforce
-			// direct-mode pairing: direct write needs access permitting writes AND a
-			// non-empty contribution string (which becomes the self-review turn's
-			// contract). contribution_type only matters in direct mode.
+			// 8. Validate KB write-method enum + direct-mode pairing: direct write
+			// needs access permitting writes AND a non-empty contribution string
+			// (which becomes the self-review turn's contract).
 			kbWriteMethodRaw := strings.TrimSpace(targetConfig.AgentConfigs.KnowledgebaseWriteMethod)
 			if kbWriteMethodRaw != "" && kbWriteMethodRaw != KBWriteMethodAgent && kbWriteMethodRaw != KBWriteMethodDirect {
 				errors = append(errors, fmt.Sprintf("knowledgebase_write_method %q is not recognized. Valid values: \"agent\", \"direct\".", kbWriteMethodRaw))
-			}
-			kbContribTypeRaw := strings.TrimSpace(targetConfig.AgentConfigs.KnowledgebaseContributionType)
-			if kbContribTypeRaw != "" &&
-				kbContribTypeRaw != KBContributionTypeBoth &&
-				kbContribTypeRaw != KBContributionTypeGraphOnly &&
-				kbContribTypeRaw != KBContributionTypeNotesOnly {
-				errors = append(errors, fmt.Sprintf("knowledgebase_contribution_type %q is not recognized. Valid values: \"graph_only\", \"notes_only\", \"both\".", kbContribTypeRaw))
 			}
 			if kbWriteMethodRaw == KBWriteMethodDirect {
 				if !kbAccessAllowsWrite(targetConfig.AgentConfigs.KnowledgebaseAccess) {
@@ -4237,9 +4211,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.TrimSpace(targetConfig.AgentConfigs.KnowledgebaseContribution) == "" {
 					errors = append(errors, "knowledgebase_write_method=\"direct\" requires a non-empty knowledgebase_contribution. The contribution becomes the step agent's contract for the automatic post-completion self-review turn; without it the self-review has nothing to verify against.")
 				}
-			}
-			if kbContribTypeRaw != "" && kbWriteMethodRaw != KBWriteMethodDirect {
-				warnings = append(warnings, fmt.Sprintf("knowledgebase_contribution_type=%q has no effect unless knowledgebase_write_method=\"direct\". In agent mode the post-step KB update agent scopes extraction from knowledgebase_contribution alone.", kbContribTypeRaw))
 			}
 
 			// 9. Validate learnings write-method enum + direct-mode pairing.
@@ -6994,7 +6965,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			sb.WriteString("\n")
 			sb.WriteString(fmt.Sprintf("- lock_knowledgebase: %v", ctrl.LockKnowledgebase()))
 			if ctrl.LockKnowledgebase() {
-				sb.WriteString(" — post-step KB update agent is FROZEN workflow-wide; graph.json mutates only via explicit reorganize_knowledgebase calls")
+				sb.WriteString(" — post-step KB update agent is FROZEN workflow-wide; notes/ mutates only via explicit reorganize_knowledgebase calls")
 			}
 			sb.WriteString("\n")
 
@@ -7097,12 +7068,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"lock_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Workflow-level freeze on the post-step KB update agent. When true, graph.json only mutates via explicit reorganize_knowledgebase calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
-				},
-				"kb_shape": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"graph+notes", "notes-only"},
-					"description": "Workflow-level KB layout. 'graph+notes' (default) seeds graph.json + index.json + notes/; 'notes-only' seeds only notes/_index.json and skips the graph. Pick 'notes-only' when the workflow accumulates narrative observations but has no entity/traversal queries — shipping an empty graph.json there is dead weight. Existing graph.json files are NOT deleted when you switch to notes-only (migration is a separate action).",
+					"description": "Workflow-level freeze on the post-step KB update agent. When true, notes/ only mutates via explicit reorganize_knowledgebase calls (reads unaffected). Set after KB is stable to save LLM cost per step.",
 				},
 			},
 		},
@@ -7441,7 +7407,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					iwm.controller.SetLockKnowledgebase(lockVal)
 					anyChanged = true
 					if lockVal {
-						sb.WriteString("\n### Knowledgebase Lock (enabled)\nPost-step KB update agent is now frozen workflow-wide. `graph.json` only mutates via explicit `reorganize_knowledgebase` calls; reads are unaffected.\n")
+						sb.WriteString("\n### Knowledgebase Lock (enabled)\nPost-step KB update agent is now frozen workflow-wide. `notes/` only mutates via explicit `reorganize_knowledgebase` calls; reads are unaffected.\n")
 					} else {
 						sb.WriteString("\n### Knowledgebase Lock (disabled)\nPost-step KB update agent resumes for steps with `knowledgebase_contribution` set and write access.\n")
 					}
@@ -7449,27 +7415,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			// --- KB Shape ---
-			if raw, ok := args["kb_shape"]; ok && raw != nil {
-				if shapeVal, ok := raw.(string); ok {
-					if !workflowtypes.ValidKBShape(shapeVal) {
-						return fmt.Sprintf("Invalid kb_shape %q. Valid values: %q, %q.", shapeVal, workflowtypes.KBShapeGraphNotes, workflowtypes.KBShapeNotesOnly), nil
-					}
-					iwm.controller.SetKBShape(shapeVal)
-					anyChanged = true
-					resolved := workflowtypes.ResolveKBShape(shapeVal)
-					switch resolved {
-					case workflowtypes.KBShapeNotesOnly:
-						sb.WriteString("\n### KB Shape (notes-only)\nFuture runs will seed only `notes/_index.json` (graph.json + index.json are skipped). Existing graph.json files are left untouched — delete them manually if you want a clean slate, or leave them as read-only archive. Update any step with `knowledgebase_contribution` referencing entities to instead target `notes/` narrative.\n")
-					case workflowtypes.KBShapeGraphNotes:
-						sb.WriteString("\n### KB Shape (graph+notes, default)\nFuture runs seed graph.json + index.json + notes/_index.json. Post-step KB update agent extracts entities/relationships from steps with `knowledgebase_contribution`.\n")
-					}
-					logger.Info(fmt.Sprintf("Updated workflow kb_shape=%s", resolved))
-				}
-			}
-
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase, kb_shape.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks, lock_knowledgebase.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -8452,7 +8399,7 @@ You are **read-only** — you do NOT modify any files, plans, or configurations.
 ## PERSISTENT STORES (review each when optimizing a step)
 
 - **learnings/** — HOW to run (selectors, tool patterns, quirks).
-- **knowledgebase/graph.json** — decisions, facts, strategies built up over time (entities + relationships). Written only by the post-step KB update agent.
+- **knowledgebase/notes/** — durable narrative observations as per-topic markdown (entity-scoped or cross-cutting patterns). Written by the post-step KB update agent (agent mode) or step agents in direct-write mode.
 - **db/*.json** — per-run workflow state/results; step-owned; upsert-by-key.
 
 Per-step knobs: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none" — opt-in per step), `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction for the post-step KB update agent; empty = agent skipped).
@@ -8809,7 +8756,7 @@ Your primary job is structural optimization, but you must also flag plan-level p
 6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
 7. **Prefer correct mode fit**: `+"`learn_code`"+` for stable scripted logic, `+"`code_exec`"+` for adaptive work. See §7 Execution Modes.
 8. **Check portability hazards**: If plan-visible text contains hardcoded secrets, user-specific values, absolute paths, or run-folder-specific paths, flag them even if they are not yet causing a failure.
-9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/graph.json`+"`"+` (durable facts + relationships; written only by the post-step KB update agent), and `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores — e.g., a step accumulating company facts into learnings when it should set `+"`"+`knowledgebase_contribution`+"`"+`, or a step writing per-run output into `+"`"+`knowledgebase/`+"`"+` when it belongs in `+"`"+`db/`+"`"+`. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") + `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction; empty = post-step KB update agent skipped).
+9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; written by the post-step KB update agent or step agents in direct-write mode), and `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores — e.g., a step accumulating company facts into learnings when it should set `+"`"+`knowledgebase_contribution`+"`"+`, or a step writing per-run output into `+"`"+`knowledgebase/`+"`"+` when it belongs in `+"`"+`db/`+"`"+`. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") + `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction; empty = post-step KB update agent skipped).
 10. **Check lock consistency against structural changes**: If you recommend a structural change (merge/split/delete/add/retype), the affected steps' existing `+"`"+`lock_learnings`+"`"+` / `+"`"+`lock_code`+"`"+` flags are almost certainly stale — frozen artifacts were generated against a different step shape. Always pair a structural recommendation with "also set lock_learnings=false, lock_code=false, optimized=false on [step-id] before re-running" so fresh learnings and main.py are regenerated.
 
 ## CONTEXT
@@ -8957,7 +8904,7 @@ This is a **read-only review**:
 6. **Use evidence when available**: If a target run folder is provided, use run outputs/logs/eval reports to test whether the current plan decisions were actually justified.
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
-9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/graph.json`+"`"+` (durable facts + relationships; written only by the post-step KB update agent), `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` on steps that produce domain facts. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction; empty = KB update agent skipped for that step).
+9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; written by the post-step KB update agent or step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing per-run state in knowledgebase, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` on steps that produce domain facts. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction; empty = KB update agent skipped for that step).
 10. **Check lock consistency**: Three locks freeze workflow state — `+"`"+`lock_learnings`+"`"+` (per-step: freezes SKILL.md + skips learning agent), `+"`"+`lock_code`+"`"+` (per-step, learn_code only: freezes `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites), `+"`"+`lock_knowledgebase`+"`"+` (workflow-level: freezes post-step KB update agent). Flag inconsistency like `+"`"+`optimized=true`+"`"+` with `+"`"+`lock_learnings=false`+"`"+` or learn_code steps that are optimized but `+"`"+`lock_code=false`+"`"+` (fix loop can still overwrite a "done" script). If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping the locks.
 
 ## CONTEXT
@@ -9375,7 +9322,7 @@ Your job is to compare each step's **current description** with its **saved main
 4. **Anti-patterns** — hardcoded paths, hardcoded credentials, missing env var usage, non-portable code
 5. **Fabricated data** — script writes output data without actually fetching/computing it from real sources (MCP tools, APIs, input files)
 6. **MCP tool usage** — incorrect server/tool names in call_mcp(), missing API discovery, guessed parameter names instead of using get_api_spec
-7. **Persistent-store confusion** — script writes to the wrong store. Three stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`"+`knowledgebase/graph.json`+"`"+` (durable facts — written ONLY by the post-step KB update agent, not by step scripts), `+"`"+`db/*.json`+"`"+` (per-run state/results — step-owned; upsert-by-key, never overwrite). Flag scripts that write directly to `+"`"+`knowledgebase/graph.json`+"`"+`/`+"`"+`index.json`+"`"+` (those should go through the KB update agent via `+"`"+`knowledgebase_contribution`+"`"+` on the step config), or that stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, or that do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
+7. **Persistent-store confusion** — script writes to the wrong store. Three stores: `+"`"+`learnings/`+"`"+` (HOW to run, agent-managed), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations — written by the post-step KB update agent in agent mode, or by step agents in direct-write mode; NOT by arbitrary step scripts in agent mode), `+"`"+`db/*.json`+"`"+` (per-run state/results — step-owned; upsert-by-key, never overwrite). Flag scripts that write directly under `+"`"+`knowledgebase/notes/`+"`"+` outside of direct-write mode (those should go through the KB update agent via `+"`"+`knowledgebase_contribution`+"`"+` on the step config), or that stash durable cross-run state in per-step output files when it belongs in `+"`"+`db/`+"`"+`, or that do wholesale rewrites of `+"`"+`db/`+"`"+` files instead of upsert-by-key.
 
 This is a **read-only review** — do not modify any files.
 
@@ -9541,7 +9488,7 @@ This tool is **evidence-driven and mutating**:
 6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable logic, `+"`code_exec`"+` for adaptive work.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
-9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/graph.json`+"`"+` (durable facts; written only by the post-step KB update agent), `+"`"+`db/*.json`+"`"+` (per-run state/results; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
+9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; written by the post-step KB update agent or step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (per-run state/results; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
 
 ## CONTEXT
 
@@ -9633,7 +9580,7 @@ Every evaluation failure should leave behind a **structural artifact** — a pre
 
 Workflows have three separate stores that survive across runs. Don't move content between them sideways when fixing:
 - **learnings/** — HOW to run (selectors, tool patterns, quirks). Managed by the learning agent; injected as '## Skill' into every step's prompt.
-- **knowledgebase/graph.json** — decisions, facts, strategies the workflow has built up about its subject matter (entities + relationships with provenance). Written ONLY by the post-step KB update agent — steps do NOT edit graph.json/index.json directly.
+- **knowledgebase/notes/** — per-topic narrative markdown the workflow has built up about its subject matter (entity-scoped or `+"`"+`pattern-*`+"`"+` topics). Plus `+"`"+`notes/_index.json`+"`"+` as a registry. Written by the post-step KB update agent (agent mode) or step agents in direct-write mode.
 - **db/*.json** — workflow state/results (rows produced or consumed this run). Step-owned; upsert-by-key; never overwrite wholesale.
 
 Per-step KB config:

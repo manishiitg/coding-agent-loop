@@ -43,6 +43,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 	if contribution == "" {
 		return false
 	}
+	// Direct-mode steps own the write: the step agent already called kb_upsert_*
+	// inline and went through a self-review turn. Running the post-step agent on
+	// top would double-contribute (re-extracting from the same trail the step
+	// agent already processed) and risk clobbering what was carefully written.
+	// This mirrors the learning-agent skip in controller_execution.go:2478.
+	if resolveKnowledgebaseWriteMethod(agentConfigs) == KBWriteMethodDirect {
+		hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-write KB: skipping post-step KB update agent for step %s (step agent wrote graph + notes inline)", step.GetID()))
+		return false
+	}
 
 	// Snapshot step state — by the time the worker runs, the next step may already be
 	// in flight, so the closure must capture immutable values rather than reading `step`.

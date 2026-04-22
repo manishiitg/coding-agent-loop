@@ -2385,25 +2385,39 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								learningsDirectPerformed = true
 								baseWorkspace := hcpo.GetWorkspacePath()
 								globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspace, GlobalLearningID)
+								// Only widen _global/. learnings/<stepID>/ is NOT added even in
+								// learn_code mode — main.py copying is handled by Go code
+								// (saveLearnCodeScriptToLearnings, called after the execution block)
+								// independent of the direct-learnings turn. The step agent has no
+								// reason to write under learnings/<stepID>/ in direct mode, so we
+								// keep the guard tight.
 								addedPaths := []string{globalLearningsPath}
-								if isLearnCodeMode {
-									stepScriptsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspace, step.GetID())
-									addedPaths = append(addedPaths, stepScriptsPath)
-								}
 
-								// Widen session shell guard for this turn. Appending to existing
-								// paths preserves the step-scoped narrow that executeSingleStep set
-								// up at step start — we're adding learnings paths on top, not
-								// replacing the narrow.
-								if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
-									if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
+								// Widen the sub-agent session shell guard for this turn. The step
+								// agent runs shell commands under its own per-step sub-session (created
+								// by setupSubAgentSessionGuard in createExecutionOnlyAgent at
+								// controller_agent_factory.go:1281) — NOT the parent workflow session.
+								// hcpo.GetMCPSessionID() would return the parent; we need the sub-
+								// session id from the agent's config.
+								// Appending to existing paths preserves the step-scoped narrow that
+								// executeSingleStep set up at step start.
+								subSessionID := ""
+								if cfg := executionAgent.GetConfig(); cfg != nil {
+									subSessionID = strings.TrimSpace(cfg.MCPSessionID)
+								}
+								if subSessionID != "" {
+									if prevCfg := common.GetSessionShellConfig(subSessionID); prevCfg != nil {
 										widenedRead := append([]string{}, prevCfg.ReadPaths...)
 										widenedWrite := append([]string{}, prevCfg.WritePaths...)
 										widenedRead = append(widenedRead, addedPaths...)
 										widenedWrite = append(widenedWrite, addedPaths...)
-										common.SetSessionFolderGuard(sessionID, widenedRead, widenedWrite)
-										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened session %s for learnings turn on step %s: +%v", sessionID, step.GetID(), addedPaths))
+										common.SetSessionFolderGuard(subSessionID, widenedRead, widenedWrite)
+										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened sub-agent session %s for learnings turn on step %s: +%v", subSessionID, step.GetID(), addedPaths))
+									} else {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] No existing shell config for sub-agent session %s — learnings writes may fail", subSessionID))
 									}
+								} else {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [LEARN_DIRECT] Execution agent has no MCPSessionID on config — learnings writes may fail for step %d", stepIndex+1))
 								}
 								// Also widen the per-agent folder guard config so tools registered on
 								// the agent (e.g. diff_patch_workspace_file) see the new write paths.

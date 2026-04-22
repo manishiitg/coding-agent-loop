@@ -1,7 +1,6 @@
 package step_based_workflow
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 )
@@ -32,12 +31,20 @@ var learningsGlobalFileMutex sync.Mutex
 // Writes target learnings/_global/SKILL.md — the single global workflow skill
 // shared across all steps. Multiple direct-mode steps contribute scoped sections
 // to the same file; the serialization mutex prevents parallel writes from
-// racing. Per-step folders (learnings/<stepID>/) are only used in learn_code
-// mode for saving the working main.py, never for SKILL.md.
+// racing.
+//
+// Learn-code note: the step's main.py is copied to learnings/<stepID>/code/
+// automatically by Go code (controller_execution.go:2672 via
+// saveLearnCodeScriptToLearnings), independent of both the post-step learning
+// agent and this direct-mode turn. The step agent is NOT asked to do that copy
+// here — that would double-write a shared file and open needless write access
+// to learnings/<stepID>/. Direct-mode learnings only targets _global/ for
+// author-authored domain knowledge beyond what main.py encodes.
 //
 // Returns empty when the step shouldn't enter direct-learnings — callers decide
 // via shouldDirectWriteLearnings before invoking this.
 func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCodeMode bool) string {
+	_ = isLearnCodeMode // retained in the signature in case future behavior diverges by mode; not currently referenced
 	objective := strings.TrimSpace(learningObjective)
 	if stepID == "" || objective == "" {
 		return ""
@@ -45,9 +52,7 @@ func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCod
 
 	var b strings.Builder
 	b.WriteString("## Learnings Contribution (dedicated turn)\n\n")
-	b.WriteString("Your main-step work is complete and pre-validation passed. Now — in this turn only — you have WRITE access to `learnings/_global/` (and, in learn-code mode, your step's `learnings/")
-	b.WriteString(stepID)
-	b.WriteString("/code/`). Your job for this turn is to capture HOW to run this task well, so future runs don't have to rediscover what you just worked out.\n\n")
+	b.WriteString("Your main-step work is complete and pre-validation passed. Now — in this turn only — you have WRITE access to `learnings/_global/`. Your job for this turn is to capture HOW to run this task well, so future runs don't have to rediscover what you just worked out.\n\n")
 
 	b.WriteString("**Target:** `learnings/_global/SKILL.md` — the single global skill shared across every step of this workflow. You are appending this step's contribution, not owning the file.\n\n")
 
@@ -68,16 +73,6 @@ func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCod
 	b.WriteString("4. **Merge with existing knowledge, don't duplicate.** If the lesson you'd write overlaps with a pattern another step already captured in an existing references file, extend that file (append a new section, refine an existing one) rather than creating a second place for the same knowledge.\n")
 	b.WriteString("5. **No ephemeral refs.** Do not save session-local browser handles (`@e1`, `e68`, etc.) — they are useless across runs.\n")
 	b.WriteString("6. **No fabrication.** Capture only patterns you actually used in this execution. If you're unsure whether a pattern is reliable, say so explicitly in the note.\n\n")
-
-	if isLearnCodeMode {
-		b.WriteString("**Learn-code mode — save the working script:**\n")
-		b.WriteString(fmt.Sprintf("After writing SKILL.md, copy your successful `main.py` from the execution folder to `learnings/%s/code/main.py` (step-scoped, not global):\n", stepID))
-		b.WriteString("```bash\n")
-		b.WriteString(fmt.Sprintf("mkdir -p 'learnings/%s/code'\n", stepID))
-		b.WriteString(fmt.Sprintf("cp \"$STEP_OUTPUT_DIR/code/main.py\" 'learnings/%s/code/main.py'\n", stepID))
-		b.WriteString("```\n")
-		b.WriteString("Subsequent runs will attempt this saved script as the fast path before invoking the LLM.\n\n")
-	}
 
 	b.WriteString("**Objective for this step's contribution (the contract):**\n")
 	b.WriteString(objective)

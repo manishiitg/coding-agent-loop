@@ -264,27 +264,26 @@ List the exact update_step_config calls the user can copy/paste to apply each re
 DISCOVERY
 1. Read soul/soul.md to understand the objective and success criteria.
 2. Read planning/plan.json and planning/step_config.json so you understand which steps should read from or contribute to the KB.
-3. Read knowledgebase/graph.json and index.json.
+3. Read knowledgebase/notes/_index.json and skim the topic files that look relevant.
 4. ${runText}
 
 DECISION
 Assess whether the KB needs:
 - no change
-- targeted graph reorganization
+- targeted notes reorganization
 - cross-step consolidation
 - both
 
 Look for:
-- duplicate entities
-- type-name drift
-- property-name drift
-- orphaned relationships
-- contested facts
+- duplicate or overlapping topics
+- topic-name drift
+- stale narrative that no longer matches current step outputs
+- contested claims across topics
 - missing step contributions that should have been persisted
-- KB structure that no longer matches the workflow objective or current step outputs
+- notes structure that no longer matches the workflow objective
 
 ACTION
-- Use reorganize_knowledgebase when the graph structure itself needs cleanup or normalization.
+- Use reorganize_knowledgebase when the notes structure itself needs cleanup or normalization.
 - Use consolidate_knowledgebase when cross-step consolidation or canonicalization is needed.
 - Automatically APPLY high-confidence, evidence-backed KB improvements instead of only listing recommendations.
 - Be conservative and bounded; do not ask for human confirmation during this improve run.

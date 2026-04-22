@@ -1,6 +1,15 @@
 # Persistent Stores Design
 
-This document captures the planned improvements to how workflows manage persistent data, report output, and knowledgebase access control. None of these are implemented yet — this is the design spec.
+> **Status note — KB surface simplified to notes-only (2026).**
+> This doc was written when the knowledgebase had two surfaces (structured `graph.json` + per-topic notes). The graph surface has been **removed**; the knowledgebase is now notes-only — per-topic markdown files under `knowledgebase/notes/` plus a `notes/_index.json` registry. Any section below that references `graph.json`, `index.json`, `entities`, `relationships`, `kb_upsert_*`, or `kb_shape: "graph+notes"` describes the earlier design and does not reflect current behavior. The code of truth is:
+> - `pkg/orchestrator/agents/workflow/step_based_workflow/kb_graph.go` — only seeds `notes/_index.json` now.
+> - `pkg/orchestrator/agents/workflow/step_based_workflow/kb_update_agent.go` — prompts are notes-only.
+> - `pkg/orchestrator/agents/workflow/step_based_workflow/kb_tools.go` — holds `BuildStepKBGuidance` / `BuildKBContributionReviewMessage` for direct-write mode (shell + `diff_patch_workspace_file` under `notes/`).
+> - `pkg/workflowtypes/types.go` — `ResolveKBShape` always returns `"notes-only"`; legacy `"graph+notes"` values collapse at load.
+>
+> Direct-write mode is a per-step option (`knowledgebase_write_method: "direct"`) in which the step agent writes to `notes/` inline via a post-completion self-review turn. Agent mode (default) keeps using the post-step KB update agent, which now also targets only `notes/`.
+
+This document captures the planned improvements to how workflows manage persistent data, report output, and knowledgebase access control.
 
 ---
 

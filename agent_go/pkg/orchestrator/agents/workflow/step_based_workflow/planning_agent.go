@@ -211,6 +211,7 @@ type AgentConfigs struct {
 	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 500
 	LearningObjective            string          `json:"learning_objective,omitempty"`              // Instruction for the learning agent describing what patterns/selectors/recipes SKILL.md should capture from successful runs of this step. Required when learnings_access includes write. The extraction target for the writer — not a gate; read/write gating lives in learnings_access.
 	LearningsAccess              string          `json:"learnings_access,omitempty"`                // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't contribute. "read-write": reads and also writes — requires learning_objective to be non-empty. "none": no read, no write, no learning agent. Empty = legacy auto-migration (see resolveLearningsAccess).
+	LearningsWriteMethod         string          `json:"learnings_write_method,omitempty"`          // "agent" | "direct". How SKILL.md writes happen when learnings_access permits them. "agent" (default): the post-step learning agent analyzes the step trace and writes SKILL.md. "direct": the step agent itself writes SKILL.md via shell + diff_patch_workspace_file during a dedicated post-completion user-message turn; no post-step learning agent runs. Only effective when learnings_access == "read-write" AND lock_learnings != true AND learning_objective is non-empty.
 	LockLearnings                *bool           `json:"lock_learnings,omitempty"`                  // lock learnings (SKILL.md) - prevents learning agent from running but still uses existing SKILL.md (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LockCode                     *bool           `json:"lock_code,omitempty"`                       // lock code (main.py) - prevents LLM-rewritten main.py from being saved back to learnings, skips fix loop (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	SelectedServers              []string        `json:"selected_servers,omitempty"`                // step-level MCP server selection (subset of preset servers)
@@ -220,7 +221,8 @@ type AgentConfigs struct {
 	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)
 	KnowledgebaseAccess          string          `json:"knowledgebase_access,omitempty"`            // "read" | "write" | "read-write" | "none". If empty, defaults to "none" — KB is opt-in per step. Preset-level UseKnowledgebase is a prerequisite (off → forced "none").
-	KnowledgebaseContribution    string          `json:"knowledgebase_contribution,omitempty"`      // User-authored instruction for the KB update agent — what to extract from this step's output. Required trigger for KB update agent; if empty, KB update is skipped for this step even with write access.
+	KnowledgebaseWriteMethod     string          `json:"knowledgebase_write_method,omitempty"`      // "agent" | "direct". How KB writes happen when knowledgebase_access permits them. "agent" (default): the post-step KB update agent reads the step's trail + knowledgebase_contribution and writes notes/. "direct": the step agent writes notes/ itself via shell + diff_patch_workspace_file during execution, with a post-completion self-review turn. Only meaningful when knowledgebase_access ∈ {"write", "read-write"}.
+	KnowledgebaseContribution    string          `json:"knowledgebase_contribution,omitempty"`      // User-authored instruction for KB writes — what this step should contribute to notes/. In "agent" write-method, it's the extraction instruction handed to the post-step KB update agent. In "direct" write-method, it's injected into the step agent's prompt as its contribution contract. Required to trigger KB writes; if empty, no KB write happens regardless of access.
 	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, execution and conditional agents always use Tier 1 (high reasoning)
@@ -960,6 +962,16 @@ func getDeletePlanStepsSchema() string {
 			}
 		},
 		"required": ["deleted_step_ids"]
+	}`
+}
+
+// getCreatePlanSchema returns the JSON schema for the create_plan tool.
+// The tool takes no arguments — it initializes an empty planning/plan.json
+// so that subsequent add_*_step tools have a file to modify.
+func getCreatePlanSchema() string {
+	return `{
+		"type": "object",
+		"properties": {}
 	}`
 }
 
@@ -3933,6 +3945,35 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 	}
 }
 
+// createCreatePlanExecutor returns an executor for the create_plan tool, which
+// initializes an empty planning/plan.json for workflows that don't have one yet.
+// Fails if plan.json already exists so we never silently clobber a live plan.
+func createCreatePlanExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		planPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "plan.json"), workspacePath)
+
+		planFileMutex.Lock()
+		defer planFileMutex.Unlock()
+
+		if existing, err := readFile(ctx, planPath); err == nil && strings.TrimSpace(existing) != "" {
+			return "", fmt.Errorf("plan.json already exists at %s — use add_regular_step / update_* / delete_plan_steps to modify it instead of recreating it", planPath)
+		}
+
+		emptyPlan := &PlanningResponse{}
+		data, err := json.MarshalIndent(emptyPlan, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal empty plan: %w", err)
+		}
+
+		if err := writeFile(ctx, planPath, string(data)); err != nil {
+			return "", fmt.Errorf("failed to write plan.json: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("🆕 Created new empty plan.json at %s", planPath))
+		return fmt.Sprintf("Created empty plan.json at %s. Add steps with add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step. For the first step, pass insert_after_step_id=\"\" to insert at the beginning.", planPath), nil
+	}
+}
+
 // registerPlanModificationTools registers all plan modification tools (plan update tools only)
 // Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
 // This shared function is used by planning agent, code exec debugging agent, etc.
@@ -3949,6 +3990,23 @@ func registerPlanModificationTools(
 ) error {
 	// Note: human_feedback is already registered via WorkspaceTools (created by createCustomTools in server.go)
 	// No need to register it again here to avoid duplicate registration errors
+
+	// Register create_plan first — it's the only way to initialize planning/plan.json for a new
+	// workflow so that the add_* tools (which require an existing plan) can run.
+	createPlanSchema := getCreatePlanSchema()
+	createPlanParams, err := parseSchemaForToolParameters(createPlanSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse create plan schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"create_plan",
+		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: objective and success_criteria live in soul/soul.md — edit that file separately; plan.json no longer stores them.",
+		createPlanParams,
+		createCreatePlanExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register create_plan tool: %w", err)
+	}
 
 	// Register workflow-specific plan update tools with "workflow" category
 	// Individual update tools for each step type

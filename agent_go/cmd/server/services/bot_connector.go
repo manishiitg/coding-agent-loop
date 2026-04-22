@@ -118,6 +118,7 @@ type BotConnector interface {
 	AddReaction(ctx context.Context, channelID, messageTS, emoji string) error    // no-op for platforms without reactions
 	RemoveReaction(ctx context.Context, channelID, messageTS, emoji string) error // no-op for platforms without reactions
 	GetThreadHistory(ctx context.Context, threadID ThreadID) ([]ThreadMessage, error)
+	GetChannelName(ctx context.Context, channelID string) string // returns "" when unavailable (unsupported platform, API error, etc.)
 	SetMessageHandler(handler BotMessageHandler)
 	SetInteractionHandler(handler BotInteractionHandler)
 	GetFormatter() MessageFormatter
@@ -974,14 +975,18 @@ func (m *BotConversationManager) IsBotSession(sessionID string) bool {
 
 // buildQueryWithThreadHistory loads thread history from the platform and prepends it as context
 // to the user's current message. This ensures continuity when a user replies to an existing thread
-// after the previous session has completed (e.g., hours later).
+// after the previous session has completed (e.g., hours later). Called only on new-session starts;
+// live sessions inject follow-ups as raw text since the LLM retains prior turns in its own context.
 func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platform string, threadID ThreadID) string {
 	connector := m.GetConnector(platform)
 	if connector == nil || !connector.SupportsThreads() {
 		return query
 	}
 
-	history, err := connector.GetThreadHistory(context.Background(), threadID)
+	ctx := context.Background()
+	channelName := connector.GetChannelName(ctx, threadID.ChannelID)
+
+	history, err := connector.GetThreadHistory(ctx, threadID)
 	if err != nil {
 		log.Printf("[BOT_MANAGER] Failed to load thread history: %v", err)
 		return query
@@ -1003,13 +1008,20 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 		meaningful = append(meaningful, msg)
 	}
 
-	// No history (or only the current message) — no context needed
+	// No prior history: still prepend a channel header when available so the LLM knows
+	// where the conversation is happening; skip entirely when channel name is unknown.
 	if len(meaningful) <= 1 {
-		return query
+		if channelName == "" {
+			return query
+		}
+		return fmt.Sprintf("## Channel\n#%s\n\n---\n\n## Current Message\n%s", channelName, query)
 	}
 
 	// Build conversation context from history (exclude the last message which is the current one)
 	var parts []string
+	if channelName != "" {
+		parts = append(parts, fmt.Sprintf("## Channel\n#%s\n", channelName))
+	}
 	parts = append(parts, "## Previous Conversation in This Thread\n")
 	for _, msg := range meaningful[:len(meaningful)-1] {
 		role := "User"
@@ -1018,13 +1030,14 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 		} else if msg.UserName != "" {
 			role = msg.UserName
 		}
-		parts = append(parts, fmt.Sprintf("**%s:** %s\n", role, msg.Text))
+		tsLabel := msg.Timestamp.UTC().Format("2006-01-02 15:04 UTC")
+		parts = append(parts, fmt.Sprintf("**%s** (%s): %s\n", role, tsLabel, msg.Text))
 	}
 	parts = append(parts, "---\n\n## Current Message\n")
 	parts = append(parts, query)
 
 	combined := strings.Join(parts, "\n")
-	log.Printf("[BOT_MANAGER] Prepended %d messages of thread history to query", len(meaningful)-1)
+	log.Printf("[BOT_MANAGER] Prepended %d messages of thread history to query (channel=%s)", len(meaningful)-1, channelName)
 	return combined
 }
 

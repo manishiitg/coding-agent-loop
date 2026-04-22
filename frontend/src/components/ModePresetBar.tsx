@@ -520,7 +520,7 @@ export const ModePresetBar: React.FC = () => {
                 type="button"
               >
                 <Building2 className="w-3 h-3" />
-                <span>Organization</span>
+                <span>Org</span>
               </button>
             </div>
 

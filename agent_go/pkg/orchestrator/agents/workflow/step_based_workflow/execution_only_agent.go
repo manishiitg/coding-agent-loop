@@ -67,25 +67,21 @@ All paths are absolute. Write primary outputs under `+"`"+`STEP_OUTPUT_DIR`+"`"+
 
 **Three persistent stores — do not confuse them:**
 - **db/** — **workflow state and results**. JSON files this step produces/consumes (processed records, cursors, cumulative output). Owned by your step. READ first, upsert by the builder-defined key, write back merged. NEVER overwrite wholesale — that destroys rows from other groups/runs.
-- **knowledgebase/** — **what the workflow has discovered about the subject matter, durable across runs**. Two formats live here, both written **only by the post-step KB update agent** (not by you):
-  - `+"`"+`graph.json`+"`"+` + `+"`"+`index.json`+"`"+` — atomic facts as entities and relationships. Read with `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+`.
-  - `+"`"+`notes/`+"`"+` — per-topic narrative markdown, one file per topic (entity-scoped or `+"`"+`pattern-*`+"`"+`). **Read discipline:** ALWAYS `+"`"+`cat knowledgebase/notes/_index.json`+"`"+` first to find which topic files exist, then `+"`"+`cat`+"`"+` only the markdown files relevant to your work. NEVER `+"`"+`cat knowledgebase/notes/*.md`+"`"+` — file count grows unboundedly and loading all of them blows context.
-  - Do NOT write `+"`"+`graph.json`+"`"+`, `+"`"+`index.json`+"`"+`, or any file under `+"`"+`notes/`+"`"+` directly — that breaks the KB update agent's merge discipline.
+- **knowledgebase/** — **what the workflow has discovered about the subject matter, durable across runs**. Per-topic narrative markdown under `+"`"+`notes/`+"`"+`, one file per topic (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. **Read discipline:** ALWAYS `+"`"+`cat knowledgebase/notes/_index.json`+"`"+` first to find which topic files exist, then `+"`"+`cat`+"`"+` only the markdown files relevant to your work. NEVER `+"`"+`cat knowledgebase/notes/*.md`+"`"+` — file count grows unboundedly and loading all of them blows context. {{if eq .KbWriteMethod "direct"}}Writes for this step: handled directly per the step's contract — see the **Knowledgebase contribution** block below. Use shell heredoc (new files) or `+"`"+`diff_patch_workspace_file`+"`"+` (existing files), and keep `+"`"+`_index.json`+"`"+` in sync.{{else}}Written **only by the post-step KB update agent** (not by you). Do NOT write under `+"`"+`notes/`+"`"+` directly — that breaks the KB update agent's merge discipline.{{end}}
 - **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Read-only for you; the learning agent maintains it after the step. Relevant learnings are already injected under `+"`"+`## Skill`+"`"+` below when applicable.
 
 {{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them. Selective read recipes:
 ` + "```" + `bash
-# entity by id
-jq '.entities[] | select(.id == "company-acme")' knowledgebase/graph.json
-# relationships touching an entity
-jq '.relationships[] | select(.from == "company-acme" or .to == "company-acme")' knowledgebase/graph.json
-# narrative topics covering an entity (returns filenames)
+# list all topics
+jq '.topics[] | {id, file, covers}' knowledgebase/notes/_index.json
+# find topics covering a specific entity
 jq -r '.topics[] | select(.covers[]? == "company-acme") | .file' knowledgebase/notes/_index.json
 # load one specific topic file
 cat knowledgebase/notes/company-acme.md
 ` + "```" + `
-{{else if eq .KbAccess "write"}} Write-scoped: the folder guard allows writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` / `+"`"+`notes/`+"`"+` yourself; emit facts in your step output and let the KB agent merge.{{end}}
+{{else if eq .KbWriteMethod "direct"}} Direct write: your step writes narrative to `+"`"+`knowledgebase/notes/`+"`"+` inline — see the **Knowledgebase contribution** block below for exact conventions and discipline. The post-step KB update agent does NOT run for this step — you are the canonical writer.{{else}} Write-scoped (agent method): the folder guard would allow writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`notes/`+"`"+` yourself; emit observations in your step output and let the KB agent append to the right topic files.{{end}}
 {{end}}
+{{if .KBGuidanceBlock}}{{.KBGuidanceBlock}}{{end}}
 ## EXECUTION RULES
 1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` under `+"`"+`$STEP_OUTPUT_DIR`+"`"+` (step folder: `+"`"+`{{.StepExecutionPath}}/`+"`"+`).
 {{if .UseCodeStyleRules}}2. Derive output paths from `+"`"+`os.environ['STEP_OUTPUT_DIR']`+"`"+` in code. E.g., `+"`"+`open(os.path.join(os.environ['STEP_OUTPUT_DIR'], '{{.StepContextOutput}}'), "w")`+"`"+`.
@@ -355,6 +351,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"DBPath":                     dbPath,                               // DB folder path (always enabled)
 		"KbAccess":                   templateVars["KbAccess"],             // "read" | "write" | "read-write" | "none"
 		"KbAccessLabel":              templateVars["KbAccessLabel"],        // Human-readable label (e.g., "READ/WRITE")
+		"KbWriteMethod":              templateVars["KbWriteMethod"],        // "agent" | "direct" — who writes KB (post-step agent vs step itself)
+		"KnowledgebaseContribution":  templateVars["KnowledgebaseContribution"], // Author-authored instruction for the step's KB contribution (direct mode only)
+		"KBGuidanceBlock":            templateVars["KBGuidanceBlock"],      // Pre-built KB guidance block — non-empty only when KbWriteMethod == "direct"
 		"FolderGuardReadPaths":       folderGuardReadPaths,                 // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag

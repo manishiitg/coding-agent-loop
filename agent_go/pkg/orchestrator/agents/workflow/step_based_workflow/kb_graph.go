@@ -1,9 +1,12 @@
 package step_based_workflow
 
-// Knowledgebase graph files. The LLM KB update agent owns graph.json and index.json
-// end-to-end — Go only seeds empty valid files on workspace init so the agent's first
-// read sees parseable JSON. Schema, merging, index upkeep are all the agent's job;
-// if the prompt's schema changes, update the seed literals below to match.
+// Knowledgebase files. Notes-only KB model: the knowledgebase is a set of
+// per-topic markdown files under knowledgebase/notes/ plus notes/_index.json
+// as a registry. There is no graph.json / index.json surface. Go only seeds
+// an empty _index.json on workspace init so the agent's first read sees
+// parseable JSON; all subsequent writes (content + _index.json sync) are the
+// agent's job (either the post-step KB update agent in agent mode, or the
+// step agent itself in direct mode).
 
 import (
 	"context"
@@ -11,69 +14,28 @@ import (
 	"path/filepath"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 )
 
 const (
-	KBGraphFileName      = "graph.json"
-	KBIndexFileName      = "index.json"
-	KBNotesFolderName    = "notes"      // sibling of graph.json — per-topic narrative markdown
+	KBNotesFolderName    = "notes"       // per-topic narrative markdown under knowledgebase/
 	KBNotesIndexFileName = "_index.json" // registry of topic files inside notes/
 )
 
-const (
-	emptyGraphJSON = `{
-  "version": "1",
-  "entities": [],
-  "relationships": []
-}
-`
-	emptyIndexJSON = `{
-  "entity_count": 0,
-  "relationship_count": 0,
-  "entity_types": [],
-  "relationship_types": []
-}
-`
-	// emptyNotesIndexJSON seeds notes/_index.json — a registry of per-topic markdown
-	// files inside knowledgebase/notes/. The KB update agent appends/updates entries
-	// when it writes narrative analysis; consumers (steps with KB read access, builder
-	// review tools) read this first to find relevant topic files without scanning the
-	// whole folder.
-	emptyNotesIndexJSON = `{
+// emptyNotesIndexJSON seeds notes/_index.json — a registry of per-topic markdown
+// files inside knowledgebase/notes/. Agents append/update entries when they write
+// narrative analysis; consumers (steps with KB read access, builder review tools)
+// read this first to find relevant topic files without scanning the whole folder.
+const emptyNotesIndexJSON = `{
   "topics": []
 }
 `
-)
 
-// InitKBGraphFiles seeds the empty KB artifacts that the declared shape calls
-// for. Safe to call repeatedly — existing files are left alone so agent-written
-// content survives. Shape controls which artifacts exist:
-//
-//   - KBShapeGraphNotes (default): graph.json + index.json + notes/_index.json
-//   - KBShapeNotesOnly:            notes/_index.json only
-//
-// For notes-only we intentionally do NOT touch any pre-existing graph.json/
-// index.json — migration of shape is handled separately.
+// InitKBGraphFiles seeds knowledgebase/notes/_index.json so the first agent
+// read sees a parseable registry. Safe to call repeatedly — existing files are
+// left alone. The kbShape parameter is accepted for call-site compatibility
+// but ignored: notes-only is the only shape now.
 func InitKBGraphFiles(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspaceRoot, kbShape string) error {
-	shape := workflowtypes.ResolveKBShape(kbShape)
-
-	if shape == workflowtypes.KBShapeGraphNotes {
-		graphPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBGraphFileName)
-		if exists, _ := bo.CheckWorkspaceFileExists(ctx, graphPath); !exists {
-			if err := bo.WriteWorkspaceFile(ctx, graphPath, emptyGraphJSON); err != nil {
-				return fmt.Errorf("init graph.json: %w", err)
-			}
-		}
-		indexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBIndexFileName)
-		if exists, _ := bo.CheckWorkspaceFileExists(ctx, indexPath); !exists {
-			if err := bo.WriteWorkspaceFile(ctx, indexPath, emptyIndexJSON); err != nil {
-				return fmt.Errorf("init index.json: %w", err)
-			}
-		}
-	}
-
-	// notes/_index.json is seeded for every non-empty shape — both shapes use narrative notes.
+	_ = kbShape // retained for compatibility; shape is always notes-only
 	notesIndexPath := filepath.Join(workspaceRoot, KnowledgebaseFolderName, KBNotesFolderName, KBNotesIndexFileName)
 	if exists, _ := bo.CheckWorkspaceFileExists(ctx, notesIndexPath); !exists {
 		if err := bo.WriteWorkspaceFile(ctx, notesIndexPath, emptyNotesIndexJSON); err != nil {

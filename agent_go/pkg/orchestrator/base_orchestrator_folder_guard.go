@@ -49,7 +49,8 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 	// Human feedback is an interactive tool that doesn't use file paths
 	// Note: human_feedback may be included in WorkspaceTools (combined in server.go createCustomTools)
 	specialTools := map[string]bool{
-		"human_feedback": true,
+		"human_feedback":      true,
+		"submit_human_answer": true,
 	}
 	if specialTools[toolName] {
 		return originalDescription

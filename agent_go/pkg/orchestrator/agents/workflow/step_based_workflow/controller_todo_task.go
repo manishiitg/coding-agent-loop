@@ -465,6 +465,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
 		"KbAccess":            kbAccess,
 		"KbAccessLabel":       kbAccessLabel(kbAccess),
+		"KbWriteMethod":       resolveKnowledgebaseWriteMethod(stepConfig),
+		"KnowledgebaseContribution": kbContributionForPrompt(stepConfig),
+		"KBGuidanceBlock":     BuildStepKBGuidance(kbAccess, resolveKnowledgebaseWriteMethod(stepConfig), kbContributionForPrompt(stepConfig)),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),

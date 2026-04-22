@@ -10,14 +10,13 @@ import (
 	"time"
 
 	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"mcp-agent-builder-go/agent_go/pkg/workflowtypes"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // Post-step KB update orchestration. Serialized through kbUpdateQueue so concurrent
-// step completions can't race on knowledgebase/graph.json writes. The agent reads and
-// writes the file directly via shell; Go only schedules and tracks.
+// step completions can't race on knowledgebase/notes/ writes. The agent reads and
+// writes the notes/ tree directly via shell; Go only schedules and tracks.
 
 // maybeEnqueueKBUpdate enqueues a post-step KB update when all gates hold:
 // KB enabled, KB not locked at workflow level, step access grants write,
@@ -43,6 +42,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 	if contribution == "" {
 		return false
 	}
+	// Direct-mode steps own the write: the step agent already wrote to notes/
+	// inline and went through a self-review turn. Running the post-step agent on
+	// top would double-contribute (re-extracting from the same trail the step
+	// agent already processed) and risk clobbering what was carefully written.
+	// This mirrors the learning-agent skip in controller_execution.go:2478.
+	if resolveKnowledgebaseWriteMethod(agentConfigs) == KBWriteMethodDirect {
+		hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-write KB: skipping post-step KB update agent for step %s (step agent wrote graph + notes inline)", step.GetID()))
+		return false
+	}
 
 	// Snapshot step state — by the time the worker runs, the next step may already be
 	// in flight, so the closure must capture immutable values rather than reading `step`.
@@ -64,7 +72,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) maybeEnqueueKBUpdate(
 	// Surface the KB update as a tracked execution so the workshop UI shows it
 	// alongside learning, harden, replan, etc. Mirrors the learning-agent pattern
 	// at controller_learning.go:410-454. Without this the KB agent runs invisibly
-	// and users have no signal that graph.json/notes are about to change.
+	// and users have no signal that notes are about to change.
 	execLabel := fmt.Sprintf("KB Update: %s", stepLabel)
 	execID := fmt.Sprintf("kb-update-%s-%05d", stepID, time.Now().UnixNano()%100000)
 	baseCtx := hcpo.workshopSessionCtx
@@ -139,8 +147,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 	// that convention so the KB agent's shell commands work without prefixing.
 	docsRoot := GetPromptDocsRoot()
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	graphFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBGraphFileName)
-	indexFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBIndexFileName)
 	notesFolderPath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBNotesFolderName)
 	notesIndexPath := filepath.Join(notesFolderPath, KBNotesIndexFileName)
 
@@ -188,11 +194,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBUpdatePhase(
 		"ExecutionLogsPath":         executionLogsPath,
 		"ExecutionLogsFilesListing": BuildStepFilesListing(executionLogsPath),
 		"ContributionInstruction":   contribution,
-		"GraphFilePath":             graphFilePath,
-		"IndexFilePath":             indexFilePath,
 		"NotesFolderPath":           notesFolderPath,
 		"NotesIndexPath":            notesIndexPath,
-		"KBShape":                   workflowtypes.ResolveKBShape(hcpo.KBShape()),
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
@@ -221,8 +224,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 
 	docsRoot := GetPromptDocsRoot()
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	graphFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBGraphFileName)
-	indexFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBIndexFileName)
 	notesFolderPath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBNotesFolderName)
 	notesIndexPath := filepath.Join(notesFolderPath, KBNotesIndexFileName)
 
@@ -234,11 +235,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBReorganizePhase(ctx context.Cont
 
 	templateVars := map[string]string{
 		"Instruction":     instruction,
-		"GraphFilePath":   graphFilePath,
-		"IndexFilePath":   indexFilePath,
 		"NotesFolderPath": notesFolderPath,
 		"NotesIndexPath":  notesIndexPath,
-		"KBShape":         workflowtypes.ResolveKBShape(hcpo.KBShape()),
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
@@ -355,8 +353,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBConsolidatePhase(ctx context.Con
 
 	docsRoot := GetPromptDocsRoot()
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	graphFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBGraphFileName)
-	indexFilePath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBIndexFileName)
 	notesFolderPath := filepath.Join(docsRoot, baseWorkspacePath, KnowledgebaseFolderName, KBNotesFolderName)
 	notesIndexPath := filepath.Join(notesFolderPath, KBNotesIndexFileName)
 
@@ -373,11 +369,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBConsolidatePhase(ctx context.Con
 		"Objective":              objective,
 		"ContributionsBlock":     contributionsBlock,
 		"StepOutputFoldersBlock": stepOutputFoldersBlock,
-		"GraphFilePath":          graphFilePath,
-		"IndexFilePath":          indexFilePath,
 		"NotesFolderPath":        notesFolderPath,
 		"NotesIndexPath":         notesIndexPath,
-		"KBShape":                workflowtypes.ResolveKBShape(hcpo.KBShape()),
 	}
 
 	result, _, err := agent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
@@ -511,7 +504,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildStepOutputFoldersBlock(docsRoot,
 	executionPath := filepath.Join(docsRoot, baseWorkspacePath, "runs", runFolder, "execution")
 	entries, err := os.ReadDir(executionPath)
 	if err != nil {
-		return fmt.Sprintf("_Selected run `%s` has no execution folder at `%s` (%v). Read graph.json + notes directly._", runFolder, executionPath, err)
+		return fmt.Sprintf("_Selected run `%s` has no execution folder at `%s` (%v). Read notes/_index.json + notes/ directly._", runFolder, executionPath, err)
 	}
 	var folders []string
 	for _, e := range entries {

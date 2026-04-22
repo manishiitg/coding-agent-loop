@@ -175,6 +175,11 @@ func (w *WebSimulatorConnector) UpdateMessage(ctx context.Context, threadID Thre
 	return fmt.Errorf("message %s not found in thread %s", messageID, threadID.ThreadTS)
 }
 
+// GetChannelName returns "" — web simulator has no concept of Slack-style channel names.
+func (w *WebSimulatorConnector) GetChannelName(ctx context.Context, channelID string) string {
+	return ""
+}
+
 func (w *WebSimulatorConnector) GetThreadHistory(ctx context.Context, threadID ThreadID) ([]ThreadMessage, error) {
 	thread := w.getThread(threadID.ThreadTS)
 	if thread == nil {

@@ -1220,8 +1220,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
                 </div>
                 <div className="max-w-md text-center text-sm text-muted-foreground leading-6">
                   The builder writes <code className="px-1 rounded bg-muted">reports/report_plan.json</code> to configure
-                  this view; widgets render once <code className="px-1 rounded bg-muted">db/</code> or{' '}
-                  <code className="px-1 rounded bg-muted">knowledgebase/graph.json</code> has data.
+                  this view; widgets render once <code className="px-1 rounded bg-muted">db/</code> has data.
                 </div>
               </div>
             )}

@@ -403,8 +403,10 @@ func isGenericAgentStep(stepID, stepPath string) bool {
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents.
 // kbAccess must be one of KBAccessRead / Write / ReadWrite / None — callers resolve it
-// via resolveKnowledgebaseAccess before invoking. Returns readPaths and writePaths.
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string) (readPaths, writePaths []string) {
+// via resolveKnowledgebaseAccess before invoking. kbWriteMethod must be one of
+// KBWriteMethodAgent / Direct and is only consulted when kbAccess permits writes;
+// callers resolve it via resolveKnowledgebaseWriteMethod. Returns readPaths and writePaths.
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, kbWriteMethod string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -417,10 +419,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + global learnings + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
-	// NOTE: knowledgebase/ is deliberately NOT added to step writePaths even when kb_access=write.
-	// Step code must never write graph.json/index.json/notes/ directly — that's the post-step
-	// KB update agent's job (setupKBUpdateFolderGuard). `kb_access=write` + a non-empty
-	// `knowledgebase_contribution` is what triggers that agent (see controller_kb_update.go).
+	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
+	// step can write per-topic markdown via shell + diff_patch_workspace_file. Under
+	// kbWriteMethod=agent we add nothing — notes/ is only writable by the post-step KB
+	// update agent (setupKBUpdateFolderGuard, triggered by a non-empty knowledgebase_contribution).
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
@@ -446,14 +448,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	readPaths = append(readPaths, dbPath)
 	writePaths = append(writePaths, dbPath)
 
-	// Add knowledgebase folder to READ paths when the mode grants read. Write access is
-	// intentionally NOT granted to step agents here — kb_access=write gates whether the
-	// post-step KB update agent runs (controller_kb_update.go), not whether the step itself
-	// can modify knowledgebase/. The KB update agent gets its own writePaths via
-	// setupKBUpdateFolderGuard and bypasses this function entirely.
+	// Add knowledgebase folder to READ paths when the mode grants read. Under
+	// kbWriteMethod=direct, also add knowledgebase/notes/ to WRITE paths so the step
+	// can author per-topic markdown via shell + diff_patch_workspace_file.
 	if kbAccess != KBAccessNone && kbAccessAllowsRead(kbAccess) {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 		readPaths = append(readPaths, knowledgebasePath)
+	}
+	if kbAccessAllowsWrite(kbAccess) && kbWriteMethod == KBWriteMethodDirect {
+		notesPath := fmt.Sprintf("%s/notes", getKnowledgebasePath(baseWorkspacePath))
+		writePaths = append(writePaths, notesPath)
 	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
@@ -1225,7 +1229,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 2. Setup folder guard (extracted method). Empty kbAccess defaults to orchestrator-level UseKnowledgebase.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess)
+	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess, kbWriteMethod)
 
 	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
@@ -1952,7 +1957,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		return nil, fmt.Errorf("failed to apply post-setup to todo task orchestrator agent: %w", err)
 	}
 
-	// Inject supplementary prompts (skills, secrets, browser instructions)
+	// Inject supplementary prompts (skills, secrets, browser instructions).
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
 	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
 		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {

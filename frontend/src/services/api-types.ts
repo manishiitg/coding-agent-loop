@@ -830,7 +830,6 @@ export interface PresetLLMConfig {
 
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
-  kb_shape?: 'graph+notes' | 'notes-only'  // shape of the KB (default 'graph+notes'). 'notes-only' skips graph.json/index.json.
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
   enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
@@ -1319,7 +1318,7 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 // Dynamic report system (docs/workflow/persistent_stores_design.md section 2)
 // Replaces the static final_output.go agent. The report is a live frontend
-// view over db/ + knowledgebase/graph.json, defined by reports/report_plan.json.
+// view over db/, defined by reports/report_plan.json.
 // Files are fetched via the
 // existing workspace document API (agentApi.getPlannerFileContent).
 // ---------------------------------------------------------------------------
@@ -1368,9 +1367,9 @@ export interface ReportDefaultSort {
   direction: ReportSortDirection;
 }
 
-// A single widget. `source` is a workspace-relative path (db/x.json or
-// knowledgebase/graph.json / index.json). `path` is a dot-notation key into
-// the JSON. `filter` is an optional `key=value` string for filtering arrays.
+// A single widget. `source` is a workspace-relative path (db/x.json).
+// `path` is a dot-notation key into the JSON. `filter` is an optional
+// `key=value` string for filtering arrays.
 //
 // All fields beyond source/path/kind are optional. The renderer applies
 // sensible defaults so a minimal widget (just source + path) still renders.

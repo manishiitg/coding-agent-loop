@@ -1421,6 +1421,23 @@ func (s *SlackService) UpdateMessage(ctx context.Context, threadID ThreadID, mes
 }
 
 // GetThreadHistory retrieves the full history of a Slack thread
+// GetChannelName returns the Slack channel's human-readable name (e.g. "general"),
+// or "" on any error. Used to enrich LLM prompt context on new-session starts.
+func (s *SlackService) GetChannelName(ctx context.Context, channelID string) string {
+	if s.client == nil || channelID == "" {
+		return ""
+	}
+	info, err := s.client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+		ChannelID:         channelID,
+		IncludeLocale:     false,
+		IncludeNumMembers: false,
+	})
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.Name
+}
+
 func (s *SlackService) GetThreadHistory(ctx context.Context, threadID ThreadID) ([]ThreadMessage, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("slack client not initialized")

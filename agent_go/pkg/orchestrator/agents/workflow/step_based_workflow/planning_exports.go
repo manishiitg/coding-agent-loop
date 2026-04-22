@@ -788,14 +788,12 @@ func (s *WorkshopChatSession) DetachSecretFromWorkflow(ctx context.Context, name
 }
 
 // RegisterReorganizeKnowledgebaseTool registers a reorganize_knowledgebase tool that
-// applies a natural-language transformation to knowledgebase/graph.json (dedupe entities,
-// rename types, purge bad provenance, etc.). Runs synchronously — the tool handler
-// blocks until the agent finishes — but serialized through kbUpdateQueue so it can't
-// race with a live workflow's post-step KB updates. Shorter-running transformations
-// feel responsive; larger ones will appear as a slow tool call but that's honest UX.
+// applies a natural-language transformation to the knowledgebase notes — merge or
+// rename topics, drop sections from bad runs, compact topic files. Runs synchronously
+// (the handler blocks until the agent finishes) but serialized through kbUpdateQueue
+// so it can't race with a live workflow's post-step KB updates.
 //
-// See docs/workflow/persistent_stores_design.md section 5 and the post-step KB update
-// agent for the extraction counterpart.
+// See the post-step KB update agent for the extraction counterpart.
 func RegisterReorganizeKnowledgebaseTool(
 	mcpAgent *mcpagent.Agent,
 	session *WorkshopChatSession,
@@ -803,7 +801,7 @@ func RegisterReorganizeKnowledgebaseTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"reorganize_knowledgebase",
-		"Apply a natural-language transformation to the knowledgebase: graph.json + index.json + per-topic notes/ files. Operations include dedupe entities, rename types, drop entries from a bad run, merge split records, AND notes operations (merge two topic files, drop sections from a bad run, compact a topic file, rename a topic). Takes one argument 'instruction' describing what to do. The agent reads graph.json + index.json + notes/_index.json, scopes to relevant topic files, applies the transformation, and resyncs the indexes. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
+		"Apply a natural-language transformation to the knowledgebase notes. Supported operations: merge two topic files, drop sections from a bad run, compact a topic file, rename a topic and rewrite cross-references, drop a topic entirely. Takes one argument 'instruction' describing what to do. The agent reads knowledgebase/notes/_index.json, scopes to the relevant topic files, applies the transformation, and resyncs the index. Serialized against post-step KB updates — safe to call while a workflow is running. Returns the agent's summary line describing what changed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -858,7 +856,7 @@ func RegisterConsolidateKnowledgebaseTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"consolidate_knowledgebase",
-		"Run a holistic cross-step consolidation pass over knowledgebase/graph.json + notes/. Use this AFTER multiple steps have contributed to catch drift that per-step KB updates can't see: two steps extracting the same concept under different type names (company vs organization), properties with different names for the same thing (industry vs sector), duplicate entities from different steps, cross-step patterns that need a `pattern-*.md` note, contested property values that got silently clobbered. The agent reads every step's knowledgebase_contribution plus step output folders from the selected run. Takes one argument 'objective' describing the consolidation goal — be specific; the agent scopes work to it and won't opportunistically reorganize beyond. Returns the agent's summary line.",
+		"Run a holistic cross-step consolidation pass over knowledgebase/notes/. Use this AFTER multiple steps have contributed to catch drift that per-step KB updates can't see: two steps creating topic files under different slugs for the same entity, cross-step patterns that need a `pattern-*.md` note, contradictions between steps on the same subject. The agent reads every step's knowledgebase_contribution plus step output folders from the selected run. Takes one argument 'objective' describing the consolidation goal — be specific; the agent scopes work to it and won't opportunistically reorganize beyond. Returns the agent's summary line.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1413,7 +1411,7 @@ func RegisterRunFullWorkflowTool(
 				result = firstNonEmpty(strings.TrimSpace(result), "Workflow execution completed successfully.")
 
 				// Whole-workflow completion must block until post-step side effects land:
-				// learning writes to _global/SKILL.md, KB writes to graph.json. Per-step flow
+				// learning writes to _global/SKILL.md, KB writes to notes/. Per-step flow
 				// is still non-blocking — only this full-workflow exit waits. Without this,
 				// "workflow done" returned before the last steps' learnings finished queuing,
 				// so the next run started against stale SKILL.md.

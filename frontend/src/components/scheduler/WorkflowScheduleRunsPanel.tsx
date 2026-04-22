@@ -4,7 +4,7 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck, AlertTriangle,
-  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare
+  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search, FileText, MessageSquare, Workflow
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -26,6 +26,7 @@ interface WorkflowScheduleRunsPanelProps {
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
+type SchedulePanelView = 'overview' | 'workflows'
 
 const MISSED_SCHEDULE_GRACE_MS = 60_000
 
@@ -38,7 +39,6 @@ interface JobPopupState {
   selectedRunFolder?: string
   sessionId?: string
   presetQueryId?: string
-  jobMode?: ScheduledJob['mode']
 }
 
 type RunCostData = {
@@ -355,6 +355,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+  const [activeView, setActiveView] = useState<SchedulePanelView>('workflows')
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
@@ -362,11 +363,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [isUpdatingSchedulerPause, setIsUpdatingSchedulerPause] = useState(false)
   const [showSchedulerDisabledNotice, setShowSchedulerDisabledNotice] = useState(false)
 
-  // Auto-expand running jobs
+  // Keep a running workflow expanded so its live run history stays visible.
   useEffect(() => {
-    if (expandedJobId) return // don't override user's choice
     const runningJob = jobs.find(j => j.last_status === 'running')
-    if (runningJob) {
+    if (runningJob && expandedJobId !== runningJob.id) {
       setExpandedJobId(runningJob.id)
     }
   }, [jobs, expandedJobId])
@@ -740,7 +740,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const openScheduledRunInChat = useCallback(async (
     sessionId: string,
     jobName: string,
-    jobMode?: ScheduledJob['mode'],
     presetQueryId?: string,
   ) => {
     if (!sessionId) return
@@ -749,12 +748,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const existingTab = Object.values(chatStore.chatTabs).find(t => t.sessionId === sessionId)
 
     let effectivePresetQueryId = presetQueryId || existingTab?.metadata?.presetQueryId
-    let resolvedPhaseId = existingTab?.metadata?.phaseId
     if (!effectivePresetQueryId) {
       try {
         const running = await agentApi.getRunningWorkflow(sessionId)
         effectivePresetQueryId = running.preset_query_id || undefined
-        resolvedPhaseId = running.phase_id || resolvedPhaseId
       } catch {
         // Leave undefined rather than rebinding the scheduled run to whichever
         // workflow is currently open.
@@ -766,32 +763,19 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
     useWorkflowStore.getState().setShowChatArea(true)
 
-    const isWorkshopRun = jobMode === 'workshop' || resolvedPhaseId === 'workflow-builder'
-    const desiredName = isWorkshopRun ? 'Workflow Builder' : 'Schedule'
-    const metadata = isWorkshopRun
-      ? {
-          mode: 'workflow' as const,
-          phaseId: 'workflow-builder',
-          phaseName: 'Workflow Builder',
-          ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
-          isViewOnly: false,
-          isScheduledRun: true,
-          scheduledJobName: jobName,
-        }
-      : {
-          mode: 'workflow' as const,
-          phaseId: undefined,
-          phaseName: undefined,
-          ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
-          isViewOnly: true,
-          isScheduledRun: true,
-          scheduledJobName: jobName,
-        }
+    const desiredName = 'Schedule'
+    const metadata = {
+      mode: 'workflow' as const,
+      phaseId: undefined,
+      phaseName: undefined,
+      ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
+      isViewOnly: true,
+      isScheduledRun: true,
+      scheduledJobName: jobName,
+    }
 
     if (existingTab) {
-      // Rebind the tab to this preset and surface the schedule badge. Workshop-mode
-      // sessions should behave like normal workflow-builder chat, while normal
-      // workflow schedules remain read-only observers.
+      // Rebind the tab to this preset and surface the schedule badge.
       chatStore.setTabMetadata(existingTab.tabId, metadata)
       if (existingTab.name !== desiredName) {
         useChatStore.setState((state) => {
@@ -810,6 +794,50 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       metadata,
       sessionId,
     )
+    chatStore.switchTab(tabId)
+    onClose()
+  }, [onClose])
+
+  const openWorkflowBuilderForSchedule = useCallback(async (
+    presetQueryId?: string,
+  ) => {
+    if (!presetQueryId) return
+
+    useGlobalPresetStore.getState().setActivePreset('workflow', presetQueryId)
+    useWorkflowStore.getState().setShowChatArea(true)
+
+    const chatStore = useChatStore.getState()
+    const existingBuilderTab = Object.values(chatStore.chatTabs).find(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.presetQueryId === presetQueryId &&
+      tab.metadata?.phaseId === 'workflow-builder'
+    )
+
+    const builderMetadata = {
+      mode: 'workflow' as const,
+      phaseId: 'workflow-builder',
+      phaseName: 'Workflow Builder',
+      presetQueryId,
+      isViewOnly: false,
+      isScheduledRun: false,
+      scheduledJobName: undefined,
+    }
+
+    if (existingBuilderTab) {
+      chatStore.setTabMetadata(existingBuilderTab.tabId, builderMetadata)
+      if (existingBuilderTab.name !== 'Workflow Builder') {
+        useChatStore.setState((state) => {
+          const t = state.chatTabs[existingBuilderTab.tabId]
+          if (!t) return state
+          return { chatTabs: { ...state.chatTabs, [existingBuilderTab.tabId]: { ...t, name: 'Workflow Builder' } } }
+        })
+      }
+      chatStore.switchTab(existingBuilderTab.tabId)
+      onClose()
+      return
+    }
+
+    const tabId = await chatStore.createChatTab('Workflow Builder', builderMetadata)
     chatStore.switchTab(tabId)
     onClose()
   }, [onClose])
@@ -950,7 +978,51 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {!isLoading && jobs.length > 0 && (
-            <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-4 space-y-4">
+            <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="inline-flex rounded-lg border border-border bg-background p-1">
+                  <button
+                    onClick={() => setActiveView('overview')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeView === 'overview'
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    Overview
+                  </button>
+                  <button
+                    onClick={() => setActiveView('workflows')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeView === 'workflows'
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    All Workflows
+                  </button>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {activeView === 'overview'
+                    ? 'Summary and schedule health'
+                    : `${filteredJobs.length} workflow${filteredJobs.length !== 1 ? 's' : ''} shown`}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isLoading && jobs.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Loading...</div>
+          ) : error ? (
+            <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
+          ) : jobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground">
+              <Clock className="w-8 h-8 opacity-30" />
+              <p>No scheduled workflows yet.</p>
+              <p className="text-xs">Click the clock icon on a workflow preset to add one.</p>
+            </div>
+          ) : activeView === 'overview' ? (
+            <div className="px-5 py-4 space-y-4">
               {!isSchedulerExecutionEnabled && (
                 <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
                   <div className="flex items-start justify-between gap-3">
@@ -993,12 +1065,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <button
-                  onClick={() => setActiveFilter('running')}
-                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    activeFilter === 'running'
-                      ? 'border-amber-400/70 bg-muted text-foreground shadow-sm'
-                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
-                  }`}
+                  onClick={() => {
+                    setActiveFilter('running')
+                    setActiveView('workflows')
+                  }}
+                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Running now</div>
                   <div className="mt-1 flex items-center gap-2">
@@ -1007,34 +1078,31 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   </div>
                 </button>
                 <button
-                  onClick={() => setActiveFilter('enabled')}
-                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    activeFilter === 'enabled'
-                      ? 'border-emerald-400/70 bg-muted text-foreground shadow-sm'
-                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
-                  }`}
+                  onClick={() => {
+                    setActiveFilter('enabled')
+                    setActiveView('workflows')
+                  }}
+                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Enabled</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.enabled}</div>
                 </button>
                 <button
-                  onClick={() => setActiveFilter('paused')}
-                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    activeFilter === 'paused'
-                      ? 'border-border bg-muted text-foreground shadow-sm'
-                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
-                  }`}
+                  onClick={() => {
+                    setActiveFilter('paused')
+                    setActiveView('workflows')
+                  }}
+                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paused</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.paused}</div>
                 </button>
                 <button
-                  onClick={() => setActiveFilter('missed')}
-                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    activeFilter === 'missed'
-                      ? 'border-amber-400/70 bg-muted text-foreground shadow-sm'
-                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
-                  }`}
+                  onClick={() => {
+                    setActiveFilter('missed')
+                    setActiveView('workflows')
+                  }}
+                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Missed</div>
                   <div className="mt-1 flex items-center gap-2">
@@ -1043,12 +1111,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   </div>
                 </button>
                 <button
-                  onClick={() => setActiveFilter('issues')}
-                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
-                    activeFilter === 'issues'
-                      ? 'border-red-400/70 bg-muted text-foreground shadow-sm'
-                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
-                  }`}
+                  onClick={() => {
+                    setActiveFilter('issues')
+                    setActiveView('workflows')
+                  }}
+                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Issues</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.issues}</div>
@@ -1079,7 +1146,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       return (
                         <button
                           key={`missed-${job.id}`}
-                          onClick={() => setExpandedJobId(job.id)}
+                          onClick={() => {
+                            setExpandedJobId(job.id)
+                            setActiveView('workflows')
+                          }}
                           className="rounded-lg border border-amber-400/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -1126,7 +1196,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       return (
                         <button
                           key={`upcoming-${job.id}`}
-                          onClick={() => setExpandedJobId(job.id)}
+                          onClick={() => {
+                            setExpandedJobId(job.id)
+                            setActiveView('workflows')
+                          }}
                           className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
                         >
                           <div className="flex items-center justify-between gap-3">
@@ -1147,63 +1220,56 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   </div>
                 )}
               </div>
-
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-1 max-w-3xl flex-col gap-3 md:flex-row">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search by workflow, preset, cron, workspace..."
-                      className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                    />
-                  </div>
-                  <select
-                    value={selectedWorkflowFilter}
-                    onChange={(e) => setSelectedWorkflowFilter(e.target.value)}
-                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50 md:min-w-[220px]"
-                  >
-                    <option value="all">All workflows</option>
-                    {workflowOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {filterPills.map((pill) => (
-                    <button
-                      key={pill.key}
-                      onClick={() => setActiveFilter(pill.key)}
-                      className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                        activeFilter === pill.key
-                          ? 'bg-foreground text-background'
-                          : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                      }`}
+            </div>
+          ) : (
+            <>
+              <div className="border-b border-border px-5 py-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-1 max-w-3xl flex-col gap-3 md:flex-row">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by workflow, preset, cron, workspace..."
+                        className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                      />
+                    </div>
+                    <select
+                      value={selectedWorkflowFilter}
+                      onChange={(e) => setSelectedWorkflowFilter(e.target.value)}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50 md:min-w-[220px]"
                     >
-                      {pill.label} ({pill.count})
-                    </button>
-                  ))}
+                      <option value="all">All workflows</option>
+                      {workflowOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {filterPills.map((pill) => (
+                      <button
+                        key={pill.key}
+                        onClick={() => setActiveFilter(pill.key)}
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          activeFilter === pill.key
+                            ? 'bg-foreground text-background'
+                            : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        {pill.label} ({pill.count})
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           )}
-
-          {isLoading && jobs.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Loading...</div>
-          ) : error ? (
-            <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
-          ) : jobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground">
-              <Clock className="w-8 h-8 opacity-30" />
-              <p>No scheduled workflows yet.</p>
-              <p className="text-xs">Click the clock icon on a workflow preset to add one.</p>
-            </div>
-          ) : filteredJobs.length === 0 ? (
+          {jobs.length > 0 && activeView === 'workflows' && filteredJobs.length === 0 && (
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
               <Search className="w-8 h-8 opacity-30" />
               <p>No workflows match the current filter.</p>
@@ -1218,7 +1284,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 Clear search and show all schedules
               </button>
             </div>
-          ) : (
+          )}
+          {jobs.length > 0 && activeView === 'workflows' && filteredJobs.length > 0 && (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
               {filteredJobs.map((job, index, jobsList) => {
                 const preset = presetMap.get(job.preset_query_id ?? '')
@@ -1476,8 +1543,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           <TooltipContent side="bottom">Delete schedule</TooltipContent>
                         </Tooltip>
                         <button
-                          onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
-                          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          onClick={() => {
+                            if (job.last_status === 'running') return
+                            setExpandedJobId(isExpanded ? null : job.id)
+                          }}
+                          disabled={job.last_status === 'running'}
+                          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                          title={job.last_status === 'running' ? 'Running workflows stay expanded' : undefined}
                         >
                           {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                         </button>
@@ -1506,6 +1578,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                   runningRunFolders,
                                   latestRunFoldersByJob[job.id]
                                 )
+                                const currentSessionId =
+                                  run.session_id || (run.status === 'running' ? job.last_session_id : undefined)
                                 return (
                                 <div
                                   key={run.id}
@@ -1600,7 +1674,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                   {/* Action buttons */}
                                   <div className="flex items-center gap-2 ml-auto flex-shrink-0">
                                     {/* Live view button for running jobs with session_id */}
-                                    {run.status === 'running' && run.session_id && (
+                                    {run.status === 'running' && currentSessionId && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
@@ -1610,9 +1684,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                               workspacePath: job.workspace_path || '',
                                               runFolders: [],
                                               popup: 'live',
-                                              sessionId: run.session_id,
+                                              sessionId: currentSessionId,
                                               presetQueryId: job.preset_query_id,
-                                              jobMode: job.mode,
                                             })}
                                             className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
                                           >
@@ -1622,20 +1695,33 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipContent side="left">Live execution view</TooltipContent>
                                       </Tooltip>
                                     )}
-                                    {/* Workshop schedules resume in builder chat; normal workflow schedules stay read-only. */}
-                                    {run.status === 'running' && run.session_id && (
+                                    {/* Open the scheduled run itself as a read-only chat tab. */}
+                                    {run.status === 'running' && currentSessionId && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
-                                            onClick={() => openScheduledRunInChat(run.session_id!, job.name, job.mode, job.preset_query_id)}
+                                            onClick={() => openScheduledRunInChat(currentSessionId, job.name, job.preset_query_id)}
                                             className="p-1 text-blue-500 hover:text-blue-400 transition-colors"
                                           >
                                             <MessageSquare className="w-3 h-3" />
                                           </button>
                                         </TooltipTrigger>
                                         <TooltipContent side="left">
-                                          {job.mode === 'workshop' ? 'Resume in workflow builder' : 'Open in chat (read-only)'}
+                                          Open run in chat (read-only)
                                         </TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                    {run.status === 'running' && job.preset_query_id && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            onClick={() => openWorkflowBuilderForSchedule(job.preset_query_id)}
+                                            className="p-1 text-violet-500 hover:text-violet-400 transition-colors"
+                                          >
+                                            <Workflow className="w-3 h-3" />
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">Open workflow builder</TooltipContent>
                                       </Tooltip>
                                     )}
                                     {/* Stop button for running jobs */}
@@ -1653,7 +1739,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                       </Tooltip>
                                     )}
                                     {/* Logs button */}
-                                    {effectiveFolder && (
+                                    {effectiveFolder && run.status !== 'running' && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
@@ -1667,7 +1753,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                       </Tooltip>
                                     )}
                                     {/* Evaluation button */}
-                                    {effectiveFolder && (
+                                    {effectiveFolder && run.status !== 'running' && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
@@ -1681,7 +1767,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                       </Tooltip>
                                     )}
                                     {/* Report button */}
-                                    {effectiveFolder && (
+                                    {effectiveFolder && run.status !== 'running' && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
@@ -1743,10 +1829,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           onOpenInChat={() => {
             const sid = popupState.sessionId!
             const name = popupState.jobName
-            const mode = popupState.jobMode
             const pid = popupState.presetQueryId
             setPopupState(null)
-            openScheduledRunInChat(sid, name, mode, pid)
+            openScheduledRunInChat(sid, name, pid)
           }}
         />
       )}

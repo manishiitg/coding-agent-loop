@@ -1,5 +1,5 @@
 // Cell formatters used by report TableWidget. Maps a named preset
-// (declared in report_plan.md `formats:` block) to a stringification function.
+// (declared in report_plan.json widget `formats`) to a stringification function.
 // Keep these as named presets — not user-supplied expressions — so the schema
 // stays bounded and predictable.
 

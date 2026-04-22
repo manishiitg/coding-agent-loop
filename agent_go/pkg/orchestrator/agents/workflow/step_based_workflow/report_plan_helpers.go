@@ -17,7 +17,7 @@ import (
 )
 
 // Mirrors the subset of frontend/src/lib/reportPlanParser.ts needed to validate
-// reports/report_plan.md. Kept narrow: validation only, no rendering concerns.
+// reports/report_plan.json.
 
 var (
 	reportPlanKnownChartTypes = map[string]struct{}{
@@ -70,6 +70,94 @@ type reportPlanWidget struct {
 type reportPlanSection struct {
 	Heading string
 	Widgets []*reportPlanWidget
+}
+
+type reportPlanDocument struct {
+	Version  int                         `json:"version,omitempty"`
+	Sections []reportPlanDocumentSection `json:"sections"`
+}
+
+type reportPlanDocumentSection struct {
+	ID      string                    `json:"id,omitempty"`
+	Heading string                    `json:"heading"`
+	Entries []reportPlanDocumentEntry `json:"entries"`
+}
+
+type reportPlanDocumentEntry struct {
+	ID     string                    `json:"id,omitempty"`
+	Kind   string                    `json:"kind"`
+	Widget *reportPlanDocumentWidget `json:"widget,omitempty"`
+	Row    *reportPlanDocumentRow    `json:"row,omitempty"`
+}
+
+type reportPlanDocumentRow struct {
+	Widgets []reportPlanDocumentWidget `json:"widgets"`
+}
+
+type reportPlanDocumentDefaultSort struct {
+	Field     string `json:"field"`
+	Direction string `json:"direction,omitempty"`
+}
+
+type reportPlanDocumentWidget struct {
+	ID            string                         `json:"id,omitempty"`
+	Hidden        bool                           `json:"hidden,omitempty"`
+	Kind          string                         `json:"kind"`
+	Source        string                         `json:"source,omitempty"`
+	Path          string                         `json:"path,omitempty"`
+	Filter        string                         `json:"filter,omitempty"`
+	Title         string                         `json:"title,omitempty"`
+	Description   string                         `json:"description,omitempty"`
+	Height        int                            `json:"height,omitempty"`
+	Formats       map[string]string              `json:"formats,omitempty"`
+	PageSize      int                            `json:"pageSize,omitempty"`
+	EnableSearch  *bool                          `json:"enableSearch,omitempty"`
+	DefaultSort   *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
+	HideColumns   []string                       `json:"hideColumns,omitempty"`
+	ChartType     string                         `json:"chartType,omitempty"`
+	XAxis         string                         `json:"xAxis,omitempty"`
+	YAxis         string                         `json:"yAxis,omitempty"`
+	TopN          int                            `json:"topN,omitempty"`
+	Sort          string                         `json:"sort,omitempty"`
+	ShowValues    *bool                          `json:"showValues,omitempty"`
+	Colors        []string                       `json:"colors,omitempty"`
+	ColorsDark    []string                       `json:"colorsDark,omitempty"`
+	ColorBy       string                         `json:"colorBy,omitempty"`
+	ColorMap      map[string]string              `json:"colorMap,omitempty"`
+	ShowIf        string                         `json:"showIf,omitempty"`
+	Label         string                         `json:"label,omitempty"`
+	Prefix        string                         `json:"prefix,omitempty"`
+	Suffix        string                         `json:"suffix,omitempty"`
+	Format        string                         `json:"format,omitempty"`
+	DeltaPath     string                         `json:"deltaPath,omitempty"`
+	DeltaFormat   string                         `json:"deltaFormat,omitempty"`
+	TrendPath     string                         `json:"trendPath,omitempty"`
+	Severity      string                         `json:"severity,omitempty"`
+	Message       string                         `json:"message,omitempty"`
+	RowsField     string                         `json:"rowsField,omitempty"`
+	ColumnsField  string                         `json:"columnsField,omitempty"`
+	ValuesField   string                         `json:"valuesField,omitempty"`
+	Aggregate     string                         `json:"aggregate,omitempty"`
+	Heatmap       *bool                          `json:"heatmap,omitempty"`
+	HeatmapColors []string                       `json:"heatmapColors,omitempty"`
+	Series        []string                       `json:"series,omitempty"`
+	SeriesColors  []string                       `json:"seriesColors,omitempty"`
+	Stacked       *bool                          `json:"stacked,omitempty"`
+	CostsScope    string                         `json:"costsScope,omitempty"`
+	CostsView     string                         `json:"costsView,omitempty"`
+	CostsMetric   string                         `json:"costsMetric,omitempty"`
+	EvalsView     string                         `json:"evalsView,omitempty"`
+	EvalsMetric   string                         `json:"evalsMetric,omitempty"`
+	RunsView      string                         `json:"runsView,omitempty"`
+	RunFolder     string                         `json:"runFolder,omitempty"`
+	Group         string                         `json:"group,omitempty"`
+}
+
+type reportPlanReadResult struct {
+	Document   *reportPlanDocument
+	RawContent string
+	Format     string
+	FilePath   string
 }
 
 type reportPlanDiagnostic struct {
@@ -126,7 +214,7 @@ type reportPlanCapabilitiesResult struct {
 
 func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 	return reportPlanCapabilitiesResult{
-		FilePath:            "reports/report_plan.md",
+		FilePath:            "reports/report_plan.json",
 		ValidationTool:      "validate_report_plan",
 		PreviewTool:         "preview_report_render",
 		WidgetKinds:         []string{"text", "table", "chart", "stat", "alert", "pivot", "costs", "evals", "runs", "row"},
@@ -151,7 +239,7 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 		APIBackedRules: []string{
 			"costs, evals, and runs are API-backed widgets and do not require source or path",
 			"if source/path are present on costs/evals/runs, the renderer ignores them",
-			"after editing reports/report_plan.md always call validate_report_plan",
+			"after editing reports/report_plan.json always call validate_report_plan",
 			"call preview_report_render to inspect the final widget structure and resolved data preview",
 		},
 		WidgetSpecificFields: map[string][]string{
@@ -169,10 +257,10 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 			"api_backed":    "- costs | view: summary | scope: all ; - evals | view: run-chart ; - runs | view: table",
 		},
 		WorkflowRules: []string{
-			"edit reports/report_plan.md instead of generating HTML or markdown artifacts",
+			"edit reports/report_plan.json instead of generating HTML or markdown artifacts",
 			"if the user wants a visualization the grammar cannot express, say so explicitly and propose either a new widget type or a data-shape change",
-			"when the report shows 'No report yet', inspect or create reports/report_plan.md",
-			"when the report renders but data is empty, inspect reports/report_plan.md and the actual db/ or knowledgebase files",
+			"when the report shows 'No report yet', inspect or create reports/report_plan.json",
+			"when the report renders but data is empty, inspect reports/report_plan.json and the actual db/ or knowledgebase files",
 		},
 		Examples: []reportPlanCapabilityExample{
 			{
@@ -219,7 +307,10 @@ type reportPlanRenderPreviewResult struct {
 	Valid           bool                        `json:"valid"`
 	Sections        int                         `json:"sections"`
 	Widgets         int                         `json:"widgets"`
+	PlanFilePath    string                      `json:"plan_file_path,omitempty"`
+	PlanFormat      string                      `json:"plan_format,omitempty"`
 	PlanMarkdown    string                      `json:"plan_markdown"`
+	PlanJSON        *reportPlanDocument         `json:"plan_json,omitempty"`
 	PreviewMarkdown string                      `json:"preview_markdown"`
 	Validation      *reportPlanValidationResult `json:"validation,omitempty"`
 	SectionsPreview []reportPlanPreviewSection  `json:"sections_preview,omitempty"`
@@ -266,6 +357,571 @@ type reportPlanEvalPreviewItem struct {
 type reportPlanRunPreviewItem struct {
 	RunFolder  string `json:"run_folder"`
 	ModifiedAt string `json:"modified_at,omitempty"`
+}
+
+func readReportPlanDocument(
+	ctx context.Context,
+	workspacePath string,
+	readFile func(context.Context, string) (string, error),
+) (*reportPlanReadResult, error) {
+	jsonPath := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.json"), workspacePath)
+	rawJSON, jsonErr := readFile(ctx, jsonPath)
+	if jsonErr != nil {
+		return &reportPlanReadResult{
+			Document:   normalizeReportPlanDocument(&reportPlanDocument{Version: 1}),
+			RawContent: "",
+			Format:     "json",
+			FilePath:   "reports/report_plan.json",
+		}, nil
+	}
+	doc, err := parseReportPlanJSONDocument(rawJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", jsonPath, err)
+	}
+	return &reportPlanReadResult{
+		Document:   normalizeReportPlanDocument(doc),
+		RawContent: rawJSON,
+		Format:     "json",
+		FilePath:   "reports/report_plan.json",
+	}, nil
+}
+
+func parseReportPlanJSONDocument(raw string) (*reportPlanDocument, error) {
+	if strings.TrimSpace(raw) == "" {
+		return &reportPlanDocument{Version: 1}, nil
+	}
+	var doc reportPlanDocument
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+func parseReportPlanMarkdownDocument(markdown string) *reportPlanDocument {
+	doc := &reportPlanDocument{Version: 1}
+	if strings.TrimSpace(markdown) == "" {
+		return doc
+	}
+	lines := strings.Split(markdown, "\n")
+	var current *reportPlanDocumentSection
+	i := 0
+	for i < len(lines) {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "## ") && !strings.HasPrefix(trimmed, "### ") {
+			doc.Sections = appendSectionIfPresent(doc.Sections, current)
+			current = &reportPlanDocumentSection{Heading: strings.TrimSpace(strings.TrimPrefix(trimmed, "##"))}
+			i++
+			continue
+		}
+		if m := reportPlanFenceRE.FindStringSubmatch(trimmed); m != nil {
+			kind := strings.ToLower(m[1])
+			var body []string
+			i++
+			for i < len(lines) && strings.TrimSpace(lines[i]) != "```" {
+				body = append(body, lines[i])
+				i++
+			}
+			if i < len(lines) {
+				i++
+			}
+			if current == nil {
+				continue
+			}
+			if kind == "row" {
+				row := parseReportPlanMarkdownRowDocument(body)
+				if len(row.Widgets) > 0 {
+					current.Entries = append(current.Entries, reportPlanDocumentEntry{Kind: "row", Row: row})
+				}
+				continue
+			}
+			widget := parseReportPlanMarkdownKeyValueWidget(kind, body)
+			if widget != nil {
+				current.Entries = append(current.Entries, reportPlanDocumentEntry{Kind: "single", Widget: widget})
+			}
+			continue
+		}
+		i++
+	}
+	doc.Sections = appendSectionIfPresent(doc.Sections, current)
+	return doc
+}
+
+func appendSectionIfPresent(sections []reportPlanDocumentSection, section *reportPlanDocumentSection) []reportPlanDocumentSection {
+	if section == nil {
+		return sections
+	}
+	return append(sections, *section)
+}
+
+func parseReportPlanMarkdownKeyValueWidget(kind string, body []string) *reportPlanDocumentWidget {
+	if !reportPlanDocumentWidgetKindAllowed(kind) {
+		return nil
+	}
+	fields := map[string]string{}
+	for _, line := range body {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		sep := strings.Index(t, ":")
+		if sep <= 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(t[:sep]))
+		val := strings.TrimSpace(t[sep+1:])
+		if val != "" {
+			fields[key] = val
+		}
+	}
+	if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+		return nil
+	}
+	return reportPlanDocumentWidgetFromLegacyFields(kind, fields)
+}
+
+func parseReportPlanMarkdownRowDocument(body []string) *reportPlanDocumentRow {
+	row := &reportPlanDocumentRow{}
+	for _, raw := range body {
+		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "-"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		cleaned := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				cleaned = append(cleaned, part)
+			}
+		}
+		if len(cleaned) < 2 {
+			continue
+		}
+		kind := strings.ToLower(cleaned[0])
+		if !reportPlanDocumentWidgetKindAllowed(kind) {
+			continue
+		}
+		fields := map[string]string{}
+		for _, seg := range cleaned[1:] {
+			sep := strings.Index(seg, ":")
+			if sep <= 0 {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(seg[:sep]))
+			val := strings.TrimSpace(seg[sep+1:])
+			if val != "" {
+				fields[key] = val
+			}
+		}
+		if !reportPlanWidgetIsAPIBacked(kind) && fields["source"] == "" {
+			continue
+		}
+		if widget := reportPlanDocumentWidgetFromLegacyFields(kind, fields); widget != nil {
+			row.Widgets = append(row.Widgets, *widget)
+		}
+	}
+	return row
+}
+
+func reportPlanDocumentWidgetKindAllowed(kind string) bool {
+	return kind == "text" || kind == "table" || kind == "chart" ||
+		kind == "stat" || kind == "alert" || kind == "pivot" ||
+		kind == "costs" || kind == "evals" || kind == "runs"
+}
+
+func reportPlanDocumentWidgetFromLegacyFields(kind string, fields map[string]string) *reportPlanDocumentWidget {
+	widget := &reportPlanDocumentWidget{
+		Kind:        kind,
+		Source:      fields["source"],
+		Path:        normalizeReportPlanPath(fields["path"]),
+		Filter:      fields["filter"],
+		Title:       fields["title"],
+		Description: fields["description"],
+		ShowIf:      reportPlanFirstNonEmpty(fields["show_if"], fields["showif"]),
+	}
+	if n, err := strconv.Atoi(fields["height"]); err == nil && n > 0 {
+		widget.Height = n
+	}
+	if len(fields["formats"]) > 0 {
+		widget.Formats = parseReportPlanFormatsField(fields["formats"])
+	}
+	if n, err := strconv.Atoi(reportPlanFirstNonEmpty(fields["page_size"], fields["pagesize"])); err == nil && n > 0 {
+		widget.PageSize = n
+	}
+	if v, ok := parseReportPlanBoolPointer(reportPlanFirstNonEmpty(fields["enable_search"], fields["enablesearch"])); ok {
+		widget.EnableSearch = v
+	}
+	if raw := reportPlanFirstNonEmpty(fields["default_sort"], fields["defaultsort"]); raw != "" {
+		widget.DefaultSort = parseReportPlanDefaultSort(raw)
+	}
+	if raw := reportPlanFirstNonEmpty(fields["hide_columns"], fields["hidecolumns"]); raw != "" {
+		widget.HideColumns = parseReportPlanCSVList(raw)
+	}
+	widget.ChartType = reportPlanFirstNonEmpty(fields["chart_type"], fields["charttype"])
+	widget.XAxis = reportPlanFirstNonEmpty(fields["x_axis"], fields["xaxis"])
+	widget.YAxis = reportPlanFirstNonEmpty(fields["y_axis"], fields["yaxis"])
+	if n, err := strconv.Atoi(reportPlanFirstNonEmpty(fields["top_n"], fields["topn"])); err == nil && n > 0 {
+		widget.TopN = n
+	}
+	widget.Sort = fields["sort"]
+	if v, ok := parseReportPlanBoolPointer(reportPlanFirstNonEmpty(fields["show_values"], fields["showvalues"])); ok {
+		widget.ShowValues = v
+	}
+	widget.Colors = parseReportPlanCSVList(fields["colors"])
+	widget.ColorsDark = parseReportPlanCSVList(reportPlanFirstNonEmpty(fields["colors_dark"], fields["colorsdark"]))
+	widget.ColorBy = reportPlanFirstNonEmpty(fields["color_by"], fields["colorby"])
+	if len(fields["color_map"]) > 0 || len(fields["colormap"]) > 0 {
+		widget.ColorMap = parseReportPlanColorMapField(reportPlanFirstNonEmpty(fields["color_map"], fields["colormap"]))
+	}
+	widget.Label = fields["label"]
+	widget.Prefix = fields["prefix"]
+	widget.Suffix = fields["suffix"]
+	widget.Format = fields["format"]
+	widget.DeltaPath = reportPlanFirstNonEmpty(fields["delta_path"], fields["deltapath"])
+	widget.DeltaFormat = reportPlanFirstNonEmpty(fields["delta_format"], fields["deltaformat"])
+	widget.TrendPath = reportPlanFirstNonEmpty(fields["trend_path"], fields["trendpath"])
+	widget.Severity = fields["severity"]
+	widget.Message = fields["message"]
+	widget.RowsField = fields["rows"]
+	widget.ColumnsField = fields["columns"]
+	widget.ValuesField = fields["values"]
+	widget.Aggregate = fields["aggregate"]
+	if v, ok := parseReportPlanBoolPointer(fields["heatmap"]); ok {
+		widget.Heatmap = v
+	}
+	widget.HeatmapColors = parseReportPlanCSVList(reportPlanFirstNonEmpty(fields["heatmap_colors"], fields["heatmapcolors"]))
+	widget.Series = parseReportPlanCSVList(fields["series"])
+	widget.SeriesColors = parseReportPlanCSVList(reportPlanFirstNonEmpty(fields["series_colors"], fields["seriescolors"]))
+	if v, ok := parseReportPlanBoolPointer(fields["stacked"]); ok {
+		widget.Stacked = v
+	}
+	widget.CostsScope = fields["scope"]
+	widget.CostsView = fields["view"]
+	widget.CostsMetric = fields["metric"]
+	widget.EvalsView = fields["view"]
+	widget.EvalsMetric = fields["metric"]
+	widget.RunsView = fields["view"]
+	widget.RunFolder = reportPlanFirstNonEmpty(fields["run_folder"], fields["runfolder"])
+	widget.Group = fields["group"]
+	return widget
+}
+
+func parseReportPlanFormatsField(raw string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ",") {
+		eq := strings.Index(part, "=")
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(part[:eq])
+		val := strings.TrimSpace(part[eq+1:])
+		if key != "" && val != "" {
+			out[key] = val
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseReportPlanColorMapField(raw string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ",") {
+		eq := strings.Index(part, "=")
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(part[:eq])
+		val := strings.TrimSpace(part[eq+1:])
+		if key != "" && val != "" {
+			out[key] = val
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseReportPlanCSVList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseReportPlanDefaultSort(raw string) *reportPlanDocumentDefaultSort {
+	parts := strings.Split(raw, ":")
+	field := strings.TrimSpace(parts[0])
+	if field == "" {
+		return nil
+	}
+	sortSpec := &reportPlanDocumentDefaultSort{Field: field, Direction: "asc"}
+	if len(parts) > 1 && strings.EqualFold(strings.TrimSpace(parts[1]), "desc") {
+		sortSpec.Direction = "desc"
+	}
+	return sortSpec
+}
+
+func parseReportPlanBoolPointer(raw string) (*bool, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	value := parseReportPlanBool(raw)
+	return &value, true
+}
+
+func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
+	if doc == nil {
+		doc = &reportPlanDocument{}
+	}
+	if doc.Version == 0 {
+		doc.Version = 1
+	}
+	normalized := &reportPlanDocument{Version: doc.Version}
+	sectionCounter := 0
+	for _, section := range doc.Sections {
+		if strings.TrimSpace(section.Heading) == "" {
+			continue
+		}
+		sectionCounter++
+		if section.ID == "" {
+			section.ID = fmt.Sprintf("section-%02d-%s", sectionCounter, reportPlanSlug(section.Heading))
+		}
+		entryCounter := 0
+		nextSection := reportPlanDocumentSection{
+			ID:      section.ID,
+			Heading: strings.TrimSpace(section.Heading),
+			Entries: make([]reportPlanDocumentEntry, 0, len(section.Entries)),
+		}
+		for _, entry := range section.Entries {
+			entryCounter++
+			if entry.Kind != "single" && entry.Kind != "row" {
+				continue
+			}
+			if entry.ID == "" {
+				entry.ID = fmt.Sprintf("%s-entry-%02d", section.ID, entryCounter)
+			}
+			if entry.Kind == "single" {
+				if entry.Widget == nil || !reportPlanDocumentWidgetKindAllowed(entry.Widget.Kind) {
+					continue
+				}
+				entry.Widget = normalizeReportPlanDocumentWidget(*entry.Widget, section.ID, entryCounter, 0)
+				nextSection.Entries = append(nextSection.Entries, entry)
+				continue
+			}
+			if entry.Row == nil {
+				continue
+			}
+			nextRow := &reportPlanDocumentRow{}
+			for widgetIndex, widget := range entry.Row.Widgets {
+				if !reportPlanDocumentWidgetKindAllowed(widget.Kind) {
+					continue
+				}
+				nextRow.Widgets = append(nextRow.Widgets, *normalizeReportPlanDocumentWidget(widget, section.ID, entryCounter, widgetIndex))
+			}
+			if len(nextRow.Widgets) == 0 {
+				continue
+			}
+			entry.Row = nextRow
+			nextSection.Entries = append(nextSection.Entries, entry)
+		}
+		normalized.Sections = append(normalized.Sections, nextSection)
+	}
+	return normalized
+}
+
+func normalizeReportPlanDocumentWidget(widget reportPlanDocumentWidget, sectionID string, entryIndex, widgetIndex int) *reportPlanDocumentWidget {
+	widget.Kind = strings.ToLower(strings.TrimSpace(widget.Kind))
+	widget.Path = normalizeReportPlanPath(widget.Path)
+	if widget.ID == "" {
+		if widgetIndex > 0 {
+			widget.ID = fmt.Sprintf("%s-widget-%02d-%02d", sectionID, entryIndex, widgetIndex)
+		} else {
+			widget.ID = fmt.Sprintf("%s-widget-%02d", sectionID, entryIndex)
+		}
+	}
+	return &widget
+}
+
+func flattenReportPlanDocument(doc *reportPlanDocument) []reportPlanSection {
+	if doc == nil || len(doc.Sections) == 0 {
+		return nil
+	}
+	sections := make([]reportPlanSection, 0, len(doc.Sections))
+	for _, section := range doc.Sections {
+		nextSection := reportPlanSection{Heading: section.Heading}
+		for _, entry := range section.Entries {
+			if entry.Kind == "single" && entry.Widget != nil {
+				nextSection.Widgets = append(nextSection.Widgets, reportPlanLegacyWidgetFromDocumentWidget(*entry.Widget, section.Heading, false, 0))
+				continue
+			}
+			if entry.Kind == "row" && entry.Row != nil {
+				for idx, widget := range entry.Row.Widgets {
+					nextSection.Widgets = append(nextSection.Widgets, reportPlanLegacyWidgetFromDocumentWidget(widget, section.Heading, true, idx))
+				}
+			}
+		}
+		sections = append(sections, nextSection)
+	}
+	return sections
+}
+
+func reportPlanLegacyWidgetFromDocumentWidget(widget reportPlanDocumentWidget, section string, inRow bool, rowIndex int) *reportPlanWidget {
+	fields := map[string]string{}
+	add := func(key, value string) {
+		if strings.TrimSpace(value) != "" {
+			fields[key] = strings.TrimSpace(value)
+		}
+	}
+	add("source", widget.Source)
+	add("path", widget.Path)
+	add("filter", widget.Filter)
+	add("title", widget.Title)
+	add("description", widget.Description)
+	if widget.Height > 0 {
+		fields["height"] = strconv.Itoa(widget.Height)
+	}
+	if len(widget.Formats) > 0 {
+		keys := make([]string, 0, len(widget.Formats))
+		for key := range widget.Formats {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%s", key, widget.Formats[key]))
+		}
+		fields["formats"] = strings.Join(parts, ", ")
+	}
+	if widget.PageSize > 0 {
+		fields["page_size"] = strconv.Itoa(widget.PageSize)
+	}
+	if widget.EnableSearch != nil {
+		fields["enable_search"] = strconv.FormatBool(*widget.EnableSearch)
+	}
+	if widget.DefaultSort != nil && widget.DefaultSort.Field != "" {
+		if widget.DefaultSort.Direction == "desc" {
+			fields["default_sort"] = widget.DefaultSort.Field + ":desc"
+		} else {
+			fields["default_sort"] = widget.DefaultSort.Field
+		}
+	}
+	if len(widget.HideColumns) > 0 {
+		fields["hide_columns"] = strings.Join(widget.HideColumns, ", ")
+	}
+	add("chart_type", widget.ChartType)
+	add("x_axis", widget.XAxis)
+	add("y_axis", widget.YAxis)
+	if widget.TopN > 0 {
+		fields["top_n"] = strconv.Itoa(widget.TopN)
+	}
+	add("sort", widget.Sort)
+	if widget.ShowValues != nil {
+		fields["show_values"] = strconv.FormatBool(*widget.ShowValues)
+	}
+	if len(widget.Colors) > 0 {
+		fields["colors"] = strings.Join(widget.Colors, ", ")
+	}
+	if len(widget.ColorsDark) > 0 {
+		fields["colors_dark"] = strings.Join(widget.ColorsDark, ", ")
+	}
+	add("color_by", widget.ColorBy)
+	if len(widget.ColorMap) > 0 {
+		keys := make([]string, 0, len(widget.ColorMap))
+		for key := range widget.ColorMap {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%s", key, widget.ColorMap[key]))
+		}
+		fields["color_map"] = strings.Join(parts, ", ")
+	}
+	add("show_if", widget.ShowIf)
+	add("label", widget.Label)
+	add("prefix", widget.Prefix)
+	add("suffix", widget.Suffix)
+	add("format", widget.Format)
+	add("delta_path", widget.DeltaPath)
+	add("delta_format", widget.DeltaFormat)
+	add("trend_path", widget.TrendPath)
+	add("severity", widget.Severity)
+	add("message", widget.Message)
+	add("rows", widget.RowsField)
+	add("columns", widget.ColumnsField)
+	add("values", widget.ValuesField)
+	add("aggregate", widget.Aggregate)
+	if widget.Heatmap != nil {
+		fields["heatmap"] = strconv.FormatBool(*widget.Heatmap)
+	}
+	if len(widget.HeatmapColors) > 0 {
+		fields["heatmap_colors"] = strings.Join(widget.HeatmapColors, ", ")
+	}
+	if len(widget.Series) > 0 {
+		fields["series"] = strings.Join(widget.Series, ", ")
+	}
+	if len(widget.SeriesColors) > 0 {
+		fields["series_colors"] = strings.Join(widget.SeriesColors, ", ")
+	}
+	if widget.Stacked != nil {
+		fields["stacked"] = strconv.FormatBool(*widget.Stacked)
+	}
+	add("scope", widget.CostsScope)
+	add("view", reportPlanFirstNonEmpty(widget.CostsView, widget.EvalsView, widget.RunsView))
+	add("metric", reportPlanFirstNonEmpty(widget.CostsMetric, widget.EvalsMetric))
+	add("run_folder", widget.RunFolder)
+	add("group", widget.Group)
+	if widget.Hidden {
+		fields["hidden"] = "true"
+	}
+	return &reportPlanWidget{
+		Kind:     widget.Kind,
+		Source:   widget.Source,
+		Path:     widget.Path,
+		Filter:   widget.Filter,
+		Fields:   fields,
+		Section:  section,
+		InRow:    inRow,
+		RowIndex: rowIndex,
+	}
+}
+
+func reportPlanSlug(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "item"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "item"
+	}
+	return slug
 }
 
 // parseReportPlan walks the markdown and returns sections+widgets. Intentionally
@@ -499,31 +1155,33 @@ func applyReportPlanFilter(value interface{}, filter string) interface{} {
 	return filtered
 }
 
-// validateReportPlanMarkdown parses report_plan.md and checks each widget against
-// its referenced source file. Returns a structured result for the LLM to act on.
-func validateReportPlanMarkdown(
+// validateReportPlan parses the canonical JSON report plan (with markdown fallback)
+// and checks each widget against its referenced source file. Returns a structured
+// result for the LLM to act on.
+func validateReportPlan(
 	ctx context.Context,
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
 ) (*reportPlanValidationResult, error) {
-	// The workspace read API resolves paths from the workspace-docs root, so workflow-
-	// relative paths must be normalized via normalizePathForWorkspaceAPI — the same
-	// pattern readPlanFromFile and readEvaluationPlanFromFile use.
-	planPath := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.md"), workspacePath)
-	markdown, err := readFile(ctx, planPath)
+	planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s: %w", planPath, err)
+		return nil, err
 	}
 
-	sections := parseReportPlan(markdown)
+	var sections []reportPlanSection
+	if planRead.Format == "markdown" {
+		sections = parseReportPlan(planRead.RawContent)
+	} else {
+		sections = flattenReportPlanDocument(planRead.Document)
+	}
 	result := &reportPlanValidationResult{Valid: true, Sections: len(sections)}
 
 	if len(sections) == 0 {
 		result.Valid = false
 		result.Errors = append(result.Errors, reportPlanDiagnostic{
 			Severity: "error",
-			Message:  "report_plan.md has no `## Heading` sections — widgets placed before any H2 are silently dropped by the renderer.",
-			Hint:     "Add an H2 heading (e.g. `## Overview`) above each widget block.",
+			Message:  fmt.Sprintf("%s has no usable report sections.", planRead.FilePath),
+			Hint:     "Add at least one section with a heading and widget entries.",
 		})
 		return result, nil
 	}
@@ -668,7 +1326,7 @@ func validateReportPlanMarkdown(
 		if len(result.Errors) > 0 {
 			result.Valid = false
 		}
-		result.Suggestions = append(result.Suggestions, "Fix errors first (they cause silent blank widgets). Warnings are safe to ignore if intentional.")
+		result.Suggestions = append(result.Suggestions, "Fix errors first. Review warnings too — some still degrade rendering even when the report remains technically valid.")
 	}
 	return result, nil
 }
@@ -849,10 +1507,11 @@ func validateReportPlanStatShape(
 	case nil, bool, float64, string:
 		// acceptable scalars (json.Unmarshal uses float64 for numbers)
 	default:
-		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-			Message: "stat `path:` resolves to an object or array — stat renders scalars best.",
-			Hint:    "Pick a leaf field; nested values get JSON.stringify'd, which reads poorly in a KPI tile.",
+		result.Valid = false
+		result.Errors = append(result.Errors, reportPlanDiagnostic{
+			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
+			Message: "stat `path:` resolves to an object or array — stat widgets require a scalar value.",
+			Hint:    "Pick a leaf field or write a summary JSON file with precomputed scalar metrics; otherwise the UI will stringify the JSON into the KPI tile.",
 		})
 	}
 	if dp := reportPlanFirstNonEmpty(w.Fields["delta_path"], w.Fields["deltapath"]); dp != "" {
@@ -1096,6 +1755,24 @@ func validateReportPlanOptions(
 			}
 		}
 	}
+	if raw := reportPlanFirstNonEmpty(w.Fields["format"]); raw != "" {
+		if _, ok := reportPlanKnownFormatters[raw]; !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown format preset %q — the widget formatter will be ignored.", raw),
+				Hint:    "Valid: currency-inr, currency-usd, percent, percent-1dp, short-date, long-date, datetime, number, number-1dp, number-2dp, bytes, boolean-icon.",
+			})
+		}
+	}
+	if raw := reportPlanFirstNonEmpty(w.Fields["delta_format"], w.Fields["deltaformat"]); raw != "" {
+		if _, ok := reportPlanKnownFormatters[raw]; !ok {
+			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+				Message: fmt.Sprintf("unknown delta_format preset %q — the stat delta formatter will be ignored.", raw),
+				Hint:    "Valid: currency-inr, currency-usd, percent, percent-1dp, short-date, long-date, datetime, number, number-1dp, number-2dp, bytes, boolean-icon.",
+			})
+		}
+	}
 	if raw := reportPlanFirstNonEmpty(w.Fields["sort"]); raw != "" {
 		s := strings.ToLower(raw)
 		if s != "asc" && s != "desc" && s != "none" {
@@ -1241,23 +1918,33 @@ func previewReportRender(
 	workspacePath string,
 	readFile func(context.Context, string) (string, error),
 ) (*reportPlanRenderPreviewResult, error) {
-	planPath := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.md"), workspacePath)
-	markdown, err := readFile(ctx, planPath)
+	planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s: %w", planPath, err)
+		return nil, err
 	}
 
-	validation, validationErr := validateReportPlanMarkdown(ctx, workspacePath, readFile)
+	validation, validationErr := validateReportPlan(ctx, workspacePath, readFile)
 	if validationErr != nil {
 		return nil, validationErr
 	}
 
-	sections := parseReportPlan(markdown)
+	var sections []reportPlanSection
+	if planRead.Format == "markdown" {
+		sections = parseReportPlan(planRead.RawContent)
+	} else {
+		sections = flattenReportPlanDocument(planRead.Document)
+	}
 	result := &reportPlanRenderPreviewResult{
-		Valid:        validation.Valid,
-		Sections:     len(sections),
-		PlanMarkdown: markdown,
-		Validation:   validation,
+		Valid:      validation.Valid,
+		Sections:   len(sections),
+		Validation: validation,
+	}
+	result.PlanFormat = planRead.Format
+	result.PlanFilePath = planRead.FilePath
+	if planRead.Format == "markdown" {
+		result.PlanMarkdown = planRead.RawContent
+	} else {
+		result.PlanJSON = planRead.Document
 	}
 
 	sourceCache := map[string]interface{}{}
@@ -1327,6 +2014,14 @@ func buildReportPlanWidgetPreview(
 		RowIndex:    w.RowIndex,
 		Visible:     true,
 		RenderState: "visible",
+	}
+
+	if parseReportPlanBool(reportPlanFirstNonEmpty(w.Fields["hidden"])) {
+		out.Visible = false
+		out.RenderState = "hidden"
+		out.Reason = "widget is hidden"
+		out.Summary = "hidden"
+		return out
 	}
 
 	if reportPlanWidgetIsAPIBacked(w.Kind) {
@@ -1778,6 +2473,206 @@ func filterReportPreviewRuns(items []reportPlanRunPreviewItem, group, runFolder 
 	return out
 }
 
+type reportPlanWidgetLocation struct {
+	SectionIndex int
+	EntryIndex   int
+	WidgetIndex  int
+	InRow        bool
+}
+
+func writeReportPlanDocument(
+	ctx context.Context,
+	workspacePath string,
+	writeFile func(context.Context, string, string) error,
+	doc *reportPlanDocument,
+) error {
+	doc = normalizeReportPlanDocument(doc)
+	content, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal report plan: %w", err)
+	}
+	path := normalizePathForWorkspaceAPI(filepath.Join("reports", "report_plan.json"), workspacePath)
+	return writeFile(ctx, path, string(content)+"\n")
+}
+
+func reportPlanWidgetToMap(widget reportPlanDocumentWidget) (map[string]interface{}, error) {
+	raw, err := json.Marshal(widget)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func reportPlanWidgetFromMap(payload map[string]interface{}) (*reportPlanDocumentWidget, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	var widget reportPlanDocumentWidget
+	if err := json.Unmarshal(raw, &widget); err != nil {
+		return nil, err
+	}
+	if !reportPlanDocumentWidgetKindAllowed(strings.ToLower(strings.TrimSpace(widget.Kind))) {
+		return nil, fmt.Errorf("unsupported widget kind %q", widget.Kind)
+	}
+	widget.Kind = strings.ToLower(strings.TrimSpace(widget.Kind))
+	widget.Path = normalizeReportPlanPath(widget.Path)
+	return &widget, nil
+}
+
+func reportPlanFindSection(doc *reportPlanDocument, sectionID, heading string) int {
+	for i, section := range doc.Sections {
+		if sectionID != "" && section.ID == sectionID {
+			return i
+		}
+		if heading != "" && strings.EqualFold(strings.TrimSpace(section.Heading), strings.TrimSpace(heading)) {
+			return i
+		}
+	}
+	return -1
+}
+
+func reportPlanEnsureSection(doc *reportPlanDocument, sectionID, heading string) int {
+	if idx := reportPlanFindSection(doc, sectionID, heading); idx >= 0 {
+		return idx
+	}
+	heading = strings.TrimSpace(heading)
+	if heading == "" {
+		heading = "Overview"
+	}
+	section := reportPlanDocumentSection{
+		ID:      sectionID,
+		Heading: heading,
+	}
+	if section.ID == "" {
+		section.ID = fmt.Sprintf("section-%02d-%s", len(doc.Sections)+1, reportPlanSlug(heading))
+	}
+	doc.Sections = append(doc.Sections, section)
+	return len(doc.Sections) - 1
+}
+
+func reportPlanFindRowEntry(doc *reportPlanDocument, rowID string) (int, int, bool) {
+	if rowID == "" {
+		return -1, -1, false
+	}
+	for sectionIndex, section := range doc.Sections {
+		for entryIndex, entry := range section.Entries {
+			if entry.Kind == "row" && entry.ID == rowID {
+				return sectionIndex, entryIndex, true
+			}
+		}
+	}
+	return -1, -1, false
+}
+
+func reportPlanFindWidget(doc *reportPlanDocument, widgetID string) (reportPlanWidgetLocation, bool) {
+	for sectionIndex, section := range doc.Sections {
+		for entryIndex, entry := range section.Entries {
+			if entry.Kind == "single" && entry.Widget != nil && entry.Widget.ID == widgetID {
+				return reportPlanWidgetLocation{SectionIndex: sectionIndex, EntryIndex: entryIndex}, true
+			}
+			if entry.Kind == "row" && entry.Row != nil {
+				for widgetIndex, widget := range entry.Row.Widgets {
+					if widget.ID == widgetID {
+						return reportPlanWidgetLocation{
+							SectionIndex: sectionIndex,
+							EntryIndex:   entryIndex,
+							WidgetIndex:  widgetIndex,
+							InRow:        true,
+						}, true
+					}
+				}
+			}
+		}
+	}
+	return reportPlanWidgetLocation{}, false
+}
+
+func reportPlanRemoveWidgetAt(doc *reportPlanDocument, loc reportPlanWidgetLocation) (reportPlanDocumentWidget, error) {
+	section := &doc.Sections[loc.SectionIndex]
+	entry := &section.Entries[loc.EntryIndex]
+	if !loc.InRow {
+		if entry.Widget == nil {
+			return reportPlanDocumentWidget{}, fmt.Errorf("widget entry is empty")
+		}
+		widget := *entry.Widget
+		section.Entries = append(section.Entries[:loc.EntryIndex], section.Entries[loc.EntryIndex+1:]...)
+		return widget, nil
+	}
+	if entry.Row == nil || loc.WidgetIndex < 0 || loc.WidgetIndex >= len(entry.Row.Widgets) {
+		return reportPlanDocumentWidget{}, fmt.Errorf("row widget index is invalid")
+	}
+	widget := entry.Row.Widgets[loc.WidgetIndex]
+	entry.Row.Widgets = append(entry.Row.Widgets[:loc.WidgetIndex], entry.Row.Widgets[loc.WidgetIndex+1:]...)
+	if len(entry.Row.Widgets) == 0 {
+		section.Entries = append(section.Entries[:loc.EntryIndex], section.Entries[loc.EntryIndex+1:]...)
+	}
+	return widget, nil
+}
+
+func reportPlanInsertWidget(doc *reportPlanDocument, widget reportPlanDocumentWidget, sectionIndex int, rowID string, index int) error {
+	if rowID != "" {
+		rowSectionIndex, rowEntryIndex, ok := reportPlanFindRowEntry(doc, rowID)
+		if !ok {
+			return fmt.Errorf("row_id %q was not found", rowID)
+		}
+		row := doc.Sections[rowSectionIndex].Entries[rowEntryIndex].Row
+		if row == nil {
+			return fmt.Errorf("row_id %q is not a row entry", rowID)
+		}
+		if index < 0 || index > len(row.Widgets) {
+			index = len(row.Widgets)
+		}
+		row.Widgets = append(row.Widgets, reportPlanDocumentWidget{})
+		copy(row.Widgets[index+1:], row.Widgets[index:])
+		row.Widgets[index] = widget
+		return nil
+	}
+	section := &doc.Sections[sectionIndex]
+	entry := reportPlanDocumentEntry{
+		Kind:   "single",
+		Widget: &widget,
+	}
+	if index < 0 || index > len(section.Entries) {
+		index = len(section.Entries)
+	}
+	section.Entries = append(section.Entries, reportPlanDocumentEntry{})
+	copy(section.Entries[index+1:], section.Entries[index:])
+	section.Entries[index] = entry
+	return nil
+}
+
+func cleanupReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
+	if doc == nil {
+		return normalizeReportPlanDocument(&reportPlanDocument{Version: 1})
+	}
+	nextSections := make([]reportPlanDocumentSection, 0, len(doc.Sections))
+	for _, section := range doc.Sections {
+		nextEntries := make([]reportPlanDocumentEntry, 0, len(section.Entries))
+		for _, entry := range section.Entries {
+			if entry.Kind == "single" {
+				if entry.Widget != nil {
+					nextEntries = append(nextEntries, entry)
+				}
+				continue
+			}
+			if entry.Row != nil && len(entry.Row.Widgets) > 0 {
+				nextEntries = append(nextEntries, entry)
+			}
+		}
+		section.Entries = nextEntries
+		if len(section.Entries) > 0 {
+			nextSections = append(nextSections, section)
+		}
+	}
+	doc.Sections = nextSections
+	return normalizeReportPlanDocument(doc)
+}
+
 // registerReportPlanValidationTools registers the validate_report_plan tool on an
 // MCP agent. Parallels registerEvaluationValidationTools in evaluation_helpers.go.
 func registerReportPlanValidationTools(
@@ -1795,10 +2690,10 @@ func registerReportPlanValidationTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_plan",
-		"Validate reports/report_plan.md after editing it. Parses every widget block, reads the JSON sources they point to, and checks: source path is allowed (db/*.json or knowledgebase/{graph,index}.json), source file exists and is valid JSON, the dot-path resolves, the resolved shape matches the widget kind (array-of-objects for table/chart/pivot; scalar for stat), and options like chart_type/formats/sort/aggregate/severity are known values. Returns structured per-widget errors + warnings + suggestions AND a `parsed` dump showing exactly what the parser saw (so you can spot silent-drop bugs: widgets missing from `parsed` had a malformed fence tag; unknown keys land in the per-widget `options` bag where typos like `chrt_type` are visible). Run this every time you edit report_plan.md — the renderer drops bad widgets silently, so without this tool the user sees a blank Report tab with no indication why.",
+		"Validate reports/report_plan.json after editing it. It parses every widget, reads the JSON sources they point to, and checks: source path allowlist, source file readability, dot-path resolution, widget/data shape compatibility, and option validity. Returns structured per-widget errors + warnings + suggestions plus a parsed dump showing exactly what the validator saw.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			res, err := validateReportPlanMarkdown(ctx, workspacePath, readFile)
+			res, err := validateReportPlan(ctx, workspacePath, readFile)
 			if err != nil {
 				return "", err
 			}
@@ -1820,32 +2715,359 @@ func registerReportPlanValidationTools(
 	return nil
 }
 
-func registerReportPlanCapabilitiesTool(
+func registerReportPlanManagementTools(
 	mcpAgent *mcpagent.Agent,
+	workspacePath string,
 	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
 ) error {
-	schema := `{
+	getPlanSchema := `{
 		"type": "object",
 		"properties": {},
 		"additionalProperties": false
 	}`
-	params, _ := parseSchemaForToolParameters(schema)
+	getPlanParams, _ := parseSchemaForToolParameters(getPlanSchema)
 
 	mcpAgent.RegisterCustomTool(
-		"get_reporting_capabilities",
-		"Get the reporting grammar and built-in widget capabilities for reports/report_plan.md. Call this before editing report widgets or answering detailed reporting/dashboard questions. Returns the supported widget kinds, which widgets require source/path, the API-backed widgets (costs/evals/runs) with their views/metrics/scopes, row syntax, rules, and compact examples. After editing report_plan.md, still call validate_report_plan.",
-		params,
+		"get_report_plan",
+		"Read the current report plan from reports/report_plan.json and return its section, entry, row, and widget IDs. Call this before move/remove/toggle operations so you have stable IDs.",
+		getPlanParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			out, err := json.MarshalIndent(getReportPlanCapabilities(), "", "  ")
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
 			if err != nil {
-				return "", fmt.Errorf("failed to marshal reporting capabilities: %w", err)
+				return "", err
 			}
-			return "reporting capabilities loaded\n" + string(out), nil
+			payload := map[string]interface{}{
+				"canonical_file_path": "reports/report_plan.json",
+				"source_file_path":    planRead.FilePath,
+				"source_format":       planRead.Format,
+				"plan":                planRead.Document,
+			}
+			out, err := json.MarshalIndent(payload, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal report plan: %w", err)
+			}
+			return "report plan loaded\n" + string(out), nil
 		},
 		"workflow",
 	)
 
-	logger.Info("✅ Registered reporting capabilities tool")
+	widgetConfigSchema := `{
+		"type": "object",
+		"properties": {
+			"id": { "type": "string" },
+			"hidden": { "type": "boolean" },
+			"source": { "type": "string" },
+			"path": { "type": "string" },
+			"filter": { "type": "string" },
+			"title": { "type": "string" },
+			"description": { "type": "string" },
+			"height": { "type": "integer" },
+			"formats": { "type": "object", "additionalProperties": { "type": "string" } },
+			"pageSize": { "type": "integer" },
+			"enableSearch": { "type": "boolean" },
+			"defaultSort": {
+				"type": "object",
+				"properties": {
+					"field": { "type": "string" },
+					"direction": { "type": "string", "enum": ["asc", "desc"] }
+				},
+				"additionalProperties": false
+			},
+			"hideColumns": { "type": "array", "items": { "type": "string" } },
+			"chartType": { "type": "string", "enum": ["bar", "line", "area", "pie"] },
+			"xAxis": { "type": "string" },
+			"yAxis": { "type": "string" },
+			"topN": { "type": "integer" },
+			"sort": { "type": "string", "enum": ["asc", "desc", "none"] },
+			"showValues": { "type": "boolean" },
+			"colors": { "type": "array", "items": { "type": "string" } },
+			"colorsDark": { "type": "array", "items": { "type": "string" } },
+			"colorBy": { "type": "string" },
+			"colorMap": { "type": "object", "additionalProperties": { "type": "string" } },
+			"showIf": { "type": "string" },
+			"label": { "type": "string" },
+			"prefix": { "type": "string" },
+			"suffix": { "type": "string" },
+			"format": { "type": "string" },
+			"deltaPath": { "type": "string" },
+			"deltaFormat": { "type": "string" },
+			"trendPath": { "type": "string" },
+			"severity": { "type": "string", "enum": ["info", "warning", "error", "success"] },
+			"message": { "type": "string" },
+			"rowsField": { "type": "string" },
+			"columnsField": { "type": "string" },
+			"valuesField": { "type": "string" },
+			"aggregate": { "type": "string", "enum": ["sum", "avg", "count", "min", "max", "first"] },
+			"heatmap": { "type": "boolean" },
+			"heatmapColors": { "type": "array", "items": { "type": "string" } },
+			"series": { "type": "array", "items": { "type": "string" } },
+			"seriesColors": { "type": "array", "items": { "type": "string" } },
+			"stacked": { "type": "boolean" },
+			"costsScope": { "type": "string", "enum": ["phase", "execution", "evaluation", "all"] },
+			"costsView": { "type": "string", "enum": ["summary", "stage-breakdown", "run-table", "step-table", "model-table"] },
+			"costsMetric": { "type": "string", "enum": ["cost", "total_tokens", "input_tokens", "output_tokens", "llm_calls"] },
+			"evalsView": { "type": "string", "enum": ["summary", "run-chart", "run-table", "step-table"] },
+			"evalsMetric": { "type": "string", "enum": ["score_percentage", "total_score"] },
+			"runsView": { "type": "string", "enum": ["summary", "duration-chart", "status-chart", "table"] },
+			"runFolder": { "type": "string" },
+			"group": { "type": "string" }
+		},
+		"additionalProperties": false
+	}`
+
+	upsertSchema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"section_id": { "type": "string" },
+			"section_heading": { "type": "string" },
+			"row_id": { "type": "string" },
+			"widget_id": { "type": "string" },
+			"kind": { "type": "string", "enum": ["text", "table", "chart", "stat", "alert", "pivot", "costs", "evals", "runs"] },
+			"index": { "type": "integer" },
+			"config": %s
+		},
+		"required": ["kind"],
+		"additionalProperties": false
+	}`, widgetConfigSchema)
+	upsertParams, _ := parseSchemaForToolParameters(upsertSchema)
+
+	mcpAgent.RegisterCustomTool(
+		"upsert_report_widget",
+		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.",
+		upsertParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			sectionID, _ := args["section_id"].(string)
+			sectionHeading, _ := args["section_heading"].(string)
+			rowID, _ := args["row_id"].(string)
+			widgetID, _ := args["widget_id"].(string)
+			kind, _ := args["kind"].(string)
+			kind = strings.ToLower(strings.TrimSpace(kind))
+			index := -1
+			if value, ok := args["index"].(float64); ok {
+				index = int(value)
+			}
+			config := map[string]interface{}{}
+			if rawConfig, ok := args["config"].(map[string]interface{}); ok {
+				config = rawConfig
+			}
+
+			var base reportPlanDocumentWidget
+			hasBase := false
+			if widgetID != "" {
+				if loc, ok := reportPlanFindWidget(doc, widgetID); ok {
+					hasBase = true
+					if loc.InRow {
+						base = doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Row.Widgets[loc.WidgetIndex]
+					} else {
+						base = *doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Widget
+					}
+				}
+			}
+			payload := map[string]interface{}{}
+			if hasBase {
+				payload, err = reportPlanWidgetToMap(base)
+				if err != nil {
+					return "", err
+				}
+			}
+			for key, value := range config {
+				payload[key] = value
+			}
+			payload["kind"] = kind
+			if widgetID != "" {
+				payload["id"] = widgetID
+			}
+			widget, err := reportPlanWidgetFromMap(payload)
+			if err != nil {
+				return "", err
+			}
+			if widget.ID == "" {
+				widget.ID = fmt.Sprintf("widget-%d", time.Now().UnixNano())
+			}
+
+			if hasBase {
+				loc, _ := reportPlanFindWidget(doc, widget.ID)
+				if loc.InRow {
+					doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Row.Widgets[loc.WidgetIndex] = *widget
+				} else {
+					doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Widget = widget
+				}
+			} else {
+				sectionIndex := reportPlanEnsureSection(doc, sectionID, sectionHeading)
+				if err := reportPlanInsertWidget(doc, *widget, sectionIndex, rowID, index); err != nil {
+					return "", err
+				}
+			}
+
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+
+			payloadOut := map[string]interface{}{
+				"updated_widget_id": widget.ID,
+				"plan":              doc,
+			}
+			out, err := json.MarshalIndent(payloadOut, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("report widget upserted: %s\n", widget.ID) + string(out), nil
+		},
+		"workflow",
+	)
+
+	removeSchema := `{
+		"type": "object",
+		"properties": {
+			"widget_id": { "type": "string" }
+		},
+		"required": ["widget_id"],
+		"additionalProperties": false
+	}`
+	removeParams, _ := parseSchemaForToolParameters(removeSchema)
+	mcpAgent.RegisterCustomTool(
+		"remove_report_widget",
+		"Remove one widget from reports/report_plan.json by widget_id. If the widget was the last item in a row, the empty row is removed too. Empty sections are cleaned up automatically.",
+		removeParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			widgetID, _ := args["widget_id"].(string)
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			loc, ok := reportPlanFindWidget(doc, widgetID)
+			if !ok {
+				return "", fmt.Errorf("widget_id %q was not found", widgetID)
+			}
+			if _, err := reportPlanRemoveWidgetAt(doc, loc); err != nil {
+				return "", err
+			}
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+			out, err := json.MarshalIndent(map[string]interface{}{"removed_widget_id": widgetID, "plan": doc}, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("report widget removed: %s\n", widgetID) + string(out), nil
+		},
+		"workflow",
+	)
+
+	moveSchema := `{
+		"type": "object",
+		"properties": {
+			"widget_id": { "type": "string" },
+			"target_section_id": { "type": "string" },
+			"target_section_heading": { "type": "string" },
+			"target_row_id": { "type": "string" },
+			"target_index": { "type": "integer" }
+		},
+		"required": ["widget_id"],
+		"additionalProperties": false
+	}`
+	moveParams, _ := parseSchemaForToolParameters(moveSchema)
+	mcpAgent.RegisterCustomTool(
+		"move_report_widget",
+		"Move one widget to a different section position or into an existing row. Use target_row_id to place it inside a row entry; otherwise it becomes a single full-width widget entry in the target section.",
+		moveParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			widgetID, _ := args["widget_id"].(string)
+			targetSectionID, _ := args["target_section_id"].(string)
+			targetSectionHeading, _ := args["target_section_heading"].(string)
+			targetRowID, _ := args["target_row_id"].(string)
+			targetIndex := -1
+			if value, ok := args["target_index"].(float64); ok {
+				targetIndex = int(value)
+			}
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			loc, ok := reportPlanFindWidget(doc, widgetID)
+			if !ok {
+				return "", fmt.Errorf("widget_id %q was not found", widgetID)
+			}
+			widget, err := reportPlanRemoveWidgetAt(doc, loc)
+			if err != nil {
+				return "", err
+			}
+			sectionIndex := 0
+			if targetRowID == "" {
+				sectionIndex = reportPlanEnsureSection(doc, targetSectionID, targetSectionHeading)
+			}
+			if err := reportPlanInsertWidget(doc, widget, sectionIndex, targetRowID, targetIndex); err != nil {
+				return "", err
+			}
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+			out, err := json.MarshalIndent(map[string]interface{}{"moved_widget_id": widgetID, "plan": doc}, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("report widget moved: %s\n", widgetID) + string(out), nil
+		},
+		"workflow",
+	)
+
+	toggleSchema := `{
+		"type": "object",
+		"properties": {
+			"widget_id": { "type": "string" },
+			"hidden": { "type": "boolean" }
+		},
+		"required": ["widget_id", "hidden"],
+		"additionalProperties": false
+	}`
+	toggleParams, _ := parseSchemaForToolParameters(toggleSchema)
+	mcpAgent.RegisterCustomTool(
+		"toggle_report_widget",
+		"Set a widget's hidden state in reports/report_plan.json without deleting it. Hidden widgets stay in the plan but do not render in the frontend.",
+		toggleParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			widgetID, _ := args["widget_id"].(string)
+			hidden, _ := args["hidden"].(bool)
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			loc, ok := reportPlanFindWidget(doc, widgetID)
+			if !ok {
+				return "", fmt.Errorf("widget_id %q was not found", widgetID)
+			}
+			if loc.InRow {
+				doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Row.Widgets[loc.WidgetIndex].Hidden = hidden
+			} else {
+				doc.Sections[loc.SectionIndex].Entries[loc.EntryIndex].Widget.Hidden = hidden
+			}
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+			out, err := json.MarshalIndent(map[string]interface{}{"widget_id": widgetID, "hidden": hidden, "plan": doc}, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("report widget toggled: %s hidden=%v\n", widgetID, hidden) + string(out), nil
+		},
+		"workflow",
+	)
+
+	logger.Info("✅ Registered report plan management tools")
 	return nil
 }
 
@@ -1864,7 +3086,7 @@ func registerReportRenderPreviewTool(
 
 	mcpAgent.RegisterCustomTool(
 		"preview_report_render",
-		"Preview how reports/report_plan.md resolves against current workspace data. Returns validation output, a human-readable preview markdown, and per-widget resolved data previews so you can inspect what the final report would show before asking the user to open the Report tab.",
+		"Preview how reports/report_plan.json resolves against current workspace data. Returns validation output, a human-readable preview markdown, and per-widget resolved data previews so you can inspect what the final report would show before asking the user to open the Report tab.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			res, err := previewReportRender(ctx, workspacePath, readFile)

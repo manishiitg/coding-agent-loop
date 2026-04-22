@@ -28,6 +28,7 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 - `tool_filtering_system.md`
 - `workflow_manifest_architecture.md`
 - `workflow_builder_interactive.md`
+- `workflow_builder_commands_and_tools.md`
 - `workflow_monitoring.md`
 - `workflow_scheduling.md`
 - `workflow_shell_working_directory.md`

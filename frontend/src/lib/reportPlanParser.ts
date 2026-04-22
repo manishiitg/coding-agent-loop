@@ -1,7 +1,7 @@
-// Parser for reports/report_plan.md — widget definitions driving the dynamic report.
+// Parser for reports/report_plan.json.
 // See docs/workflow/persistent_stores_design.md section 2.
 //
-// Input: raw markdown string (contents of report_plan.md).
+// Input: raw file contents from report_plan.json.
 // Output: ParsedReportPlan — sections + widget entries, ready for ReportViewer to render.
 //
 // Grammar recap:
@@ -141,57 +141,187 @@ function parseBool(raw: string): boolean | undefined {
   return undefined
 }
 
-export function parseReportPlan(markdown: string): ParsedReportPlan {
-  if (!markdown || markdown.trim() === '') {
+export function parseReportPlan(rawPlan: string): ParsedReportPlan {
+  if (!rawPlan || rawPlan.trim() === '') {
     return { sections: [] }
   }
 
-  const lines = markdown.split('\n')
-  const sections: ReportSection[] = []
-  let current: ReportSection | null = null
-  let i = 0
+  const trimmed = rawPlan.trim()
+  if (trimmed.startsWith('{')) {
+    const parsedJSON = parseReportPlanJSON(trimmed)
+    if (parsedJSON) return parsedJSON
+  }
+  return { sections: [] }
+}
 
-  while (i < lines.length) {
-    const raw = lines[i]
-    const trimmed = raw.trim()
-
-    // H2 heading → start new section. H1 (single #) and H3+ are ignored — only ##
-    // delimits sections by the design doc's spec.
-    if (/^##\s+/.test(trimmed) && !/^###/.test(trimmed)) {
-      if (current) sections.push(current)
-      current = { heading: trimmed.replace(/^##\s+/, '').trim(), entries: [] }
-      i++
-      continue
+function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      sections?: Array<{
+        heading?: unknown
+        entries?: Array<{
+          kind?: unknown
+          widget?: unknown
+          row?: { widgets?: unknown }
+        }>
+      }>
     }
+    if (!parsed || !Array.isArray(parsed.sections)) return null
 
-    // Fenced code block? Check for widget language tag.
-    const fenceMatch = /^```\s*widget:([\w-]+)\s*$/.exec(trimmed)
-    if (fenceMatch) {
-      const kind = fenceMatch[1]
-      const body: string[] = []
-      i++
-      while (i < lines.length && lines[i].trim() !== '```') {
-        body.push(lines[i])
-        i++
+    const sections: ReportSection[] = []
+    for (const section of parsed.sections) {
+      if (!section || typeof section.heading !== 'string' || section.heading.trim() === '') continue
+      const entries: ReportEntry[] = []
+      const rawEntries = Array.isArray(section.entries) ? section.entries : []
+      for (const entry of rawEntries) {
+        if (!entry || typeof entry.kind !== 'string') continue
+        if (entry.kind === 'single') {
+          const widget = parseReportPlanJSONWidget(entry.widget)
+          if (widget) entries.push({ kind: 'single', widget })
+          continue
+        }
+        if (entry.kind === 'row') {
+          const rawWidgets = Array.isArray(entry.row?.widgets) ? entry.row?.widgets : []
+          const widgets = rawWidgets
+            .map(widget => parseReportPlanJSONWidget(widget))
+            .filter((widget): widget is ReportWidget => widget !== null)
+          if (widgets.length > 0) entries.push({ kind: 'row', row: { widgets } })
+        }
       }
-      // Skip the closing ``` if present
-      if (i < lines.length) i++
-
-      // Only attach widgets to a section — drop widgets that appear before any heading.
-      if (!current) continue
-
-      const entry = parseWidgetBlock(kind, body)
-      if (entry) current.entries.push(entry)
-      continue
+      sections.push({ heading: section.heading.trim(), entries })
     }
+    return { sections }
+  } catch {
+    return null
+  }
+}
 
-    // Any other line — narrative markdown between widgets, ignored for now. If we want
-    // to support prose inside sections later, attach it to the current section here.
-    i++
+function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
+  if (!raw || typeof raw !== 'object') return null
+  const source = raw as Record<string, unknown>
+  const kind = typeof source.kind === 'string' ? source.kind.toLowerCase() : ''
+  if (!isWidgetKind(kind)) return null
+
+  const widget: ReportWidget = {
+    kind,
+    hidden: source.hidden === true ? true : undefined,
+    source: kind === 'costs' || kind === 'evals' || kind === 'runs'
+      ? ''
+      : typeof source.source === 'string'
+        ? source.source
+        : '',
+    path: normalizePath(typeof source.path === 'string' ? source.path : ''),
+  }
+  if (kind !== 'costs' && kind !== 'evals' && kind !== 'runs' && !widget.source) return null
+
+  if (typeof source.filter === 'string') widget.filter = source.filter
+  if (typeof source.title === 'string') widget.title = source.title
+  if (typeof source.description === 'string') widget.description = source.description
+  if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) widget.height = Math.trunc(source.height)
+  if (typeof source.showIf === 'string') widget.showIf = source.showIf
+
+  if (widget.kind === 'table') {
+    if (source.formats && typeof source.formats === 'object' && !Array.isArray(source.formats)) {
+      const formats: Record<string, ReportFormatterName> = {}
+      for (const [key, value] of Object.entries(source.formats as Record<string, unknown>)) {
+        if (typeof value === 'string' && KNOWN_FORMATTER_SET.has(value)) formats[key] = value as ReportFormatterName
+      }
+      if (Object.keys(formats).length > 0) widget.formats = formats
+    }
+    if (typeof source.pageSize === 'number' && Number.isFinite(source.pageSize) && source.pageSize > 0) widget.pageSize = Math.trunc(source.pageSize)
+    if (typeof source.enableSearch === 'boolean') widget.enableSearch = source.enableSearch
+    if (source.defaultSort && typeof source.defaultSort === 'object' && !Array.isArray(source.defaultSort)) {
+      const defaultSort = source.defaultSort as Record<string, unknown>
+      const field = typeof defaultSort.field === 'string'
+        ? defaultSort.field
+        : ''
+      const direction = typeof defaultSort.direction === 'string'
+        ? defaultSort.direction.toLowerCase()
+        : 'asc'
+      if (field) widget.defaultSort = { field, direction: direction === 'desc' ? 'desc' : 'asc' }
+    }
+    if (Array.isArray(source.hideColumns)) {
+      const cols = source.hideColumns.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (cols.length > 0) widget.hideColumns = cols
+    }
+  } else if (widget.kind === 'chart') {
+    if (typeof source.chartType === 'string' && KNOWN_CHART_TYPE_SET.has(source.chartType.toLowerCase())) widget.chartType = source.chartType.toLowerCase() as ReportChartType
+    if (typeof source.xAxis === 'string') widget.xAxis = source.xAxis
+    if (typeof source.yAxis === 'string') widget.yAxis = source.yAxis
+    if (typeof source.topN === 'number' && Number.isFinite(source.topN) && source.topN > 0) widget.topN = Math.trunc(source.topN)
+    if (typeof source.sort === 'string') {
+      const sort = source.sort.toLowerCase()
+      if (sort === 'asc' || sort === 'desc' || sort === 'none') widget.sort = sort as ReportSortDirection | 'none'
+    }
+    if (typeof source.showValues === 'boolean') widget.showValues = source.showValues
+    if (Array.isArray(source.series)) {
+      const series = source.series.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (series.length > 0) widget.series = series
+    }
+    if (Array.isArray(source.seriesColors)) {
+      const colors = source.seriesColors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (colors.length > 0) widget.seriesColors = colors
+    }
+    if (typeof source.stacked === 'boolean') widget.stacked = source.stacked
+  } else if (widget.kind === 'stat') {
+    if (typeof source.label === 'string') widget.label = source.label
+    if (typeof source.prefix === 'string') widget.prefix = source.prefix
+    if (typeof source.suffix === 'string') widget.suffix = source.suffix
+    if (typeof source.format === 'string' && KNOWN_FORMATTER_SET.has(source.format)) widget.format = source.format as ReportFormatterName
+    if (typeof source.deltaPath === 'string') widget.deltaPath = source.deltaPath
+    if (typeof source.deltaFormat === 'string' && KNOWN_FORMATTER_SET.has(source.deltaFormat)) widget.deltaFormat = source.deltaFormat as ReportFormatterName
+    if (typeof source.trendPath === 'string') widget.trendPath = source.trendPath
+  } else if (widget.kind === 'alert') {
+    if (typeof source.severity === 'string' && KNOWN_ALERT_SEVERITY_SET.has(source.severity.toLowerCase())) widget.severity = source.severity.toLowerCase() as ReportAlertSeverity
+    if (typeof source.message === 'string') widget.message = source.message
+  } else if (widget.kind === 'pivot') {
+    if (typeof source.rowsField === 'string') widget.rowsField = source.rowsField
+    if (typeof source.columnsField === 'string') widget.columnsField = source.columnsField
+    if (typeof source.valuesField === 'string') widget.valuesField = source.valuesField
+    if (typeof source.aggregate === 'string' && KNOWN_PIVOT_AGGREGATE_SET.has(source.aggregate.toLowerCase())) widget.aggregate = source.aggregate.toLowerCase() as ReportPivotAggregate
+    if (typeof source.format === 'string' && KNOWN_FORMATTER_SET.has(source.format)) widget.format = source.format as ReportFormatterName
+    if (typeof source.heatmap === 'boolean') widget.heatmap = source.heatmap
+    if (Array.isArray(source.heatmapColors)) {
+      const colors = source.heatmapColors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (colors.length >= 2) widget.heatmapColors = [colors[0], colors[1]]
+    }
+  } else if (widget.kind === 'costs') {
+    if (typeof source.costsScope === 'string' && KNOWN_COSTS_SCOPE_SET.has(source.costsScope.toLowerCase())) widget.costsScope = source.costsScope.toLowerCase() as ReportCostsScope
+    if (typeof source.costsView === 'string' && KNOWN_COSTS_VIEW_SET.has(source.costsView.toLowerCase())) widget.costsView = source.costsView.toLowerCase() as ReportCostsView
+    if (typeof source.costsMetric === 'string' && KNOWN_COSTS_METRIC_SET.has(source.costsMetric.toLowerCase())) widget.costsMetric = source.costsMetric.toLowerCase() as ReportCostsMetric
+    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
+    if (typeof source.group === 'string') widget.group = source.group
+  } else if (widget.kind === 'evals') {
+    if (typeof source.evalsView === 'string' && KNOWN_EVALS_VIEW_SET.has(source.evalsView.toLowerCase())) widget.evalsView = source.evalsView.toLowerCase() as ReportEvalsView
+    if (typeof source.evalsMetric === 'string' && KNOWN_EVALS_METRIC_SET.has(source.evalsMetric.toLowerCase())) widget.evalsMetric = source.evalsMetric.toLowerCase() as ReportEvalsMetric
+    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
+    if (typeof source.group === 'string') widget.group = source.group
+  } else if (widget.kind === 'runs') {
+    if (typeof source.runsView === 'string' && KNOWN_RUNS_VIEW_SET.has(source.runsView.toLowerCase())) widget.runsView = source.runsView.toLowerCase() as ReportRunsView
+    if (typeof source.runFolder === 'string') widget.runFolder = source.runFolder
+    if (typeof source.group === 'string') widget.group = source.group
   }
 
-  if (current) sections.push(current)
-  return { sections }
+  if (widget.kind === 'chart' || widget.kind === 'table') {
+    if (Array.isArray(source.colors)) {
+      const colors = source.colors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (colors.length > 0) widget.colors = colors
+    }
+    if (Array.isArray(source.colorsDark)) {
+      const colors = source.colorsDark.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (colors.length > 0) widget.colorsDark = colors
+    }
+    if (typeof source.colorBy === 'string') widget.colorBy = source.colorBy
+    if (source.colorMap && typeof source.colorMap === 'object' && !Array.isArray(source.colorMap)) {
+      const colorMap: Record<string, string> = {}
+      for (const [key, value] of Object.entries(source.colorMap as Record<string, unknown>)) {
+        if (typeof value === 'string') colorMap[key] = value
+      }
+      if (Object.keys(colorMap).length > 0) widget.colorMap = colorMap
+    }
+  }
+
+  return widget
 }
 
 function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {

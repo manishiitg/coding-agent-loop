@@ -1460,19 +1460,9 @@ func RegisterEvaluationValidationTools(
 	return registerEvaluationValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
-// RegisterEvaluationCapabilitiesTool is the exported wrapper for registering the
-// get_evaluation_capabilities tool on an MCP agent. Used by server.go for workflow-builder
-// and optimizer chat sessions so eval grammar can be loaded on demand.
-func RegisterEvaluationCapabilitiesTool(
-	mcpAgent *mcpagent.Agent,
-	logger loggerv2.Logger,
-) error {
-	return registerEvaluationCapabilitiesTool(mcpAgent, logger)
-}
-
 // RegisterReportPlanValidationTools is the exported wrapper for registering the
 // validate_report_plan tool on an MCP agent. Used by server.go for workflow-builder
-// chat sessions. Validates reports/report_plan.md widget blocks against their JSON sources.
+// chat sessions. Validates reports/report_plan.json.
 func RegisterReportPlanValidationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,
@@ -1482,14 +1472,17 @@ func RegisterReportPlanValidationTools(
 	return registerReportPlanValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
-// RegisterReportingCapabilitiesTool is the exported wrapper for registering the
-// get_reporting_capabilities tool on an MCP agent. Used by server.go for workflow-builder
-// and optimizer chat sessions so reporting grammar can be loaded on demand.
-func RegisterReportingCapabilitiesTool(
+// RegisterReportPlanManagementTools is the exported wrapper for registering the
+// JSON report plan read/write tools on an MCP agent. Used by server.go for
+// workflow-builder and optimizer chat sessions.
+func RegisterReportPlanManagementTools(
 	mcpAgent *mcpagent.Agent,
+	workspacePath string,
 	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
 ) error {
-	return registerReportPlanCapabilitiesTool(mcpAgent, logger)
+	return registerReportPlanManagementTools(mcpAgent, workspacePath, logger, readFile, writeFile)
 }
 
 // RegisterReportRenderPreviewTool is the exported wrapper for registering the

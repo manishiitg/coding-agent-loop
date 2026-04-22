@@ -819,8 +819,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"agent_browser",
 		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)
 		"get_api_spec", "get_prompt", "get_resource",
-		// Code execution virtual tools
-		"write_code", "discover_code_files",
 		// Sub-agent execution tools — used by execution agents running inside steps.
 		// These must always be allowed because SetToolAllowList also gates the code
 		// execution registry (HTTP calls), which blocks execution agents from calling
@@ -882,13 +880,13 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Eval tools
 	eval := []string{
-		"get_evaluation_capabilities", "validate_evaluation_plan", "run_full_evaluation",
+		"validate_evaluation_plan", "run_full_evaluation",
 	}
 
-	// Report tools — validate reports/report_plan.md against real db/ + KB sources.
+	// Report tools — manage reports/report_plan.json and validate/preview against real db/ + KB sources.
 	// Available in builder and optimizer modes; run mode never edits the report plan.
 	report := []string{
-		"get_reporting_capabilities", "validate_report_plan", "preview_report_render",
+		"get_report_plan", "upsert_report_widget", "remove_report_widget", "move_report_widget", "toggle_report_widget", "validate_report_plan", "preview_report_render",
 	}
 
 	// Knowledgebase write tools — explicit graph/notes mutations. Registered only
@@ -917,14 +915,16 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_results")
+		tools = append(tools, "review_workflow_timing")
+		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
 		tools = append(tools, kb...)
 		tools = append(tools, "optimize_step")
 		tools = append(tools, "optimize_workflow")
 		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_step).
-		// From legacy 'output' mode — report widget editing happens via raw shell write to reports/report_plan.md;
-		// validate_report_plan closes the feedback loop so the builder doesn't ship broken widgets silently.
+		// From legacy 'output' mode — report widgets now live in reports/report_plan.json
+		// and are mutated through dedicated tools instead of raw shell writes.
 
 	case "optimizer":
 		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable.
@@ -941,6 +941,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_results")
+		tools = append(tools, "review_workflow_timing")
+		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
 		tools = append(tools, report...)
 		tools = append(tools, kb...)
@@ -957,6 +959,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "debug_step")
 		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_results")
+		tools = append(tools, "review_workflow_timing")
+		tools = append(tools, "review_workflow_costs")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1346,32 +1350,32 @@ When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **defa
 
 ## Reporting — the frontend Report tab is already wired
 
-The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.md`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
+The workflow has a **live frontend report viewer** at the top toolbar's "Report" tab. It reads `+"`reports/report_plan.json`"+` and renders the widget blocks defined there against `+"`db/*.json`"+`, `+"`knowledgebase/`"+` (graph + notes), and dedicated workflow APIs for built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widgets. It is always available — there is NO "generate report" phase, no HTML/PDF artifact to produce, no step that writes a finished report.
 
 **When the user asks "create a report" / "build a reporting UI" / "show me X in a dashboard":**
-- The answer is almost always: **edit `+"`reports/report_plan.md`"+`** — add or update widget blocks.
+- The answer is almost always: **update `+"`reports/report_plan.json`"+` via the report-plan tools** — add, move, toggle, or remove widgets.
 - Do NOT add a step that generates HTML, markdown, or any other "rendered report" artifact.
-- Do NOT write Python that produces a dashboard file. The React frontend already does this from the markdown.
+- Do NOT write Python that produces a dashboard file. The React frontend already does this from the report plan.
 - If the user wants a NEW kind of visualization the widget grammar can't express, say so explicitly and propose either (a) a new widget type to add to the renderer, or (b) reshaping the underlying `+"`db/`"+` data to fit existing widget types. Don't silently fall back to "I'll write a Python script that makes HTML."
 
-**When the report shows "No report yet":** it means `+"`reports/report_plan.md`"+` is missing or contains zero parseable widgets. Fix by writing/editing that file.
+**When the report shows "No report yet":** it means `+"`reports/report_plan.json`"+` is missing or contains zero usable widgets. Fix by creating/updating the report plan.
 
-**When the report renders but is empty/missing widgets the user expects:** the markdown widgets parsed correctly but their `+"`source`"+` JSON is missing or has no rows yet. Either a step hasn't run, or the widget points at the wrong path. Inspect `+"`reports/report_plan.md`"+` and the actual `+"`db/`"+` files to diagnose.
+**When the report renders but is empty/missing widgets the user expects:** the plan resolved correctly but the widget `+"`source`"+` JSON is missing or has no rows yet. Either a step hasn't run, or the widget points at the wrong path. Inspect `+"`reports/report_plan.json`"+` and the actual `+"`db/`"+` files to diagnose.
 
-**Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent edits `+"`report_plan.md`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
+**Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent updates `+"`report_plan.json`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
-### Report plan — reports/report_plan.md
+### Report plan — reports/report_plan.json
 
-The workflow's live report is defined by `+"`reports/report_plan.md`"+`. The frontend renders it on demand — there is no "report" phase that runs after execution. You write and maintain this file.
+The workflow's live report is defined by `+"`reports/report_plan.json`"+`. The frontend renders it on demand — there is no "report" phase that runs after execution. You write and maintain this file through dedicated tools.
 
 **Use the reporting toolchain, not the system prompt, for details:**
-- Before answering detailed reporting/dashboard/widget questions OR editing `+"`report_plan.md`"+`, call `+"`get_reporting_capabilities`"+`.
-- That tool returns the supported widget kinds, required fields, row syntax, built-in `+"`costs`"+` / `+"`evals`"+` / `+"`runs`"+` widget options, and compact examples.
-- After every edit to `+"`reports/report_plan.md`"+`, call `+"`validate_report_plan`"+`.
+- Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
+- Use `+"`upsert_report_widget`"+` for create/update, `+"`move_report_widget`"+` to reposition, `+"`toggle_report_widget`"+` to hide/show, and `+"`remove_report_widget`"+` to delete.
+- After every edit to `+"`reports/report_plan.json`"+`, call `+"`validate_report_plan`"+`.
 - When you need to inspect what the final report will actually show with current data, call `+"`preview_report_render`"+`.
 
-**When to write/update `+"`report_plan.md`"+`:**
+**When to write/update `+"`report_plan.json`"+`:**
 - After the user confirms what they want to see in the report
 - When you add a step that writes a new `+"`db/`"+` file the user wants surfaced
 - When the KB starts accumulating a new entity type the user wants listed
@@ -1380,8 +1384,8 @@ The workflow's live report is defined by `+"`reports/report_plan.md`"+`. The fro
 
 **Reporting workflow:**
 1. Clarify what the user wants to see if needed.
-2. Call `+"`get_reporting_capabilities`"+`.
-3. Edit `+"`reports/report_plan.md`"+`.
+2. Call `+"`get_report_plan`"+` if you need IDs or current structure.
+3. Use the report-plan mutation tools to update `+"`reports/report_plan.json`"+`.
 4. Call `+"`validate_report_plan`"+`.
 5. If the user asked how it will render, call `+"`preview_report_render`"+`.
 6. Fix validation errors, then validate again until clean.
@@ -1392,9 +1396,17 @@ The workflow's live report is defined by `+"`reports/report_plan.md`"+`. The fro
 
 You write and maintain the eval plan — design in builder mode, keep it sharp as you harden in optimizer mode.
 
-**Use the evaluation toolchain, not the system prompt, for details:**
-- Before answering detailed eval-design questions OR editing `+"`evaluation/evaluation_plan.json`"+`, call `+"`get_evaluation_capabilities`"+`.
-- That tool returns the eval-plan field requirements, mode guidance, scoring-agent options, the `+"`"+`{{"{{TARGET_RUN_PATH}}"}}`+"`"+` rule, and compact examples.
+**Eval plan rules:**
+- Each eval step in `+"`evaluation/evaluation_plan.json`"+` must have: `+"`id`"+`, `+"`title`"+`, `+"`description`"+`.
+- Optional per-step field: `+"`pre_validation`"+`.
+- Eval step IDs must NOT collide with execution-plan step IDs because both share `+"`learnings/{stepID}/`"+`.
+- Focus eval steps on workflow outcomes, not intermediate files, unless a file check is truly the outcome.
+- `+"`pre_validation`"+` checks files inside the eval step execution folder, not the original run folder.
+- Eval step descriptions may reference `+"`"+`{{"{{TARGET_RUN_PATH}}"}}`+"`"+`, which resolves to the absolute path of the original execution folder being scored. Use that placeholder when the eval needs to inspect original run artifacts directly; never hardcode iteration paths.
+- For scoring config in `+"`evaluation/step_config.json`"+`:
+  - prefer `+"`declared_execution_mode=learn_code`"+` for deterministic checks and stable reusable scoring logic
+  - use `+"`declared_execution_mode=code_exec`"+` when the eval still needs adaptive model judgment
+  - set `+"`use_code_execution_mode=false`"+` for lean tool-call scoring when supported; set it to `+"`true`"+` to force code-exec on non-CLI providers
 - After every edit to `+"`evaluation/evaluation_plan.json`"+`, call `+"`validate_evaluation_plan`"+`.
 - When you want to test the current eval plan, call `+"`run_full_evaluation(target_run_folder)`"+`.
 
@@ -1406,11 +1418,10 @@ You write and maintain the eval plan — design in builder mode, keep it sharp a
 
 **Evaluation workflow:**
 1. Clarify what the user wants the eval to prove if needed.
-2. Call `+"`get_evaluation_capabilities`"+`.
-3. Edit `+"`evaluation/evaluation_plan.json`"+`.
-4. Call `+"`validate_evaluation_plan`"+`.
-5. Fix validation errors, then validate again until clean.
-6. If needed, call `+"`run_full_evaluation(target_run_folder)`"+` to test the plan.
+2. Edit `+"`evaluation/evaluation_plan.json`"+`.
+3. Call `+"`validate_evaluation_plan`"+`.
+4. Fix validation errors, then validate again until clean.
+5. If needed, call `+"`run_full_evaluation(target_run_folder)`"+` to test the plan.
 
 **Files:**
 - Plan: `+"`evaluation/evaluation_plan.json`"+`
@@ -1453,7 +1464,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - The workflow's actual output data: rows the workflow produces or consumes this run (processed records, cursors, cumulative output, per-group tallies).
 - **Written by (runtime):** step code directly (shell / Python). Step-owned during runs — upsert-by-key, never overwrite wholesale (that destroys rows from other groups/runs).
 - **Written by (design time — you):** YOU (the builder) MAY shell-write `+"`db/*.json`"+` directly to scaffold empty schemas, seed initial state, fix corrupt rows, or stage test data for development. Your FolderGuard allows it. Prefer letting steps populate `+"`db/`"+` during actual runs — your writes are for setup and repair, not ongoing state.
-- Read as: step agents read directly, widgets in reports/report_plan.md bind to it.
+- Read as: step agents read directly, widgets in reports/report_plan.json bind to it.
 - Shape: JSON with per-file schema (primary key + merge rule) decided by the builder at design time.
 - Examples: "db/processed_companies.json with rows keyed by company_id", "db/monthly_totals.json aggregated across all months", "db/cursors.json tracking last-processed dates".
 
@@ -1483,7 +1494,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 Every non-trivial step has a `+"`"+`context_output`+"`"+` file (e.g. `+"`"+`extracted_data.json`+"`"+`). That's the forward-pipe to the next step and the target of `+"`"+`validation_schema`+"`"+`. It lives under `+"`"+`runs/{iteration}/{group}/execution/{step-id}/`+"`"+` and is **volatile** — deleted on re-execution.
 
-`+"`"+`db/*.json`+"`"+` is different: workspace-level, persistent across runs and groups, and the **only** place report widgets can bind to (`+"`"+`reports/report_plan.md`+"`"+` sources must be `+"`"+`db/*.json`+"`"+` or `+"`"+`knowledgebase/graph.json`+"`"+`/`+"`"+`index.json`+"`"+` — never `+"`"+`runs/...`+"`"+`).
+`+"`"+`db/*.json`+"`"+` is different: workspace-level, persistent across runs and groups, and the **only** place report widgets can bind to (`+"`"+`reports/report_plan.json`+"`"+` sources must be `+"`"+`db/*.json`+"`"+` or `+"`"+`knowledgebase/graph.json`+"`"+`/`+"`"+`index.json`+"`"+` — never `+"`"+`runs/...`+"`"+`).
 
 **When to introduce a db/ file:**
 - (a) You want (or might plausibly want) this data to appear in the Report UI — db/ is the only option; migrating later means rewriting step code + schema notes, so lean toward db/ up front.
@@ -1508,7 +1519,7 @@ Every non-trivial step has a `+"`"+`context_output`+"`"+` file (e.g. `+"`"+`extr
 - **merge_rule**: upsert by company_id; on conflict, newer `+"`"+`updated_at`+"`"+` wins; never delete rows
 - **writers**: step-extract-companies (insert/update), step-score-companies (update scores field only)
 - **shape**: `+"`"+`[{company_id, name, industry, scored_at, score}]`+"`"+`
-- **used by**: report widget `+"`"+`companies-table`+"`"+` in report_plan.md; step-rank-companies reads it
+- **used by**: report widget `+"`"+`companies-table`+"`"+` in report_plan.json; step-rank-companies reads it
 `+"```"+`
 
 **Before you create or edit any step that writes to `+"`"+`db/`+"`"+`:**
@@ -1930,6 +1941,16 @@ For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, review the execution logs to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
 
+### 4b. LLM Tier Selection
+In tiered mode, prefer a persistent `+"`execution_tier`"+` when a step should usually run on a cheaper or faster tier, instead of pinning an exact model.
+
+- **Use `+"`execution_tier`"+` for persistent behavior**: `+"`update_step_config(step_id, execution_tier=\"medium\")`"+` or `+"`\"low\"`"+` when the step is stable and you want future runs to default to that tier.
+- **Use `+"`execution_llm`"+` only when you need an exact model**: this pins a specific provider/model and overrides tier selection entirely.
+- **Use `+"`execute_step(step_id, group_name, tier=\"...\")`"+` for one-off experiments**: this is for testing a single run without changing the step's persistent config.
+- **Prefer `+"`execution_tier`"+` over exact-model pinning for mature steps**: if the goal is "this step can usually run on medium/low", set the tier, don't hardcode a model.
+- **Do not force a cheaper tier too early**: first make the step reliable with a clear description, good validation, and stable learnings. Then downgrade deliberately.
+- **If a step has `+"`execution_llm`"+` set, `+"`execution_tier`"+` is ignored** until the exact-model override is cleared.
+
 ### 5. Step Description Optimization
 The step **description** in plan.json is the primary instruction the execution agent receives. A well-written description directly improves output quality.
 
@@ -2152,6 +2173,8 @@ Rules:
 - **Objective + success criteria** — edit `+"`soul/soul.md`"+` directly via shell (fill in the `+"`## Objective`"+` and `+"`## Success Criteria`"+` sections). soul.md is the canonical source; plan.json no longer stores these fields. No dedicated tool — use `+"`diff_patch_workspace_file`"+` or a shell heredoc.
 - **replan_workflow_from_results(target_run_folder?, focus?)** — Structural rewrite: add/remove/reorder steps using actual run evidence. Use when the plan structure is wrong. Use harden_workflow when the structure is right but steps need hardening.
 - **review_workflow_results(iteration?, group_name?, focus?)** — Read-only outcome review: checks whether a real run is achieving the objective and success criteria, and whether the evaluation actually measures them properly.
+- **review_workflow_timing(iteration?, group_name?, focus?)** — Read-only latency review: finds the slowest groups/steps/tools/LLM calls and recommends faster descriptions, fewer handoffs, safer step merges, or plan changes.
+- **review_workflow_costs(iteration?, group_name?, focus?)** — Read-only cost review: finds the biggest cost drivers and recommends cheaper models, fewer retries/handoffs, better descriptions, or plan changes without sacrificing success criteria.
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
@@ -2207,7 +2230,6 @@ Rules:
 
 {{if eq .WorkshopMode "builder"}}
 ### Evaluation tools (Builder mode owns eval design)
-- **get_evaluation_capabilities** — Load the eval-plan grammar, workflow rules, scoring-agent options, and examples on demand
 - **validate_evaluation_plan** — Validate the evaluation plan JSON
 - **run_full_evaluation(target_run_folder)** — Score the eval plan against an execution run; eval steps execute in the internal `+"`evaluation/runs/iteration-0/...`"+` sandbox
 - **optimize_step(step_id, iteration?, group_name?, focus?, forced?)** — Unified background optimization agent. Auto-detects plan vs eval step. For eval steps, pass iteration + group_name to target a specific eval run.
@@ -2260,7 +2282,7 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 |------|----------|
 | planning/plan.json | Workflow plan — step definitions, descriptions, validation schemas |
 | planning/step_config.json | Step-level config overrides (LLM, execution mode, learnings, etc.) |
-| reports/report_plan.md | Dynamic report widget definitions (see §2 of the persistent-stores design) |
+| reports/report_plan.json | Dynamic report widget definitions (see §2 of the persistent-stores design) |
 
 ### Execution Outputs (per run, per group)
 | Path | Contents |
@@ -2549,7 +2571,7 @@ var workshopVersionedConfigFiles = []string{
 	"planning/step_config.json",
 	"planning/workflow_layout.json",
 	"planning/step_override.json",
-	"reports/report_plan.md",
+	"reports/report_plan.json",
 	"variables/variables.json",
 	"evaluation/evaluation_plan.json",
 }
@@ -5662,6 +5684,278 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_workflow_results tool: %v", err))
 	}
 
+	// Tool 7f3: review_workflow_timing — read-only review of runtime latency and speedup opportunities
+	if err := mcpAgent.RegisterCustomTool(
+		"review_workflow_timing",
+		"Start a background agent that reviews workflow runtime and step timing from actual run evidence, identifies the main latency bottlenecks, and recommends how to make the workflow faster without compromising the objective or success criteria. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus for the review, e.g., 'slowest step', 'tool latency', 'too many steps', 'merge opportunities', 'description ambiguity'.",
+				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional iteration folder (e.g., 'iteration-3'). If omitted, the selected run folder is used when present; otherwise the reviewer finds the latest meaningful run evidence.",
+				},
+				"group_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+			targetRunFolder := ""
+			if iter, ok := args["iteration"]; ok && iter != nil {
+				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
+					targetRunFolder = strings.TrimSpace(s)
+					if gid, ok := args["group_name"]; ok && gid != nil {
+						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
+							targetRunFolder += "/" + strings.TrimSpace(g)
+						}
+					}
+				}
+			}
+			if targetRunFolder == "" {
+				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
+			}
+
+			execID := fmt.Sprintf("review-timing-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
+
+			agentSessionID := fmt.Sprintf("workshop-review-timing-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "review-workflow-timing",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Review Workflow Timing",
+					Cancel:            cancel,
+				})
+			}
+
+			go func() {
+				var result string
+				var execErr error
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := skipNotify || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-review-timing",
+							AgentName:     "Review Workflow Timing",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !skipNotify && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Timing", result, nil, execErr)
+					}
+				}()
+
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-review-timing",
+						AgentName:     "Review Workflow Timing",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, execErr = iwm.runReviewWorkflowTimingAgent(execCtx, targetRunFolder, focus)
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			runInfo := ""
+			if targetRunFolder != "" {
+				runInfo = fmt.Sprintf("\nTarget run folder: %s", targetRunFolder)
+			}
+			logger.Info(fmt.Sprintf("⏱️ Workshop: review_workflow_timing agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
+			return fmt.Sprintf("Workflow timing review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, runInfo, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_workflow_timing tool: %v", err))
+	}
+
+	// Tool 7f4: review_workflow_costs — read-only review of cost drivers and reduction opportunities
+	if err := mcpAgent.RegisterCustomTool(
+		"review_workflow_costs",
+		"Start a background agent that reviews workflow token/cost data from actual run evidence, identifies the biggest cost drivers, and recommends how to reduce cost without compromising the objective or success criteria. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus for the review, e.g., 'expensive step', 'model tier', 'retry waste', 'evaluation cost', 'merge opportunities'.",
+				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional iteration folder (e.g., 'iteration-3'). If omitted, the selected run folder is used when present; otherwise the reviewer finds the latest meaningful cost/run evidence.",
+				},
+				"group_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+			targetRunFolder := ""
+			if iter, ok := args["iteration"]; ok && iter != nil {
+				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
+					targetRunFolder = strings.TrimSpace(s)
+					if gid, ok := args["group_name"]; ok && gid != nil {
+						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
+							targetRunFolder += "/" + strings.TrimSpace(g)
+						}
+					}
+				}
+			}
+			if targetRunFolder == "" {
+				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
+			}
+
+			execID := fmt.Sprintf("review-costs-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel, ctxErr := iwm.newExecContext()
+			if ctxErr != nil {
+				return "Session was stopped — execution skipped", nil
+			}
+
+			agentSessionID := fmt.Sprintf("workshop-review-costs-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "review-workflow-costs",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
+					ID:                execID,
+					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+					Name:              "Review Workflow Costs",
+					Cancel:            cancel,
+				})
+			}
+
+			go func() {
+				var result string
+				var execErr error
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				defer func() {
+					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
+					if eventBridge != nil {
+						isCancelled := skipNotify || execCtx.Err() != nil
+						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+							AgentType:     "workshop-review-costs",
+							AgentName:     "Review Workflow Costs",
+							Success:       execErr == nil,
+						}
+						if execErr != nil {
+							if isCancelled {
+								endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+							} else {
+								endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+							}
+						} else {
+							endEvent.Result = result
+						}
+						eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+							Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+							Data: endEvent, CorrelationID: agentSessionID,
+						})
+					}
+					if !skipNotify && iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Costs", result, nil, execErr)
+					}
+				}()
+
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-review-costs",
+						AgentName:     "Review Workflow Costs",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, execErr = iwm.runReviewWorkflowCostsAgent(execCtx, targetRunFolder, focus)
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			runInfo := ""
+			if targetRunFolder != "" {
+				runInfo = fmt.Sprintf("\nTarget run folder: %s", targetRunFolder)
+			}
+			logger.Info(fmt.Sprintf("💸 Workshop: review_workflow_costs agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
+			return fmt.Sprintf("Workflow cost review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, runInfo, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_workflow_costs tool: %v", err))
+	}
+
 	// Tool: review_step_code — background agent that checks if saved scripts match step descriptions
 	if err := mcpAgent.RegisterCustomTool(
 		"review_step_code",
@@ -8766,6 +9060,227 @@ Give the top 3-5 next actions. Prefer concrete tool calls when possible, and dis
 
 var reviewWorkflowResultsAgentUserTemplate = MustRegisterTemplate("reviewWorkflowResultsAgentUser", `Review the actual workflow outcomes against the objective and success criteria, and judge whether the evaluation truly measures them.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}".{{else}} Find the latest meaningful run/eval evidence first.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
+var reviewWorkflowTimingAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowTimingAgentSystem", `# Workflow Timing Review Agent
+
+You are a read-only reviewer of workflow runtime performance. Your job is to determine:
+1. where the workflow is actually spending time
+2. which latency is necessary versus wasteful
+3. how to make the workflow faster without compromising the objective or success criteria
+
+This is a **read-only review**:
+- do not modify files
+- do not recommend speedups that obviously sacrifice the real goal
+- separate evidence-backed bottlenecks from speculation
+
+## RULES
+1. **Read-Only**: Do NOT modify files.
+2. **Evidence first**: Use run_metadata, execution summaries, timing files, and conversation logs from a real run.
+3. **Read timing in the right order**: workflow wall-clock first, then step summaries, then detailed timing for the slowest steps, then conversation logs only to explain why the slow call happened.
+4. **Separate bottleneck classes**:
+   - LLM latency
+   - tool latency
+   - orchestration / validation / file IO overhead
+   - too many step boundaries or handoffs
+   - unclear descriptions causing extra tool calls, retries, or thinking loops
+5. **Protect the objective**: A speedup is only good if it still preserves the stated objective and success criteria. Flag risky suggestions clearly.
+6. **Recommend the smallest effective fix**: Prefer a tighter description over a structural replan when the issue is prompt ambiguity. Prefer a structural change only when the current plan shape is causing waste.
+7. **If no target run folder is preset**: Use shell to find the latest meaningful run evidence. If no run evidence exists, say you cannot assess real workflow speed yet.
+
+## CONTEXT
+
+- **Workspace**: {{.WorkspacePath}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level finding{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
+{{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful run evidence before judging speed{{end}}
+
+{{if .PlanJSON}}## CURRENT PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
+
+{{if .StepConfigSummary}}## STEP CONFIG SUMMARY
+{{.StepConfigSummary}}
+{{end}}
+
+## REQUIRED EVIDENCE TO READ
+
+1. Read `+"`runs/<target>/run_metadata.json`"+` if present.
+2. Read the step execution summaries under `+"`runs/<target>/logs/<step-id>/execution/`"+` to rank the slowest step attempts using:
+   - `+"`duration_ms`"+`
+   - `+"`llm_duration_ms`"+`
+   - `+"`tool_duration_ms`"+`
+3. For the slowest step attempts, read the matching `+"`*-timing.json`"+` files and interpret:
+   - `+"`agent.duration_ms`"+` as full wall-clock
+   - `+"`llm.total_duration_ms`"+` as total model time
+   - `+"`tools.total_duration_ms`"+` as total tool time
+   - `+"`tools.calls[]`"+` as per-tool breakdown
+4. Read conversation logs only after the timing files show where the time went.
+5. Read `+"`evaluation/evaluation_plan.json`"+` and the eval report if they help determine whether a proposed speedup would threaten success criteria.
+
+{{if .Focus}}## FOCUS
+Prioritize this area: **{{.Focus}}**
+{{end}}
+
+## REVIEW TASKS
+
+1. Identify the workflow-level wall-clock and whether one group or one step dominates.
+2. Identify the top latency bottlenecks by class:
+   - slow model calls
+   - slow tools
+   - orchestration/overhead gap
+   - unnecessary step boundaries / file handoffs
+   - ambiguous descriptions causing extra loops
+3. For each major bottleneck, decide the safest improvement lever:
+   - tighten a step description
+   - reduce tool thrash
+   - merge/remove/reorder steps
+   - route work differently
+   - change model/config only if the current tier is clearly overkill
+4. Distinguish:
+   - **safe speedups** that should preserve outcome quality
+   - **risky speedups** that could harm success criteria
+5. Prefer concrete recommendations over generic advice.
+
+## OUTPUT FORMAT
+
+### Verdict
+- **Speed status**: fast enough | mixed | too slow | cannot assess
+- **Main bottleneck class**: llm | tools | orchestration | plan shape | mixed
+- **Confidence**: high | medium | low
+
+### Biggest Bottlenecks
+List the top 3-5 bottlenecks.
+
+For each:
+- **[workflow|group|step-id]**
+  - **Where time went**: <wall-clock, llm, tools, overhead>
+  - **Evidence**: <file/field values>
+  - **Why it happened**: <actual cause, not vague speculation>
+
+### Recommended Speedups
+Group recommendations into:
+- **Description / prompt changes**
+- **Plan / step-shape changes**
+- **Model / tool / config changes**
+
+For each recommendation:
+- **Change**
+- **Expected impact**: high | medium | low
+- **Risk to success criteria**: low | medium | high
+- **Why**
+
+### Priority Next Actions
+Give the top 3-5 next actions. Prefer concrete tool calls where possible.
+`)
+
+var reviewWorkflowTimingAgentUserTemplate = MustRegisterTemplate("reviewWorkflowTimingAgentUser", `Review workflow latency and recommend how to make it faster without weakening the objective or success criteria.{{if .TargetRunFolder}} Use run evidence from "{{.TargetRunFolder}}".{{else}} Find the latest meaningful run evidence first.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
+var reviewWorkflowCostsAgentSystemTemplate = MustRegisterTemplate("reviewWorkflowCostsAgentSystem", `# Workflow Cost Review Agent
+
+You are a read-only reviewer of workflow cost efficiency. Your job is to determine:
+1. where the workflow is spending tokens and money
+2. which spend is necessary versus wasteful
+3. how to reduce cost without compromising the objective or success criteria
+
+This is a **read-only review**:
+- do not modify files
+- do not recommend cheaper settings that obviously undermine the real goal
+- separate necessary spend from avoidable waste
+
+## RULES
+1. **Read-Only**: Do NOT modify files.
+2. **Evidence first**: Use actual cost ledgers, `+"`get_cost_summary`"+`, execution summaries, and run/eval evidence from a real run.
+3. **Protect the objective**: First preserve success; then reduce cost. A cheap failure is not an optimization.
+4. **Separate cost sources**:
+   - expensive model usage
+   - too many retries or loops
+   - too many step boundaries / handoffs
+   - unnecessary tool calls
+   - expensive evaluation that is not measuring the real objective well
+   - background learning / KB updates / fix loops that are still unlocked without enough benefit
+5. **Recommend the smallest effective fix**: Prefer a tighter description or config change over a structural replan when the issue is local. Recommend structural changes only when the plan shape itself is creating waste.
+6. **If no target run folder is preset**: Use shell to find the latest meaningful cost/run evidence. If no cost evidence exists, say you cannot assess real workflow cost yet.
+
+## CONTEXT
+
+- **Workspace**: {{.WorkspacePath}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — treat missing objective as a top-level finding{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — treat missing success criteria as a top-level finding{{end}}
+{{if .TargetRunFolder}}- **Target Run Folder**: {{.TargetRunFolder}}{{else}}- **Target Run Folder**: not preset — find the latest meaningful cost/run evidence before judging cost{{end}}
+
+{{if .PlanJSON}}## CURRENT PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the review.{{end}}
+
+{{if .StepConfigSummary}}## STEP CONFIG SUMMARY
+{{.StepConfigSummary}}
+{{end}}
+
+## REQUIRED EVIDENCE TO READ
+
+1. Call `+"`get_cost_summary`"+` for the target run if available.
+2. Read cost ledgers under:
+   - `+"`costs/phase/token_usage.json`"+`
+   - `+"`costs/execution/`"+`
+   - `+"`costs/evaluation/`"+` when evaluation spend matters
+3. Read step execution summaries under `+"`runs/<target>/logs/<step-id>/execution/`"+` to correlate cost with retries, LLM calls, and tool calls.
+4. Read `+"`evaluation/evaluation_plan.json`"+` and eval reports when evaluation cost might be disproportionate or misaligned to the real goal.
+5. Read enough run evidence to judge whether a lower-cost recommendation would threaten success criteria.
+
+{{if .Focus}}## FOCUS
+Prioritize this area: **{{.Focus}}**
+{{end}}
+
+## REVIEW TASKS
+
+1. Identify the biggest cost drivers by step, model, and phase.
+2. Distinguish:
+   - **necessary spend** that is directly supporting success
+   - **avoidable waste** from retries, ambiguous descriptions, too many handoffs, or overpowered models
+3. Decide the safest reduction lever for each major cost driver:
+   - tighten a description to reduce retries/tool calls
+   - merge/remove/reorder steps
+   - reduce evaluation waste or misaligned eval breadth
+   - change model/config only when success evidence suggests it is safe
+   - lock mature learnings/code/knowledgebase only when the current evidence supports freezing them
+4. Distinguish:
+   - **safe cost reductions** that should preserve outcome quality
+   - **risky cost reductions** that could hurt success criteria
+5. Prefer concrete recommendations over generic advice.
+
+## OUTPUT FORMAT
+
+### Verdict
+- **Cost status**: efficient | mixed | too expensive | cannot assess
+- **Main cost driver**: model usage | retries/loops | plan shape | evaluation | mixed
+- **Confidence**: high | medium | low
+
+### Biggest Cost Drivers
+List the top 3-5 cost drivers.
+
+For each:
+- **[phase|group|step-id|model]**
+  - **Cost evidence**: <tool output, ledger values, call counts>
+  - **Why cost is high**: <actual cause>
+  - **Necessary vs wasteful**: <one sentence>
+
+### Recommended Cost Reductions
+Group recommendations into:
+- **Description / prompt changes**
+- **Plan / step-shape changes**
+- **Model / tool / config changes**
+
+For each recommendation:
+- **Change**
+- **Expected savings**: high | medium | low
+- **Risk to success criteria**: low | medium | high
+- **Why**
+
+### Priority Next Actions
+Give the top 3-5 next actions. Prefer concrete tool calls where possible.
+`)
+
+var reviewWorkflowCostsAgentUserTemplate = MustRegisterTemplate("reviewWorkflowCostsAgentUser", `Review workflow cost and recommend how to reduce it without weakening the objective or success criteria.{{if .TargetRunFolder}} Use run and cost evidence from "{{.TargetRunFolder}}".{{else}} Find the latest meaningful run and cost evidence first.{{end}}{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
 // --- review_step_code templates ---
 
 var reviewStepCodeAgentSystemTemplate = MustRegisterTemplate("reviewStepCodeAgentSystem", `# Step Code Review Agent
@@ -9479,6 +9994,64 @@ func (agent *WorkflowResultsReviewAgent) Execute(ctx context.Context, templateVa
 		return "", nil, err
 	}
 	if err := reviewWorkflowResultsAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
+	return result, updatedHistory, nil
+}
+
+// WorkflowTimingReviewAgent reviews actual run latency and speedup opportunities.
+type WorkflowTimingReviewAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowTimingReviewAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowTimingReviewAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowTimingReviewAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowTimingReviewAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := reviewWorkflowTimingAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := reviewWorkflowTimingAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
+	return result, updatedHistory, nil
+}
+
+// WorkflowCostReviewAgent reviews actual run costs and cost-reduction opportunities.
+type WorkflowCostReviewAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowCostReviewAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowCostReviewAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowCostReviewAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowCostReviewAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := reviewWorkflowCostsAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := reviewWorkflowCostsAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
 		return "", nil, err
 	}
 	inputProcessor := func(map[string]string) string { return userMessage.String() }
@@ -10305,6 +10878,217 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowResultsAgent(ctx context
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("review_workflow_results agent failed: %w", err)
+	}
+	return result, nil
+}
+
+// runReviewWorkflowTimingAgent reviews actual run latency and speedup opportunities.
+func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+	logger := iwm.controller.GetLogger()
+
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	stepConfigSummary := ""
+	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
+		var sb strings.Builder
+		for _, sc := range stepConfigs {
+			optimized := false
+			mode := "code_exec"
+			declaredMode := ""
+			successfulRuns := 0
+			lockLearnings := false
+			lockCode := false
+			if sc.AgentConfigs != nil {
+				if sc.AgentConfigs.Optimized != nil {
+					optimized = *sc.AgentConfigs.Optimized
+				}
+				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
+					mode = "code_exec"
+				}
+				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+				if sc.AgentConfigs.SuccessfulRuns != nil {
+					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
+				}
+				if sc.AgentConfigs.LockLearnings != nil {
+					lockLearnings = *sc.AgentConfigs.LockLearnings
+				}
+				if sc.AgentConfigs.LockCode != nil {
+					lockCode = *sc.AgentConfigs.LockCode
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v\n", sc.ID, optimized, mode, declaredMode, successfulRuns, lockLearnings, lockCode))
+		}
+		stepConfigSummary = sb.String()
+	}
+
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ review_workflow_timing: failed to reload plan for objective: %v (using cached value)", err))
+	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
+
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for review_workflow_timing agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-timing-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowTimingReviewAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "review-workflow-timing", 0, 0, "review-workflow-timing",
+		createAgentFunc, phaseTools, phaseExecutors, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create review_workflow_timing agent: %w", err)
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath":           workspacePath,
+		"TargetRunFolder":         targetRunFolder,
+		"PlanJSON":                planJSON,
+		"StepConfigSummary":       stepConfigSummary,
+		"WorkflowObjective":       workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
+	}
+
+	logger.Info(fmt.Sprintf("⏱️ Running review_workflow_timing agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("review_workflow_timing agent failed: %w", err)
+	}
+	return result, nil
+}
+
+// runReviewWorkflowCostsAgent reviews actual run costs and cost-reduction opportunities.
+func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+	logger := iwm.controller.GetLogger()
+
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	stepConfigSummary := ""
+	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
+		var sb strings.Builder
+		for _, sc := range stepConfigs {
+			optimized := false
+			mode := "code_exec"
+			declaredMode := ""
+			successfulRuns := 0
+			lockLearnings := false
+			lockCode := false
+			if sc.AgentConfigs != nil {
+				if sc.AgentConfigs.Optimized != nil {
+					optimized = *sc.AgentConfigs.Optimized
+				}
+				if isScriptedExecutionModeConfig(sc.AgentConfigs) {
+					mode = "code_exec"
+				}
+				declaredMode = sc.AgentConfigs.DeclaredExecutionMode
+				if sc.AgentConfigs.SuccessfulRuns != nil {
+					successfulRuns = *sc.AgentConfigs.SuccessfulRuns
+				}
+				if sc.AgentConfigs.LockLearnings != nil {
+					lockLearnings = *sc.AgentConfigs.LockLearnings
+				}
+				if sc.AgentConfigs.LockCode != nil {
+					lockCode = *sc.AgentConfigs.LockCode
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v, mode=%s, declared_mode=%s, successful_runs=%d, lock_learnings=%v, lock_code=%v\n", sc.ID, optimized, mode, declaredMode, successfulRuns, lockLearnings, lockCode))
+		}
+		stepConfigSummary = sb.String()
+	}
+
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ review_workflow_costs: failed to reload plan for objective: %v (using cached value)", err))
+	}
+	workflowObjective, workflowSuccessCriteria := iwm.controller.ResolveWorkflowObjective(ctx)
+
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+		fmt.Sprintf("%s/costs", workspacePath),
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for review_workflow_costs agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("review-workflow-costs-agent", 60, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowCostReviewAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "review-workflow-costs", 0, 0, "review-workflow-costs",
+		createAgentFunc, phaseTools, phaseExecutors, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create review_workflow_costs agent: %w", err)
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath":           workspacePath,
+		"TargetRunFolder":         targetRunFolder,
+		"PlanJSON":                planJSON,
+		"StepConfigSummary":       stepConfigSummary,
+		"WorkflowObjective":       workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
+	}
+
+	logger.Info(fmt.Sprintf("💸 Running review_workflow_costs agent (target_run_folder: %q, objective: %q, success_criteria: %q, focus: %q)", targetRunFolder, workflowObjective, workflowSuccessCriteria, focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("review_workflow_costs agent failed: %w", err)
 	}
 	return result, nil
 }

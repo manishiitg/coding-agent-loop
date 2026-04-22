@@ -1113,7 +1113,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
 	// Dynamic report system (docs/workflow/persistent_stores_design.md section 2).
-	// No backend wrappers — the frontend ReportViewer reads reports/report_plan.md
+	// No backend wrappers — the frontend ReportViewer reads reports/report_plan.json
 	// and db/*.json / knowledgebase/*.json directly via the workspace service's
 	// /api/documents/{path} endpoint (agentApi.getPlannerFileContent).
 
@@ -4632,18 +4632,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Register evaluation tools in builder-style phases. One loads the eval
-					// grammar/capabilities on demand, one validates the plan, and one executes
-					// the full evaluation against the current run.
-					if err := todo_creation_human.RegisterEvaluationCapabilitiesTool(
-						underlyingAgent,
-						api.logger,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation capabilities tool in %s: %v", workflowPhaseID, err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered evaluation capabilities tool in %s", workflowPhaseID)
-					}
-
+					// Register evaluation tools in builder-style phases: validation plus
+					// full execution against the current run.
 					if err := todo_creation_human.RegisterEvaluationValidationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4657,17 +4647,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					// Reporting tools: one loads the on-demand reporting grammar/capabilities,
-					// the other validates reports/report_plan.md against real db/*.json and
-					// knowledgebase/*.json sources. The renderer silently drops bad widgets, so
-					// without validation the user sees a blank Report tab with no diagnostic.
-					if err := todo_creation_human.RegisterReportingCapabilitiesTool(
+					// Reporting tools: JSON report-plan read/write tools plus validation and
+					// preview against real db/*.json / knowledgebase/*.json sources. The renderer
+					// silently drops bad widgets, so validation stays in the loop.
+					if err := todo_creation_human.RegisterReportPlanManagementTools(
 						underlyingAgent,
+						phaseWorkspacePath,
 						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
 					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register reporting capabilities tool in %s: %v", workflowPhaseID, err)
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan management tools in %s: %v", workflowPhaseID, err)
 					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered reporting capabilities tool in %s", workflowPhaseID)
+						log.Printf("[WORKFLOW_PHASE] Registered report plan management tools in %s", workflowPhaseID)
 					}
 
 					if err := todo_creation_human.RegisterReportPlanValidationTools(

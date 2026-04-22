@@ -1,5 +1,6 @@
-// Dynamic report viewer — parses reports/report_plan.md, fetches each widget's JSON
-// source, renders widgets. See docs/workflow/persistent_stores_design.md.
+// Dynamic report viewer — parses reports/report_plan.json, fetches each widget's
+// JSON source, and renders widgets.
+// See docs/workflow/persistent_stores_design.md.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
@@ -792,6 +793,7 @@ function widgetInstanceKey(
 }
 
 function widgetShouldRender(widget: ReportWidget, raw: unknown) {
+  if (widget.hidden) return false
   if (widget.kind === 'costs' || widget.kind === 'evals' || widget.kind === 'runs') return true
   if (raw === undefined || raw === null) return true
   if (!evaluateShowIf(raw, widget.showIf)) return false
@@ -836,7 +838,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     }
   })
   const [loading, setLoading] = useState(false)
-  const [planMarkdown, setPlanMarkdown] = useState<string | null>(null)
+  const [planSource, setPlanSource] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceCache>({})
   const [costsData, setCostsData] = useState<WorkflowCostsResponse | null>(null)
   const [costsLoading, setCostsLoading] = useState(false)
@@ -852,9 +854,9 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
 
   const plan: ParsedReportPlan = useMemo(() => {
-    if (!planMarkdown) return { sections: [] }
-    return parseReportPlan(planMarkdown)
-  }, [planMarkdown])
+    if (!planSource) return { sections: [] }
+    return parseReportPlan(planSource)
+  }, [planSource])
 
   // Stable key: same set of paths → same string → effect below doesn't re-run.
   // Using the array identity directly would recompute every render because useMemo
@@ -920,10 +922,10 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     setLoading(true)
     setError(null)
 
-    readWorkspaceText(`${workspacePath}/reports/report_plan.md`)
-      .then(content => {
+    readWorkspaceText(`${workspacePath}/reports/report_plan.json`)
+      .then(jsonContent => {
         if (cancelled) return
-        setPlanMarkdown(content)
+        setPlanSource(jsonContent)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -1095,7 +1097,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
 
   useEffect(() => {
     setHiddenWidgetKeys(new Set())
-  }, [workspacePath, planMarkdown, refreshNonce])
+  }, [workspacePath, planSource, refreshNonce])
 
   const handleRefresh = () => {
     setError(null)
@@ -1118,7 +1120,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     })
   }
 
-  const planExists = planMarkdown !== null
+  const planExists = planSource !== null
   const visibleSections = useMemo(() => {
     return plan.sections.flatMap((section, sectionIndex) => {
       const entries = section.entries.flatMap((entry, entryIndex) => {
@@ -1217,7 +1219,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
                   <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Waiting For Plan Or Data</div>
                 </div>
                 <div className="max-w-md text-center text-sm text-muted-foreground leading-6">
-                  The builder writes <code className="px-1 rounded bg-muted">reports/report_plan.md</code> to configure
+                  The builder writes <code className="px-1 rounded bg-muted">reports/report_plan.json</code> to configure
                   this view; widgets render once <code className="px-1 rounded bg-muted">db/</code> or{' '}
                   <code className="px-1 rounded bg-muted">knowledgebase/graph.json</code> has data.
                 </div>

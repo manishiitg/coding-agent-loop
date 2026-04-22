@@ -1,20 +1,240 @@
-import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Database, Network } from 'lucide-react'
-import type { CommandDefinition } from './types'
+# Workflow Builder Commands And Tools
 
-export const builtinCommands: CommandDefinition[] = [
-  {
-    command: 'design-flow',
-    description: 'Validate context dependency chain between steps',
-    icon: <GitBranch className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nPay special attention to: ${focus}` : ''
-      ctx.onSubmit(`Read planning/plan.json and analyze the context flow between steps.${focusText}
+This doc is a reference for the workflow-builder surface.
+
+It separates two different concepts that are easy to confuse:
+
+- **Slash commands**: frontend shortcuts defined in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx). These are prompt macros. They do not perform work themselves.
+- **Tools**: backend workflow-builder tools registered in [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). These are the actual callable operations the builder agent can execute.
+
+Short version:
+
+- `/improve-workflow` is a slash command
+- `harden_workflow` is a tool
+- `/review-goal` is a slash command
+- `review_workflow_results` is a tool
+
+## Mental Model
+
+Use this rule:
+
+- Add a **slash command** when you want a guided workflow or a common prompt pattern
+- Add a **tool** when you need a new primitive capability
+
+A slash command can call multiple tools.
+A tool can exist without any dedicated slash command.
+
+## Workshop Modes
+
+Current workflow-builder workshop modes used by the UI:
+
+- `builder`
+- `optimizer`
+- `run`
+
+Availability in this doc is expressed in terms of those three modes.
+
+## Slash Commands
+
+These are the current workflow slash commands.
+
+| Slash Command | Purpose | Available In | Typical Tools It Drives |
+|---|---|---|---|
+| `/design-flow` | Inspect context dependencies and handoff design | `builder` | read-only shell/file tools |
+| `/ready-to-optimize` | Run a readiness checklist before switching into optimizer work | `builder` | read-only shell/file tools |
+| `/review-plan` | Critically review workflow design decisions | `builder`, `optimizer`, `run` | `review_plan` |
+| `/review-goal` | Check whether a real run is achieving the goal and whether eval measures it properly | `optimizer` | `review_workflow_results` |
+| `/review-speed` | Analyze workflow latency and recommend how to make it faster safely | `optimizer` | `review_workflow_timing` |
+| `/review-cost` | Analyze workflow cost and recommend how to reduce it safely | `optimizer` | `review_workflow_costs` |
+| `/review-config` | Review KB/db/lock recommendations | `builder`, `optimizer`, `run` | read-only shell/file tools, step-config inspection |
+| `/improve-kb` | Review and improve the knowledgebase using the current graph, plan, and run evidence | `optimizer` | `reorganize_knowledgebase`, `consolidate_knowledgebase`, read-only inspection tools |
+| `/improve-learnings` | Review and improve shared learnings using current learnings, plan, and run evidence | `optimizer` | `organize_global_learnings`, read-only inspection tools |
+| `/improve-eval` | Validate and improve `evaluation/evaluation_plan.json` against the objective, success criteria, and real run evidence | `optimizer` | `validate_evaluation_plan`, `review_workflow_results`, sometimes `run_full_evaluation` |
+| `/improve-report` | Validate and improve `reports/report_plan.md` using a rendered preview plus underlying data | `optimizer` | `validate_report_plan`, `preview_report_render`, read-only shell/file tools |
+| `/improve-continuously` | Set up recurring run + slower recurring optimizer improvement, with `builder/improve.md` as durable memory | `optimizer` | `get_workflow_config`, `get_schedule_runs`, `create_schedule`, `update_schedule`, file-edit tools |
+| `/improve-workflow` | Hybrid optimization flow: structural review, optional replan, evidence-based harden, optional verification run | `optimizer` | `optimize_workflow`, `replan_workflow_from_results`, `harden_workflow`, sometimes `run_full_evaluation`, optionally `run_full_workflow` |
+| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, and missing validation | `builder`, `optimizer`, `run` | read-only shell/file tools |
+| `/review-code` | Review saved `main.py` scripts against step descriptions | `optimizer` | `review_step_code` |
+| `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes | `builder`, `optimizer`, `run` | read-only shell/file tools |
+
+## Backend Tools
+
+These are the actual workflow-builder tools. The builder agent can call them directly when the current workshop mode allows it.
+
+### Always Available Base Tools
+
+These are available regardless of workshop mode.
+This section lists tools actually exposed to the workflow-builder LLM. Internal workspace executors such as `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, and `move_workspace_file` are intentionally excluded here because they are backend APIs/executors, not workflow-mode LLM tools.
+
+| Tool | Purpose |
+|---|---|
+| `execute_shell_command` | Run shell commands in the workflow workspace |
+| `diff_patch_workspace_file` | Patch a workspace file with a diff |
+| `read_image` | Read an image artifact |
+| `read_pdf` | Read a PDF artifact |
+| `generate_text_llm` | One-off text generation helper |
+| `search_web_llm` | Web-search helper |
+| `image_gen` | Generate images |
+| `image_edit` | Edit images |
+| `list_secrets` / `set_user_secret` / `delete_user_secret` | Inspect or manage user secrets |
+| `human_feedback` | Ask the human for a response |
+| `agent_browser` | Browser automation entry point |
+| `get_api_spec` / `get_prompt` / `get_resource` | MCP virtual helper tools |
+| `call_sub_agent` / `call_generic_agent` / `get_sub_agent_conversation` / `get_route_description` | Sub-agent helper tools |
+| `get_step_prompts` | Show prompts for a workflow step |
+| `get_workflow_config` | Inspect workflow-level config |
+| `get_llm_config` | Inspect active LLM config |
+| `get_cost_summary` | Show token/cost breakdown |
+
+### Execution Tools
+
+These are the run/test/inspection primitives.
+
+| Tool | Purpose | Available In |
+|---|---|---|
+| `execute_step` | Run one step in the background | `builder`, `optimizer`, `run` |
+| `query_step` | Inspect execution progress and tool calls | `builder`, `optimizer`, `run` |
+| `stop_step` | Stop one running execution | `builder`, `optimizer`, `run` |
+| `stop_all_executions` | Stop all running executions in the session | `builder`, `optimizer`, `run` |
+| `list_executions` | List known background executions | `builder`, `optimizer`, `run` |
+| `run_in_background` | Spawn a background agent with the same workflow context | `builder`, `optimizer`, `run` |
+| `run_full_workflow` | Run the full workflow | `builder`, `optimizer`, `run` |
+| `debug_step` | Inspect a step’s execution state, logs, and learning status | `builder`, `optimizer`, `run` |
+
+### Review And Optimization Tools
+
+These are the most important tools when people say “review”, “optimize”, “replan”, or “harden”.
+
+| Tool | Purpose | Mutates? | Available In |
+|---|---|---|---|
+| `review_plan` | Critically review workflow design decisions, optionally using run evidence | No | `builder`, `optimizer`, `run` |
+| `review_workflow_results` | Review actual outcomes against objective/success criteria and audit eval quality | No | `builder`, `optimizer`, `run` |
+| `review_workflow_timing` | Review actual run latency and recommend safe speedups | No | `builder`, `optimizer`, `run` |
+| `review_workflow_costs` | Review actual run cost and recommend safe cost reductions | No | `builder`, `optimizer`, `run` |
+| `review_step_code` | Review saved `main.py` against current step descriptions | No | `builder`, `optimizer` |
+| `optimize_step` | Analyze one step for optimization opportunities | No | `builder`, `optimizer` |
+| `optimize_workflow` | Analyze the overall workflow structure against the objective | No | `builder`, `optimizer` |
+| `replan_workflow_from_results` | Rewrite the workflow structure from actual run evidence | Yes | `builder`, `optimizer` |
+| `harden_workflow` | Apply non-structural reliability fixes from eval failures | Yes | `builder`, `optimizer` |
+| `analyze_step` | Step-focused inspection helper | Yes/No depends on usage context, but used as analysis tooling | `builder`, `optimizer` |
+
+Important distinction:
+
+- Use `review_workflow_results` when the question is: “Did the run actually achieve the goal, and is eval measuring that correctly?”
+- Use `replan_workflow_from_results` when the question is: “Is the workflow structure wrong based on what happened in a real run?”
+- Use `harden_workflow` when the structure is right but the steps need to become more reliable.
+
+### Plan And Step-Editing Tools
+
+These mutate the workflow plan/config directly.
+
+| Tool | Purpose | Available In |
+|---|---|---|
+| `add_regular_step` | Add a regular step | `builder`, `optimizer` |
+| `add_routing_step` | Add a routing step | `builder`, `optimizer` |
+| `add_human_input_step` | Add a human-input step | `builder`, `optimizer` |
+| `add_todo_task_step` | Add a `todo_task` step | `builder`, `optimizer` |
+| `add_todo_task_route` | Add a route inside a `todo_task` | `builder`, `optimizer` |
+| `update_regular_step` | Update a regular step | `builder`, `optimizer` |
+| `update_routing_step` | Update a routing step | `builder`, `optimizer` |
+| `update_human_input_step` | Update a human-input step | `builder`, `optimizer` |
+| `update_todo_task_step` | Update a `todo_task` step | `builder`, `optimizer` |
+| `update_todo_task_route` | Update a `todo_task` route | `builder`, `optimizer` |
+| `delete_todo_task_route` | Delete a `todo_task` route | `builder`, `optimizer` |
+| `delete_plan_steps` | Delete workflow steps | `builder`, `optimizer` |
+| `update_validation_schema` | Update a step’s validation schema | `builder`, `optimizer` |
+| `update_step_config` | Update per-step execution/configuration settings | `builder`, `optimizer` |
+| `publish_workflow_version` | Publish a workflow version | `builder`, `optimizer` |
+| `restore_workflow_version` | Restore a prior workflow version | `builder`, `optimizer` |
+
+### Variables, Workflow Config, Scheduling, Skills
+
+| Tool | Purpose | Available In |
+|---|---|---|
+| `update_variable` | Update a variable definition | `builder`, `optimizer` |
+| `add_group` / `update_group` / `delete_group` | Manage variable groups | `builder`, `optimizer` |
+| `update_workflow_config` | Update workflow-level config | `builder`, `optimizer` |
+| `create_schedule` / `update_schedule` / `delete_schedule` / `trigger_schedule` / `get_schedule_runs` | Manage workflow schedules | `builder`, `optimizer` |
+| `list_skills` / `search_skills` / `install_skill` / `uninstall_skill` / `import_skill` | Manage skills | `builder`, `optimizer` |
+| `list_published_llms` / `list_provider_models` / `test_llm` / `set_workflow_llm_config` | Inspect or configure LLM settings | `builder`, `optimizer` |
+
+### Evaluation And Reporting Tools
+
+| Tool | Purpose | Available In |
+|---|---|---|
+| `validate_evaluation_plan` | Validate the evaluation plan | `builder`, `optimizer` |
+| `run_full_evaluation` | Execute the evaluation plan | `builder`, `optimizer` |
+| `get_reporting_capabilities` | Show report grammar/capabilities | `builder`, `optimizer` |
+| `validate_report_plan` | Validate `reports/report_plan.md` | `builder`, `optimizer` |
+| `preview_report_render` | Preview report rendering | `builder`, `optimizer` |
+
+### Knowledgebase Tools
+
+| Tool | Purpose | Available In |
+|---|---|---|
+| `reorganize_knowledgebase` | Apply a natural-language KB reorganization | `builder`, `optimizer` |
+| `consolidate_knowledgebase` | Consolidate KB content across steps/runs | `builder`, `optimizer` |
+
+## Common Crosswalks
+
+These are the most common “what slash command maps to what tool?” relationships.
+
+| Slash Command | Usually Calls |
+|---|---|
+| `/review-plan` | `review_plan` |
+| `/review-goal` | `review_workflow_results` |
+| `/review-speed` | `review_workflow_timing` |
+| `/review-cost` | `review_workflow_costs` |
+| `/review-code` | `review_step_code` |
+| `/improve-eval` | `validate_evaluation_plan`, `review_workflow_results`, and sometimes `run_full_evaluation` |
+| `/improve-continuously` | `get_workflow_config`, `get_schedule_runs`, `create_schedule`, `update_schedule`, and file-edit tools for `builder/improve.md` |
+| `/improve-workflow` | `optimize_workflow`, sometimes `replan_workflow_from_results`, then `harden_workflow`; only uses `run_full_evaluation` or `run_full_workflow` when existing evidence is missing or verification is needed |
+| `/improve-kb` | `reorganize_knowledgebase`, `consolidate_knowledgebase`, and read-only KB inspection |
+| `/improve-learnings` | `organize_global_learnings` and read-only learnings inspection |
+| `/improve-report` | `validate_report_plan`, `preview_report_render`, plus read-only data inspection |
+
+## Which One Should I Use?
+
+If you are trying to:
+
+- **Review the design**: use `/review-plan` or `review_plan`
+- **Review whether a real run actually achieved the goal**: use `/review-goal` or `review_workflow_results`
+- **Review where runtime is being spent**: use `/review-speed` or `review_workflow_timing`
+- **Review where cost is being spent**: use `/review-cost` or `review_workflow_costs`
+- **Improve the knowledgebase**: use `/improve-kb`
+- **Improve learnings**: use `/improve-learnings`
+- **Improve the evaluation plan**: use `/improve-eval`
+- **Set up recurring execution + continuous optimization**: use `/improve-continuously`
+- **Rewrite the workflow structure from evidence**: use `replan_workflow_from_results` or let `/improve-workflow` decide
+- **Improve reliability without redesigning the workflow**: use `harden_workflow` or let `/improve-workflow` decide
+- **Do an end-to-end optimization pass**: use `/improve-workflow`
+
+## Exact Slash Command Messages
+
+This appendix captures the exact normalized prompt templates used by the workflow slash commands in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx).
+
+Normalization rules:
+
+- Runtime values are shown as placeholders such as `<focus>`, `<selected-run-folder>`, `<step-id>`, and `<instruction>`.
+- If a command has multiple behaviors depending on whether text appears before the slash, both variants are shown.
+- If a command does not immediately submit a message and instead pre-fills the chat input, that draft text is shown explicitly.
+- Common placeholders:
+  - `<focus-text>` means either empty or ` Focus especially on: <focus>.`
+  - `<focus-line>` means either empty or a new line carrying the focus text, exactly as shown in the relevant command section
+  - `<run-text>` means the selected-run-folder sentence or the fallback “find the latest meaningful evidence first” sentence
+
+### `/design-flow`
+
+If text exists before the slash, append:
+
+```text
+Pay special attention to: <focus>
+```
+
+Submitted message:
+
+```text
+Read planning/plan.json and analyze the context flow between steps.<focus-text>
 
 Check for:
 1. **Broken chain** — step depends on a context_output that no earlier step produces
@@ -27,19 +247,15 @@ Check for:
 Show me:
 - A dependency graph: step-a (produces X) → step-b (consumes X, produces Y) → step-c (consumes Y)
 - Any issues found with severity (CRITICAL / WARNING / INFO)
-- Suggested fixes for each issue`)
-    }
-  },
-  {
-    command: 'ready-to-optimize',
-    description: 'Check if workflow is ready to move to optimizer mode',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'builder',
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.onSubmit(`Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
+- Suggested fixes for each issue
+```
+
+### `/ready-to-optimize`
+
+Submitted message:
+
+```text
+Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
 
 1. **Objective set?** — Read soul/soul.md and check the "## Objective" section. FAIL if the file is missing, the section is absent, or its body is empty / still a "<TODO: ...>" placeholder.
 2. **Success criteria set?** — Read soul/soul.md and check the "## Success Criteria" section. Same FAIL conditions as objective.
@@ -54,45 +270,29 @@ Show me:
 Summary:
 - READY if 0 FAILs
 - NOT READY if any FAILs — list what needs to be done
-- If READY with WARNs — "Ready but recommended to fix these first"`)
-    }
-  },
-  {
-    command: 'review-plan',
-    description: 'Critically analyze the workflow design for weaknesses and improvements',
-    icon: <Search className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Run review_plan() to critically analyze the current workflow plan.${focusText}
+- If READY with WARNs — "Ready but recommended to fix these first"
+```
+
+### `/review-plan`
+
+Submitted message:
+
+```text
+Run review_plan() to critically analyze the current workflow plan.<focus-text>
 
 Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
 
-This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.`)
-    }
-  },
-  {
-    command: 'review-goal',
-    description: 'Review whether a real run achieves the goal, and whether eval is measuring that properly',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" unless you find stronger newer evidence is needed.`
-        : 'If no run folder is selected, find the latest meaningful run/eval evidence first.'
-      ctx.onSubmit(`Run review_workflow_results() to judge actual workflow outcomes, not just the plan.${focusText}
+This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.
+```
 
-${runText}
+### `/review-goal`
+
+Submitted message:
+
+```text
+Run review_workflow_results() to judge actual workflow outcomes, not just the plan.<focus-text>
+
+<run-text>
 
 Assess three things separately:
 1. Is the workflow actually achieving the stated objective?
@@ -109,27 +309,17 @@ Then give:
 - an overall verdict on evaluation quality
 - the most important workflow gaps
 - the most important eval gaps
-- the top next actions, clearly separated into workflow fixes vs eval fixes.`)
-    }
-  },
-  {
-    command: 'review-speed',
-    description: 'Review workflow latency and how to make it faster',
-    icon: <Minimize2 className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" unless you find stronger newer evidence is needed.`
-        : 'If no run folder is selected, find the latest meaningful run evidence first.'
-      ctx.onSubmit(`Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.${focusText}
+- the top next actions, clearly separated into workflow fixes vs eval fixes.
+```
 
-${runText}
+### `/review-speed`
+
+Submitted message:
+
+```text
+Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.<focus-text>
+
+<run-text>
 
 Assess four things separately:
 1. What is the overall workflow wall-clock, and what is the biggest bottleneck class: LLM latency, tool latency, orchestration overhead, or plan shape?
@@ -142,27 +332,29 @@ Then give:
 - the best description/prompt changes
 - the best plan changes to reduce handoffs or unnecessary steps
 - the best model/tool/config changes
-- the top next actions, with expected impact and risk to success criteria.`)
-    }
-  },
-  {
-    command: 'review-cost',
-    description: 'Review workflow cost and how to reduce it safely',
-    icon: <Cpu className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Focus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" unless you find stronger newer evidence is needed.`
-        : 'If no run folder is selected, find the latest meaningful run and cost evidence first.'
-      ctx.onSubmit(`Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.${focusText}
+- the top next actions, with expected impact and risk to success criteria.
+```
 
-${runText}
+Where `<run-text>` is one of:
+
+```text
+Use the selected run folder "<selected-run-folder>" unless you find stronger newer evidence is needed.
+```
+
+or
+
+```text
+If no run folder is selected, find the latest meaningful run evidence first.
+```
+
+### `/review-cost`
+
+Submitted message:
+
+```text
+Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.<focus-text>
+
+<run-text>
 
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?
@@ -175,21 +367,27 @@ Then give:
 - the best description/prompt changes
 - the best plan changes to reduce unnecessary steps or handoffs
 - the best model/tool/config changes
-- the top next actions, with expected savings and risk to success criteria.`)
-    }
-  },
-  {
-    command: 'review-config',
-    description: 'Review per-step KB / db / lock_learnings / lock_code recommendations',
-    icon: <Lock className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus areas: ${focus}.` : ''
-      ctx.onSubmit(`Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.${focusText}
+- the top next actions, with expected savings and risk to success criteria.
+```
+
+Where `<run-text>` is one of:
+
+```text
+Use the selected run folder "<selected-run-folder>" unless you find stronger newer evidence is needed.
+```
+
+or
+
+```text
+If no run folder is selected, find the latest meaningful run and cost evidence first.
+```
+
+### `/review-config`
+
+Submitted message:
+
+```text
+Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.<focus-text>
 
 PROCEDURE
 1. Read planning/plan.json and planning/step_config.json. For each step capture: id, title, description, declared_execution_mode, and current AgentConfigs (knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash).
@@ -241,31 +439,21 @@ Then summary sections:
 - **Stale locks (unlock + re-review)** — currently locked but description_hash drifted.
 
 END WITH READY-TO-PASTE COMMANDS
-List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.`)
-    }
-  },
-  {
-    command: 'improve-kb',
-    description: 'Review and improve the knowledgebase using the current graph, plan, and run evidence',
-    icon: <Network className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" when recent run evidence helps explain KB drift or missing contributions.`
-        : 'If recent run evidence is needed to explain KB drift or missing contributions, find the latest meaningful run first.'
-      ctx.onSubmit(`Review and improve the workflow knowledgebase. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your KB findings and applied decisions when you finish.${focusText}
+List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
+```
+
+### `/improve-kb`
+
+Submitted message:
+
+```text
+Review and improve the workflow knowledgebase. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your KB findings and applied decisions when you finish.<focus-text>
 
 DISCOVERY
 1. Read soul/soul.md to understand the objective and success criteria.
 2. Read planning/plan.json and planning/step_config.json so you understand which steps should read from or contribute to the KB.
 3. Read knowledgebase/graph.json and index.json.
-4. ${runText}
+4. <run-text>
 
 DECISION
 Assess whether the KB needs:
@@ -294,32 +482,34 @@ When you finish, update builder/improve.md with:
 - the main KB weaknesses you found
 - what was reorganized or consolidated
 - what was applied vs deferred
-- remaining KB gaps`)
-    }
-  },
-  {
-    command: 'improve-learnings',
-    description: 'Review and improve shared learnings using current learnings, plan, and run evidence',
-    icon: <Lightbulb className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" when recent run evidence helps explain stale, missing, or duplicated learnings.`
-        : 'If recent run evidence is needed to explain stale, missing, or duplicated learnings, find the latest meaningful run first.'
-      ctx.onSubmit(`Review and improve workflow learnings. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your learnings findings and applied decisions when you finish.${focusText}
+- remaining KB gaps
+```
+
+Where `<run-text>` is one of:
+
+```text
+Use the selected run folder "<selected-run-folder>" when recent run evidence helps explain KB drift or missing contributions.
+```
+
+or
+
+```text
+If recent run evidence is needed to explain KB drift or missing contributions, find the latest meaningful run first.
+```
+
+### `/improve-learnings`
+
+Submitted message:
+
+```text
+Review and improve workflow learnings. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your learnings findings and applied decisions when you finish.<focus-text>
 
 DISCOVERY
 1. Read soul/soul.md to understand the objective and success criteria.
 2. Read planning/step_config.json to inspect learning_objective coverage across steps.
 3. Read learnings/_global/SKILL.md and references/*.md when present.
 4. Inspect relevant step learnings when current failures, duplication, or missing knowledge appear to be step-specific.
-5. ${runText}
+5. <run-text>
 
 DECISION
 Assess whether learnings need:
@@ -345,21 +535,27 @@ When you finish, update builder/improve.md with:
 - the main learnings weaknesses you found
 - what was reorganized or promoted
 - what was applied vs deferred
-- remaining learnings gaps`)
-    }
-  },
-  {
-    command: 'improve-report',
-    description: 'Validate reports/report_plan.json and suggest layout/color improvements',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusLine = focus ? `\n\nFocus on: ${focus}.` : ''
-      ctx.onSubmit(`Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.${focusLine}
+- remaining learnings gaps
+```
+
+Where `<run-text>` is one of:
+
+```text
+Use the selected run folder "<selected-run-folder>" when recent run evidence helps explain stale, missing, or duplicated learnings.
+```
+
+or
+
+```text
+If recent run evidence is needed to explain stale, missing, or duplicated learnings, find the latest meaningful run first.
+```
+
+### `/improve-report`
+
+Submitted message:
+
+```text
+Review and improve reports/report_plan.md in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.<focus-line>
 
 PASS 1 — VALIDATION
 Call validate_report_plan.
@@ -378,31 +574,28 @@ Then call get_report_plan yourself and also sample the underlying db/*.json and 
 5. **Density**: any charts with >10 points that need top_n? Any tables without default_sort that would be hard to scan?
 6. **Rendered reality check**: based on the preview, what actually looks broken, cramped, misleading, empty, or visually weak even if the JSON is technically valid?
 
-Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.json until I confirm.
+Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.md until I confirm.
 
 When you finish, update builder/improve.md with:
 - what report evidence you reviewed
 - the main report weaknesses you found
 - what you recommended
-- what was applied vs deferred`)
-    }
-  },
-  {
-    command: 'improve-eval',
-    description: 'Validate evaluation/evaluation_plan.json and improve goal/criteria coverage',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusLine = focus ? `\n\nFocus on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" as the primary evidence set when judging whether eval measures the real objective and success criteria well.`
-        : 'If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.'
-      ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in three passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+- what was applied vs deferred
+```
+
+Where `<focus-line>` is either empty or:
+
+```text
+
+Focus on: <focus>.
+```
+
+### `/improve-eval`
+
+Submitted message:
+
+```text
+Review and improve evaluation/evaluation_plan.json in three passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.<focus-line>
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
@@ -412,7 +605,7 @@ PASS 1 — VALIDATION
 PASS 2 — GOAL / SUCCESS-CRITERIA ALIGNMENT
 1. Read soul/soul.md and extract the objective and success criteria.
 2. Read planning/plan.json so you understand what the workflow is actually producing.
-3. ${runText}
+3. <run-text>
 4. If existing run evidence is available, use review_workflow_results() or inspect the existing run/eval outputs to judge:
    - which success criteria are directly measured
    - which are only weakly or indirectly measured
@@ -434,22 +627,34 @@ When you finish, update builder/improve.md with:
 - what workflow/eval evidence you reviewed
 - the main eval weaknesses you found
 - what you recommended
-- what was applied vs deferred`)
-    }
-  },
-  {
-    command: 'improve-continuously',
-    description: 'Set up recurring workflow run + slower recurring optimizer improvement',
-    icon: <Bot className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const improveMessageFocus = focus ? ` Focus especially on: ${focus}.` : ''
-      ctx.onSubmit(`Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid creating duplicate schedules.${focusText}
+- what was applied vs deferred
+```
+
+Where `<focus-line>` is either empty or:
+
+```text
+
+Focus on: <focus>.
+```
+
+Where `<run-text>` is one of:
+
+```text
+Use the selected run folder "<selected-run-folder>" as the primary evidence set when judging whether eval measures the real objective and success criteria well.
+```
+
+or
+
+```text
+If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.
+```
+
+### `/improve-continuously`
+
+Submitted message:
+
+```text
+Set up automatic run + improve scheduling for this workflow. Do this autonomously and avoid creating duplicate schedules.<focus-text>
 
 GOAL
 Create or update TWO complementary schedules:
@@ -457,10 +662,10 @@ Create or update TWO complementary schedules:
 2. a slower optimizer/workshop schedule that continuously improves the workflow and evaluation over time
 
 DISCOVERY
-1. Call get_workflow_config and inspect the current schedule list carefully before doing anything else.
-2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
-3. Read soul/soul.md to understand the objective and success criteria.
-4. Read variables/variables.json to identify valid group names and enabled groups.
+1. Read soul/soul.md to understand the objective and success criteria.
+2. Read variables/variables.json to identify valid group names and enabled groups.
+3. Call get_workflow_config and inspect the current schedule list carefully.
+4. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -497,7 +702,7 @@ The optimizer schedule message should explicitly do the following:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading
 - improve the report plan when the rendered report is weak, misleading, or clearly behind the workflow's current outputs
 - improve the workflow using existing evidence first; only run verification when genuinely needed
-- update builder/improve.md with timestamp, evidence reviewed, schedule context, workflow changes, eval changes, report changes, what was applied automatically, remaining gaps, and next hypotheses${improveMessageFocus}
+- update builder/improve.md with timestamp, evidence reviewed, schedule context, workflow changes, eval changes, report changes, what was applied automatically, remaining gaps, and next hypotheses<improve-continuously-focus>
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
@@ -523,39 +728,34 @@ Summarize:
 - run schedule: ID, name, cadence, timezone, groups
 - improve schedule: ID, name, cadence, timezone, groups
 - where you saved builder/improve.md
-- the exact optimizer schedule message you configured`)
-    }
-  },
-  {
-    command: 'improve-workflow',
-    description: 'Use existing run evidence to review, replan if needed, harden, then optionally verify',
-    icon: <RefreshCw className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const iterationHint = runFolder
-        ? `Use iteration "${runFolder.split('/')[0]}" as the starting evidence set for structural review.`
-        : 'Read runs/ to find the latest iteration and use that as the starting evidence set for structural review.'
-      const focusArg = focus ? `, focus="${focus}"` : ''
-      ctx.onSubmit(`Your single goal: improve this workflow end-to-end with the minimum necessary changes, starting from existing run evidence. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end. Review the current iteration first, then replan or harden from that evidence. Only run a fresh verification pass if it is actually needed.${focusText}
+- the exact optimizer schedule message you configured
+```
+
+Where `<improve-continuously-focus>` is either empty or:
+
+```text
+ Focus especially on: <focus>.
+```
+
+### `/improve-workflow`
+
+Submitted message:
+
+```text
+Your single goal: improve this workflow end-to-end with the minimum necessary changes, starting from existing run evidence. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end. Review the current iteration first, then replan or harden from that evidence. Only run a fresh verification pass if it is actually needed.<focus-text>
 
 SETUP
 1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
-4. ${iterationHint} Treat that iteration as the default evidence set for this command run.
+4. <iteration-hint> Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
-1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
+1. Call optimize_workflow(<focus-call>).
 2. Read the optimize_workflow result carefully and classify the findings:
    - **Structural**: missing steps, redundant steps, wrong ordering, wrong step type, broken context flow.
    - **Non-structural**: weak prompts, weak validation, step reliability issues, tool/config issues.
-3. If the findings show a MATERIAL structural problem and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before doing the hardening review.
+3. If the findings show a MATERIAL structural problem and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"<focus-arg>) ONCE before doing the hardening review.
 4. If the findings are minor or mostly non-structural, skip replanning and keep the current structure.
 5. Do not thrash the plan. At most one structural replan in this command run.
 
@@ -567,8 +767,8 @@ For group {group}:
      - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}") to score the existing outputs. Do NOT execute a fresh workflow run in this phase.
      - If there is no meaningful run evidence for this group in the chosen iteration, report that gap clearly and continue with the groups that do have evidence.
   b. **DECIDE** — based on the existing evidence:
-     - If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue reviewing the remaining groups against the updated plan.
-     - Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) and wait for it to finish.
+     - If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"<focus-arg>), then continue reviewing the remaining groups against the updated plan.
+     - Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"<focus-arg>) and wait for it to finish.
   c. **BE CONSERVATIVE** — prefer harden_workflow for reliability fixes; use replanning only when the workflow shape is actually wrong.
 
 PHASE 3 — VERIFY THE IMPROVEMENT
@@ -597,21 +797,15 @@ Before finishing, update builder/improve.md with:
 - eval/report changes touched if any
 - what improved
 - remaining gaps
-- next hypotheses`)
-    }
-  },
-  {
-    command: 'review-descriptions',
-    description: 'Review all steps for description vs skill/learning confusion',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Pay special attention to: ${focus}.` : ''
-      ctx.onSubmit(`Audit every step's description in plan.json. For each step, do the following:
+- next hypotheses
+```
+
+### `/review-descriptions`
+
+Submitted message:
+
+```text
+Audit every step's description in plan.json. For each step, do the following:
 
 1. Read the step description from plan.json.
 2. Read the step's SKILL.md / learnings (if any exist).
@@ -651,39 +845,29 @@ For each step, report:
 - Status: CLEAN, CONFUSED (description/skill issues), HARDCODED (hardcoded values found), WEAK_ORCHESTRATOR (for todo_task steps with orchestrator issues), BROWSER_ANTIPATTERN (prescribes evaluate/selectors instead of ref-based interaction), or NO_VALIDATION (missing or weak validation_schema) — a step can have multiple
 - If issues found: which problems and a concrete fix suggestion
 
-End with a summary table of all steps and their status.${focusText}`)
-    }
-  },
-  {
-    command: 'review-code',
-    description: 'Review saved scripts (main.py) against step descriptions to detect drift',
-    icon: <FileText className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      if (focus) {
-        // If text before slash, treat it as a step ID
-        ctx.onSubmit(`Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.`)
-      } else {
-        ctx.onSubmit(`Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.`)
-      }
-    }
-  },
-  {
-    command: 'review-orchestrators',
-    description: 'Review todo_task orchestrator descriptions for quality',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? ` Pay special attention to: ${focus}.` : ''
-      ctx.onSubmit(`Audit all todo_task steps in plan.json. For each todo_task step, read its todo_task_step description and all its predefined_routes sub-agent descriptions. Check for these problems:
+End with a summary table of all steps and their status.<focus-text>
+```
+
+### `/review-code`
+
+If text exists before the slash, the command immediately submits:
+
+```text
+Run review_step_code(step_id="<step-id>") to check if the saved main.py for step "<step-id>" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.
+```
+
+If no text exists before the slash, the command immediately submits:
+
+```text
+Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.
+```
+
+### `/review-orchestrators`
+
+Submitted message:
+
+```text
+Audit all todo_task steps in plan.json. For each todo_task step, read its todo_task_step description and all its predefined_routes sub-agent descriptions. Check for these problems:
 
 **Orchestrator Description Quality:**
 - **Missing objective/intent**: The orchestrator description must clearly state WHAT we are trying to achieve — the overall goal and purpose. Without this, the orchestrator can't make intelligent decisions when things go wrong or when it encounters unexpected situations. A good orchestrator description answers: "Why do these sub-agents exist together? What outcome are we after?"
@@ -705,161 +889,14 @@ For each todo_task step, report:
 - Per sub-agent route: route ID + verdict
 - Concrete fix suggestions for each issue
 
-End with a summary table.${focusText}`)
-    }
-  },
-  {
-    command: 'build-skill',
-    description: 'Build a new skill using the skill-creator',
-    icon: <Lightbulb className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const currentSkills = ctx.tabConfig?.selectedSkills || []
-      if (!currentSkills.includes('skill-creator')) {
-        ctx.setTabConfig(ctx.activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
-      }
-      const wsStore = ctx.getWorkspaceStore()
-      const expanded = new Set(wsStore.expandedFolders)
-      expanded.add('skills')
-      expanded.add('skills/custom')
-      wsStore.setExpandedFolders(expanded)
-      const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
-      const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${skillContext}`
-        : `I want to build a skill based on our conversation. ${skillContext}`
-      ctx.onSubmit(message)
-    }
-  },
-  {
-    command: 'build-subagent',
-    description: 'Build a new sub-agent template',
-    icon: <Bot className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const currentSkills = ctx.tabConfig?.selectedSkills || []
-      if (!currentSkills.includes('subagent-creator') && !currentSkills.includes('custom/subagent-creator')) {
-        ctx.setTabConfig(ctx.activeTabId, { selectedSkills: [...currentSkills, 'custom/subagent-creator'] })
-      }
-      const wsStore = ctx.getWorkspaceStore()
-      const expanded = new Set(wsStore.expandedFolders)
-      expanded.add('subagents')
-      expanded.add('subagents/custom')
-      wsStore.setExpandedFolders(expanded)
-      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level) and markdown instructions.'
-      const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${saContext}`
-        : `I want to build a sub-agent template. ${saContext}`
-      ctx.onSubmit(message)
-    }
-  },
-  {
-    command: 'add-skill',
-    description: 'Import a skill from GitHub',
-    icon: <Download className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.openDialog('skillImport')
-    }
-  },
-  {
-    command: 'mcp',
-    description: 'View MCP server details and tools',
-    icon: <Server className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('mcpDetails')
-    }
-  },
-  {
-    command: 'mcp-add',
-    description: 'Add or edit MCP server configuration',
-    icon: <Server className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('mcpConfig')
-    }
-  },
-  {
-    command: 'models',
-    description: 'Open LLM model configuration',
-    icon: <Cpu className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      ctx.getAppStore().setWorkspaceMinimized(true)
-      ctx.openDialog('models')
-    }
-  },
-  {
-    command: 'workflow-builder',
-    description: 'Turn this conversation into a reusable workflow (Workflow/<name>/)',
-    icon: <Layers className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const instruction = `Turn our current conversation into a new reusable workflow by calling the \`create_workflow\` tool with a valid workflow.json and plan.json.
+End with a summary table.<focus-text>
+```
 
-## Step 1 — Pick a folder_name AND a display label
-Workflows have two separate names:
-- **folder_name** (the on-disk path under \`Workflow/\`) — must be **shell-safe kebab-case**: lowercase letters/digits with hyphens between words, no spaces, no underscores, no uppercase, no special characters (e.g. "customer-onboarding", "sales-report", "api-health-check"). 2-5 words, ≤64 chars.
-- **label** (the human-readable display name that goes in \`workflow_json.label\`) — can be any string: spaces, capitalization, punctuation, whatever reads naturally (e.g. "Customer Onboarding", "AWS Cost Analysis Q3", "Müller's Pipeline").
+## Source Of Truth
 
-If I gave you a label in my preamble, keep it verbatim as the \`label\` and slugify it for the \`folder_name\`. If I gave you a kebab-case name, use it for \`folder_name\` and also as the starting point for \`label\` (titlecased). Otherwise infer both from what we've been working on. If you cannot produce a clean folder_name, ask me one clarifying question instead of proceeding.
+This doc is only a guide.
 
-## Step 2 — Pick the capabilities from context
-Analyze this conversation and select ONLY the MCP servers, skills, and LLM tier settings that are actually relevant to the workflow being extracted. **Do not blindly copy every currently-enabled server and skill — pick the ones the steps actually need.** If a server was enabled in chat but never used for this specific work, leave it out.
+The current source of truth is the code:
 
-## Step 3 — Extract the steps
-Re-read the conversation and extract the concrete, repeatable steps the workflow should run. Each step must have:
-- A stable kebab-case \`id\` (e.g. "fetch-data", "analyze-results"), unique within the plan
-- A human \`title\`
-- A detailed \`description\` of what the step does, in enough detail that a worker with no memory of this conversation could execute it
-- A \`success_criteria\` line describing how to tell the step succeeded
-- Optionally \`context_dependencies\` (file names produced by earlier steps) and \`context_output\` (file name this step produces)
-- Most steps should use \`"type": "regular"\`. Use \`"conditional"\` / \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching or human-in-the-loop.
-
-## Step 4 — Call create_workflow
-Build the two JSON objects yourself in this turn and call the privileged tool:
-
-\`create_workflow(folder_name: "<kebab-name>", workflow_json: {..., label: "<human-readable>", ...}, plan_json: {...})\`
-
-**IMPORTANT**: Use the \`create_workflow\` tool — do NOT try to \`mkdir\` or write files with shell commands. The \`Workflow/\` folder is read-only to normal shell writes; \`create_workflow\` is the only path that can create a new workflow folder. The tool validates folder_name (shell-safe kebab-case), enforces required JSON fields, refuses to overwrite existing workflows, and writes both files in one call.
-
-The workflow.json schema (required: schema_version, id, label) and the plan.json schema (required: steps array with type/id/title) are already documented in your system prompt — follow that shape exactly.
-
-## Step 5 — Report back to me
-After the tool returns, tell me:
-- The folder path returned by the tool
-- The display label
-- A one-line summary of what the workflow does
-- The step IDs + titles (numbered list)
-- Tell me I can pick it from the workflow picker to activate it.`
-
-      const message = ctx.beforeSlash
-        ? `${ctx.beforeSlash}\n\n${instruction}`
-        : instruction
-
-      ctx.onSubmit(message)
-    }
-  },
-  {
-    command: 'enrich-memory',
-    description: 'Distil recent chats into memory and consolidate (deletes chats older than 7 days)',
-    icon: <Minimize2 className="w-4 h-4" />,
-    modes: ['multi-agent'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const msg = ctx.beforeSlash
-        ? `Enrich my memory, focusing on: ${ctx.beforeSlash}. Use enrich_memory — extract insights from chat_history into memories, then consolidate. Delete chat sessions older than 7 days.`
-        : 'Enrich my memory. Use enrich_memory to extract insights from every session in chat_history into today\u2019s date folder + entity files, then consolidate all memories and regenerate index.md. Delete chat sessions older than 7 days.'
-      ctx.onSubmit(msg)
-    }
-  }
-]
+- Slash commands: [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx)
+- Tool gating and registration: [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go)

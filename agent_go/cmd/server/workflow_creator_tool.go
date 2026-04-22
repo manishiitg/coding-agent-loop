@@ -156,7 +156,7 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold soul/soul.md for Workflow/%s: %v", folderName, err)
 	}
 
-	// Scaffold reports/report_plan.md and db/.gitkeep so the builder can write
+	// Scaffold reports/report_plan.json and db/.gitkeep so the builder can write
 	// into both folders on day one without hitting "no such file or directory"
 	// from the workspace write API (which doesn't auto-create parent dirs for
 	// heredocs). reports/ is never otherwise created; db/ is created lazily on
@@ -164,11 +164,10 @@ func (api *StreamingAPI) handleWorkflowCreatorTool(ctx context.Context, args map
 	// edits. knowledgebase/ is intentionally NOT scaffolded here — that folder
 	// needs seeded graph.json/index.json/notes/_index.json (InitKBGraphFiles)
 	// which createRunFolderStructure handles on first run.
-	reportScaffold := "# Report plan\n\n" +
-		"<!-- Define widgets here. See builder prompt for widget:text, widget:table, widget:chart, widget:row syntax. -->\n"
-	reportsPath := pathpkg.Join(workflowFolder, "reports", "report_plan.md")
+	reportScaffold := "{\n  \"version\": 1,\n  \"sections\": []\n}\n"
+	reportsPath := pathpkg.Join(workflowFolder, "reports", "report_plan.json")
 	if err := writeRawFileToWorkspace(ctx, reportsPath, reportScaffold); err != nil {
-		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold reports/report_plan.md for Workflow/%s: %v", folderName, err)
+		log.Printf("[WORKFLOW CREATOR] Warning: failed to scaffold reports/report_plan.json for Workflow/%s: %v", folderName, err)
 	}
 	dbKeepPath := pathpkg.Join(workflowFolder, "db", ".gitkeep")
 	if err := writeRawFileToWorkspace(ctx, dbKeepPath, ""); err != nil {

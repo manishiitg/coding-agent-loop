@@ -1,0 +1,92 @@
+package step_based_workflow
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func TestValidateReportPlanStatArrayIsError(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/linkedin"
+	files := map[string]string{
+		"Workflow/linkedin/reports/report_plan.md": "## Overview\n\n" +
+			"```widget:stat\n" +
+			"title: Active Strategies\n" +
+			"source: db/strategies.json\n" +
+			"path: active_strategies\n" +
+			"format: count\n" +
+			"```",
+		"Workflow/linkedin/db/strategies.json": `{"active_strategies":[{"id":"s-1"},{"id":"s-2"}]}`,
+	}
+
+	result, err := validateReportPlanMarkdown(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlanMarkdown returned error: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatalf("expected result.Valid=false, got true")
+	}
+	if len(result.Errors) == 0 {
+		t.Fatalf("expected at least one validation error, got none")
+	}
+	if !diagnosticsContain(result.Errors, "stat widgets require a scalar value") {
+		t.Fatalf("expected scalar-value error, got %#v", result.Errors)
+	}
+	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
+		t.Fatalf("expected unknown format warning for stat format, got %#v", result.Warnings)
+	}
+}
+
+func TestValidateReportPlanStatUnknownFormatWarns(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "Workflow/linkedin"
+	files := map[string]string{
+		"Workflow/linkedin/reports/report_plan.md": "## Overview\n\n" +
+			"```widget:stat\n" +
+			"title: Total Posts\n" +
+			"source: db/summary.json\n" +
+			"path: total_posts\n" +
+			"format: count\n" +
+			"```",
+		"Workflow/linkedin/db/summary.json": `{"total_posts":14}`,
+	}
+
+	result, err := validateReportPlanMarkdown(context.Background(), workspacePath, fakeReportPlanReadFile(files))
+	if err != nil {
+		t.Fatalf("validateReportPlanMarkdown returned error: %v", err)
+	}
+
+	if !result.Valid {
+		t.Fatalf("expected result.Valid=true, got false with errors %#v", result.Errors)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no validation errors, got %#v", result.Errors)
+	}
+	if !diagnosticsContain(result.Warnings, `unknown format preset "count"`) {
+		t.Fatalf("expected unknown format warning for stat format, got %#v", result.Warnings)
+	}
+}
+
+func fakeReportPlanReadFile(files map[string]string) func(context.Context, string) (string, error) {
+	return func(_ context.Context, path string) (string, error) {
+		content, ok := files[path]
+		if !ok {
+			return "", fmt.Errorf("file not found: %s", path)
+		}
+		return content, nil
+	}
+}
+
+func diagnosticsContain(diags []reportPlanDiagnostic, want string) bool {
+	for _, diag := range diags {
+		if strings.Contains(diag.Message, want) {
+			return true
+		}
+	}
+	return false
+}

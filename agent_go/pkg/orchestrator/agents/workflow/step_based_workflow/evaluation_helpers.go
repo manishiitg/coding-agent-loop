@@ -11,71 +11,6 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-type evaluationCapabilityExample struct {
-	Name string `json:"name"`
-	JSON string `json:"json"`
-}
-
-type evaluationCapabilitiesResult struct {
-	FilePath                 string                      `json:"file_path"`
-	ValidationTool           string                      `json:"validation_tool"`
-	ExecutionTool            string                      `json:"execution_tool"`
-	ScoringConfigFile        string                      `json:"scoring_config_file"`
-	RequiredStepFields       []string                    `json:"required_step_fields"`
-	OptionalStepFields       []string                    `json:"optional_step_fields"`
-	StepModeGuidance         map[string]string           `json:"step_mode_guidance"`
-	WorkflowRules            []string                    `json:"workflow_rules"`
-	TargetRunPathPlaceholder string                      `json:"target_run_path_placeholder"`
-	ScoringAgentOptions      map[string]string           `json:"scoring_agent_options"`
-	Examples                 []evaluationCapabilityExample `json:"examples"`
-}
-
-func getEvaluationCapabilities() evaluationCapabilitiesResult {
-	return evaluationCapabilitiesResult{
-		FilePath:          "evaluation/evaluation_plan.json",
-		ValidationTool:    "validate_evaluation_plan",
-		ExecutionTool:     "run_full_evaluation",
-		ScoringConfigFile: "evaluation/step_config.json",
-		RequiredStepFields: []string{
-			"id", "title", "description",
-		},
-		OptionalStepFields: []string{
-			"pre_validation",
-		},
-		StepModeGuidance: map[string]string{
-			"learn_code": "Prefer for deterministic checks and stable scoring logic.",
-			"code_exec":  "Prefer for adaptive reasoning or cases that still need model judgment.",
-		},
-		WorkflowRules: []string{
-			"focus eval steps on workflow outcomes, not intermediate files, unless a file check is truly the outcome",
-			"after editing evaluation/evaluation_plan.json always call validate_evaluation_plan",
-			"run_full_evaluation always scores against the current workflow run (iteration-0, optionally iteration-0/<group>)",
-			"eval step IDs must not collide with execution-plan step IDs because they share learnings/{stepID}/",
-			"pre_validation checks files inside the eval step execution folder, not the original run folder",
-		},
-		TargetRunPathPlaceholder: "{{TARGET_RUN_PATH}}",
-		ScoringAgentOptions: map[string]string{
-			"use_code_execution_mode_false": "Set __evaluation_scoring__.agent_configs.use_code_execution_mode=false for lean tool-call scoring when supported.",
-			"use_code_execution_mode_true":  "Set __evaluation_scoring__.agent_configs.use_code_execution_mode=true to force code-exec on non-CLI providers.",
-			"declared_execution_mode_learn_code": "Set __evaluation_scoring__.agent_configs.declared_execution_mode=learn_code to generate and reuse a deterministic scoring script.",
-		},
-		Examples: []evaluationCapabilityExample{
-			{
-				Name: "Minimal evaluation plan",
-				JSON: "{\n  \"steps\": [\n    {\n      \"id\": \"verify-final-output\",\n      \"title\": \"Verify final output\",\n      \"description\": \"Check that the workflow produced the required final output in the target system.\"\n    }\n  ]\n}",
-			},
-			{
-				Name: "Evaluation step with pre_validation",
-				JSON: "{\n  \"steps\": [\n    {\n      \"id\": \"score-report\",\n      \"title\": \"Score generated report\",\n      \"description\": \"Read artifacts under {{TARGET_RUN_PATH}} and score whether the final report meets the success criteria.\",\n      \"pre_validation\": {\n        \"type\": \"object\",\n        \"required\": [\"evaluation_report.json\"]\n      }\n    }\n  ]\n}",
-			},
-			{
-				Name: "Scoring agent config",
-				JSON: "{\n  \"id\": \"__evaluation_scoring__\",\n  \"agent_configs\": {\n    \"use_code_execution_mode\": false,\n    \"declared_execution_mode\": \"learn_code\"\n  }\n}",
-			},
-		},
-	}
-}
-
 // checkExistingEvaluationPlan reads and parses an evaluation plan from the workspace.
 // Used by evaluation_execution.go (live evaluation-execution phase).
 func (hcpo *StepBasedWorkflowOrchestrator) checkExistingEvaluationPlan(ctx context.Context, planPath string) (bool, *EvaluationPlan, error) {
@@ -246,34 +181,5 @@ func registerEvaluationValidationTools(
 	)
 
 	logger.Info("✅ Registered evaluation plan validation tool")
-	return nil
-}
-
-func registerEvaluationCapabilitiesTool(
-	mcpAgent *mcpagent.Agent,
-	logger loggerv2.Logger,
-) error {
-	validationSchema := `{
-		"type": "object",
-		"properties": {},
-		"additionalProperties": false
-	}`
-	params, _ := parseSchemaForToolParameters(validationSchema)
-
-	mcpAgent.RegisterCustomTool(
-		"get_evaluation_capabilities",
-		"Get the evaluation-plan grammar and workflow-specific eval rules for evaluation/evaluation_plan.json. Call this before editing the eval plan or answering detailed eval-design questions. Returns required fields, optional fields, mode guidance, scoring-agent options, the {{TARGET_RUN_PATH}} rule, and compact examples. After editing the eval plan, still call validate_evaluation_plan and then run_full_evaluation when you want to test it.",
-		params,
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			out, err := json.MarshalIndent(getEvaluationCapabilities(), "", "  ")
-			if err != nil {
-				return "", fmt.Errorf("failed to marshal evaluation capabilities: %w", err)
-			}
-			return "evaluation capabilities loaded\n" + string(out), nil
-		},
-		"workflow",
-	)
-
-	logger.Info("✅ Registered evaluation capabilities tool")
 	return nil
 }

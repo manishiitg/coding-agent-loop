@@ -1,5 +1,5 @@
-// Lightweight existence check for reports/report_plan.md. Used to conditionally hide
-// Report entry points (toolbar button, canvas-mode toggles) when no plan file exists,
+// Lightweight existence check for reports/report_plan.json. Used to conditionally hide
+// Report entry points when no plan file exists,
 // since the Report view would render the empty-state anyway.
 
 import { useEffect, useState } from 'react'
@@ -15,15 +15,15 @@ export function useReportPlanExists(workspacePath: string | null): boolean {
     }
     let cancelled = false
     agentApi
-      .getPlannerFileContent(`${workspacePath}/reports/report_plan.md`)
-      .then(resp => {
+      .getPlannerFileContent(`${workspacePath}/reports/report_plan.json`)
+      .then(jsonResp => {
         if (cancelled) return
         const has =
-          !!resp &&
-          resp.success === true &&
-          !!resp.data &&
-          typeof resp.data.content === 'string' &&
-          resp.data.content.trim().length > 0
+          !!jsonResp &&
+          jsonResp.success === true &&
+          !!jsonResp.data &&
+          typeof jsonResp.data.content === 'string' &&
+          jsonResp.data.content.trim().length > 0
         setExists(has)
       })
       .catch(() => {

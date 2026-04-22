@@ -1319,12 +1319,12 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 // Dynamic report system (docs/workflow/persistent_stores_design.md section 2)
 // Replaces the static final_output.go agent. The report is a live frontend
-// view over db/ + knowledgebase/graph.json, defined by reports/report_plan.md
-// widget blocks. Files are fetched via the existing workspace document API
-// (agentApi.getPlannerFileContent) — no dedicated backend wrappers.
+// view over db/ + knowledgebase/graph.json, defined by reports/report_plan.json.
+// Files are fetched via the
+// existing workspace document API (agentApi.getPlannerFileContent).
 // ---------------------------------------------------------------------------
 
-// Widget types supported by report_plan.md. See section 2 of the design doc.
+// Widget types supported by the report plan. See section 2 of the design doc.
 export type ReportWidgetKind = 'text' | 'chart' | 'table' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
 
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
@@ -1377,6 +1377,7 @@ export interface ReportDefaultSort {
 // See workshop builder prompt for the full markdown grammar.
 export interface ReportWidget {
   kind: ReportWidgetKind;
+  hidden?: boolean;
   source: string;
   path: string;
   filter?: string;

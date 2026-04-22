@@ -86,6 +86,32 @@ func CreateHumanTools() []llmtypes.Tool {
 	}
 	humanTools = append(humanTools, humanQuestionsTool)
 
+	// submit_human_answer — used by a builder agent to resolve a human_input
+	// step that was routed into this chat session (via run_workflow). The chat
+	// message from the workflow will include the request_id to pass here.
+	submitHumanAnswerTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "submit_human_answer",
+			Description: "Resolve a pending workflow human_input step. Use this ONLY in response to a [WORKFLOW_HUMAN_INPUT] message from a workflow you launched. Pass the request_id from that message and the answer. For yes/no steps, answer with 'yes' or 'no'. For multiple-choice, answer with 'option0', 'option1', ... (or the exact option text). For text, pass the user's free-text answer. The workflow resumes as soon as you call this.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"request_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The request_id from the [WORKFLOW_HUMAN_INPUT] message (e.g. 'human_input_step_2_1714171234567').",
+					},
+					"answer": map[string]interface{}{
+						"type":        "string",
+						"description": "The answer to submit. Format depends on the response type given in the workflow message.",
+					},
+				},
+				"required": []string{"request_id", "answer"},
+			}),
+		},
+	}
+	humanTools = append(humanTools, submitHumanAnswerTool)
+
 	return humanTools
 }
 
@@ -100,8 +126,32 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 
 	executors["human_feedback"] = handleHumanFeedback
 	executors["human_questions"] = handleHumanQuestions
+	executors["submit_human_answer"] = handleSubmitHumanAnswer
 
 	return executors
+}
+
+// handleSubmitHumanAnswer resolves a pending workflow human_input step by
+// forwarding the answer to the HumanFeedbackStore, unblocking the workflow
+// goroutine that's parked on WaitForResponse.
+func handleSubmitHumanAnswer(ctx context.Context, args map[string]interface{}) (string, error) {
+	requestID, _ := args["request_id"].(string)
+	if requestID == "" {
+		return "", fmt.Errorf("request_id is required")
+	}
+	answer, _ := args["answer"].(string)
+	// Note: empty answer is allowed (e.g., "Approve" with no text for text-type steps).
+
+	feedbackStore := GetHumanFeedbackStore()
+	if err := feedbackStore.SubmitResponse(requestID, answer); err != nil {
+		return "", fmt.Errorf("failed to submit answer: %w", err)
+	}
+	result := map[string]interface{}{
+		"status":     "submitted",
+		"request_id": requestID,
+	}
+	b, _ := json.Marshal(result)
+	return string(b), nil
 }
 
 // handleHumanFeedback handles the human_feedback tool execution

@@ -1003,6 +1003,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Wire startSessionInternal after api is created (closure captures api)
 	botManager.SetStartSessionFunc(api.startSessionInternal)
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
+	// Install a chat injector so workflows launched from a builder chat session
+	// can route human_input questions back as a synthetic turn on that session
+	// (instead of the blocking popup UI). The builder agent receives the
+	// question, decides whether to answer it from its own context or ask the
+	// user, and resolves the workflow via submit_human_answer.
+	virtualtools.SetChatInjector(func(ctx context.Context, sessionID, userID, message string) error {
+		api.executeSyntheticTurn(sessionID, message)
+		return nil
+	})
 	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]slackservice.DecryptedSecret, error) {
 		stored, err := chatStore.ListUserSecrets(ctx, userID)
 		if err != nil {

@@ -211,9 +211,22 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 	// Generate a unique session ID for this workflow run
 	wfSessionID := fmt.Sprintf("wfrun_%d", time.Now().UnixNano())
 
+	// If this workflow is being launched from an existing builder chat session,
+	// register the mapping so human_input steps can route questions back to the
+	// builder instead of showing the blocking popup UI.
+	if sessionID != "" {
+		virtualtools.RegisterParentChat(wfSessionID, &virtualtools.ParentChatContext{
+			SessionID:    sessionID,
+			UserID:       userID,
+			WorkflowPath: workflowPath,
+			GroupName:    groupName,
+		})
+	}
+
 	// Use the API's background agent registry directly (not from context — context has the querier wrapper)
 	registry := api.bgAgentRegistry
 	if registry == nil {
+		virtualtools.UnregisterParentChat(wfSessionID)
 		return "", fmt.Errorf("background agent registry not available")
 	}
 
@@ -272,6 +285,9 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s completed", agentName)
 		}
 		bgAgent.mu.Unlock()
+
+		// Clean up the parent-chat mapping for this workflow run.
+		virtualtools.UnregisterParentChat(wfSessionID)
 
 		// Notify the orchestrator that this agent finished
 		registry.NotifyCompletion(sessionID, agentID)

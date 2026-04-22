@@ -144,12 +144,99 @@ func kbAccessAllowsRead(mode string) bool {
 	return mode == KBAccessRead || mode == KBAccessReadWrite
 }
 
-// kbAccessAllowsWrite reports whether the mode is eligible for post-step KB contribution.
-// This gates whether the post-step KB update agent runs (controller_kb_update.go) — it
-// does NOT grant the step agent itself direct write access to knowledgebase/ (step
-// writePaths are set in setupExecutionFolderGuard and deliberately exclude KB).
+// kbContributionForPrompt returns the step's knowledgebase_contribution string
+// safely — nil step config and unset field both map to the empty string.
+func kbContributionForPrompt(stepConfig *AgentConfigs) string {
+	if stepConfig == nil {
+		return ""
+	}
+	return stepConfig.KnowledgebaseContribution
+}
+
+// kbAccessAllowsWrite reports whether the mode is eligible for KB contribution.
+// This gates whether KB writes happen at all for the step; the mechanism
+// (post-step agent vs step-level direct upserts) is picked separately by
+// resolveKnowledgebaseWriteMethod.
 func kbAccessAllowsWrite(mode string) bool {
 	return mode == KBAccessWrite || mode == KBAccessReadWrite
+}
+
+// Knowledgebase write methods — picked per step, only meaningful when
+// kbAccessAllowsWrite(kbAccess) is true.
+const (
+	// KBWriteMethodAgent is the default: the step executes, and the post-step KB
+	// update agent (controller_kb_update.go) reads the step's tool trail plus its
+	// knowledgebase_contribution and merges facts into graph.json / notes/.
+	KBWriteMethodAgent = "agent"
+	// KBWriteMethodDirect gives the step agent itself direct write authority:
+	// kb_upsert_entity / kb_upsert_relationship tools are registered on the agent
+	// and notes/ is added to its folder-guard writePaths. The post-step KB update
+	// agent does NOT run for steps using this method.
+	KBWriteMethodDirect = "direct"
+)
+
+// resolveKnowledgebaseWriteMethod returns which mechanism writes KB for the step.
+// Only consulted when kbAccessAllowsWrite reports true for the effective access mode.
+// Default when unset is "agent" so every existing workflow keeps current behavior.
+func resolveKnowledgebaseWriteMethod(stepConfig *AgentConfigs) string {
+	if stepConfig == nil {
+		return KBWriteMethodAgent
+	}
+	switch stepConfig.KnowledgebaseWriteMethod {
+	case KBWriteMethodDirect:
+		return KBWriteMethodDirect
+	case KBWriteMethodAgent, "":
+		return KBWriteMethodAgent
+	default:
+		return KBWriteMethodAgent
+	}
+}
+
+// Knowledgebase contribution surfaces — picked per step, only consulted in direct
+// write mode to scope which KB surfaces (graph, notes, or both) the step is
+// expected to write. Agent-mode KB extraction ignores this and continues to read
+// the freeform knowledgebase_contribution string.
+const (
+	// KBContributionTypeBoth enables both graph (kb_upsert_* tools) and notes
+	// (shell + diff_patch under knowledgebase/notes/). This is the default when
+	// the field is unset — full direct-mode capability.
+	KBContributionTypeBoth = "both"
+	// KBContributionTypeGraphOnly registers kb_upsert_entity / kb_upsert_relationship
+	// but does NOT add knowledgebase/notes/ to writePaths. Step contributes only
+	// atomic facts; narrative notes are out of scope.
+	KBContributionTypeGraphOnly = "graph_only"
+	// KBContributionTypeNotesOnly adds knowledgebase/notes/ to writePaths but does
+	// NOT register kb_upsert_*. Step contributes only narrative; graph entries are
+	// out of scope.
+	KBContributionTypeNotesOnly = "notes_only"
+)
+
+// resolveKnowledgebaseContributionType returns the scoped contribution type.
+// Empty or unknown values fall back to "both" to preserve full capability.
+func resolveKnowledgebaseContributionType(stepConfig *AgentConfigs) string {
+	if stepConfig == nil {
+		return KBContributionTypeBoth
+	}
+	switch stepConfig.KnowledgebaseContributionType {
+	case KBContributionTypeGraphOnly:
+		return KBContributionTypeGraphOnly
+	case KBContributionTypeNotesOnly:
+		return KBContributionTypeNotesOnly
+	case KBContributionTypeBoth, "":
+		return KBContributionTypeBoth
+	default:
+		return KBContributionTypeBoth
+	}
+}
+
+// kbContributionAllowsGraph reports whether the contribution type includes graph writes.
+func kbContributionAllowsGraph(contribType string) bool {
+	return contribType == KBContributionTypeGraphOnly || contribType == KBContributionTypeBoth
+}
+
+// kbContributionAllowsNotes reports whether the contribution type includes notes writes.
+func kbContributionAllowsNotes(contribType string) bool {
+	return contribType == KBContributionTypeNotesOnly || contribType == KBContributionTypeBoth
 }
 
 // kbAccessLabel returns a human-readable label for prompt display.
@@ -1135,8 +1222,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	// via `cat`/`cp`. Snapshot and restore the prior config so the builder's out-of-step
 	// chat shell commands keep their broader access.
 	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
-		narrowKBAccess := resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess)
+		narrowAgentCfg := getAgentConfigs(step)
+		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
+		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
+		narrowKBContribType := resolveKnowledgebaseContributionType(narrowAgentCfg)
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowKBWriteMethod, narrowKBContribType)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1248,6 +1338,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 		// Resolve KB access mode for this step (explicit step config > preset default)
 		kbAccess := resolveKnowledgebaseAccess(agentConfigs, hcpo.UseKnowledgebase())
+		kbWriteMethod := resolveKnowledgebaseWriteMethod(agentConfigs)
+		kbContribType := resolveKnowledgebaseContributionType(agentConfigs)
 		useKnowledgebase := kbAccess != KBAccessNone
 		knowledgebasePath := ""
 		if useKnowledgebase {
@@ -1255,7 +1347,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, kbWriteMethod, kbContribType)
 
 		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
 		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.
@@ -1340,6 +1432,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                       // Whether knowledgebase is enabled (deprecated, retained for backward compat)
 			"KbAccess":              kbAccess,                                                  // KB access mode: "read" | "write" | "read-write" | "none"
 			"KbAccessLabel":         kbAccessLabel(kbAccess),                                   // Human-readable label for prompt display
+			"KbWriteMethod":         kbWriteMethod,                                             // "agent" | "direct" — who writes KB
+			"KbContributionType":    kbContribType,                                             // "graph_only" | "notes_only" | "both" — direct-mode scope
+			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                 // Author's contribution instruction (direct mode surfaces it to the step)
+			"KBGuidanceBlock":       BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContribType, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance, scoped by type
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                    // Code execution mode flag (step-specific or preset)
 			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
@@ -1430,6 +1526,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Inner loop: Automatic retry logic
 		var validationResponse *ValidationResponse
+		// KB contribution self-review is one-shot per step execution (direct mode with a
+		// non-empty contribution). Declared outside the retry loop so it survives
+		// validation retries without re-firing.
+		var kbReviewPerformed bool
+		// Direct-learnings turn is one-shot per step execution. Declared here so
+		// validation retries don't re-fire it, and so the post-step learning-agent
+		// trigger further down can see "already handled direct".
+		var learningsDirectPerformed bool
 
 		// Learn code mode: attempt fast path execution with saved script (before any LLM work).
 		if isLearnCodeMode && !learnCodeFastPathDone {
@@ -2208,6 +2312,126 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				} else {
 					hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation passed for step %d - auto-approving", stepIndex+1))
+
+					// KB contribution self-review (direct-write mode only): one-shot nudge
+					// asking the step agent to verify it fulfilled its knowledgebase_contribution
+					// contract. Does NOT consume a retry slot, does NOT re-run pre-validation,
+					// and fires at most once per step execution. The agent's follow-up tool
+					// calls (if any) land via the normal kb_upsert_* / notes-write pipeline.
+					if !kbReviewPerformed && executionAgent != nil {
+						stepCfgForReview := getAgentConfigs(step)
+						reviewMsg := BuildKBContributionReviewMessage(
+							resolveKnowledgebaseAccess(stepCfgForReview, hcpo.UseKnowledgebase()),
+							resolveKnowledgebaseWriteMethod(stepCfgForReview),
+							resolveKnowledgebaseContributionType(stepCfgForReview),
+							kbContributionForPrompt(stepCfgForReview),
+						)
+						if reviewMsg != "" {
+							kbReviewPerformed = true
+							hcpo.GetLogger().Info(fmt.Sprintf("🧠 KB contribution self-review: firing one-shot continuation for step %d", stepIndex+1))
+							if ba := executionAgent.GetBaseAgent(); ba != nil {
+								reviewResult, updatedHistory, reviewErr := ba.Execute(ctx, reviewMsg, executionConversationHistory, "", false)
+								if reviewErr != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB self-review continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, reviewErr))
+								} else {
+									executionResult = reviewResult
+									executionConversationHistory = updatedHistory
+									hcpo.GetLogger().Info(fmt.Sprintf("🧠 KB self-review completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
+								}
+							}
+						}
+					}
+
+					// Direct-learnings turn (fires after KB review, if any). Runs only when
+					// learnings_write_method is "direct" AND the access/objective/lock gates
+					// agree (see shouldDirectWriteLearnings). Writes target learnings/_global/
+					// (shared across steps), with learnings/<stepID>/ opened only in learn_code
+					// mode for the main.py copy. Folder guard is widened here for the turn only —
+					// the main-step execution did NOT have write access to either path. The
+					// outer step defer that restores session shell config to pre-step state
+					// handles cleanup when the step exits. Parallel steps writing to _global/
+					// are serialized by learningsGlobalFileMutex.
+					if !learningsDirectPerformed && executionAgent != nil {
+						stepCfgForLearn := getAgentConfigs(step)
+						if shouldDirectWriteLearnings(stepCfgForLearn, step, hcpo.isEvaluationMode) {
+							// Lock + empty-folder override (mirrors agent-mode logic at ~line 2434):
+							// lock_learnings is honored only when _global/ actually has content to
+							// protect. An empty _global/ folder allows the first direct-mode write
+							// to bootstrap initial learnings, even with lock_learnings: true. This
+							// keeps lock semantics consistent across agent and direct methods.
+							skipDueToLock := false
+							if stepCfgForLearn != nil && stepCfgForLearn.LockLearnings != nil && *stepCfgForLearn.LockLearnings {
+								globalEmpty, emptyErr := hcpo.isStepLearningsFolderEmpty(ctx, GlobalLearningID, 0, "")
+								if emptyErr != nil {
+									// Can't check — assume empty to allow bootstrap (conservative for first runs).
+									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ check failed (%v) — allowing direct-learnings turn to bootstrap", stepIndex+1, emptyErr))
+								} else if globalEmpty {
+									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d but _global/ is empty — allowing direct-learnings turn to bootstrap initial skill", stepIndex+1))
+								} else {
+									hcpo.GetLogger().Info(fmt.Sprintf("🔒 lock_learnings=true on step %d with existing _global/ content — skipping direct-learnings turn", stepIndex+1))
+									skipDueToLock = true
+								}
+							}
+
+							learnObjective := ""
+							if stepCfgForLearn != nil {
+								learnObjective = stepCfgForLearn.LearningObjective
+							}
+							learningsTurnMsg := ""
+							if !skipDueToLock {
+								learningsTurnMsg = BuildLearningsContributionTurn(step.GetID(), learnObjective, isLearnCodeMode)
+							}
+							if learningsTurnMsg != "" {
+								learningsDirectPerformed = true
+								baseWorkspace := hcpo.GetWorkspacePath()
+								globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspace, GlobalLearningID)
+								addedPaths := []string{globalLearningsPath}
+								if isLearnCodeMode {
+									stepScriptsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspace, step.GetID())
+									addedPaths = append(addedPaths, stepScriptsPath)
+								}
+
+								// Widen session shell guard for this turn. Appending to existing
+								// paths preserves the step-scoped narrow that executeSingleStep set
+								// up at step start — we're adding learnings paths on top, not
+								// replacing the narrow.
+								if sessionID := hcpo.GetMCPSessionID(); sessionID != "" {
+									if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
+										widenedRead := append([]string{}, prevCfg.ReadPaths...)
+										widenedWrite := append([]string{}, prevCfg.WritePaths...)
+										widenedRead = append(widenedRead, addedPaths...)
+										widenedWrite = append(widenedWrite, addedPaths...)
+										common.SetSessionFolderGuard(sessionID, widenedRead, widenedWrite)
+										hcpo.GetLogger().Info(fmt.Sprintf("🔓 [LEARN_DIRECT] Widened session %s for learnings turn on step %s: +%v", sessionID, step.GetID(), addedPaths))
+									}
+								}
+								// Also widen the per-agent folder guard config so tools registered on
+								// the agent (e.g. diff_patch_workspace_file) see the new write paths.
+								if cfg := executionAgent.GetConfig(); cfg != nil {
+									cfg.FolderGuardReadPaths = append(cfg.FolderGuardReadPaths, addedPaths...)
+									cfg.FolderGuardWritePaths = append(cfg.FolderGuardWritePaths, addedPaths...)
+								}
+
+								// Serialize against parallel direct-learnings turns. Each step has its
+								// own MCP session so folder guards don't collide, but _global/SKILL.md
+								// is a shared file — parallel diff_patches would race without this.
+								learningsGlobalFileMutex.Lock()
+								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: firing one-shot continuation for step %d (objective length=%d)", stepIndex+1, len(learnObjective)))
+								if ba := executionAgent.GetBaseAgent(); ba != nil {
+									learnResult, learnHistory, learnErr := ba.Execute(ctx, learningsTurnMsg, executionConversationHistory, "", false)
+									if learnErr != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
+									} else {
+										executionResult = learnResult
+										executionConversationHistory = learnHistory
+										hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
+									}
+								}
+								learningsGlobalFileMutex.Unlock()
+							}
+						}
+					}
+
 					validationResponse = &ValidationResponse{
 						IsSuccessCriteriaMet: true,
 						ExecutionStatus:      "COMPLETED",
@@ -2283,11 +2507,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				// Learning agents — gated on learning-enabled + not-locked (existing behavior).
-				if isLearningDisabled || shouldSkipLearningDueToLock {
+				// Additionally: if the step ran direct-learnings inline this turn, the
+				// post-step learning agent MUST be skipped — direct is the canonical
+				// writer under that method, and running the agent on top would double-
+				// contribute and potentially clobber the step's own SKILL.md writes.
+				if isLearningDisabled || shouldSkipLearningDueToLock || learningsDirectPerformed {
 					if isLearningDisabled {
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for step %d", stepIndex+1))
 					} else if shouldSkipLearningDueToLock {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for step %d (using existing learnings)", stepIndex+1))
+					} else if learningsDirectPerformed {
+						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings: Skipping post-step learning agent for step %d (step agent wrote SKILL.md inline)", stepIndex+1))
 					}
 				} else if validationResponse.IsSuccessCriteriaMet && populatedTodoStep != nil {
 					// Success Learning Agent - analyze what worked well and update plan.json

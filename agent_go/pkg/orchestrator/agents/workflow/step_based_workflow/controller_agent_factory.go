@@ -403,8 +403,13 @@ func isGenericAgentStep(stepID, stepPath string) bool {
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents.
 // kbAccess must be one of KBAccessRead / Write / ReadWrite / None — callers resolve it
-// via resolveKnowledgebaseAccess before invoking. Returns readPaths and writePaths.
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string) (readPaths, writePaths []string) {
+// via resolveKnowledgebaseAccess before invoking. kbWriteMethod must be one of
+// KBWriteMethodAgent / Direct and is only consulted when kbAccess permits writes;
+// callers resolve it via resolveKnowledgebaseWriteMethod. kbContribType scopes
+// direct-mode writes to a subset of surfaces — callers resolve it via
+// resolveKnowledgebaseContributionType (unset → "both"); only consulted when
+// kbWriteMethod == "direct". Returns readPaths and writePaths.
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, kbWriteMethod string, kbContribType string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -417,10 +422,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// Set folder guard paths:
 	// READ: execution folder (to read previous step results) + global learnings + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
-	// NOTE: knowledgebase/ is deliberately NOT added to step writePaths even when kb_access=write.
-	// Step code must never write graph.json/index.json/notes/ directly — that's the post-step
-	// KB update agent's job (setupKBUpdateFolderGuard). `kb_access=write` + a non-empty
-	// `knowledgebase_contribution` is what triggers that agent (see controller_kb_update.go).
+	// NOTE: graph.json and index.json are NEVER added to step writePaths, even with
+	// kbWriteMethod=direct — the kb_upsert_entity / kb_upsert_relationship tools are the
+	// sole writers, so rogue shell writes to graph.json are blocked by the sandbox.
+	// Under kbWriteMethod=direct we DO add knowledgebase/notes/ to writePaths so the step
+	// can write per-topic markdown via shell + diff_patch. Under kbWriteMethod=agent we
+	// add nothing — graph.json/index.json/notes/ are only writable by the post-step KB
+	// update agent (setupKBUpdateFolderGuard, triggered by a non-empty knowledgebase_contribution).
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
@@ -446,14 +454,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	readPaths = append(readPaths, dbPath)
 	writePaths = append(writePaths, dbPath)
 
-	// Add knowledgebase folder to READ paths when the mode grants read. Write access is
-	// intentionally NOT granted to step agents here — kb_access=write gates whether the
-	// post-step KB update agent runs (controller_kb_update.go), not whether the step itself
-	// can modify knowledgebase/. The KB update agent gets its own writePaths via
-	// setupKBUpdateFolderGuard and bypasses this function entirely.
+	// Add knowledgebase folder to READ paths when the mode grants read. Under
+	// kbWriteMethod=direct, also add knowledgebase/notes/ to WRITE paths so the step
+	// can author per-topic markdown via shell + diff_patch. graph.json and index.json
+	// are NEVER added to writePaths — the kb_upsert_* tools are the sole writers; a
+	// shell write to graph.json is blocked by the sandbox as a hard guarantee.
 	if kbAccess != KBAccessNone && kbAccessAllowsRead(kbAccess) {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 		readPaths = append(readPaths, knowledgebasePath)
+	}
+	if kbAccessAllowsWrite(kbAccess) && kbWriteMethod == KBWriteMethodDirect && kbContributionAllowsNotes(kbContribType) {
+		notesPath := fmt.Sprintf("%s/notes", getKnowledgebasePath(baseWorkspacePath))
+		writePaths = append(writePaths, notesPath)
 	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
@@ -1225,7 +1237,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 2. Setup folder guard (extracted method). Empty kbAccess defaults to orchestrator-level UseKnowledgebase.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess)
+	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
+	kbContribType := resolveKnowledgebaseContributionType(stepConfig)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess, kbWriteMethod, kbContribType)
 
 	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
@@ -1366,6 +1380,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
 		// Log warning but don't fail agent creation
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
+	}
+
+	// Direct-write KB tools: register kb_upsert_entity / kb_upsert_relationship when
+	// (a) writes are permitted, (b) the method is direct, and (c) the contribution
+	// type includes graph. Notes-only steps skip registration and write narrative
+	// via shell instead.
+	if kbAccessAllowsWrite(kbAccess) && kbWriteMethod == KBWriteMethodDirect && kbContributionAllowsGraph(kbContribType) {
+		if err := RegisterKBTools(mcpAgent, hcpo.GetWorkspacePath(), stepID, hcpo.selectedRunFolder,
+			hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to register kb_upsert_* tools for %s: %v", agentName, err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Registered kb_upsert_entity + kb_upsert_relationship for %s (step=%s, run=%s, scope=%s)", agentName, stepID, hcpo.selectedRunFolder, kbContribType))
+		}
 	}
 
 	return agent, nil
@@ -1952,11 +1979,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		return nil, fmt.Errorf("failed to apply post-setup to todo task orchestrator agent: %w", err)
 	}
 
-	// Inject supplementary prompts (skills, secrets, browser instructions)
+	// Inject supplementary prompts (skills, secrets, browser instructions); also register
+	// direct-write KB tools when the step's configured write method is "direct".
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
 	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
 		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
 			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "")
+
+			kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
+			kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
+			kbContribType := resolveKnowledgebaseContributionType(stepConfig)
+			if kbAccessAllowsWrite(kbAccess) && kbWriteMethod == KBWriteMethodDirect && kbContributionAllowsGraph(kbContribType) {
+				if err := RegisterKBTools(mcpAgent, hcpo.GetWorkspacePath(), stepID, hcpo.selectedRunFolder,
+					hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to register kb_upsert_* tools for %s: %v", agentName, err))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Registered kb_upsert_entity + kb_upsert_relationship for todo task orchestrator %s (step=%s, run=%s, scope=%s)", agentName, stepID, hcpo.selectedRunFolder, kbContribType))
+				}
+			}
 		}
 	}
 

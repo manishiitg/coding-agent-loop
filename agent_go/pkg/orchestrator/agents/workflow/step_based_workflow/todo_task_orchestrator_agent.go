@@ -75,11 +75,12 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 
 **Three persistent stores — keep them separate when instructing sub-agents:**
 - **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale.
-- **knowledgebase/graph.json** — decisions, facts, strategies built up over time (entities + relationships). Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` directly.
+- **knowledgebase/graph.json** — decisions, facts, strategies built up over time (entities + relationships). {{if eq .KbWriteMethod "direct"}}This step (and its sub-agents) write KB directly according to the configured scope ({{.KbContributionType}}) — see the **Knowledgebase contribution** block below for which surfaces are enabled. The post-step KB update agent does NOT run for this step. Shell writes to `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` are always blocked — the `+"`"+`kb_upsert_*`+"`"+` tools are the sole writers.{{else}}Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`graph.json`+"`"+` / `+"`"+`index.json`+"`"+` directly.{{end}}
 - **learnings/** — HOW to run the task. Read-only at execution time; the learning agent maintains it.
 
-{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} Sub-agents may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` KB files; writes are blocked.{{else if eq .KbAccess "write"}} Folder guard allows writes, but emit facts in step output and let the KB update agent merge — do not patch graph.json directly.{{end}}
+{{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} Sub-agents may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` KB files; writes are blocked.{{else if eq .KbWriteMethod "direct"}} Direct write (scope: **{{.KbContributionType}}**): this orchestrator (and every sub-agent it delegates to) contributes KB inline per the scope — see the **Knowledgebase contribution** block below. No post-step KB update agent runs.{{else}} Write-scoped (agent method): emit facts in step output and let the post-step KB update agent merge — do not patch `+"`"+`graph.json`+"`"+` directly.{{end}}
 {{end}}
+{{if .KBGuidanceBlock}}{{.KBGuidanceBlock}}{{end}}
 
 ---
 
@@ -326,6 +327,10 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"ShowToolsSection":              templateVars["ShowToolsSection"] == "true",
 		"KbAccess":                      templateVars["KbAccess"],
 		"KbAccessLabel":                 templateVars["KbAccessLabel"],
+		"KbWriteMethod":                 templateVars["KbWriteMethod"],
+		"KbContributionType":            templateVars["KbContributionType"],
+		"KnowledgebaseContribution":     templateVars["KnowledgebaseContribution"],
+		"KBGuidanceBlock":               templateVars["KBGuidanceBlock"],
 		"IsCodeExecutionMode":           templateVars["IsCodeExecutionMode"] == "true",
 		"CodeExecutionSection":          BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["WorkspacePath"]),
 		"PreviousStepsSummary":          templateVars["PreviousStepsSummary"],

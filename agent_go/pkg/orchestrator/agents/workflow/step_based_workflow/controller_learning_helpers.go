@@ -66,6 +66,49 @@ func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEva
 	return strings.TrimSpace(agentConfigs.LearningObjective) != ""
 }
 
+// Learnings write methods — mirror of knowledgebase_write_method. Only meaningful
+// when canWriteLearnings reports true for the step (access == read-write AND
+// objective non-empty AND not eval/routing). lock_learnings is still honored
+// separately: locked → no writes regardless of method.
+const (
+	// LearnWriteMethodAgent is the default: a post-step learning agent reads the
+	// step's conversation trail + learning_objective and writes SKILL.md.
+	LearnWriteMethodAgent = "agent"
+	// LearnWriteMethodDirect hands learnings writes to the step agent itself via a
+	// dedicated post-completion user-message turn. Folder guard widens only for
+	// that turn. The post-step learning agent does not run under this method.
+	LearnWriteMethodDirect = "direct"
+)
+
+// resolveLearningsWriteMethod returns which mechanism writes SKILL.md for the step.
+// Consulted only when canWriteLearnings returns true; unset or unknown falls back
+// to "agent" so every existing workflow keeps current behavior.
+func resolveLearningsWriteMethod(agentConfigs *AgentConfigs) string {
+	if agentConfigs == nil {
+		return LearnWriteMethodAgent
+	}
+	switch strings.TrimSpace(agentConfigs.LearningsWriteMethod) {
+	case LearnWriteMethodDirect:
+		return LearnWriteMethodDirect
+	case LearnWriteMethodAgent, "":
+		return LearnWriteMethodAgent
+	default:
+		return LearnWriteMethodAgent
+	}
+}
+
+// shouldDirectWriteLearnings reports whether the step is configured for
+// direct-mode learnings writes — access + objective + method gates. Does NOT
+// include the lock check; callers combine this with the lock+bootstrap check
+// (see controller_execution.go at the direct-learnings turn trigger) which
+// mirrors agent-mode's empty-folder override exactly.
+func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
+	if !canWriteLearnings(agentConfigs, step, isEvalMode) {
+		return false
+	}
+	return resolveLearningsWriteMethod(agentConfigs) == LearnWriteMethodDirect
+}
+
 // getEffectiveToolsForStep returns the list of effective MCP server/tool names for a step.
 // Uses step-level filtering against the workflow cap, or workflow defaults.
 func (hcpo *StepBasedWorkflowOrchestrator) getEffectiveToolsForStep(step PlanStepInterface) []string {

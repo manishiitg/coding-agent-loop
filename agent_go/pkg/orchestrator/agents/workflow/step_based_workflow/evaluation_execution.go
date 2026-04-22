@@ -213,11 +213,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 			return report, fmt.Errorf("failed to publish evaluation report: %w", err)
 		}
 	}
+	if err := hcpo.persistEvaluationScoreLedger(ctx, report, targetRunFolder); err != nil {
+		return report, fmt.Errorf("failed to persist evaluation score ledger: %w", err)
+	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to internal path: %s", internalReportPath))
 	if filepath.ToSlash(internalReportPath) != filepath.ToSlash(publishedReportPath) {
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report published to target path: %s", publishedReportPath))
 	}
+	hcpo.GetLogger().Info(fmt.Sprintf("📚 Evaluation score ledger updated for target path: %s", targetRunFolder))
 	return report, nil
 }
 

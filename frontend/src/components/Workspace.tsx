@@ -539,15 +539,10 @@ export default function Workspace({
     }
   }, [workspaceDisplayedIteration, availableIterations])
 
-  const prevWorkflowWorkspaceViewRef = useRef<typeof workflowWorkspaceView>(workflowWorkspaceView)
   useEffect(() => {
     if (workflowWorkspaceView === 'builder') {
       setShowIterationDropdown(false)
     }
-  }, [workflowWorkspaceView])
-
-  useEffect(() => {
-    prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
   }, [workflowWorkspaceView])
 
   const canSelectIterationInWorkspace = selectedModeCategory === 'workflow'
@@ -911,20 +906,6 @@ export default function Workspace({
   // Handle folder click - only folders are clickable now
   const handleFolderClick = (folder: PlannerFile) => {
     if (folder.type === 'folder') {
-      // In workflow mode, disable direct clicking on iteration/group folders
-      // Only allow checkbox-based selection for these folders
-      if (selectedModeCategory === 'workflow' && workflowWorkspaceView === 'execution') {
-        const isIterationFolder =
-          folder.filepath.includes('/runs/iteration-') ||
-          /\/iteration-\d+$/.test(folder.filepath) ||
-          /\/runs\/iteration-\d+\/[^/]+$/.test(folder.filepath) // Group folders
-
-        if (isIterationFolder) {
-          console.log('[Workspace] Ignoring click on iteration/group folder (use checkbox instead):', folder.filepath)
-          return // Don't toggle expansion for iteration/group folders in workflow mode
-        }
-      }
-
       // Toggle folder expansion
       if (expandedFolders.has(folder.filepath)) {
         // Collapse folder

@@ -352,6 +352,12 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.workspaceIndex[sched.ID] = sctx.WorkspacePath
 	s.workspaceIndexMu.Unlock()
 
+	if sctx.SourceType == "workflow" {
+		if err := EnsureWorkflowScheduleExecutionTracker(context.Background(), sctx.WorkspacePath, sched, time.Now().UTC()); err != nil {
+			s.logf(sctx, "[SCHEDULER] Warning: failed to initialize execution history for %s: %v", sched.ID, err)
+		}
+	}
+
 	// Update user index for multi-agent schedules
 	if sctx.UserID != "" {
 		s.userIndexMu.Lock()
@@ -502,6 +508,10 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	s.runtimeStatesMu.Unlock()
 
 	sctx := buildScheduleContext(workspacePath, manifest, *sched)
+
+	if err := RecordWorkflowScheduleExecution(context.Background(), workspacePath, *sched, startTime); err != nil {
+		s.logf(sctx, "[SCHEDULER] Warning: failed to record manual schedule execution for %s: %v", scheduleID, err)
+	}
 
 	go func() {
 		if _, err := s.runJob(context.Background(), sctx); err != nil {
@@ -706,6 +716,12 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 	state.LastStatus = "running"
 	state.LastRunAt = &startTime
 	s.runtimeStatesMu.Unlock()
+
+	if freshCtx.SourceType == "workflow" {
+		if err := RecordWorkflowScheduleExecution(context.Background(), freshCtx.WorkspacePath, freshCtx.Schedule, startTime); err != nil {
+			s.logf(freshCtx, "[SCHEDULER] Warning: failed to record scheduled execution for %s: %v", schedID, err)
+		}
+	}
 
 	s.logf(freshCtx, "[SCHEDULER] 🚀 Starting %s (%s)", schedID, freshCtx.Schedule.Name)
 	if _, err := s.runJob(context.Background(), freshCtx); err != nil {

@@ -28,8 +28,6 @@ type ActivePopup = 'costs' | 'logs' | 'eval' | 'report' | 'live' | null
 type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 type SchedulePanelView = 'overview' | 'workflows'
 
-const MISSED_SCHEDULE_GRACE_MS = 60_000
-
 interface JobPopupState {
   jobId: string
   jobName: string
@@ -231,19 +229,16 @@ function formatTimeUntil(dateStr?: string): string {
 }
 
 function getMissedScheduleDelayMs(job: ScheduledJob): number | null {
-  if (!job.enabled || job.last_status === 'running' || !job.next_run_at) return null
+  if (!job.enabled || job.last_status === 'running' || !job.latest_missed_run_at) return null
 
-  const scheduledAtMs = new Date(job.next_run_at).getTime()
-  if (Number.isNaN(scheduledAtMs)) return null
+  const missedAtMs = new Date(job.latest_missed_run_at).getTime()
+  if (Number.isNaN(missedAtMs)) return null
 
-  const overdueMs = Date.now() - scheduledAtMs
-  if (overdueMs < MISSED_SCHEDULE_GRACE_MS) return null
-
-  return overdueMs
+  return Math.max(0, Date.now() - missedAtMs)
 }
 
 function isMissedSchedule(job: ScheduledJob): boolean {
-  return getMissedScheduleDelayMs(job) != null
+  return !!job.enabled && (job.missed_run_count ?? 0) > 0
 }
 
 function formatOverdueDuration(durationMs: number): string {
@@ -979,29 +974,50 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         <div className="flex-1 overflow-y-auto">
           {!isLoading && jobs.length > 0 && (
             <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="inline-flex rounded-lg border border-border bg-background p-1">
+              <div className="space-y-2">
+                <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
                   <button
                     onClick={() => setActiveView('overview')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                       activeView === 'overview'
                         ? 'bg-foreground text-background'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
                     Overview
                   </button>
                   <button
-                    onClick={() => setActiveView('workflows')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeView === 'workflows'
+                    onClick={() => {
+                      setActiveView('workflows')
+                      setSelectedWorkflowFilter('all')
+                    }}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      activeView === 'workflows' && selectedWorkflowFilter === 'all'
                         ? 'bg-foreground text-background'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
                   >
                     All Workflows
                   </button>
+                  {workflowOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setActiveView('workflows')
+                        setSelectedWorkflowFilter(option.value)
+                      }}
+                      className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                        activeView === 'workflows' && selectedWorkflowFilter === option.value
+                          ? 'bg-foreground text-background'
+                          : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                      title={option.label}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
+
                 <div className="text-xs text-muted-foreground">
                   {activeView === 'overview'
                     ? 'Summary and schedule health'
@@ -1063,7 +1079,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 </div>
               )}
 
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <button
                   onClick={() => {
                     setActiveFilter('running')
@@ -1096,19 +1112,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 >
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paused</div>
                   <div className="mt-1 text-lg font-semibold text-foreground">{summary.paused}</div>
-                </button>
-                <button
-                  onClick={() => {
-                    setActiveFilter('missed')
-                    setActiveView('workflows')
-                  }}
-                  className="text-left rounded-xl border border-border bg-background px-3 py-2 text-foreground shadow-sm hover:bg-muted transition-colors"
-                >
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Missed</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                    <span className="text-lg font-semibold text-foreground">{summary.missed}</span>
-                  </div>
                 </button>
                 <button
                   onClick={() => {
@@ -1157,12 +1160,14 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                               {label}
                             </span>
                             <span className="text-xs font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
-                              Missed by {formatOverdueDuration(overdueMs)}
+                              {job.missed_run_count && job.missed_run_count > 1
+                                ? `${job.missed_run_count} missed`
+                                : `Missed by ${formatOverdueDuration(overdueMs)}`}
                             </span>
                           </div>
                           <div className="mt-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
                             <span className="truncate" title={job.name}>{getLocalizedJobName(job)}</span>
-                            <span className="whitespace-nowrap">{formatLocalScheduleTime(job.next_run_at)}</span>
+                            <span className="whitespace-nowrap">{formatLocalScheduleTime(job.latest_missed_run_at || job.next_run_at)}</span>
                           </div>
                         </button>
                       )
@@ -1225,7 +1230,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <>
               <div className="border-b border-border px-5 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex flex-1 max-w-3xl flex-col gap-3 md:flex-row">
+                  <div className="flex flex-1 max-w-3xl flex-col gap-3">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <input
@@ -1236,18 +1241,6 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                       />
                     </div>
-                    <select
-                      value={selectedWorkflowFilter}
-                      onChange={(e) => setSelectedWorkflowFilter(e.target.value)}
-                      className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50 md:min-w-[220px]"
-                    >
-                      <option value="all">All workflows</option>
-                      {workflowOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
@@ -1434,7 +1427,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           <span>
                             {job.enabled
                               ? isMissedJob && missedDelayMs != null
-                                ? `Missed by ${formatOverdueDuration(missedDelayMs)}`
+                                ? job.missed_run_count && job.missed_run_count > 1
+                                  ? `${job.missed_run_count} missed · latest ${formatOverdueDuration(missedDelayMs)} ago`
+                                  : `Missed by ${formatOverdueDuration(missedDelayMs)}`
                                 : `Next: ${formatLocalScheduleTime(job.next_run_at)}`
                               : 'paused'}
                           </span>

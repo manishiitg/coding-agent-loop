@@ -110,20 +110,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
-  const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
 
-  const isExecutionWorkspace =
-    workflowWorkspaceView === 'execution' ||
-    (workflowWorkspaceSelectionTouched &&
-      workflowWorkspaceView === null &&
-      (currentPhase === 'execution' || currentPhase === 'evaluation-execution'))
-  const isBuilderWorkspace =
-    workflowWorkspaceView === 'builder' ||
-    (workflowWorkspaceSelectionTouched &&
-      workflowWorkspaceView === null &&
-      currentPhase === 'workflow-builder')
+  const isBuilderWorkspace = workflowWorkspaceView === null || workflowWorkspaceView === 'builder'
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
@@ -584,8 +574,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Workflow execution
   const {
-    status,
-    stopWorkflow
+    status
   } = useWorkflowExecution()
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
@@ -2204,7 +2193,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             variablesManifest={variablesManifest}
             isLoadingWorkspaceState={isLoadingWorkspaceState}
             onStartPhase={handleStartPhase}
-            onStop={stopWorkflow}
             onCreatePlan={onCreatePlan || (() => {})}
             showChatArea={showChatArea}
             onToggleChatArea={onToggleChatArea}
@@ -2252,7 +2240,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           variablesManifest={variablesManifest}
           isLoadingWorkspaceState={isLoadingWorkspaceState}
           onStartPhase={handleStartPhase}
-          onStop={stopWorkflow}
           onBulkUpdateSteps={handleBulkUpdateSteps}
           onCreatePlan={onCreatePlan || (() => {})}
           showChatArea={showChatArea}

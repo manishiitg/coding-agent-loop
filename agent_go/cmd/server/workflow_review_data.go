@@ -102,59 +102,24 @@ func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsR
 }
 
 func loadWorkflowEvaluationReports(ctx context.Context, workspacePath, runFolder string) workflowEvaluationReportsResponse {
-	evaluationRunsPath := filepath.Join(workspacePath, "evaluation", "runs")
-	listing, exists, err := listWorkspaceFolder(ctx, evaluationRunsPath, 1)
+	evaluationPlan := readWorkflowEvaluationPlan(ctx, workspacePath)
+	reportMap, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
 	if err != nil {
 		return workflowEvaluationReportsResponse{
 			Success: false,
-			Error:   fmt.Sprintf("Failed to list evaluation runs: %v", err),
-		}
-	}
-
-	evaluationPlan := readWorkflowEvaluationPlan(ctx, workspacePath)
-	if !exists {
-		return workflowEvaluationReportsResponse{
-			Success:        true,
-			Reports:        []EvaluationReportEntry{},
-			EvaluationPlan: evaluationPlan,
+			Error:   fmt.Sprintf("Failed to read evaluation scores: %v", err),
 		}
 	}
 
 	var reports []EvaluationReportEntry
-	for _, item := range extractWorkspaceChildFolders(listing, evaluationRunsPath) {
-		reportPaths := []string{
-			fmt.Sprintf("%s/evaluation_report.json", item.FilePath),
+	for runFolderName, report := range reportMap {
+		if !workflowRunFolderMatches(runFolderName, runFolder) {
+			continue
 		}
-
-		subListing, subExists, subErr := listWorkspaceFolder(ctx, item.FilePath, 1)
-		if subErr == nil && subExists {
-			for _, subItem := range extractWorkspaceChildFolders(subListing, item.FilePath) {
-				reportPaths = append(reportPaths, fmt.Sprintf("%s/evaluation_report.json", subItem.FilePath))
-			}
-		}
-
-		for _, reportPath := range reportPaths {
-			content, fileExists, readErr := readFileFromWorkspace(ctx, reportPath)
-			if readErr != nil || !fileExists {
-				continue
-			}
-
-			relPath := strings.TrimPrefix(reportPath, filepath.ToSlash(evaluationRunsPath)+"/")
-			runFolderName := strings.TrimSuffix(relPath, "/evaluation_report.json")
-			if !workflowRunFolderMatches(runFolderName, runFolder) {
-				continue
-			}
-
-			var report EvaluationReport
-			if err := json.Unmarshal([]byte(content), &report); err != nil {
-				continue
-			}
-
-			reports = append(reports, EvaluationReportEntry{
-				RunFolder: runFolderName,
-				Report:    report,
-			})
-		}
+		reports = append(reports, EvaluationReportEntry{
+			RunFolder: runFolderName,
+			Report:    report,
+		})
 	}
 
 	sort.Slice(reports, func(i, j int) bool {

@@ -40,7 +40,7 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-export type WorkflowWorkspaceView = 'builder' | 'execution' | 'report' | 'plan' | 'flow' | null
+export type WorkflowWorkspaceView = 'builder' | 'report' | 'plan' | 'flow' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
@@ -62,12 +62,31 @@ type PersistedWorkflowUIState = {
   canvasViewMode?: CanvasViewMode
 }
 
+function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
+  switch (view) {
+    case 'builder':
+    case 'report':
+    case 'plan':
+    case 'flow':
+    case null:
+      return view
+    default:
+      return null
+  }
+}
+
 function loadWorkspaceViewByPreset(): Record<string, WorkflowWorkspaceView> {
   try {
     const saved = localStorage.getItem(WORKSPACE_VIEW_BY_PRESET_KEY)
     if (saved) {
       const parsed = JSON.parse(saved)
-      if (parsed && typeof parsed === 'object') return parsed
+      if (parsed && typeof parsed === 'object') {
+        const out: Record<string, WorkflowWorkspaceView> = {}
+        for (const [presetId, rawView] of Object.entries(parsed as Record<string, unknown>)) {
+          out[presetId] = normalizeWorkflowWorkspaceView(rawView)
+        }
+        return out
+      }
     }
   } catch (error) {
     console.error('[WorkflowStore] Failed to load workspaceViewByPreset:', error)
@@ -79,10 +98,11 @@ function persistWorkspaceViewForPreset(presetId: string | null, view: WorkflowWo
   if (!presetId) return
   try {
     const current = loadWorkspaceViewByPreset()
-    if (view === null) {
+    const normalizedView = normalizeWorkflowWorkspaceView(view)
+    if (normalizedView === null) {
       delete current[presetId]
     } else {
-      current[presetId] = view
+      current[presetId] = normalizedView
     }
     localStorage.setItem(WORKSPACE_VIEW_BY_PRESET_KEY, JSON.stringify(current))
   } catch (error) {
@@ -103,15 +123,7 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
       out[presetId] = {
         showChatArea: typeof candidate.showChatArea === 'boolean' ? candidate.showChatArea : undefined,
         showWorkspacePane: typeof candidate.showWorkspacePane === 'boolean' ? candidate.showWorkspacePane : undefined,
-        workflowWorkspaceView:
-          candidate.workflowWorkspaceView === 'builder' ||
-          candidate.workflowWorkspaceView === 'execution' ||
-          candidate.workflowWorkspaceView === 'report' ||
-          candidate.workflowWorkspaceView === 'plan' ||
-          candidate.workflowWorkspaceView === 'flow' ||
-          candidate.workflowWorkspaceView === null
-            ? candidate.workflowWorkspaceView as WorkflowWorkspaceView
-            : undefined,
+        workflowWorkspaceView: normalizeWorkflowWorkspaceView(candidate.workflowWorkspaceView) ?? undefined,
         canvasViewMode:
           candidate.canvasViewMode === 'flow' ||
           candidate.canvasViewMode === 'plan' ||
@@ -137,6 +149,10 @@ function persistWorkflowUIStateForPreset(
     const next = {
       ...current[presetId],
       ...patch,
+      workflowWorkspaceView:
+        patch.workflowWorkspaceView === undefined
+          ? current[presetId]?.workflowWorkspaceView
+          : normalizeWorkflowWorkspaceView(patch.workflowWorkspaceView),
     }
     current[presetId] = next
     localStorage.setItem(WORKFLOW_UI_STATE_BY_PRESET_KEY, JSON.stringify(current))
@@ -171,7 +187,6 @@ export interface PresetWorkflowState {
   showWorkspacePane: boolean
   chatAreaExpanded: boolean
   workflowWorkspaceView: WorkflowWorkspaceView
-  workflowWorkspaceSelectionTouched: boolean
   workflowChatTabs: Record<string, WorkflowChatTab>
   activeWorkflowTabId: string | null
   selectedGroupIds: string[]
@@ -198,7 +213,6 @@ function createDefaultPresetState(): PresetWorkflowState {
     showWorkspacePane: false,
     chatAreaExpanded: true,
     workflowWorkspaceView: null,
-    workflowWorkspaceSelectionTouched: false,
     workflowChatTabs: {},
     activeWorkflowTabId: null,
     selectedGroupIds: [],
@@ -218,7 +232,6 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     showWorkspacePane: state.showWorkspacePane,
     chatAreaExpanded: state.chatAreaExpanded,
     workflowWorkspaceView: state.workflowWorkspaceView,
-    workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
     workflowChatTabs: state.workflowChatTabs,
     activeWorkflowTabId: state.activeWorkflowTabId,
     selectedGroupIds: state.selectedGroupIds,
@@ -286,7 +299,6 @@ interface WorkflowStore {
   showWorkspacePane: boolean
   chatAreaExpanded: boolean
   workflowWorkspaceView: WorkflowWorkspaceView
-  workflowWorkspaceSelectionTouched: boolean
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
   canvasViewMode: CanvasViewMode // 'flow' = React Flow diagram, 'plan' = readable outline
 
@@ -496,7 +508,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       showWorkspacePane: false,
       chatAreaExpanded: true,
       workflowWorkspaceView: null,
-      workflowWorkspaceSelectionTouched: false,
       // Layout direction (persists across page refreshes via localStorage)
       layoutDirection: (() => {
         try {
@@ -1169,15 +1180,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => {
+        const normalizedView = normalizeWorkflowWorkspaceView(view)
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-        persistWorkflowUIStateForPreset(presetId ?? null, { workflowWorkspaceView: view })
-        set({
-          workflowWorkspaceView: view,
-          workflowWorkspaceSelectionTouched: view !== null
-        })
+        persistWorkflowUIStateForPreset(presetId ?? null, { workflowWorkspaceView: normalizedView })
+        set({ workflowWorkspaceView: normalizedView })
         // Persist per-preset so the user returns to the same view across reloads.
         // _presetStates handles in-session preset switches but lives in memory only.
-        persistWorkspaceViewForPreset(presetId ?? null, view)
+        persistWorkspaceViewForPreset(presetId ?? null, normalizedView)
       },
 
       setLayoutDirection: (direction: LayoutDirection) => {
@@ -1640,9 +1649,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
               workflowWorkspaceView:
                 persistedUIState.workflowWorkspaceView ??
                 (loadWorkspaceViewByPreset()[presetId] ?? null),
-              workflowWorkspaceSelectionTouched:
-                (persistedUIState.workflowWorkspaceView ??
-                  (loadWorkspaceViewByPreset()[presetId] ?? null)) !== null,
               ...(persistedUIState.canvasViewMode ? { canvasViewMode: persistedUIState.canvasViewMode } : {}),
               _currentPresetId: presetId
             } as Partial<WorkflowStore>)
@@ -1689,8 +1695,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             showWorkspacePane: persistedShowWorkspacePane,
             chatAreaExpanded: restored.chatAreaExpanded,
             workflowWorkspaceView: persistedWorkspaceView,
-            workflowWorkspaceSelectionTouched:
-              restored.workflowWorkspaceSelectionTouched || persistedWorkspaceView !== null,
             ...(syncedCanvasMode ? { canvasViewMode: syncedCanvasMode } : {}),
             workflowChatTabs: restored.workflowChatTabs,
             activeWorkflowTabId: restored.activeWorkflowTabId,
@@ -1732,7 +1736,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           stepStatusMap: new Map(),
           batchProgress: null,
           workflowWorkspaceView: null,
-          workflowWorkspaceSelectionTouched: false,
           // activePhase is saved/loaded per-preset, don't reset here
           workflowChatTabs: {},
           activeWorkflowTabId: null

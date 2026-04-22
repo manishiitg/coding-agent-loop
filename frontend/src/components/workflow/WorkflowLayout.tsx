@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } 
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
-import { useChatStore, waitForChatStoreHydration } from '../../stores/useChatStore'
+import { useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
@@ -313,6 +313,37 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const lastWorkspaceRunExpansionKeyRef = useRef<string | null>(null)
   const reportAutoMinimizedWorkspaceRef = useRef(false)
   const prevWorkflowWorkspaceViewRef = useRef<string | null>(null)
+
+  const rehydrateWorkflowTabs = useCallback(async (tabs: ChatTab[]) => {
+    const tabsToHydrate = tabs.filter(tab =>
+      tab.sessionId && useChatStore.getState().getTabEvents(tab.sessionId).length === 0
+    )
+    if (tabsToHydrate.length === 0) {
+      return 0
+    }
+
+    const activeSessions = await useChatStore.getState().getActiveSessions()
+    const activeWorkflowSessionIds = new Set(
+      activeSessions
+        .filter(session => session.agent_mode === 'workflow' || session.agent_mode === 'workflow_phase')
+        .map(session => session.session_id)
+    )
+    const { setTabStreaming } = useChatStore.getState()
+
+    for (const tab of tabsToHydrate) {
+      if (!tab.sessionId) continue
+      try {
+        await restoreWorkflowStateFromEvents(tab.sessionId)
+        if (activeWorkflowSessionIds.has(tab.sessionId)) {
+          setTabStreaming(tab.tabId, true)
+        }
+      } catch (err) {
+        console.warn('[WorkflowReconnect] Failed to rehydrate events for persisted tab', tab.sessionId, err)
+      }
+    }
+
+    return tabsToHydrate.length
+  }, [])
 
   // Get active workflow preset (file-backed manifests, not DB presets)
   const { getActivePreset } = useGlobalPresetStore()
@@ -824,32 +855,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
         })
         const newSessions = sessionsToRestore.filter(s => !existingTabsBySession.has(s.sessionId))
-        const rehydrateSessions = sessionsToRestore.filter(s => {
-          const tabId = existingTabsBySession.get(s.sessionId)
-          if (!tabId) return false
-          return getTabEvents(s.sessionId).length === 0
-        })
+        const existingWorkflowTabs = getExistingWorkflowTabsForPreset()
 
         // Only restore sessions that don't have tabs yet
         const sessionsToActuallyRestore = newSessions
 
-        if (sessionsToActuallyRestore.length > 0 || rehydrateSessions.length > 0) {
+        const needsTabHydration = existingWorkflowTabs.some(tab =>
+          tab.sessionId && getTabEvents(tab.sessionId).length === 0
+        )
+
+        if (sessionsToActuallyRestore.length > 0 || needsTabHydration) {
           setIsRestoringWorkflowSessions(true)
         }
 
-        // 3a. Rehydrate events for persisted tabs whose events were dropped on refresh.
-        for (const session of rehydrateSessions) {
-          const tabId = existingTabsBySession.get(session.sessionId)!
-          try {
-            await restoreWorkflowStateFromEvents(session.sessionId)
-            if (session.isActive || session.status === 'running') {
-              setTabStreaming(tabId, true)
-            }
-            const loadedEvents = getTabEvents(session.sessionId)
-            console.log('[WorkflowReconnect] Rehydrated', loadedEvents.length, 'events for persisted tab', session.sessionId)
-          } catch (err) {
-            console.warn('[WorkflowReconnect] Failed to rehydrate events for persisted tab', session.sessionId, err)
-          }
+        // 3a. Rehydrate events for persisted tabs whose event buffer was lost on refresh.
+        if (needsTabHydration) {
+          await rehydrateWorkflowTabs(existingWorkflowTabs)
         }
 
         // 4. Create tabs and load events for new sessions only
@@ -902,7 +923,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         //    If not, auto-create a default "Workflow Builder" tab so the user sees something.
         if (!lastTabId) {
           const store = useChatStore.getState()
-          const existingWorkflowTabs = getExistingWorkflowTabsForPreset()
           if (existingWorkflowTabs.length === 0) {
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
@@ -937,7 +957,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, setShowChatArea])
+  }, [activePresetId, setShowChatArea, rehydrateWorkflowTabs])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -992,6 +1012,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, streaming=${!!streamingTab})`)
         chatStore.switchTab(targetTab.tabId)
         setShowChatArea(true)
+
+        const needsHydration = newPresetTabs.some(tab =>
+          tab.sessionId && chatStore.getTabEvents(tab.sessionId).length === 0
+        )
+        if (needsHydration) {
+          setIsRestoringWorkflowSessions(true)
+          void rehydrateWorkflowTabs(newPresetTabs).finally(() => {
+            setIsRestoringWorkflowSessions(false)
+          })
+        }
       } else {
         console.log(`[WorkflowLayout] No tabs for new preset, clearing activeTabId`)
         // Clear activeTabId so the old preset's tab events don't bleed into the new preset's view
@@ -1007,7 +1037,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
     }
-  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea])
+  }, [activePresetId, minimizeWorkflow, selectedRunFolder, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
@@ -1054,11 +1084,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     })
 
     setCurrentWorkflowPhase(phaseId)
-    setWorkflowWorkspaceView(
-      phaseId === 'execution' || phaseId === 'evaluation-execution' || phaseId === 'report-execution'
-        ? 'execution'
-        : 'builder'
-    )
+    setWorkflowWorkspaceView('builder')
 
     // For chat-compatible phases, just open the tab without auto-submitting a query.
     // The user will type naturally in the chat input.

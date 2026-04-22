@@ -1765,6 +1765,8 @@ export interface ScheduledJob {
   last_duration_ms?: number
   run_count: number
   consecutive_failures: number
+  missed_run_count?: number
+  latest_missed_run_at?: string
   created_at?: string
   updated_at?: string
 }

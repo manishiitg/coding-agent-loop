@@ -58,7 +58,6 @@ const (
 	HumanVerificationResponse events.EventType = "human_verification_response"
 	RequestHumanFeedback      events.EventType = "request_human_feedback"
 	BlockingHumanFeedback     events.EventType = "blocking_human_feedback"
-	BlockingHumanQuestions    events.EventType = "blocking_human_questions"
 	PlanApproval              events.EventType = "plan_approval"
 
 	// Step token usage event
@@ -93,7 +92,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
 		StepTokenUsage, StepProgressUpdated,
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
-		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, BlockingHumanQuestions, PlanApproval,
+		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, PlanApproval,
 		LearningSkipped,
 		RoutingEvaluated, PreValidationCompleted,
 		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:

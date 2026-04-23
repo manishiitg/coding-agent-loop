@@ -15,7 +15,7 @@ import (
 )
 
 // BlockingEventCallback is called when a blocking event is received.
-// The eventType is "plan_approval", "blocking_human_feedback", or "blocking_human_questions".
+// The eventType is "plan_approval" or "blocking_human_feedback".
 type BlockingEventCallback func(eventType string)
 
 // SessionDoneCallback is called when the event filter determines the session is truly complete.
@@ -34,14 +34,14 @@ type BotEventFilter struct {
 	mu                 sync.Mutex
 	delegationNames    map[string]string // correlationID -> instruction (sub-agent name)
 	pendingDelegations int
-	awaitingInput      bool // set on any blocking event, cleared externally
-	completionReceived bool // set when unified_completion, agent_end, or conversation_end arrives
-	sessionDone        bool // idempotency guard — ensures onSessionDone fires at most once
-	baseHierarchy      int      // the minimum hierarchy level seen — treated as "main" level
-	baseHierarchySet   bool     // true once baseHierarchy has been calibrated
-	lastActivity       string   // human-friendly description of current activity
-	toolCallCount      int      // total tool calls seen (for progress feel)
-	mainTextSent       bool     // true once we've sent main-level text via llm_generation_end
+	awaitingInput      bool   // set on any blocking event, cleared externally
+	completionReceived bool   // set when unified_completion, agent_end, or conversation_end arrives
+	sessionDone        bool   // idempotency guard — ensures onSessionDone fires at most once
+	baseHierarchy      int    // the minimum hierarchy level seen — treated as "main" level
+	baseHierarchySet   bool   // true once baseHierarchy has been calibrated
+	lastActivity       string // human-friendly description of current activity
+	toolCallCount      int    // total tool calls seen (for progress feel)
+	mainTextSent       bool   // true once we've sent main-level text via llm_generation_end
 	onBlockingEvent    BlockingEventCallback
 	onSessionDone      SessionDoneCallback
 }
@@ -290,14 +290,6 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		}
 		f.setBlocking("blocking_human_feedback")
 
-	case "blocking_human_questions":
-		msg := f.formatBlockingQuestions(event)
-		if msg != "" {
-			f.sendMessage(ctx, msg)
-			return true
-		}
-		f.setBlocking("blocking_human_questions")
-
 	case "agent_end", "conversation_end":
 		// Only main-level events signal session completion
 		if f.isMainLevel(event) {
@@ -501,38 +493,6 @@ func (f *BotEventFilter) formatBlockingFeedback(event BotEventData) string {
 	return "The agent needs your input to continue."
 }
 
-// formatBlockingQuestions formats a blocking_human_questions event.
-func (f *BotEventFilter) formatBlockingQuestions(event BotEventData) string {
-	if event.Data == nil || event.Data.Data == nil {
-		return "The agent has questions that need your answers."
-	}
-
-	raw, err := json.Marshal(event.Data.Data)
-	if err != nil {
-		return "The agent has questions that need your answers."
-	}
-	var parsed struct {
-		Questions []struct {
-			Question string `json:"question"`
-		} `json:"questions"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil || len(parsed.Questions) == 0 {
-		return "The agent has questions that need your answers."
-	}
-
-	msg := "**Questions from agent:**\n"
-	for i, q := range parsed.Questions {
-		if i >= 5 {
-			msg += fmt.Sprintf("...and %d more\n", len(parsed.Questions)-5)
-			break
-		}
-		msg += fmt.Sprintf("%d. %s\n", i+1, q.Question)
-	}
-	return msg
-}
-
-
-
 // getDelegationName extracts the sub-agent name from a delegation event (must hold lock or call before lock).
 func (f *BotEventFilter) getDelegationName(event BotEventData) string {
 	if event.Data == nil || event.Data.Data == nil {
@@ -706,4 +666,3 @@ func (f *BotEventFilter) buildShareableURL(filePath string) string {
 	}
 	return url
 }
-

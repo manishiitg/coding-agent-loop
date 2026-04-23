@@ -63,7 +63,6 @@ export const SUMMARY_MODE_EVENTS = new Set([
 
   // User interaction — must always be visible so user can respond
   'user_message',
-  'blocking_human_questions',
   'request_human_feedback',
   'blocking_human_feedback',
   'plan_approval',

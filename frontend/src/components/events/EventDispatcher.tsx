@@ -126,7 +126,6 @@ import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
 import { PlanApprovalDisplay } from './PlanApprovalDisplay'
-import { BlockingHumanQuestionsDisplay } from './BlockingHumanQuestionsDisplay'
 import { useChatStore } from '../../stores/useChatStore'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { CircularProgress } from '../ui/CircularProgress'
@@ -707,26 +706,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         onSubmitFeedback={onSubmitFeedback}
         onFeedbackSubmitted={onFeedbackSubmitted}
         isApproving={isApproving}
-      />
-    )
-  }
-
-  if (event.type === 'blocking_human_questions') {
-    const data = event.data as { data?: Record<string, unknown> } | undefined
-    const payload = (data?.data || event.data) as Record<string, unknown>
-    return (
-      <BlockingHumanQuestionsDisplay
-        event={{
-          type: event.type,
-          data: {
-            request_id: (payload?.request_id as string) || `request_${Date.now()}`,
-            questions: (payload?.questions as Array<{ id: string; question: string }>) || [],
-            session_id: (payload?.session_id as string) || '',
-          },
-          timestamp: event.timestamp || new Date().toISOString()
-        }}
-        onSubmitFeedback={onSubmitFeedback}
-        onFeedbackSubmitted={onFeedbackSubmitted}
       />
     )
   }

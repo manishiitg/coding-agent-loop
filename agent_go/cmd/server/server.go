@@ -5623,41 +5623,6 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 	log.Printf("[PLAN APPROVAL] Emitted blocking_human_feedback event for plan approval (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
-func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
-	now := time.Now()
-	// Convert questions to the event struct format
-	var eventQuestions []orchEvents.BlockingHumanQuestionsQuestion
-	for _, q := range questions {
-		eventQuestions = append(eventQuestions, orchEvents.BlockingHumanQuestionsQuestion{
-			ID:       q["id"],
-			Question: q["question"],
-		})
-	}
-	eventData := &orchEvents.BlockingHumanQuestionsEvent{
-		BaseEventData: unifiedevents.BaseEventData{
-			Timestamp: now,
-		},
-		RequestID: requestID,
-		Questions: eventQuestions,
-		SessionID: e.sessionID,
-	}
-	event := events.Event{
-		ID:        fmt.Sprintf("%s_human_questions_%d", e.sessionID, now.UnixNano()),
-		Type:      "blocking_human_questions",
-		Timestamp: now,
-		SessionID: e.sessionID,
-		Data: &unifiedevents.AgentEvent{
-			Type:      orchEvents.BlockingHumanQuestions,
-			Timestamp: now,
-			SessionID: e.sessionID,
-			Component: "human",
-			Data:      eventData,
-		},
-	}
-	e.eventStore.AddEvent(e.sessionID, event)
-	log.Printf("[HUMAN QUESTIONS] Emitted blocking_human_questions event (request_id: %s, session: %s)", requestID, e.sessionID)
-}
-
 // executeDelegatedTask executes a delegated task via a sub-agent.
 // onCreated is an optional callback invoked after the sub-agent wrapper is created
 // but before Invoke — used by background agents to attach a history func.

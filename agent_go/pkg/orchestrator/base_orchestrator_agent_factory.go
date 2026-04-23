@@ -19,7 +19,7 @@ import (
 
 // BridgeSessionEventEmitter implements virtualtools.SessionEventEmitter
 // by emitting events through the orchestrator's ContextAwareBridge.
-// This ensures human_feedback/human_questions tools work correctly when
+// This ensures human_feedback tools work correctly when
 // called from workflow agents (not just chat API agents).
 type BridgeSessionEventEmitter struct {
 	Bridge mcpagent.AgentEventListener
@@ -47,32 +47,6 @@ func (e *BridgeSessionEventEmitter) EmitBlockingHumanFeedback(requestID, questio
 	}
 	if err := e.Bridge.HandleEvent(context.Background(), agentEvent); err != nil {
 		// Best-effort emission; the tool will still wait for the response
-	}
-}
-
-func (e *BridgeSessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
-	now := time.Now()
-	var eventQuestions []orchEvents.BlockingHumanQuestionsQuestion
-	for _, q := range questions {
-		eventQuestions = append(eventQuestions, orchEvents.BlockingHumanQuestionsQuestion{
-			ID:       q["id"],
-			Question: q["question"],
-		})
-	}
-	eventData := &orchEvents.BlockingHumanQuestionsEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: now,
-		},
-		RequestID: requestID,
-		Questions: eventQuestions,
-	}
-	agentEvent := &baseevents.AgentEvent{
-		Type:      orchEvents.BlockingHumanQuestions,
-		Timestamp: now,
-		Data:      eventData,
-	}
-	if err := e.Bridge.HandleEvent(context.Background(), agentEvent); err != nil {
-		// Best-effort emission
 	}
 }
 
@@ -346,7 +320,7 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 				}
 
 				// Wrap human tools to inject SessionEventEmitter via the orchestrator's bridge.
-				// Without this, human_feedback/human_questions tools called from workflow agents
+				// Without this, human_feedback tools called from workflow agents
 				// would silently skip event emission (no emitter in context) and time out.
 				finalExecutor := toolExecutor
 				if toolCategory == virtualtools.GetHumanToolCategory() && bo.GetContextAwareBridge() != nil {

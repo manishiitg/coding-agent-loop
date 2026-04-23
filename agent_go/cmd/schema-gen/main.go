@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/mcpcache"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/invopop/jsonschema"
 )
@@ -139,10 +139,10 @@ type EventDataUnion struct {
 	OrchestratorAgentError *orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
-	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
-	RoutingEvaluated       *todo_creation_human.RoutingEvaluatedEvent        `json:"routing_evaluated,omitempty"`
-	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
+	StepTokenUsage           *todo_creation_human.StepTokenUsageEvent           `json:"step_token_usage,omitempty"`
+	StepProgressUpdated      *todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated,omitempty"`
+	RoutingEvaluated         *todo_creation_human.RoutingEvaluatedEvent         `json:"routing_evaluated,omitempty"`
+	PreValidationCompleted   *todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed,omitempty"`
 	LearnCodeScriptExecution *orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
@@ -153,7 +153,6 @@ type EventDataUnion struct {
 	// Human Feedback Events
 	RequestHumanFeedback      *orchestrator_events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
 	BlockingHumanFeedback     *orchestrator_events.BlockingHumanFeedbackEvent     `json:"blocking_human_feedback,omitempty"`
-	BlockingHumanQuestions    *orchestrator_events.BlockingHumanQuestionsEvent    `json:"blocking_human_questions,omitempty"`
 	HumanVerificationResponse *orchestrator_events.HumanVerificationResponseEvent `json:"human_verification_response,omitempty"`
 
 	// Structured Output Events
@@ -200,7 +199,7 @@ type EventDataUnion struct {
 	BatchExecutionStart *orchestrator_events.BatchExecutionStartEvent `json:"batch_execution_start,omitempty"`
 	BatchGroupStart     *orchestrator_events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
 	BatchGroupEnd       *orchestrator_events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
-	BatchExecutionEnd *orchestrator_events.BatchExecutionEndEvent `json:"batch_execution_end,omitempty"`
+	BatchExecutionEnd   *orchestrator_events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
 }
 
 // =============================================================================
@@ -292,10 +291,10 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	orchestrator_events.StepTokenUsage:         "step_token_usage",
-	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
-	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
-	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
+	orchestrator_events.StepTokenUsage:           "step_token_usage",
+	orchestrator_events.StepProgressUpdated:      "step_progress_updated",
+	orchestrator_events.RoutingEvaluated:         "routing_evaluated",
+	orchestrator_events.PreValidationCompleted:   "pre_validation_completed",
 	orchestrator_events.LearnCodeScriptExecution: "learn_code_script_execution",
 
 	// Todo/Planning Events
@@ -700,9 +699,9 @@ type UnifiedEvent struct {
 	RequestHumanFeedbackEvent orchestrator_events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
-	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
-	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
-	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`
+	StepTokenUsageEvent           todo_creation_human.StepTokenUsageEvent           `json:"step_token_usage"`
+	StepProgressUpdatedEvent      todo_creation_human.StepProgressUpdatedEvent      `json:"step_progress_updated"`
+	PreValidationCompletedEvent   todo_creation_human.PreValidationCompletedEvent   `json:"pre_validation_completed"`
 	LearnCodeScriptExecutionEvent orchestrator_events.LearnCodeScriptExecutionEvent `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events

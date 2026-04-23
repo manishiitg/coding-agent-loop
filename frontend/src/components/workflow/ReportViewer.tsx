@@ -44,6 +44,8 @@ import type {
 
 // Default rows-per-page for tables; overridable per-widget via `page_size:`.
 const DEFAULT_TABLE_PAGE_SIZE = 25
+const DEFAULT_COST_WIDGET_RUN_LIMIT = 3
+const DEFAULT_EVAL_WIDGET_RUN_LIMIT = 3
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
 // Default categorical palette. Widgets override via `colors:` / `colors_dark:`.
@@ -515,6 +517,138 @@ function useCompactWidgetLayout(maxWidth = 520) {
   }, [maxWidth])
 
   return [ref, isCompact] as const
+}
+
+const COMPACT_PRIMARY_COLUMN_CANDIDATES = [
+  'title',
+  'name',
+  'label',
+  'headline',
+  'job_title',
+  'role',
+  'position',
+]
+
+const COMPACT_SECONDARY_COLUMN_CANDIDATES = [
+  'subtitle',
+  'company',
+  'company_name',
+  'budget_display',
+  'status',
+  'location',
+  'type',
+  'created_at',
+  'updated_at',
+]
+
+const COMPACT_DEPRIORITIZED_COLUMNS = new Set([
+  'id',
+  'url',
+  'job_url',
+  'link',
+  'description',
+  'job_text',
+  'text',
+  'content',
+  'body',
+  'summary',
+])
+
+function isPrimitiveTableValue(value: unknown): value is string | number | boolean {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+}
+
+function isURLString(value: string): boolean {
+  return /^https?:\/\//i.test(value)
+}
+
+function stringifyTableValue(value: unknown): string {
+  if (value == null) return '—'
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '—'
+    if (value.every(isPrimitiveTableValue)) return value.map(item => String(item)).join(', ')
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return '—'
+    if (entries.every(([, item]) => item == null || isPrimitiveTableValue(item))) {
+      return entries
+        .map(([key, item]) => `${key}: ${item == null ? '—' : String(item)}`)
+        .join(', ')
+    }
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
+function formatTableValue(value: unknown, preset?: ReportFormatterName): FormatResult & {
+  href?: string
+  rawText: string
+  prefersBlock: boolean
+} {
+  if (preset) {
+    const formatted = formatNamed(value, preset)
+    return {
+      ...formatted,
+      rawText: formatted.text,
+      prefersBlock: formatted.text.length > 80 || formatted.text.includes('\n'),
+    }
+  }
+
+  const rawText = stringifyTableValue(value)
+  if (typeof value === 'string' && isURLString(value)) {
+    return {
+      text: value,
+      href: value,
+      isNumeric: false,
+      rawText,
+      prefersBlock: true,
+    }
+  }
+
+  if (Array.isArray(value) || (value != null && typeof value === 'object')) {
+    return {
+      text: rawText,
+      isNumeric: false,
+      rawText,
+      prefersBlock: rawText.length > 60 || Array.isArray(value),
+    }
+  }
+
+  const formatted = formatAuto(value)
+  return {
+    ...formatted,
+    rawText,
+    prefersBlock: rawText.length > 80 || rawText.includes('\n'),
+  }
+}
+
+function renderTableValueContent(formatted: {
+  text: string
+  href?: string
+}) {
+  if (formatted.href) {
+    return (
+      <a
+        href={formatted.href}
+        target="_blank"
+        rel="noreferrer"
+        className="text-primary underline underline-offset-2 break-all hover:text-primary/80"
+      >
+        {formatted.text}
+      </a>
+    )
+  }
+  return formatted.text
 }
 
 // Resolves the effective color palette for a widget given the current theme.
@@ -1774,7 +1908,7 @@ function CostsWidget({
         const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
         return bTime - aTime || b.totalCost - a.totalCost || a.runFolder.localeCompare(b.runFolder)
       })
-    if (!widget.runFolder) return filtered
+    if (!widget.runFolder) return filtered.slice(0, DEFAULT_COST_WIDGET_RUN_LIMIT)
     if (widget.runFolder === 'latest') return filtered.length > 0 ? [filtered[0]] : []
     return filtered.filter(entry => entry.runFolder === widget.runFolder)
   }, [costsData, runScope, scope, widget.group, widget.runFolder])
@@ -1819,6 +1953,14 @@ function CostsWidget({
       { label: 'Runs', value: String(runSummaries.length) },
     ]
   }, [aggregateRunSummary, phaseSummary, runSummaries.length, scope])
+
+  const recentRunCards = useMemo(() => {
+    return runSummaries.slice(0, DEFAULT_COST_WIDGET_RUN_LIMIT).map(run => ({
+      runFolder: run.runFolder,
+      updatedAt: run.updatedAt,
+      value: formatMetricValue(metric, metricValue(metric, run)),
+    }))
+  }, [metric, runSummaries])
 
   if (loading) {
     return (
@@ -2023,25 +2165,17 @@ function CostsWidget({
       <WidgetHeader widget={widget} />
       {view === 'summary' && (
         <>
-          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-4'}`}>
-            {summaryCards.map(card => (
-              <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-3'}`}>
+            {recentRunCards.map(card => (
+              <div key={card.runFolder} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{metricLabel(metric)}</div>
+                <div className="mt-1 truncate text-sm font-medium text-foreground">{card.runFolder}</div>
                 <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {formatNamed(card.updatedAt, 'datetime').text}
+                </div>
               </div>
             ))}
-          </div>
-          <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {metricLabel(metric)} by Stage
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {stageMetricRows.map(stage => (
-                <div key={stage.label} className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
-                  {stage.label}: <span className="font-medium">{formatMetricValue(metric, stage.value)}</span>
-                </div>
-              ))}
-            </div>
           </div>
         </>
       )}
@@ -2135,7 +2269,7 @@ function EvalsWidget({
         return bTime - aTime || b.report.score_percentage - a.report.score_percentage || a.run_folder.localeCompare(b.run_folder)
       })
 
-    if (!widget.runFolder) return reports
+    if (!widget.runFolder) return reports.slice(0, DEFAULT_EVAL_WIDGET_RUN_LIMIT)
     if (widget.runFolder === 'latest') return reports.length > 0 ? [reports[0]] : []
     return reports.filter(entry => entry.run_folder === widget.runFolder)
   }, [evalsData, widget.group, widget.runFolder])
@@ -2209,8 +2343,6 @@ function EvalsWidget({
     ]
   }, [summary])
 
-  const weakestSteps = useMemo(() => stepRows.slice(0, 5), [stepRows])
-
   if (loading) {
     return (
       <div className="flex flex-col gap-3">
@@ -2263,18 +2395,6 @@ function EvalsWidget({
                 <div className="mt-1 text-xl font-semibold tracking-tight text-foreground">{card.value}</div>
               </div>
             ))}
-          </div>
-          <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              Weakest Steps
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {weakestSteps.map(step => (
-                <div key={`${step.run_folder}:${step.step_id}`} className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
-                  {step.step_id}: <span className="font-medium">{step.score_percentage.toFixed(1)}%</span>
-                </div>
-              ))}
-            </div>
           </div>
         </>
       )}
@@ -2594,12 +2714,12 @@ function RunsWidget({
 
   const summaryCards = useMemo(() => {
     if (!summary) return []
+    const latestRunAt =
+      summary.latestRun?.created_at ||
+      summary.latestRun?.completed_at ||
+      null
     return [
-      { label: 'Runs', value: String(summary.totalRuns) },
-      { label: 'Completed', value: String(summary.completed) },
-      { label: 'Running', value: String(summary.running) },
-      { label: 'Total Runtime', value: formatRuntimeDuration(summary.totalDurationMs) },
-      { label: 'Avg Runtime', value: formatRuntimeDuration(summary.averageDurationMs) },
+      { label: 'Last Run', value: formatNamed(latestRunAt, 'datetime').text },
     ]
   }, [summary])
 
@@ -2676,7 +2796,7 @@ function RunsWidget({
       <WidgetHeader widget={widget} />
       {view === 'summary' && (
         <>
-          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-5'}`}>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-1'}`}>
             {summaryCards.map(card => (
               <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
@@ -2684,24 +2804,6 @@ function RunsWidget({
               </div>
             ))}
           </div>
-          {summary.latestRun && (
-            <div className={isCompact ? 'rounded-xl bg-background/35 px-2.5 py-2.5' : 'rounded-xl border border-border/60 bg-background/55 px-2.5 py-2.5'}>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Latest Run
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
-                  {summary.latestRun.run_folder}
-                </div>
-                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
-                  Status: <span className="font-medium">{summary.latestRun.status}</span>
-                </div>
-                <div className={isCompact ? 'rounded-full bg-background/60 px-2.5 py-1 text-xs text-foreground' : 'rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-foreground'}>
-                  Runtime: <span className="font-medium">{summary.latestRun.duration_label}</span>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
       {view === 'duration-chart' && (
@@ -3095,11 +3197,17 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
   }, [value, columns])
 
   const compactPrimaryColumn = useMemo(() => {
-    return columns.find(col => !numericColumns.has(col)) ?? columns[0] ?? null
+    const nonNumericColumns = columns.filter(col => !numericColumns.has(col))
+    const preferred = COMPACT_PRIMARY_COLUMN_CANDIDATES.find(candidate => nonNumericColumns.includes(candidate))
+    if (preferred) return preferred
+    return nonNumericColumns.find(col => !COMPACT_DEPRIORITIZED_COLUMNS.has(col)) ?? nonNumericColumns[0] ?? columns[0] ?? null
   }, [columns, numericColumns])
 
   const compactSecondaryColumn = useMemo(() => {
-    return columns.find(col => col !== compactPrimaryColumn && !numericColumns.has(col)) ?? null
+    const remainingColumns = columns.filter(col => col !== compactPrimaryColumn && !numericColumns.has(col))
+    const preferred = COMPACT_SECONDARY_COLUMN_CANDIDATES.find(candidate => remainingColumns.includes(candidate))
+    if (preferred) return preferred
+    return remainingColumns.find(col => !COMPACT_DEPRIORITIZED_COLUMNS.has(col)) ?? remainingColumns[0] ?? null
   }, [columns, compactPrimaryColumn, numericColumns])
 
   const compactDetailColumns = useMemo(() => {
@@ -3206,16 +3314,12 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
             const rowStyle = rowColor ? { backgroundColor: toRowTint(rowColor) } : undefined
             const primaryValue = compactPrimaryColumn ? row?.[compactPrimaryColumn] : undefined
             const primaryText = compactPrimaryColumn
-              ? (formats[compactPrimaryColumn]
-                ? formatNamed(primaryValue, formats[compactPrimaryColumn] as ReportFormatterName).text
-                : formatAuto(primaryValue).text)
-              : ''
+              ? formatTableValue(primaryValue, formats[compactPrimaryColumn] as ReportFormatterName | undefined)
+              : null
             const secondaryValue = compactSecondaryColumn ? row?.[compactSecondaryColumn] : undefined
             const secondaryText = compactSecondaryColumn
-              ? (formats[compactSecondaryColumn]
-                ? formatNamed(secondaryValue, formats[compactSecondaryColumn] as ReportFormatterName).text
-                : formatAuto(secondaryValue).text)
-              : ''
+              ? formatTableValue(secondaryValue, formats[compactSecondaryColumn] as ReportFormatterName | undefined)
+              : null
             return (
               <div
                 key={safePage * pageSize + i}
@@ -3227,12 +3331,12 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                     <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                       Row {safePage * pageSize + i + 1}
                     </div>
-                    <div className="truncate text-sm font-semibold text-foreground">
-                      {primaryText || 'Untitled row'}
+                    <div className="break-words text-sm font-semibold text-foreground">
+                      {primaryText ? renderTableValueContent(primaryText) : 'Untitled row'}
                     </div>
-                    {compactSecondaryColumn && secondaryText && secondaryText !== primaryText && (
-                      <div className="truncate text-xs text-muted-foreground">
-                        {compactSecondaryColumn}: {secondaryText}
+                    {compactSecondaryColumn && secondaryText && secondaryText.text !== primaryText?.text && (
+                      <div className="break-words text-xs text-muted-foreground">
+                        {compactSecondaryColumn}: {renderTableValueContent(secondaryText)}
                       </div>
                     )}
                   </div>
@@ -3247,14 +3351,15 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                     <div className="divide-y divide-border/35 overflow-hidden rounded-lg bg-background/40">
                       {compactDetailColumns.map(c => {
                         const preset = formats[c] as ReportFormatterName | undefined
-                        const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
+                        const formatted = formatTableValue(row?.[c], preset)
+                        const useBlockLayout = formatted.prefersBlock || formatted.rawText.length > 72
                         return (
-                          <div key={c} className="flex items-start justify-between gap-3 px-2.5 py-2">
+                          <div key={c} className={`px-2.5 py-2 ${useBlockLayout ? 'space-y-1.5' : 'flex items-start justify-between gap-3'}`}>
                             <div className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                               {c}
                             </div>
-                            <div className={`min-w-0 break-words text-right text-sm text-foreground ${formatted.isNumeric ? 'tabular-nums' : ''}`}>
-                              {formatted.text}
+                            <div className={`min-w-0 break-words text-sm text-foreground ${useBlockLayout ? 'text-left whitespace-pre-wrap' : 'text-right'} ${formatted.isNumeric ? 'tabular-nums' : ''}`}>
+                              {renderTableValueContent(formatted)}
                             </div>
                           </div>
                         )
@@ -3309,14 +3414,14 @@ function TableWidget({ value, widget }: { value: unknown; widget: ReportWidget }
                 >
                   {columns.map(c => {
                     const preset = formats[c] as ReportFormatterName | undefined
-                    const formatted = preset ? formatNamed(row?.[c], preset) : formatAuto(row?.[c])
+                    const formatted = formatTableValue(row?.[c], preset)
                     const align = formatted.isNumeric ? 'text-right tabular-nums' : 'text-left'
                     return (
                       <td
                         key={c}
-                        className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground ${align}`}
+                        className={`px-2.5 py-1.5 border-b border-border/40 align-top text-foreground break-words whitespace-pre-wrap ${align}`}
                       >
-                        {formatted.text}
+                        {renderTableValueContent(formatted)}
                       </td>
                     )
                   })}

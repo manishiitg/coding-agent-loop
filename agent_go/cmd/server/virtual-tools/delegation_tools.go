@@ -66,7 +66,6 @@ const (
 // SessionEventEmitter is the interface for emitting human-feedback events to the session event store
 type SessionEventEmitter interface {
 	EmitBlockingHumanFeedback(requestID, question, context string, yesNoOnly bool, yesLabel, noLabel string, options ...string)
-	EmitBlockingHumanQuestions(requestID string, questions []map[string]string)
 }
 
 // GetChatsFolder returns the workspace-relative Chats folder for the current session.
@@ -584,7 +583,6 @@ func handleListAgents(ctx context.Context, args map[string]interface{}) (string,
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
 }
-
 
 // truncateString truncates a string to maxLen characters, adding "..." if truncated
 func truncateString(s string, maxLen int) string {

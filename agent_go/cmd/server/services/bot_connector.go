@@ -206,7 +206,7 @@ type activeBotSession struct {
 	cancel            context.CancelFunc
 	eventFilter       *BotEventFilter
 	awaitingUserInput bool      // set by event filter on any blocking event
-	blockingEventType string    // "blocking_human_feedback", "blocking_human_questions"
+	blockingEventType string    // "blocking_human_feedback"
 	ackChannelID      string    // channel of the message the bot reacted to (for removal)
 	ackMessageTS      string    // timestamp of the message the bot reacted to
 	LastActivity      time.Time // updated on any send/receive; used to prune stale completed sessions
@@ -723,8 +723,8 @@ func isSessionEndCommand(text string) bool {
 
 // SyncMessageResult is the synchronous result of HandleMessageSync
 type SyncMessageResult struct {
-	Type         string `json:"type"`                     // "conversation" or "follow_up"
-	Response     string `json:"response,omitempty"`       // text reply for conversation
+	Type         string `json:"type"`               // "conversation" or "follow_up"
+	Response     string `json:"response,omitempty"` // text reply for conversation
 	ThreadID     string `json:"thread_id"`
 	SessionID    string `json:"session_id,omitempty"`     // internal chat session ID (for follow_up)
 	BotSessionID string `json:"bot_session_id,omitempty"` // set when awaiting confirmation

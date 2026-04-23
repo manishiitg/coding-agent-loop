@@ -26,9 +26,9 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return workspaceToolNames.includes(name)
   }
 
-  // Check if this is a human tool (feedback or questions)
+  // Check if this is a human tool
   const isHumanTool = (name: string): boolean => {
-    return name === 'human_feedback' || name === 'human_questions'
+    return name === 'human_feedback'
   }
 
   // Check if this is a code execution tool
@@ -41,7 +41,7 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return <WorkspaceToolCallDisplay event={event} />
   }
 
-  // Human tools: don't render here — blocking_human_feedback / blocking_human_questions
+  // Human tools: don't render here — blocking_human_feedback
   // events (emitted inside the tool handlers) render the interactive UI via their
   // dedicated display components, so rendering here would show the question twice.
   if (normalizedToolName && isHumanTool(normalizedToolName)) {

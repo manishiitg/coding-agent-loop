@@ -1482,7 +1482,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 **Step config knobs for KB (use update_step_config):**
 - knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB notes, 'read-write' (or 'write') on steps that produce KB narrative via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
 - knowledgebase_contribution — natural-language instruction: what to contribute to notes/ from this step (which topic file(s), what observations). In agent-write-method (default) it's the instruction handed to the post-step KB update agent; in direct-write-method it's the contract for the step agent's self-review turn. If empty, NO KB writes happen regardless of access.
-- knowledgebase_write_method — `+"`agent`"+` (default) OR `+"`direct`"+`. Picks WHO writes. **Rule of thumb:** prefer `+"`direct`"+` when the narrative contribution is clear from the step's work and the author wants inline capture. Prefer `+"`agent`"+` when the step's output is messy or verbose (research notes, investigation traces, long tool sequences) — the post-step reviewer can extract durable observations from the full trail, which the step agent mid-task often doesn't have bandwidth to do cleanly. Direct mode trades one extra LLM turn (the self-review) for zero post-step agent cost and tighter provenance.
+- knowledgebase_write_method — `+"`agent`"+` (default runtime fallback) OR `+"`direct`"+`. Picks WHO writes. **Builder preference:** choose `+"`direct`"+` in most cases so the step captures its KB contribution inline with tight provenance. Use `+"`agent`"+` only when the user explicitly wants a post-step reviewer or when the step's output is messy/verbose enough that a separate extractor will do a clearly better job (research notes, investigation traces, long tool sequences). Direct mode trades one extra LLM turn (the self-review) for zero post-step agent cost.
 {{if eq .UseKnowledgebase "false"}}
 **Note:** Knowledgebase is currently disabled at the preset level. Steps can still write to db/ but knowledgebase/ is unavailable until the preset is re-enabled.
 {{end}}
@@ -1542,7 +1542,7 @@ Both learning and knowledgebase are **off by default** for every step. Running t
 
 **Cheap heuristics to use while deciding:**
 - **Step writes a brand-new `+"`"+`db/`+"`"+` file or consumes a db file**: likely worth KB too (the domain facts often live alongside the persistent rows). Likely NOT worth learning (db schema is stable; selectors aren't).
-- **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT).
+- **Step drives a UI / browser / third-party API with fussy selectors or timing**: worth learning. Probably NOT worth KB (selectors are HOW, not WHAT). For execution mode, generally keep these steps on `+"`code_exec`"+` unless the user explicitly wants `+"`learn_code`"+` and the flow is already proven highly stable and scriptable.
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
 - **Step uses `+"`"+`declared_execution_mode = \"learn_code\"`+"`"+`**: generally leave `+"`"+`learning_objective`+"`"+` empty. The saved `+"`"+`learnings/{step-id}/main.py`+"`"+` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared `+"`"+`_global/`+"`"+` skill).
@@ -1559,8 +1559,8 @@ Both learning and knowledgebase are **off by default** for every step. Running t
 - Set up servers, tools, and context dependencies
 
 **When creating or configuring each step, choose its execution mode:**
-1. **Learn code mode** (default, preferred): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, or stable browser automation with known selectors and predictable navigation → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+`.
-2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. The LLM writes and runs code inline each time — no persistent script is saved.
+1. **Learn code mode** (preferred for stable non-browser work): use when the logic can be expressed as reusable Python with known tools, inputs, and outputs — data transforms, file processing, calculations, fixed API calls, and other deterministic flows → update_step_config(step_id, use_code_execution_mode=true). Future runs try the saved main.py first (0 LLM tokens when stable). The LLM repairs it if it fails. To run the learned step's saved Python `+"`main.py`"+` directly with no LLM fallback, use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+`.
+2. **Code execution mode**: use when the work varies too much between runs or needs adaptive/exploratory reasoning. This is also the general default for browser/UI automation, unless the user explicitly wants `+"`learn_code`"+` and the browser flow is already proven stable enough to freeze into a reusable script. The LLM writes and runs code inline each time — no persistent script is saved.
 
 ### Build Evaluation
 Once steps are producing output, set up evaluation so the optimizer has something to measure against:
@@ -1841,7 +1841,7 @@ The learning system has **three dimensions** per step: `+"`learnings_access`"+` 
 
 - **Default access is `+"`\"read\"`"+`** (inferred when `+"`learnings_access`"+` is unset). Every step — including simple plumbing — sees `+"`_global/SKILL.md`"+` in its prompt for cross-step context. Do NOT set `+"`learnings_access: \"none\"`"+` on plumbing steps just because they don't contribute; they still benefit from reading.
 - **Opt into writing** by setting `+"`learnings_access: \"read-write\"`"+` AND a non-empty `+"`learning_objective`"+`. Required for steps that produce durable HOW-knowledge (selectors, timings, auth flows, tool-call patterns). The validator enforces the pairing.
-- **Pick who writes** via `+"`learnings_write_method`"+`: default `+"`\"agent\"`"+` runs a post-step learning agent that reads the full step trail and extracts patterns into `+"`_global/`"+`; `+"`\"direct\"`"+` fires a dedicated post-completion user-message turn where the step agent itself writes `+"`_global/SKILL.md`"+` (folder guard widens only for that turn — main execution cannot write learnings). **Agent mode** is better when pattern extraction is complex (long traces, non-obvious patterns, need for cross-step synthesis). **Direct mode** is better when the lesson is simple and self-evident from the step's work, saving the post-step agent call at the cost of one extra turn. Direct mode's guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel sub-agents writing direct are serialized by an in-process mutex.
+- **Pick who writes** via `+"`learnings_write_method`"+`: runtime fallback is `+"`\"agent\"`"+`, which runs a post-step learning agent that reads the full step trail and extracts patterns into `+"`_global/`"+`; `+"`\"direct\"`"+` fires a dedicated post-completion user-message turn where the step agent itself writes `+"`_global/SKILL.md`"+` (folder guard widens only for that turn — main execution cannot write learnings). **Builder preference:** choose `+"`\"direct\"`"+` in most cases so the step records its own lesson immediately. Use `+"`\"agent\"`"+` only when the user explicitly wants a post-step reviewer or when extraction is unusually messy — long traces, non-obvious patterns, or real cross-step synthesis. Direct mode's guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel sub-agents writing direct are serialized by an in-process mutex.
 - **Use `+"`\"none\"`"+` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
 - **Auto-lock fires automatically** after 3 successful runs against the same step-description hash. Don't pre-emptively set `+"`lock_learnings: true`"+` — the system does it for you once learnings converge. Fallback safety cap: 15 total iterations.
 - **Auto-unlock fires automatically** when an auto-locked step's description changes. The old frozen learnings are invalidated and the counter restarts. `+"`optimized`"+` is cleared at the same time (they move together). Manual locks (set by a human without an `+"`auto_locked_at`"+` metadata record) are preserved across description edits.
@@ -2006,13 +2006,12 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 Steps have two execution modes — set via **update_step_config(step_id, use_code_execution_mode=true, declared_execution_mode="learn_code"|"code_exec")**:
 
-- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `+"`main.py`"+` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Use this for most steps** — it is the default and preferred mode:
+- **Learn Code mode** (declared_execution_mode="learn_code"): Agent writes a reusable `+"`main.py`"+` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. **Use this for stable, scriptable work** — especially deterministic non-browser logic:
   - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
   - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
   - The step needs to orchestrate several tools together in a single script
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
-  - Stable browser automation with known selectors, predictable navigation, and a reusable scripted flow
-- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning (e.g., exploratory browser automation on dynamic pages).
+- **Code Execution mode** (declared_execution_mode="code_exec"): LLM writes and runs code inline each time — no persistent script is saved. Use when the work varies too much between runs to stabilize into a reusable script, or when the step requires adaptive reasoning. Browser/UI steps should generally stay here unless the user explicitly wants scripted browser automation and the flow is already proven stable enough to freeze into `+"`main.py`"+` (durable selectors, predictable navigation, low semantic branching).
 
 **Mode declaration is required**: Every optimized step must store:
 - `+"`declared_execution_mode`"+`
@@ -2045,6 +2044,11 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 **When you mark a learn_code step optimized, lock its code too**:
 - `+"`update_step_config(step_id, optimized=true, lock_learnings=true, lock_code=true)`"+` — after 3+ successful runs across the groups you care about, lock both SKILL.md and main.py. Without `+"`lock_code`"+`, a single transient failure can trigger the fix loop to rewrite a script that was actually working, flipping you back into an iteration cycle.
 - Only lock code when the script has been stable across multiple runs AND multiple groups (if the workflow is multi-group). Flaky scripts should be fixed first, not frozen.
+
+**`+"`lock_learnings`"+` is independent of `+"`learn_code`"+`**:
+- It is valid to recommend `+"`lock_learnings=true`"+` while a step remains `+"`code_exec`"+`.
+- A step does not need to migrate to `+"`learn_code`"+` before its shared SKILL.md guidance is mature enough to freeze.
+- This is often the right sequence for browser steps: keep execution mode as `+"`code_exec`"+`, stabilize and lock the shared learnings first, and only consider `+"`learn_code`"+` later if the user explicitly wants it and the browser flow proves durable enough to script.
 
 **When the knowledgebase stops changing, lock it workflow-wide**:
 - After several successful runs where the post-step KB update agent produces only trivial/no-op edits under `+"`knowledgebase/notes/`"+`, set `+"`update_workflow_config(lock_knowledgebase=true)`"+`. Reads keep working; the automatic writer stops. This is a pure cost-saver — no output quality regression.
@@ -8384,8 +8388,8 @@ You are a read-only step optimization analyst. You analyze execution logs, outpu
 
 ## ROLE
 Perform deep analysis of a step's observed executions and produce a comprehensive optimization report. Optimize by **discovery from real runs**, not by speculation. Your job is to determine whether the step is fundamentally best served by:
-1. `+"`learn_code`"+` for stable reusable scripts (default — see §7 Execution Modes)
-2. `+"`code_exec`"+` for adaptive work that varies between runs
+1. `+"`learn_code`"+` for stable reusable scripts (especially deterministic non-browser work — see §7 Execution Modes)
+2. `+"`code_exec`"+` for adaptive work that varies between runs, including most browser/UI automation unless the user explicitly wants scripted browser execution
 
 You are **read-only** — you do NOT modify any files, plans, or configurations.
 
@@ -8461,6 +8465,7 @@ All paths relative to workspace root:
    - `+"`learn_code`"+`: Could the observed work be captured as a stable reusable script?
    - `+"`code_exec`"+`: Does the work vary too much between runs for a stable script?
    For each mode considered, cite the concrete evidence from the run.
+   For browser/UI-heavy steps, default your recommendation toward `+"`code_exec`"+` unless the user explicitly wants scripted browser execution and the run evidence shows the flow is already highly stable (durable selectors, predictable navigation, low semantic branching).
 4. **Review learning artifacts** — For regular steps, inspect shared workflow learnings and related reference files. For scripted code steps, inspect saved Python scripts/helpers and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
 5. **Analyze tool/server usage** — Are there unused servers? Missing tools? Did the run reveal that the step boundary should move so more work can be done in Python?
 6. **Check validation schema** — Does it catch stale files? Are there enough field checks?
@@ -8506,13 +8511,17 @@ For each hardcoded value found, recommend the specific variable placeholder to u
 
 ### Config Recommendations
 - Tool/server scoping: should servers be added or removed?
-- LLM tier: is the current model appropriate for this step's complexity?
+- **Execution tier**: recommend the step's persistent `+"`execution_tier`"+` from evidence.
+  - Choose one: `+"`high`"+`, `+"`medium`"+`, `+"`low`"+`, or leave unset if there is not enough evidence yet.
+  - Prefer `+"`execution_tier`"+` over `+"`execution_llm`"+` for persistent optimization recommendations unless an exact model pin is genuinely required.
+  - Base the recommendation on observed task complexity, reliability, failure patterns, and whether cheaper tiers are likely to hold after the step stabilizes.
+  - Do not recommend downgrading tier aggressively while the step is still unstable or the description/validation is still changing.
 - **Execution mode**: choose the mode that best matches the observed work:
-  1. **Learn code mode** (`+"`learn_code`"+`): Default — saves persistent main.py, 0 LLM tokens when stable.
-  2. **Code execution mode** (`+"`code_exec`"+`): Fresh LLM each run, no saved script.
+  1. **Learn code mode** (`+"`learn_code`"+`): saves persistent main.py, 0 LLM tokens when stable. Prefer this for deterministic non-browser work.
+  2. **Code execution mode** (`+"`code_exec`"+`): Fresh LLM each run, no saved script. Prefer this for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
 - Learning config: should learning be disabled, locked, or detail level changed?
 - **Lock recommendations** — recommend the right lock for the right artifact:
-  - `+"`lock_learnings=true`"+` when the SKILL.md patterns have stabilized across multiple successful runs and the learning agent mostly produces near-duplicate updates.
+  - `+"`lock_learnings=true`"+` when the SKILL.md patterns have stabilized across multiple successful runs and the learning agent mostly produces near-duplicate updates. This is valid even if the step remains `+"`code_exec`"+` and before any future migration to `+"`learn_code`"+`.
   - `+"`lock_code=true`"+` (learn_code only) when `+"`learnings/{{.StepID}}/main.py`"+` is stable, passes across all active groups, and you want the fix loop to stop rewriting it on transient failures. Recommend this together with `+"`lock_learnings=true`"+` + `+"`optimized=true`"+` once the script is proven.
   - **Do NOT recommend locks** if the step description is still being iterated on — the learnings/main.py could be stale relative to the intent. Flag it instead as "description changes pending → revisit locks after next stable runs".
 - **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise. If it WAS used, check whether it could be automated.
@@ -8551,7 +8560,7 @@ This step runs in **scripted code mode** — `+"`main.py`"+` is the executable t
 **To apply fixes:**
 - **Small fix** (bug, wrong field, output format): Edit the specific file directly in `+"`learnings/{{.StepID}}/`"+` using diff_patch_workspace_file. Next run uses updated files immediately.
 - **Full rewrite needed**: Delete all files in `+"`learnings/{{.StepID}}/`"+` via execute_shell_command (`+"`rm -rf learnings/{{.StepID}}/*`"+`), then re-run. LLM rewrites from scratch.
-- **When optimized**: Set `+"`lock_learnings=true`"+`, `+"`lock_code=true`"+`, AND `+"`optimized=true`"+` together. `+"`lock_code`"+` freezes `+"`main.py`"+` so the execution/fix loop won't rewrite it on transient failures; `+"`lock_learnings`"+` freezes the SKILL.md notes; `+"`optimized`"+` marks the step done.
+- **When optimized**: For learn_code steps, set `+"`lock_learnings=true`"+`, `+"`lock_code=true`"+`, AND `+"`optimized=true`"+` together. For code_exec steps, `+"`lock_learnings=true`"+` can still be appropriate on its own once SKILL.md has stabilized, even if you are not migrating to learn_code yet.
 {{end}}
 
 ### Plan Recommendations
@@ -8584,7 +8593,7 @@ Ranked list of the top 3-5 most impactful changes, with specific instructions fo
 The first action should usually be the next highest-confidence improvement from the observed run evidence, whether that means stabilizing into `+"`code_exec`"+` or continuing with `+"`learn_code`"+`.
 `)
 
-var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Decide whether code_exec or learn_code is the best fit from evidence.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report based on observed runs. Decide whether code_exec or learn_code is the best fit from evidence. Also recommend the step's persistent execution_tier (`+"`high`"+`, `+"`medium`"+`, `+"`low`"+`, or leave it unset) based on the observed complexity and stability. For browser/UI-heavy steps, generally prefer code_exec unless the user explicitly wants scripted browser execution and the observed flow is already highly stable. Treat lock_learnings as independent from learn_code — it can be recommended while the step remains code_exec.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
 var evalOptimizationAgentSystemTemplate = MustRegisterTemplate("evalOptimizationAgentSystem", `# Evaluation Step Optimization Agent
 
@@ -8656,7 +8665,7 @@ The user wants you to focus specifically on: **{{.Focus}}**
 3. If a target run is provided, use the actual eval step output and the evaluation report entry as primary evidence.
 4. Check whether the step is redundant with common checks like file existence, shape validation, or another eval step.
 5. Decide whether this concern should remain a single eval step or be split into multiple steps. Default to staying single-step unless there is strong evidence for separation.
-6. Choose the eval step's execution mode based on observed work — prefer `+"`learn_code`"+` for deterministic checks, `+"`code_exec`"+` for adaptive reasoning.
+6. Choose the eval step's execution mode based on observed work — prefer `+"`learn_code`"+` for deterministic checks, and `+"`code_exec`"+` for adaptive reasoning or any browser/UI-heavy evaluation unless the user explicitly wants scripted browser execution.
 7. **Prefer outcome-based evaluation over intermediate file checks.** Ideally, eval steps should verify that the workflow's overall success criteria are met (e.g. data in the target system, final report generated, end-to-end correctness) rather than checking individual step output files. Checking intermediate execution artifacts (step_1_credentials.json, step_3_login_status.json, etc.) is fragile and redundant with the workflow's own pre-validation. Focus on what the workflow was supposed to *achieve*, not what files it produced along the way.
 
 ## REPORT FORMAT
@@ -8745,7 +8754,7 @@ var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflow
 
 You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective and success criteria, and produce a structured report that the builder can act on immediately.
 
-Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to create clearer mode fit: `+"`learn_code`"+` for stable scripted logic, `+"`code_exec`"+` for adaptive work. See §7 Execution Modes for details.
+Your primary job is structural optimization, but you must also flag plan-level portability and execution-design issues when they are visible in step descriptions, context outputs, success criteria, or current step configs. You should identify when a workflow can be re-structured to create clearer mode fit: `+"`learn_code`"+` for stable scripted logic, especially deterministic non-browser work; `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution. See §7 Execution Modes for details.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files.
@@ -8754,7 +8763,7 @@ Your primary job is structural optimization, but you must also flag plan-level p
 4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
 5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
 6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
-7. **Prefer correct mode fit**: `+"`learn_code`"+` for stable scripted logic, `+"`code_exec`"+` for adaptive work. See §7 Execution Modes.
+7. **Prefer correct mode fit**: `+"`learn_code`"+` for stable scripted logic, especially deterministic non-browser work; `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution. See §7 Execution Modes.
 8. **Check portability hazards**: If plan-visible text contains hardcoded secrets, user-specific values, absolute paths, or run-folder-specific paths, flag them even if they are not yet causing a failure.
 9. **Check persistent-store discipline**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations as per-topic markdown; written by the post-step KB update agent or step agents in direct-write mode), and `+"`"+`db/*.json`+"`"+` (per-run state/results). Flag steps that confuse these stores — e.g., a step accumulating company facts into learnings when it should set `+"`"+`knowledgebase_contribution`+"`"+`, or a step writing per-run output into `+"`"+`knowledgebase/`+"`"+` when it belongs in `+"`"+`db/`+"`"+`. Per-step KB config: `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") + `+"`"+`knowledgebase_contribution`+"`"+` (extraction instruction; empty = post-step KB update agent skipped).
 10. **Check lock consistency against structural changes**: If you recommend a structural change (merge/split/delete/add/retype), the affected steps' existing `+"`"+`lock_learnings`+"`"+` / `+"`"+`lock_code`+"`"+` flags are almost certainly stale — frozen artifacts were generated against a different step shape. Always pair a structural recommendation with "also set lock_learnings=false, lock_code=false, optimized=false on [step-id] before re-running" so fresh learnings and main.py are regenerated.
@@ -8836,7 +8845,7 @@ For each step where the current design is preventing the best mode:
 - **Structural fix**: <split before/after [step-id] | merge with [step-id] | keep as-is but rewrite step boundaries>
 
 Use these rules:
-- Choose `+"`learn_code`"+` for deterministic scripted logic, `+"`code_exec`"+` for adaptive work (see §7 Execution Modes).
+- Choose `+"`learn_code`"+` for deterministic scripted logic, especially deterministic non-browser work; choose `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution (see §7 Execution Modes).
 - If two adjacent deterministic steps only exist because of an artificial file handoff and would be cleaner as one stable transform, recommend merging them.
 
 ### Missing Steps / Routes
@@ -9485,7 +9494,7 @@ This tool is **evidence-driven and mutating**:
 3. **Rewrite the plan, not just the report**: Use plan modification tools directly. Do not stop at recommendations.
 4. **Prefer minimal decisive changes**: Merge, split, add, remove, or reorder only when the run evidence justifies it.
 5. **Optimize for actual success**: First make the workflow achieve the success criteria. Only then optimize for elegance or cost.
-6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable logic, `+"`code_exec`"+` for adaptive work.
+6. **Prefer the mode that matches the work**: `+"`learn_code`"+` for stable scripted logic, especially deterministic non-browser work; `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
 7. **Preserve portability**: Remove plan-visible secrets, user-specific constants, hardcoded paths, and run-specific values when you touch affected steps.
 8. **Do not mark the workflow optimized**: Structural replanning is separate from final optimization readiness.
 9. **Persistent-store aware**: Three stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`"+`knowledgebase/notes/`+"`"+` (durable narrative observations; written by the post-step KB update agent or step agents in direct-write mode), `+"`"+`db/*.json`+"`"+` (per-run state/results; step-owned, upsert-by-key). When restructuring, use `+"`"+`update_step_config`+"`"+` to set `+"`"+`knowledgebase_access`+"`"+` (read/write/read-write/none; defaults to "none") and `+"`"+`knowledgebase_contribution`+"`"+` on steps that consume or produce KB facts. If run evidence shows a step stashing durable facts in output files or learnings that belong in the KB, restructure by adding a proper `+"`"+`knowledgebase_contribution`+"`"+` instead of creating new plan steps to manage state.
@@ -9539,7 +9548,7 @@ Prioritize this area while replanning: **{{.Focus}}**
    - convert a regular step into `+"`todo_task`"+` / `+"`routing`"+` when the results show hidden branching
 4. Apply the changes directly using workflow plan tools. Use `+"`diff_patch_workspace_file`"+` only when the workflow tools cannot express the exact edit.
 5. Update step descriptions / validation / success criteria fields only when the results show they are materially wrong or incomplete.
-6. Update step execution modes if the new structure changes the best fit. Prefer `+"`learn_code`"+` for stable paths, `+"`code_exec`"+` for adaptive work.
+6. Update step execution modes if the new structure changes the best fit. Prefer `+"`learn_code`"+` for stable scripted paths, especially deterministic non-browser work; prefer `+"`code_exec`"+` for adaptive work and generally for browser/UI automation unless the user explicitly wants scripted browser execution.
 7. End with a concise summary of what you changed, why, and what should be run next to verify the new plan.
 
 ## OUTPUT FORMAT

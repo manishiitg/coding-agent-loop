@@ -71,14 +71,14 @@ All paths are absolute. Write primary outputs under `+"`"+`STEP_OUTPUT_DIR`+"`"+
 - **learnings/** — **HOW to run the task** (selectors, auth flows, tool patterns). Read-only for you; the learning agent maintains it after the step. Relevant learnings are already injected under `+"`"+`## Skill`+"`"+` below when applicable.
 
 {{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} READ-only: you may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` the KB files but must not modify them. Selective read recipes:
-` + "```" + `bash
+`+"```"+`bash
 # list all topics
 jq '.topics[] | {id, file, covers}' knowledgebase/notes/_index.json
 # find topics covering a specific entity
 jq -r '.topics[] | select(.covers[]? == "company-acme") | .file' knowledgebase/notes/_index.json
 # load one specific topic file
 cat knowledgebase/notes/company-acme.md
-` + "```" + `
+`+"```"+`
 {{else if eq .KbWriteMethod "direct"}} Direct write: your step writes narrative to `+"`"+`knowledgebase/notes/`+"`"+` inline — see the **Knowledgebase contribution** block below for exact conventions and discipline. The post-step KB update agent does NOT run for this step — you are the canonical writer.{{else}} Write-scoped (agent method): the folder guard would allow writes, but the post-step KB update agent is the canonical writer — do not edit `+"`"+`notes/`+"`"+` yourself; emit observations in your step output and let the KB agent append to the right topic files.{{end}}
 {{end}}
 {{if .KBGuidanceBlock}}{{.KBGuidanceBlock}}{{end}}
@@ -130,6 +130,7 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if 
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
 {{end}}{{if eq .IsLearnCodeMode "true"}}**CODE EXEC NOTE**: Implement the task below as reusable Python code. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
+{{else}}**CODE EXEC NOTE**: This step is running in normal `+"`"+`code_exec`+"`"+` mode, not `+"`"+`learn_code`+"`"+`. Do **not** try to write one large reusable Python script for the whole task. Prefer calling the available tools and APIs step by step to inspect state, fetch data, and produce outputs. Batching API calls is fine when it improves performance, but keep it task-focused for this run rather than turning it into a reusable `+"`"+`main.py`+"`"+` authoring exercise. Use short one-off shell or Python snippets only when they materially help a specific subtask.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
 {{if .PreviousIterationOutput}}
@@ -329,42 +330,42 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	// Execute the pre-parsed template
 	var result strings.Builder
 	err := executionOnlySystemTemplate.Execute(&result, map[string]interface{}{
-		"WorkspacePath":              workspacePath,
-		"IsCodeExecutionMode":        isCodeExecutionMode,
-		"CodeExecutionSection":       codeExecutionSection,
-		"StepContextOutput":          stepContextOutput,
-		"CurrentDate":                currentDate,
-		"CurrentTime":                currentTime,
-		"LearningHistory":            learningHistory,
-		"HasLearnings":               fmt.Sprintf("%t", learningHistory != ""),
-		"KeepLearningFull":           fmt.Sprintf("%t", keepLearningFull),
-		"VariableNames":              variableNames,
-		"VariableValues":             variableValues,
-		"VarMapping":                 templateVars["LearnCodeVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
-		"UseCodeStyleRules":          useCodeStyleRules,
-		"PythonBestPractices":        buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
-		"StepNumber":                 stepNumber,
-		"StepExecutionPath":          stepExecutionPath,
-		"PreviousStepsSummary":       previousStepsSummary,
-		"ValidationSchema":           validationSchema,                     // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath,                    // Knowledgebase folder path
-		"DBPath":                     dbPath,                               // DB folder path (always enabled)
-		"KbAccess":                   templateVars["KbAccess"],             // "read" | "write" | "read-write" | "none"
-		"KbAccessLabel":              templateVars["KbAccessLabel"],        // Human-readable label (e.g., "READ/WRITE")
-		"KbWriteMethod":              templateVars["KbWriteMethod"],        // "agent" | "direct" — who writes KB (post-step agent vs step itself)
-		"KnowledgebaseContribution":  templateVars["KnowledgebaseContribution"], // Author-authored instruction for the step's KB contribution (direct mode only)
-		"KBGuidanceBlock":            templateVars["KBGuidanceBlock"],      // Pre-built KB guidance block — non-empty only when KbWriteMethod == "direct"
-		"FolderGuardReadPaths":       folderGuardReadPaths,                 // Folder guard read paths for agent guidance
-		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
-		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag
-		"IsLearnCodeMode":            templateVars["IsLearnCodeMode"],      // Learn code mode flag (validation schema shown in learn_code section instead)
-		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display
-		"DocsRoot":                   GetPromptDocsRoot(),                  // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
+		"WorkspacePath":             workspacePath,
+		"IsCodeExecutionMode":       isCodeExecutionMode,
+		"CodeExecutionSection":      codeExecutionSection,
+		"StepContextOutput":         stepContextOutput,
+		"CurrentDate":               currentDate,
+		"CurrentTime":               currentTime,
+		"LearningHistory":           learningHistory,
+		"HasLearnings":              fmt.Sprintf("%t", learningHistory != ""),
+		"KeepLearningFull":          fmt.Sprintf("%t", keepLearningFull),
+		"VariableNames":             variableNames,
+		"VariableValues":            variableValues,
+		"VarMapping":                templateVars["LearnCodeVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
+		"UseCodeStyleRules":         useCodeStyleRules,
+		"PythonBestPractices":       buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
+		"StepNumber":                stepNumber,
+		"StepExecutionPath":         stepExecutionPath,
+		"PreviousStepsSummary":      previousStepsSummary,
+		"ValidationSchema":          validationSchema,                          // Validation schema JSON string
+		"KnowledgebasePath":         knowledgebasePath,                         // Knowledgebase folder path
+		"DBPath":                    dbPath,                                    // DB folder path (always enabled)
+		"KbAccess":                  templateVars["KbAccess"],                  // "read" | "write" | "read-write" | "none"
+		"KbAccessLabel":             templateVars["KbAccessLabel"],             // Human-readable label (e.g., "READ/WRITE")
+		"KbWriteMethod":             templateVars["KbWriteMethod"],             // "agent" | "direct" — who writes KB (post-step agent vs step itself)
+		"KnowledgebaseContribution": templateVars["KnowledgebaseContribution"], // Author-authored instruction for the step's KB contribution (direct mode only)
+		"KBGuidanceBlock":           templateVars["KBGuidanceBlock"],           // Pre-built KB guidance block — non-empty only when KbWriteMethod == "direct"
+		"FolderGuardReadPaths":      folderGuardReadPaths,                      // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":     folderGuardWritePaths,                     // Folder guard write paths for agent guidance
+		"IsEvaluationMode":          templateVars["IsEvaluationMode"],          // Evaluation mode flag
+		"IsLearnCodeMode":           templateVars["IsLearnCodeMode"],           // Learn code mode flag (validation schema shown in learn_code section instead)
+		"WorkflowRoot":              templateVars["WorkflowRoot"],              // Workflow root path for absolute cwd display
+		"DocsRoot":                  GetPromptDocsRoot(),                       // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
 		// Browser authoring rules (refs-are-ephemeral + durable-selector priority
 		// + canonical DOM probe) apply to every browser step — code-exec throwaway
 		// scripts AND learn-code saved main.py. Only the final-artifact permanence
 		// differs between modes; the discovery/selector discipline is identical.
-		"BrowserAuthoringRules":      BrowserAuthoringRulesFromTemplateVars(templateVars),
+		"BrowserAuthoringRules": BrowserAuthoringRulesFromTemplateVars(templateVars),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("execution-only system prompt template execution failed (missing variable?): %v", err))

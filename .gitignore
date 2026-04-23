@@ -120,6 +120,11 @@ workspace/workspace
 *.db-shm
 *.db-wal
 
+# WhatsApp bot connector session state — contains Signal-protocol private
+# keys; committing would let anyone take over the paired account.
+agent_go/whatsapp-session.db
+whatsapp-session.db
+
 # Playwright MCP artifacts (custom filenames can bypass --output-dir and land at repo/agent_go root; see docs/playwright_artifacts.md)
 .playwright-mcp/
 agent_go/page-*.png

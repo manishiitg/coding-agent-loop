@@ -66,6 +66,11 @@ type BotIncomingMessage struct {
 	IsThreadReply   bool
 	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
 	ThreadHistory   []ThreadMessage // populated when tagged in existing thread
+	// PresetWorkflow, when set, overrides channel-based workflow routing
+	// for this message. WhatsApp uses it to let an @<slug> prefix pick a
+	// workflow explicitly, since WhatsApp has no Slack-style channel IDs.
+	// Slack sets this to nil and relies on resolveChannelWorkflow instead.
+	PresetWorkflow *ChannelRoute
 }
 
 func botMetaFromMsg(msg BotIncomingMessage, threadID ThreadID) *chathistory.BotMetadata {
@@ -547,7 +552,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, ""), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 				}
@@ -580,7 +585,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, ""), sid, uid)
+					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -598,7 +603,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, ""), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -613,7 +618,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, ""), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -638,7 +643,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, ""), sid, uid)
+				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -662,7 +667,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, ""), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -679,7 +684,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, ""), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -759,7 +764,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, ""), sessionID, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -783,7 +788,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
 
 	// Track as active session — bot sessions are in-memory only.
 	m.mu.Lock()
@@ -819,7 +824,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
 
 	// Track active session — bot sessions are in-memory only.
 	m.mu.Lock()
@@ -1232,43 +1237,59 @@ func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) 
 
 // buildQueryRequest constructs a request map for startSessionInternal.
 // userID is the workspace user ID used for loading per-user secrets.
-// channelID is used for channel→workflow routing: pass the incoming message's ChannelID for new
-// sessions, or "" for follow-ups into existing sessions (routing is ignored for follow-ups).
-func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string) map[string]interface{} {
+// channelID is used for Slack-style channel→workflow routing: pass the
+// incoming message's ChannelID for new sessions, or "" for follow-ups into
+// existing sessions (routing is ignored for follow-ups).
+// presetRoute, when non-nil, bypasses channel lookup entirely — used by
+// WhatsApp's @<slug> prefix parser to pick a workflow from in-message text.
+// platform is the bot channel ("slack", "whatsapp", …) so the server can
+// inject channel-specific formatting rules into the agent's system prompt.
+// Pass "" for non-bot callers and follow-ups (platform doesn't change
+// mid-session).
+func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string) map[string]interface{} {
 	req := map[string]interface{}{
 		"query": query,
 	}
+	if platform != "" {
+		req["bot_platform"] = platform
+	}
 
-	// Channel → workflow routing: if this Slack channel is mapped to a workflow, run it
-	// instead of the default multi-agent chat mode.
-	if channelID != "" {
-		if route := m.resolveChannelWorkflow(channelID); route != nil {
-			req["preset_query_id"] = route.WorkflowID
+	// Resolve the workflow route: an explicit preset wins over channel lookup,
+	// which wins over "no routing at all" (default multi-agent chat).
+	route := presetRoute
+	if route == nil && channelID != "" {
+		route = m.resolveChannelWorkflow(channelID)
+	}
+	if route != nil {
+		req["preset_query_id"] = route.WorkflowID
 
-			// Prefer a per-channel override on the route; fall back to the
-			// workflow manifest's workshop_mode when the route doesn't pin one.
-			workshopMode := route.WorkshopMode
-			if workshopMode == "" {
-				workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
+		// Prefer a per-channel override on the route; fall back to the
+		// workflow manifest's workshop_mode when the route doesn't pin one.
+		workshopMode := route.WorkshopMode
+		if workshopMode == "" {
+			workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
+		}
+		via := "channel " + channelID
+		if presetRoute != nil {
+			via = "preset (workflow " + route.WorkflowID + ")"
+		}
+		if workshopMode != "" {
+			// Workshop builder mode — use the conversational Workflow Builder agent.
+			// workshop_mode must live inside execution_options so the workshop
+			// session picks it up via SetWorkshopModeOverride (server.go:4409);
+			// a top-level req["workshop_mode"] is ignored and the agent falls
+			// back to auto-detection from step-optimization state.
+			req["agent_mode"] = "workflow_phase"
+			req["phase_id"] = "workflow-builder"
+			req["workshop_mode"] = workshopMode
+			req["execution_options"] = map[string]interface{}{
+				"workshop_mode": workshopMode,
 			}
-			if workshopMode != "" {
-				// Workshop builder mode — use the conversational Workflow Builder agent.
-				// workshop_mode must live inside execution_options so the workshop
-				// session picks it up via SetWorkshopModeOverride (server.go:4409);
-				// a top-level req["workshop_mode"] is ignored and the agent falls
-				// back to auto-detection from step-optimization state.
-				req["agent_mode"] = "workflow_phase"
-				req["phase_id"] = "workflow-builder"
-				req["workshop_mode"] = workshopMode
-				req["execution_options"] = map[string]interface{}{
-					"workshop_mode": workshopMode,
-				}
-				log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s (workshop_mode=%s)", channelID, route.WorkflowID, workshopMode)
-			} else {
-				// No workshop mode — use the full step-based orchestrator (Execution mode)
-				req["agent_mode"] = "workflow"
-				log.Printf("[BOT_MANAGER] Channel %s routed to workflow %s (execution mode)", channelID, route.WorkflowID)
-			}
+			log.Printf("[BOT_MANAGER] Routed via %s → workflow %s (workshop_mode=%s)", via, route.WorkflowID, workshopMode)
+		} else {
+			// No workshop mode — use the full step-based orchestrator (Execution mode)
+			req["agent_mode"] = "workflow"
+			log.Printf("[BOT_MANAGER] Routed via %s → workflow %s (execution mode)", via, route.WorkflowID)
 		}
 	}
 

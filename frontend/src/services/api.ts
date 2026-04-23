@@ -167,6 +167,7 @@ function getWorkspaceApiBaseUrl(): string {
 }
 
 const API_BASE_URL = getApiBaseUrl()
+export { API_BASE_URL }
 export const WORKSPACE_API_BASE_URL = getWorkspaceApiBaseUrl()
 
 const api = axios.create({
@@ -670,6 +671,60 @@ export const agentApi = {
     allowed_emails?: string[];
   }): Promise<{ success: boolean }> => {
     const response = await api.post('/api/bot/simulate/config', config)
+    return response.data
+  },
+
+  // ── WhatsApp bot connector ────────────────────────────────────────────────
+  // Status: is the connector enabled, paired, connected? When a pairing flow
+  // is active, returns the QR expiration timestamp so the UI can auto-refresh.
+  getWhatsAppStatus: async (): Promise<{
+    enabled: boolean;
+    paired: boolean;
+    connected: boolean;
+    own_jid: string;
+    qr_available: boolean;
+    qr_expires_at?: string;
+    owner_user_id?: string;
+    owner_email?: string;
+    owner_username?: string;
+    owner_paired_at?: string;
+  }> => {
+    const response = await api.get('/api/whatsapp/status')
+    return response.data
+  },
+
+  // Returns the URL to the PNG QR. Callers embed this in an <img> — the
+  // image body is streamed directly from the backend (served fresh each
+  // request; no caching). Prefixed with API_BASE_URL because in dev mode
+  // the Vite server and the agent run on different origins; a relative
+  // path would resolve against the Vite origin and 404. A cache-buster
+  // query param forces the <img> to re-fetch when the QR rotates.
+  getWhatsAppPairURL: (size = 384, bust?: number): string => {
+    const b = bust ?? Date.now()
+    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}`
+  },
+
+  // Drops the paired account and restarts the connector with a fresh QR.
+  unpairWhatsApp: async (): Promise<{ ok: boolean }> => {
+    const response = await api.delete('/api/whatsapp/session')
+    return response.data
+  },
+
+  // Slug → workflow routing for incoming WhatsApp messages. A message that
+  // starts with "@<slug> " routes to the workflow mapped for that slug.
+  getWhatsAppRouting: async (): Promise<{
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>;
+  }> => {
+    const response = await api.get('/api/whatsapp/routing')
+    return response.data
+  },
+
+  updateWhatsAppRouting: async (
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>
+  ): Promise<{
+    routing: Record<string, { workflow_id: string; workspace_path?: string; workshop_mode?: string }>;
+  }> => {
+    const response = await api.put('/api/whatsapp/routing', { routing })
     return response.data
   },
 

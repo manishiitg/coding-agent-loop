@@ -278,6 +278,7 @@ type StreamingAPI struct {
 
 	// Web simulator connector for testing bot flow without Slack
 	webSimulator *slackservice.WebSimulatorConnector
+	whatsappSvc  *slackservice.WhatsAppService
 
 	// API token for bearer auth on per-tool endpoints (code execution mode)
 	apiToken string
@@ -329,6 +330,11 @@ type QueryRequest struct {
 	ImageGenConfig        *ImageGenConfig `json:"image_gen_config,omitempty"`        // Image generation provider configuration
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
+	// BotPlatform identifies the chat channel the session is talking through
+	// (e.g. "slack", "whatsapp"). Set by the bot manager when wiring a bot
+	// session; empty for chat-UI sessions. Drives channel-specific system
+	// prompt additions (formatting rules), so bot replies render correctly.
+	BotPlatform string `json:"bot_platform,omitempty"`
 	// Selected sub-agent templates to make available for delegation
 	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
@@ -1058,9 +1064,39 @@ func runServer(cmd *cobra.Command, args []string) {
 	api.webSimulator = webSimulator
 	log.Printf("✅ Web bot simulator enabled")
 
+	// Register WhatsApp connector when explicitly enabled. Pairing is a
+	// one-time QR scan; the session DB persists state between restarts.
+	// Disabled by default — the user must set WHATSAPP_ENABLED=true and
+	// optionally WHATSAPP_SESSION_DB (defaults below).
+	//
+	// DB usage note: this server otherwise avoids databases and persists to
+	// workspace/ files only. WhatsApp is an intentional exception because
+	// whatsmeow needs a transactional SQLite store for its Signal-protocol
+	// keys (identity, sessions, prekeys). The file is agent-local — not
+	// shared infra, not replicated across nodes — so it behaves more like a
+	// protocol-state cache than a "database" in the architectural sense.
+	// Deleting the file and re-pairing via QR fully restores functionality.
+	if os.Getenv("WHATSAPP_ENABLED") == "true" {
+		dbPath := os.Getenv("WHATSAPP_SESSION_DB")
+		if dbPath == "" {
+			dbPath = "/var/lib/mcp-agent/whatsapp-session.db"
+		}
+		whatsappSvc := slackservice.NewWhatsAppService(dbPath)
+		botManager.RegisterConnector(whatsappSvc)
+		api.whatsappSvc = whatsappSvc
+		if err := whatsappSvc.StartListening(context.Background()); err != nil {
+			log.Printf("❌ WhatsApp service failed to start: %v", err)
+		} else {
+			log.Printf("✅ WhatsApp bot mode enabled (db=%s)", dbPath)
+		}
+	}
+
 	// Register bot routes
 	BotRoutes(router, api)
 	BotSimulatorRoutes(router, api)
+	if api.whatsappSvc != nil {
+		WhatsAppRoutes(router, api.whatsappSvc)
+	}
 
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
@@ -3957,6 +3993,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
 				}
+			}
+
+			// Channel formatting rules — tell the agent which markup subset
+			// the bot platform renders, so replies don't arrive with stray
+			// "## Headers" or "[link](url)" syntax that WhatsApp / Slack
+			// display literally. No-op when BotPlatform is empty (chat UI).
+			if channelPrompt := buildChannelFormattingInstructions(req.BotPlatform); channelPrompt != "" {
+				underlyingAgent.AppendSystemPrompt(channelPrompt)
+				log.Printf("[CHANNEL] Added %s formatting rules to system prompt", req.BotPlatform)
 			}
 
 			// 4. MODE-SPECIFIC — browser, GWS, memory (only when those capabilities are active).

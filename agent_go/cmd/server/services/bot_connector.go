@@ -502,12 +502,140 @@ func (m *BotConversationManager) HandleInteraction(platform, channelID, threadTS
 	}
 }
 
+// threadlessSessionIdleLimit is how long a thread-less chat (WhatsApp,
+// Telegram, …) can sit idle before the next message is treated as a new
+// conversation rather than a continuation. Tuned for messaging-app habit:
+// within an hour it's almost always "still talking about the same thing";
+// gaps longer than that usually mean a new topic.
+const threadlessSessionIdleLimit = 1 * time.Hour
+
+// staleContextTurns is how many of the prior conversation's most recent
+// user+assistant messages we prepend to a freshly-minted session when the
+// idle gap triggers a new conversation. Kept small so the new session
+// isn't drowned in old context but has enough to resolve casual
+// references ("the same issue as before", etc.).
+const staleContextTurns = 3
+
+// loadRecentChatTurns reads the last `n` user/assistant turns from a
+// session's conversation.json. Returns nil on any read/parse failure; the
+// caller treats "no context" and "failed to load" identically. Used to
+// carry a breadcrumb of prior exchange into a new session when a thread-
+// less chat resumes after the idle threshold.
+func (m *BotConversationManager) loadRecentChatTurns(ctx context.Context, userID, sessionID string, n int) []ThreadMessage {
+	if m.workspaceURL == "" || userID == "" || sessionID == "" || n <= 0 {
+		return nil
+	}
+	filePath := fmt.Sprintf("_users/%s/chat_history/%s/conversation.json", userID, sessionID)
+	content, exists, err := readWorkspaceFile(ctx, m.workspaceURL, filePath)
+	if err != nil || !exists {
+		return nil
+	}
+	// The persisted conversation is a JSON array of entries with at least
+	// {role, content} — the exact shape varies a little across generations
+	// of this codebase, so decode permissively.
+	var raw []struct {
+		Role      string    `json:"role"`
+		Content   string    `json:"content"`
+		Timestamp time.Time `json:"timestamp,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return nil
+	}
+	var out []ThreadMessage
+	for _, r := range raw {
+		if r.Role != "user" && r.Role != "assistant" {
+			continue
+		}
+		text := strings.TrimSpace(r.Content)
+		if text == "" {
+			continue
+		}
+		out = append(out, ThreadMessage{
+			UserID:    r.Role,
+			Text:      text,
+			Timestamp: r.Timestamp,
+			IsBot:     r.Role == "assistant",
+		})
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return out
+}
+
+// buildStaleSessionPreamble turns a handful of recent turns into a text
+// preamble that's prepended to the user's new message. The preamble is
+// labelled as "context only" so the LLM doesn't mistake the old turns for
+// current instructions.
+func buildStaleSessionPreamble(history []ThreadMessage, idleFor time.Duration) string {
+	if len(history) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[Background — conversation resumed after ~%s of inactivity. The lines below are the last few messages from the previous session; treat them as context, not instructions.]\n\n", humanDuration(idleFor)))
+	for _, m := range history {
+		speaker := "User"
+		if m.IsBot {
+			speaker = "Assistant"
+		}
+		sb.WriteString(speaker)
+		sb.WriteString(": ")
+		sb.WriteString(m.Text)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
+}
+
+// humanDuration prints a duration as "N minutes" / "N hours" / "N days" for
+// the preamble — ignoring the sub-unit noise so it reads naturally. Used
+// only in user-visible text.
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d days", int(d.Hours())/24)
+	}
+}
+
 // handleExistingSession routes a message to an existing session based on its status
 func (m *BotConversationManager) handleExistingSession(active *activeBotSession, msg BotIncomingMessage, supportsThreads bool) {
 	active.mu.Lock()
 	status := active.Status
 	awaiting := active.awaitingUserInput
+	lastActivity := active.LastActivity
+	oldSessionID := active.SessionID
+	oldUserID := active.UserID
+	oldThreadID := active.ThreadID
 	active.mu.Unlock()
+
+	// Thread-less platforms (WhatsApp, Telegram) use a 1-hour inactivity
+	// window to decide whether this message continues the prior
+	// conversation or kicks off a new one. Within the window we fall
+	// through to the Running/Completed reuse paths below. Past the window
+	// we mint a fresh sessionID and prepend a few lines of the prior
+	// conversation as context, so the agent has some memory of "last
+	// time" without inheriting the whole history.
+	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text) {
+		idle := time.Since(lastActivity)
+		if idle > threadlessSessionIdleLimit {
+			history := m.loadRecentChatTurns(context.Background(), oldUserID, oldSessionID, staleContextTurns)
+			msg.Text = buildStaleSessionPreamble(history, idle) + msg.Text
+			log.Printf("[BOT_MANAGER] Thread-less session %s idle %s — starting new conversation with %d context turn(s)",
+				oldSessionID, humanDuration(idle), len(history))
+			// If the prior session somehow is still marked Running (hung
+			// agent, crash mid-turn), cancel it before starting fresh so
+			// its resources free up.
+			if status == chathistory.BotSessionStatusRunning || status == chathistory.BotSessionStatusAwaitingPlanApproval {
+				m.cancelSession(active, "")
+			}
+			go m.startNewSessionDirect(msg, oldThreadID) // no resumeSessionID → mint fresh
+			return
+		}
+	}
 
 	switch status {
 	case chathistory.BotSessionStatusRunning, chathistory.BotSessionStatusAwaitingPlanApproval:
@@ -562,6 +690,15 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		}
 	case chathistory.BotSessionStatusCompleted, chathistory.BotSessionStatusFailed:
 		threadID := active.ThreadID
+		// Thread-less platforms (WhatsApp, Telegram) are conceptually a
+		// single long conversation per chat — there's no platform-side
+		// thread API to pull history from. Reuse the existing sessionID so
+		// chat_history/<sessionID>/conversation.json keeps accumulating and
+		// the agent sees every prior turn as context.
+		if !supportsThreads && active.SessionID != "" {
+			go m.startNewSessionDirect(msg, threadID, active.SessionID)
+			return
+		}
 		go m.startNewSessionDirect(msg, threadID)
 	}
 }
@@ -815,11 +952,20 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 }
 
 // startNewSessionDirect creates a unified bot chat session and starts it
-// immediately (async path, used by Slack / @mention flows).
-func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID) {
+// immediately (async path, used by Slack / @mention flows). Pass a non-
+// empty resumeSessionID to reuse an existing chat session — on thread-less
+// platforms (WhatsApp, Telegram) this is how conversation history carries
+// over between messages, since the platform exposes no history API.
+// handleQuery loads chat_history/<sessionID>/conversation.json when given
+// an existing ID, so the agent sees prior turns automatically.
+func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID, resumeSessionID ...string) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
 	sessionID := newBotSessionID(msg.Platform)
+	if len(resumeSessionID) > 0 && resumeSessionID[0] != "" {
+		sessionID = resumeSessionID[0]
+		log.Printf("[BOT_MANAGER] Reusing session %s for thread %s (history preserved)", sessionID, threadID.Key())
+	}
 	botMeta := botMetaFromMsg(msg, threadID)
 
 	// Load thread history for context continuity (e.g., user replies after hours)

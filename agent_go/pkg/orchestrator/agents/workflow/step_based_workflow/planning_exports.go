@@ -1252,6 +1252,22 @@ func RegisterRunFullWorkflowTool(
 			}
 			session.StepRegistry.Register(exec)
 
+			// Register the background workflow session under the invoking chat so
+			// any SpawnListener (e.g. the Slack bot connector) can mirror agent
+			// messages from this workflow into the parent chat's thread. The
+			// listener decides whether the parent is "interesting" — this is a
+			// no-op for UI-initiated runs.
+			workflowGroup := ""
+			if len(enabledGroupNames) > 0 {
+				workflowGroup = enabledGroupNames[0]
+			}
+			virtualtools.RegisterParentChat(agentSessionID, &virtualtools.ParentChatContext{
+				SessionID:    session.mainSessionID,
+				WorkflowPath: cfg.WorkspacePath,
+				GroupName:    workflowGroup,
+				AgentID:      execID,
+			})
+
 			// Notify workshop execution notifier so frontend keeps polling
 			// Include group and iteration in display name so notifications are unambiguous
 			workflowDisplayName := "full-workflow"
@@ -1271,6 +1287,11 @@ func RegisterRunFullWorkflowTool(
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
 
 			go func() {
+				// Tear down the parent-chat mapping when the background workflow
+				// exits. The SpawnListener sees this and stops mirroring the
+				// child's events into the parent chat thread.
+				defer virtualtools.UnregisterParentChat(agentSessionID)
+
 				var result string
 				var execErr error
 				eventBridge := session.controller.GetContextAwareBridge()

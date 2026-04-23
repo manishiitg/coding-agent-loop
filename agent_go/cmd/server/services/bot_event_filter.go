@@ -72,6 +72,20 @@ func (f *BotEventFilter) SetSessionDoneCallback(cb SessionDoneCallback) {
 	f.onSessionDone = cb
 }
 
+// ResetForNewTurn clears the one-shot completion state so a follow-up user
+// message (injected while the session is still held open, e.g. because a
+// background workflow is running) starts a fresh turn that can be tracked.
+// Without this, sessionDone latches on the first turn and later turns fire
+// no onSessionDone — the parent can then be cancelled mid-reply.
+func (f *BotEventFilter) ResetForNewTurn() {
+	f.mu.Lock()
+	f.sessionDone = false
+	f.completionReceived = false
+	f.mainTextSent = false
+	f.mu.Unlock()
+	log.Printf("[BOT_FILTER] Reset for new turn")
+}
+
 // ClearBlockingState clears the awaiting input flag (called when user responds to a blocking event).
 // Also resets completionReceived so the session stays alive for the follow-up agent's completion.
 func (f *BotEventFilter) ClearBlockingState() {

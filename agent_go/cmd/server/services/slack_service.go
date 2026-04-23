@@ -1092,14 +1092,16 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// Dedup: skip if we've already seen this message timestamp
-	if s.isDuplicateMessage(ev.TimeStamp) {
+	// Skip messages that contain an @mention of the bot — those are handled by
+	// handleAppMentionEvent. Must run BEFORE the dedup check: if we cache the
+	// ts here and then return, the app_mention event (which arrives with the
+	// same ts) will hit the cache and be dropped, so the message goes nowhere.
+	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
 		return
 	}
 
-	// Skip messages that contain an @mention of the bot — those are handled by handleAppMentionEvent.
-	// This prevents duplicate processing when a user @mentions the bot in a thread.
-	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
+	// Dedup: skip if we've already seen this message timestamp
+	if s.isDuplicateMessage(ev.TimeStamp) {
 		return
 	}
 

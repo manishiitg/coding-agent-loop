@@ -1012,6 +1012,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.executeSyntheticTurn(sessionID, message)
 		return nil
 	})
+	// Install the bot manager as the spawn listener. Any tool that registers a
+	// parent chat (run_workflow, run_step, run_full_workflow, …) will now
+	// automatically mirror its background session's agent messages into the
+	// parent's Slack thread — no per-tool hooks required.
+	virtualtools.SetSpawnListener(botManager)
 	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]slackservice.DecryptedSecret, error) {
 		stored, err := chatStore.ListUserSecrets(ctx, userID)
 		if err != nil {

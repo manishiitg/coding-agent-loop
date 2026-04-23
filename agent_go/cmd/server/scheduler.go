@@ -23,6 +23,22 @@ type ScheduleContext struct {
 	Capabilities  WorkflowCapabilities
 	UserID        string // Set for multi-agent schedules (derived from _users/{userID}/ path)
 	SourceType    string // "workflow" or "multi-agent"
+	TriggerSource string // "cron" (default) or "manual"; encoded into the session ID
+}
+
+// newScheduleSessionID mints the session ID for a scheduled run. Encoding the
+// trigger source (cron vs. manual) and the schedule ID prefix makes it easy to
+// tell, just from the builder/ filename, where a conversation originated.
+func (s *SchedulerService) newScheduleSessionID(sctx *ScheduleContext) string {
+	trigger := sctx.TriggerSource
+	if trigger == "" {
+		trigger = "cron"
+	}
+	idPrefix := sctx.Schedule.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	return fmt.Sprintf("schedule-%s--%s_%d", trigger, idPrefix, time.Now().UnixNano())
 }
 
 // ScheduleRuntimeState holds in-memory runtime state for a schedule (not persisted in manifest).
@@ -572,6 +588,7 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 	s.runtimeStatesMu.Unlock()
 
 	sctx := buildScheduleContext(workspacePath, manifest, *sched)
+	sctx.TriggerSource = "manual"
 
 	if err := RecordWorkflowScheduleExecution(context.Background(), workspacePath, *sched, startTime); err != nil {
 		s.logf(sctx, "[SCHEDULER] Warning: failed to record manual schedule execution for %s: %v", scheduleID, err)
@@ -618,6 +635,7 @@ func (s *SchedulerService) TriggerMultiAgentNow(userID string, scheduleID string
 	s.runtimeStatesMu.Unlock()
 
 	sctx := buildMultiAgentScheduleContext(userID, *sched, f.Capabilities)
+	sctx.TriggerSource = "manual"
 
 	go func() {
 		if _, err := s.runJob(context.Background(), sctx); err != nil {
@@ -912,11 +930,7 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 	reqMap["execution_options"] = execOpts
 
 	// Generate session ID
-	idPrefix := sctx.Schedule.ID
-	if len(idPrefix) > 8 {
-		idPrefix = idPrefix[:8]
-	}
-	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+	sessionID := s.newScheduleSessionID(sctx)
 
 	// Update runtime state with session
 	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
@@ -952,11 +966,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	}
 	runFolder := "iteration-0"
 
-	idPrefix := sctx.Schedule.ID
-	if len(idPrefix) > 8 {
-		idPrefix = idPrefix[:8]
-	}
-	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+	sessionID := s.newScheduleSessionID(sctx)
 
 	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
 	state.LastSessionID = sessionID
@@ -1006,11 +1016,7 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 		return "", "", fmt.Errorf("multi-agent schedule %s has no query", sctx.Schedule.ID)
 	}
 
-	idPrefix := sctx.Schedule.ID
-	if len(idPrefix) > 8 {
-		idPrefix = idPrefix[:8]
-	}
-	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+	sessionID := s.newScheduleSessionID(sctx)
 
 	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
 	state.LastSessionID = sessionID

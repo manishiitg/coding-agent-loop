@@ -278,6 +278,7 @@ type StreamingAPI struct {
 
 	// Web simulator connector for testing bot flow without Slack
 	webSimulator *slackservice.WebSimulatorConnector
+	whatsappSvc  *slackservice.WhatsAppService
 
 	// API token for bearer auth on per-tool endpoints (code execution mode)
 	apiToken string
@@ -1058,9 +1059,31 @@ func runServer(cmd *cobra.Command, args []string) {
 	api.webSimulator = webSimulator
 	log.Printf("✅ Web bot simulator enabled")
 
+	// Register WhatsApp connector when explicitly enabled. Pairing is a
+	// one-time QR scan; the session DB persists state between restarts.
+	// Disabled by default — the user must set WHATSAPP_ENABLED=true and
+	// optionally WHATSAPP_SESSION_DB (defaults below).
+	if os.Getenv("WHATSAPP_ENABLED") == "true" {
+		dbPath := os.Getenv("WHATSAPP_SESSION_DB")
+		if dbPath == "" {
+			dbPath = "/var/lib/mcp-agent/whatsapp-session.db"
+		}
+		whatsappSvc := slackservice.NewWhatsAppService(dbPath)
+		botManager.RegisterConnector(whatsappSvc)
+		api.whatsappSvc = whatsappSvc
+		if err := whatsappSvc.StartListening(context.Background()); err != nil {
+			log.Printf("❌ WhatsApp service failed to start: %v", err)
+		} else {
+			log.Printf("✅ WhatsApp bot mode enabled (db=%s)", dbPath)
+		}
+	}
+
 	// Register bot routes
 	BotRoutes(router, api)
 	BotSimulatorRoutes(router, api)
+	if api.whatsappSvc != nil {
+		WhatsAppRoutes(router, api.whatsappSvc)
+	}
 
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {

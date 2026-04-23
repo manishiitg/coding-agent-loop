@@ -286,7 +286,9 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		}
 		bgAgent.mu.Unlock()
 
-		// Clean up the parent-chat mapping for this workflow run.
+		// Clean up the parent-chat mapping for this workflow run. The installed
+		// SpawnListener (if any) is notified automatically and will stop
+		// mirroring this child's events to the parent chat.
 		virtualtools.UnregisterParentChat(wfSessionID)
 
 		// Notify the orchestrator that this agent finished

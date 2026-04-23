@@ -93,7 +93,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "submit_human_answer",
-			Description: "Resolve a pending workflow human_input step. Use this ONLY in response to a [WORKFLOW_HUMAN_INPUT] message from a workflow you launched. Pass the request_id from that message and the answer. For yes/no steps, answer with 'yes' or 'no'. For multiple-choice, answer with 'option0', 'option1', ... (or the exact option text). For text, pass the user's free-text answer. The workflow resumes as soon as you call this.",
+			Description: "Resolve a pending workflow decision. Use this ONLY in response to a [WORKFLOW_HUMAN_INPUT] or [WORKFLOW_ROUTING] message from a workflow you launched. Pass the request_id from that message and the answer. For human_input yes/no steps, answer with 'yes' or 'no'. For multiple-choice, answer with 'option0', 'option1', ... (or the exact option text). For text, pass the user's free-text answer. For routing steps, answer with the exact route_id (or route name) from the message. The workflow resumes as soon as you call this.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

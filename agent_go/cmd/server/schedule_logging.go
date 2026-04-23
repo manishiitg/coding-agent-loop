@@ -48,5 +48,5 @@ func scheduleLogfWithContext(logCtx serverLogContext, format string, args ...int
 }
 
 func isScheduledSession(sessionID string) bool {
-	return strings.HasPrefix(sessionID, "sched_")
+	return strings.HasPrefix(sessionID, "sched_") || strings.HasPrefix(sessionID, "schedule-")
 }

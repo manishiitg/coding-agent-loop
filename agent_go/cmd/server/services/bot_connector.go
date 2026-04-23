@@ -18,6 +18,17 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 )
 
+// newBotSessionID mints a session ID for a bot-initiated chat. Encoding the
+// source platform in the ID makes it easy to tell, just from the builder/
+// filename, where a conversation originated (slack, discord, telegram, …).
+func newBotSessionID(platform string) string {
+	p := strings.TrimSpace(platform)
+	if p == "" {
+		p = "unknown"
+	}
+	return fmt.Sprintf("bot-%s--%s", p, uuid.New().String())
+}
+
 // ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest without scanning all workspaces.
 type ChannelRoute struct {
@@ -194,6 +205,17 @@ type activeBotSession struct {
 	ackChannelID      string    // channel of the message the bot reacted to (for removal)
 	ackMessageTS      string    // timestamp of the message the bot reacted to
 	LastActivity      time.Time // updated on any send/receive; used to prune stale completed sessions
+
+	// Background workflow tracking — when the builder agent fires
+	// run_full_workflow (or any tool that registers a parent chat), we bump
+	// pendingWorkflows so the session context isn't cancelled until the
+	// workflow drains. Workflow step events publish to this parent session's
+	// own event stream (routed by the orchestrator's ContextAwareBridge), so
+	// the existing BotEventFilter forwards them to Slack — no separate mirror
+	// subscription is needed. Access under mu.
+	builderDone      bool            // event filter signalled the parent session finished its own turn
+	pendingWorkflows int             // live workflows attached via SpawnListener (>0 defers cancel)
+	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
 }
 
 // NewBotConversationManager creates a new manager.
@@ -521,6 +543,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		active.mu.Unlock()
 		if m.followUpSession != nil && sid != "" {
 			log.Printf("[BOT_MANAGER] Sending follow-up to session %s: %s", sid, botTruncate(msg.Text, 80))
+			m.resetActiveForNewTurn(active)
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
@@ -735,6 +758,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		log.Printf("[BOT_MANAGER] HandleMessageSync: found active session %s (status=%s) for thread %s", sessionID, status, threadID.Key())
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
+			m.resetActiveForNewTurn(active)
 			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, ""), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
@@ -754,7 +778,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	// Resolve workspace user ID for per-user secrets
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
-	newSessionID := uuid.New().String()
+	newSessionID := newBotSessionID(msg.Platform)
 	botMeta := botMetaFromMsg(msg, threadID)
 
 	// Load thread history for context continuity (e.g., user replies after hours)
@@ -790,7 +814,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
-	sessionID := uuid.New().String()
+	sessionID := newBotSessionID(msg.Platform)
 	botMeta := botMetaFromMsg(msg, threadID)
 
 	// Load thread history for context continuity (e.g., user replies after hours)
@@ -869,8 +893,20 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 		active.mu.Unlock()
 	})
 
-	// Wire up session done callback — event filter signals when session is truly complete
+	// Wire up session done callback — event filter signals when the builder's
+	// own turn is complete. If the builder launched background workflows via
+	// run_full_workflow, we hold off on cancelling the session context (and
+	// therefore on clearing Slack reactions) until every mirrored workflow has
+	// drained. The last mirror to finish will call cancel() itself.
 	active.eventFilter.SetSessionDoneCallback(func() {
+		active.mu.Lock()
+		active.builderDone = true
+		pending := active.pendingWorkflows
+		active.mu.Unlock()
+		if pending > 0 {
+			log.Printf("[BOT_MANAGER] Builder done for %s but %d workflow(s) still running — deferring cancel", active.SessionID, pending)
+			return
+		}
 		log.Printf("[BOT_MANAGER] Session done callback for %s", active.SessionID)
 		cancel()
 	})
@@ -933,6 +969,116 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	active.mu.Lock()
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
+}
+
+// resetActiveForNewTurn clears state that would otherwise latch from a prior
+// builder turn. Must be called before injecting a follow-up message into an
+// active session so the new turn's completion gets detected properly.
+func (m *BotConversationManager) resetActiveForNewTurn(active *activeBotSession) {
+	active.mu.Lock()
+	active.builderDone = false
+	filter := active.eventFilter
+	active.mu.Unlock()
+	if filter != nil {
+		filter.ResetForNewTurn()
+	}
+}
+
+// findActiveBySessionID returns the active bot session whose SessionID matches,
+// or nil. Linear scan — the in-flight session count is small (a few per thread).
+func (m *BotConversationManager) findActiveBySessionID(sessionID string) *activeBotSession {
+	if sessionID == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, active := range m.sessions {
+		active.mu.Lock()
+		match := active.SessionID == sessionID
+		active.mu.Unlock()
+		if match {
+			return active
+		}
+	}
+	return nil
+}
+
+// OnChildSpawned implements virtualtools.SpawnListener. Called whenever a
+// background sub-session is attached to a parent chat. Delegates to
+// NotifyWorkflowStarted, which no-ops when the parent isn't a bot session.
+func (m *BotConversationManager) OnChildSpawned(parentSessionID, childSessionID string) {
+	m.NotifyWorkflowStarted(parentSessionID, childSessionID)
+}
+
+// OnChildEnded implements virtualtools.SpawnListener. Called whenever a
+// background sub-session is detached. Delegates to NotifyWorkflowEnded.
+func (m *BotConversationManager) OnChildEnded(parentSessionID, childSessionID string) {
+	m.NotifyWorkflowEnded(parentSessionID, childSessionID)
+}
+
+// NotifyWorkflowStarted marks a background workflow as attached to a parent
+// bot session. The orchestrator's ContextAwareBridge already routes workflow
+// step events onto the parent's event stream, so the parent's existing
+// BotEventFilter forwards them to Slack — we only need to defer the session's
+// eventual cancel until every attached workflow has finished. No-op when the
+// parent isn't an active bot session (e.g. chat UI workflows).
+func (m *BotConversationManager) NotifyWorkflowStarted(parentSessionID, wfSessionID string) {
+	if parentSessionID == "" || wfSessionID == "" {
+		return
+	}
+	active := m.findActiveBySessionID(parentSessionID)
+	if active == nil {
+		return
+	}
+	active.mu.Lock()
+	if active.activeWorkflows == nil {
+		active.activeWorkflows = make(map[string]bool)
+	}
+	if active.activeWorkflows[wfSessionID] {
+		active.mu.Unlock()
+		log.Printf("[BOT_MANAGER] Workflow already tracked for wf=%s (parent=%s)", wfSessionID, parentSessionID)
+		return
+	}
+	active.activeWorkflows[wfSessionID] = true
+	active.pendingWorkflows++
+	log.Printf("[BOT_MANAGER] Workflow attached: parent=%s wf=%s (pending=%d)",
+		parentSessionID, wfSessionID, active.pendingWorkflows)
+	active.mu.Unlock()
+}
+
+// NotifyWorkflowEnded marks a background workflow as drained. When the last
+// outstanding workflow finishes AND the builder's own turn already ended, the
+// parent session context is cancelled so reactions get cleared and the
+// session is marked completed. Safe to call more than once.
+func (m *BotConversationManager) NotifyWorkflowEnded(parentSessionID, wfSessionID string) {
+	if parentSessionID == "" || wfSessionID == "" {
+		return
+	}
+	active := m.findActiveBySessionID(parentSessionID)
+	if active == nil {
+		return
+	}
+	active.mu.Lock()
+	if !active.activeWorkflows[wfSessionID] {
+		active.mu.Unlock()
+		return
+	}
+	delete(active.activeWorkflows, wfSessionID)
+	if active.pendingWorkflows > 0 {
+		active.pendingWorkflows--
+	}
+	pending := active.pendingWorkflows
+	builderDone := active.builderDone
+	parentCancel := active.cancel
+	active.mu.Unlock()
+
+	log.Printf("[BOT_MANAGER] Workflow detached: parent=%s wf=%s (pending=%d, builderDone=%v)",
+		parentSessionID, wfSessionID, pending, builderDone)
+
+	if pending == 0 && builderDone && parentCancel != nil {
+		log.Printf("[BOT_MANAGER] All workflows drained after builder done — cancelling parent session %s", active.SessionID)
+		parentCancel()
+	}
 }
 
 // cancelSession cancels a bot session

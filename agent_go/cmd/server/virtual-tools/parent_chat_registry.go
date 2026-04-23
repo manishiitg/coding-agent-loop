@@ -21,15 +21,43 @@ type ParentChatContext struct {
 // had sent it. Implemented by the server (wraps sendFollowUpInternal).
 type ChatInjectFunc func(ctx context.Context, sessionID, userID, message string) error
 
+// SpawnListener is notified whenever a background child session is attached to
+// or detached from a parent chat session. The bot connector uses it to mirror
+// the child's agent messages into the parent's Slack thread, regardless of
+// which tool spawned the child (run_workflow, run_full_workflow, etc.).
+type SpawnListener interface {
+	OnChildSpawned(parentSessionID, childSessionID string)
+	OnChildEnded(parentSessionID, childSessionID string)
+}
+
 var (
 	parentChatMu       sync.RWMutex
 	parentChatRegistry = map[string]*ParentChatContext{} // key: workflow session ID
 
 	chatInjectMu sync.RWMutex
 	chatInject   ChatInjectFunc
+
+	spawnListenerMu sync.RWMutex
+	spawnListener   SpawnListener
 )
 
+// SetSpawnListener installs a listener for child-session spawn/end. Called
+// once from server startup. A nil value clears the listener.
+func SetSpawnListener(l SpawnListener) {
+	spawnListenerMu.Lock()
+	spawnListener = l
+	spawnListenerMu.Unlock()
+}
+
+func getSpawnListener() SpawnListener {
+	spawnListenerMu.RLock()
+	defer spawnListenerMu.RUnlock()
+	return spawnListener
+}
+
 // RegisterParentChat associates a workflow session with its invoking chat session.
+// Any installed SpawnListener is notified so it can attach side-channel behaviour
+// (e.g. mirror the child's agent messages into the parent chat's Slack thread).
 func RegisterParentChat(workflowSessionID string, pc *ParentChatContext) {
 	if workflowSessionID == "" || pc == nil || pc.SessionID == "" {
 		return
@@ -37,6 +65,10 @@ func RegisterParentChat(workflowSessionID string, pc *ParentChatContext) {
 	parentChatMu.Lock()
 	parentChatRegistry[workflowSessionID] = pc
 	parentChatMu.Unlock()
+
+	if l := getSpawnListener(); l != nil {
+		l.OnChildSpawned(pc.SessionID, workflowSessionID)
+	}
 }
 
 // GetParentChat returns the parent chat context for a workflow session, or nil.
@@ -50,13 +82,22 @@ func GetParentChat(workflowSessionID string) *ParentChatContext {
 }
 
 // UnregisterParentChat removes the mapping (called when the workflow ends).
+// Any installed SpawnListener is notified with the parent/child pair so it
+// can tear down side-channel behaviour (e.g. stop mirroring the child).
 func UnregisterParentChat(workflowSessionID string) {
 	if workflowSessionID == "" {
 		return
 	}
 	parentChatMu.Lock()
+	pc := parentChatRegistry[workflowSessionID]
 	delete(parentChatRegistry, workflowSessionID)
 	parentChatMu.Unlock()
+
+	if pc != nil {
+		if l := getSpawnListener(); l != nil {
+			l.OnChildEnded(pc.SessionID, workflowSessionID)
+		}
+	}
 }
 
 // SetChatInjector installs the function used to inject messages into a chat

@@ -702,6 +702,131 @@
   color: hsl(20 60% 50%) !important;
 }
 
+/* Amber color variants (used in tool call events) - amber hue ~40 */
+.dark .bg-amber-50 {
+  background-color: hsl(40 30% 15%) !important;
+}
+
+.dark .bg-amber-100 {
+  background-color: hsl(40 30% 18%) !important;
+}
+
+.dark .bg-amber-200 {
+  background-color: hsl(40 30% 22%) !important;
+}
+
+.dark .bg-amber-300 {
+  background-color: hsl(40 30% 26%) !important;
+}
+
+.dark .bg-amber-400 {
+  background-color: hsl(40 30% 30%) !important;
+}
+
+.dark .bg-amber-500 {
+  background-color: hsl(40 30% 34%) !important;
+}
+
+.dark .bg-amber-600 {
+  background-color: hsl(40 30% 38%) !important;
+}
+
+.dark .bg-amber-700 {
+  background-color: hsl(40 30% 42%) !important;
+}
+
+.dark .bg-amber-800 {
+  background-color: hsl(40 30% 46%) !important;
+}
+
+.dark .bg-amber-900 {
+  background-color: hsl(40 30% 50%) !important;
+}
+
+.dark .text-amber-100 {
+  color: hsl(40 70% 90%) !important;
+}
+
+.dark .text-amber-200 {
+  color: hsl(40 70% 85%) !important;
+}
+
+.dark .text-amber-300 {
+  color: hsl(40 70% 80%) !important;
+}
+
+.dark .text-amber-400 {
+  color: hsl(40 70% 75%) !important;
+}
+
+.dark .text-amber-500 {
+  color: hsl(40 70% 70%) !important;
+}
+
+.dark .text-amber-600 {
+  color: hsl(40 70% 65%) !important;
+}
+
+.dark .text-amber-700 {
+  color: hsl(40 70% 60%) !important;
+}
+
+.dark .text-amber-800 {
+  color: hsl(40 70% 55%) !important;
+}
+
+.dark .text-amber-900 {
+  color: hsl(40 70% 50%) !important;
+}
+
+.dark .border-amber-200 {
+  border-color: hsl(40 30% 30%) !important;
+}
+
+.dark .border-amber-300 {
+  border-color: hsl(40 30% 35%) !important;
+}
+
+.dark .border-amber-400 {
+  border-color: hsl(40 40% 40%) !important;
+}
+
+.dark .border-amber-500 {
+  border-color: hsl(40 50% 45%) !important;
+}
+
+.dark .border-amber-700 {
+  border-color: hsl(40 50% 50%) !important;
+}
+
+.dark .border-amber-800 {
+  border-color: hsl(40 50% 45%) !important;
+}
+
+.dark .border-orange-200 {
+  border-color: hsl(20 30% 30%) !important;
+}
+
+.dark .border-orange-300 {
+  border-color: hsl(20 30% 35%) !important;
+}
+
+.dark .border-orange-400 {
+  border-color: hsl(20 40% 40%) !important;
+}
+
+.dark .border-orange-500 {
+  border-color: hsl(20 50% 45%) !important;
+}
+
+.dark .border-orange-700 {
+  border-color: hsl(20 50% 50%) !important;
+}
+
+.dark .border-orange-800 {
+  border-color: hsl(20 50% 45%) !important;
+}
+
 /* Green color variants (used in success events) - VS Code green #4ec9b0 */
 .dark .bg-green-50 {
   background-color: hsl(180 30% 18%) !important;    /* Dark green background */

@@ -64,10 +64,10 @@ function classifyPart(part: ConversationPart): 'text' | 'tool_call' | 'tool_resu
 
 function getRoleConfig(role: string, hasToolCall: boolean, hasToolResult: boolean) {
   if (hasToolResult) {
-    return { label: 'Tool Result', color: 'text-orange-700 dark:text-orange-300', bgColor: 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800', icon: '📎' }
+    return { label: 'Tool Result', color: 'text-orange-700', bgColor: 'bg-orange-50 border-orange-200', icon: '📎' }
   }
   if (hasToolCall) {
-    return { label: 'Tool Call', color: 'text-amber-700 dark:text-amber-300', bgColor: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800', icon: '🔧' }
+    return { label: 'Tool Call', color: 'text-amber-700', bgColor: 'bg-amber-50 border-amber-200', icon: '🔧' }
   }
   switch (role.toLowerCase()) {
     case 'system':
@@ -104,32 +104,32 @@ function ToolCallPart({ part }: { part: ConversationPart }) {
   const displayArgs = formattedArgs || fc.Arguments
 
   return (
-    <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/10 p-2">
+    <div className="rounded border border-amber-200 bg-amber-50 p-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-semibold text-amber-800 dark:text-amber-200">
+          <span className="text-xs font-mono font-semibold text-amber-700">
             {fc.Name}
           </span>
           {part.ID && (
-            <span className="text-[10px] text-amber-500 dark:text-amber-400 font-mono">
+            <span className="text-[10px] text-amber-500 font-mono">
               {part.ID}
             </span>
           )}
         </div>
         <button
           onClick={() => setExpanded(e => !e)}
-          className="text-[10px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1.5 py-0.5 rounded hover:bg-white/50 dark:hover:bg-gray-700/50"
+          className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
         >
           {expanded ? 'Hide args' : 'Show args'}
         </button>
       </div>
       {!expanded && (
-        <p className="text-[11px] font-mono text-gray-500 dark:text-gray-400 mt-1 truncate">
+        <p className="text-[11px] font-mono text-muted-foreground mt-1 truncate">
           {truncate(fc.Arguments, 120)}
         </p>
       )}
       {expanded && (
-        <pre className="text-[11px] font-mono text-gray-700 dark:text-gray-300 mt-1 overflow-x-auto whitespace-pre-wrap break-words bg-white/50 dark:bg-black/20 rounded p-2 max-h-[300px] overflow-y-auto">
+        <pre className="text-[11px] font-mono text-foreground mt-1 overflow-x-auto whitespace-pre-wrap break-words bg-muted rounded p-2 max-h-[300px] overflow-y-auto">
           {displayArgs}
         </pre>
       )}
@@ -146,41 +146,41 @@ function ToolResultPart({ part }: { part: ConversationPart }) {
 
   return (
     <div className={`rounded border p-2 ${isError
-      ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10'
-      : 'border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10'
+      ? 'border-red-200 bg-red-50'
+      : 'border-orange-200 bg-orange-50'
     }`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {part.Name && (
-            <span className="text-xs font-mono font-semibold text-orange-800 dark:text-orange-200">
+            <span className="text-xs font-mono font-semibold text-orange-700">
               {part.Name}
             </span>
           )}
           {part.ToolCallID && (
-            <span className="text-[10px] text-orange-500 dark:text-orange-400 font-mono">
+            <span className="text-[10px] text-orange-500 font-mono">
               {part.ToolCallID}
             </span>
           )}
           {isError && (
-            <span className="text-[10px] bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded">
+            <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
               error
             </span>
           )}
-          <span className="text-[10px] text-gray-400">
+          <span className="text-[10px] text-muted-foreground">
             {content.length.toLocaleString()} chars
           </span>
         </div>
         {isLong && (
           <button
             onClick={() => setExpanded(e => !e)}
-            className="text-[10px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-1.5 py-0.5 rounded hover:bg-white/50 dark:hover:bg-gray-700/50"
+            className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
           >
             {expanded ? 'Collapse' : 'Expand'}
           </button>
         )}
       </div>
-      <pre className={`text-[11px] font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-words bg-white/50 dark:bg-black/20 rounded p-2 ${
-        isError ? 'text-red-700 dark:text-red-300' : 'text-gray-700 dark:text-gray-300'
+      <pre className={`text-[11px] font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-words bg-muted rounded p-2 ${
+        isError ? 'text-red-700' : 'text-foreground'
       } ${!expanded && isLong ? 'max-h-[80px] overflow-hidden' : 'max-h-[400px] overflow-y-auto'}`}>
         {formattedContent || content || '(empty)'}
       </pre>
@@ -247,12 +247,12 @@ function MessageBubble({ message, index, totalMessages }: { message: Conversatio
               {role.label}
             </span>
             {hasToolCall && (
-              <span className="text-[10px] bg-amber-100 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">
+              <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
                 {toolCallParts.length} call{toolCallParts.length > 1 ? 's' : ''}
               </span>
             )}
             {hasToolResult && (
-              <span className="text-[10px] bg-orange-100 dark:bg-orange-800/40 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded">
+              <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">
                 {toolResultParts.length} result{toolResultParts.length > 1 ? 's' : ''}
               </span>
             )}

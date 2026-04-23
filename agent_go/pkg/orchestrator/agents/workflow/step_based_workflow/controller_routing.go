@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
 )
@@ -240,13 +241,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
 	}
 
-	// Evaluate routing
-	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
-	routingResponse, err := conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, variableNames, variableValues)
-	if err != nil {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
-		hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)
-		return "", "", fmt.Errorf("failed to evaluate routing step: %w", err)
+	// If this workflow was launched from a builder chat session, route the
+	// routing decision to the builder instead of evaluating via LLM: the
+	// builder already has conversation context and can pick (or ask the user
+	// to pick) directly. Falls through to LLM evaluation on any failure.
+	var routingResponse *RoutingResponse
+	if chatResp, ok := hcpo.evaluateRoutingViaBuilderChat(ctx, routingStep, executionResult, conditionContext); ok {
+		routingResponse = chatResp
+	} else {
+		// Evaluate routing via LLM
+		hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
+		var err error
+		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, variableNames, variableValues)
+		if err != nil {
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
+			hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)
+			return "", "", fmt.Errorf("failed to evaluate routing step: %w", err)
+		}
 	}
 
 	// Validate selected route ID
@@ -381,4 +392,114 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitRoutingEvaluatedEvent(ctx context
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted routing_evaluated event for step %d: %s (route=%s)", stepIndex+1, stepTitle, routingResponse.SelectedRouteID))
 	}
+}
+
+// evaluateRoutingViaBuilderChat attempts to resolve a routing step by asking
+// the parent builder chat session (set up via run_workflow) to pick a route.
+// Returns (response, true) on success; (nil, false) to fall through to the
+// LLM-based evaluator. Never fatal — any failure falls through.
+func (hcpo *StepBasedWorkflowOrchestrator) evaluateRoutingViaBuilderChat(
+	ctx context.Context,
+	routingStep *RoutingPlanStep,
+	executionResult string,
+	conditionContext string,
+) (*RoutingResponse, bool) {
+	sessionID := hcpo.getSessionID()
+	pc := virtualtools.GetParentChat(sessionID)
+	if pc == nil || pc.SessionID == "" || !virtualtools.HasChatInjector() {
+		return nil, false
+	}
+
+	requestID := fmt.Sprintf("routing_step_%s_%d", routingStep.GetID(), time.Now().UnixNano())
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+	if err := feedbackStore.CreateRequestWithoutNotification(requestID, routingStep.RoutingQuestion); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create routing feedback request: %v (falling back to LLM)", err))
+		return nil, false
+	}
+
+	var msg strings.Builder
+	msg.WriteString("[WORKFLOW_ROUTING] The workflow you launched has reached a routing step. ")
+	msg.WriteString("Pick which route to take based on the context below. ")
+	msg.WriteString("If the choice is clear from the conversation so far, answer directly by calling submit_human_answer with the route_id. ")
+	msg.WriteString("Otherwise, ask the user.\n\n")
+	if pc.WorkflowPath != "" {
+		msg.WriteString(fmt.Sprintf("Workflow: %s\n", pc.WorkflowPath))
+	}
+	if pc.GroupName != "" {
+		msg.WriteString(fmt.Sprintf("Group: %s\n", pc.GroupName))
+	}
+	msg.WriteString(fmt.Sprintf("Request ID: %s\n", requestID))
+	msg.WriteString(fmt.Sprintf("Routing question: %s\n\n", routingStep.RoutingQuestion))
+	if strings.TrimSpace(conditionContext) != "" {
+		msg.WriteString("Context (from prior steps):\n")
+		msg.WriteString(conditionContext)
+		if !strings.HasSuffix(conditionContext, "\n") {
+			msg.WriteString("\n")
+		}
+		msg.WriteString("\n")
+	}
+	if strings.TrimSpace(executionResult) != "" {
+		msg.WriteString("Execution output of this routing step:\n")
+		msg.WriteString(executionResult)
+		msg.WriteString("\n\n")
+	}
+	msg.WriteString("Available routes:\n")
+	for i, route := range routingStep.Routes {
+		msg.WriteString(fmt.Sprintf("  %d. route_id=%q  name=%q\n     Condition: %s\n     Next step: %s\n",
+			i+1, route.RouteID, route.RouteName, route.Condition, route.NextStepID))
+	}
+	msg.WriteString("\nSubmit the answer as the exact route_id (or the route name). ")
+	if routingStep.DefaultRouteID != "" {
+		msg.WriteString(fmt.Sprintf("If unsure, the default route is %q.\n", routingStep.DefaultRouteID))
+	}
+
+	if err := virtualtools.InjectChatMessage(ctx, pc.SessionID, pc.UserID, msg.String()); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to inject routing question into parent chat %s: %v (falling back to LLM)", pc.SessionID, err))
+		return nil, false
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("📨 Routed routing decision to parent chat %s (request=%s, step=%s)", pc.SessionID, requestID, routingStep.GetID()))
+
+	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Timeout/error waiting for routing answer from builder: %v (falling back to LLM)", err))
+		return nil, false
+	}
+
+	// Match the builder's answer to a route (by route_id, route name, or
+	// option index — accept a few forms so the builder isn't brittle).
+	trimmed := strings.TrimSpace(response)
+	for _, route := range routingStep.Routes {
+		if strings.EqualFold(route.RouteID, trimmed) || strings.EqualFold(route.RouteName, trimmed) {
+			return &RoutingResponse{
+				SelectedRouteID: route.RouteID,
+				Reasoning:       fmt.Sprintf("Selected by builder chat: %s", response),
+			}, true
+		}
+	}
+	// Accept "option0"/"option1"/"0"/"1" form
+	indexStr := strings.TrimPrefix(trimmed, "option")
+	if idx := parseNonNegativeInt(indexStr); idx >= 0 && idx < len(routingStep.Routes) {
+		route := routingStep.Routes[idx]
+		return &RoutingResponse{
+			SelectedRouteID: route.RouteID,
+			Reasoning:       fmt.Sprintf("Selected by builder chat (index %d): %s", idx, route.RouteID),
+		}, true
+	}
+	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Builder's routing answer %q did not match any route; falling back to LLM", trimmed))
+	return nil, false
+}
+
+func parseNonNegativeInt(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return -1
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return -1
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }

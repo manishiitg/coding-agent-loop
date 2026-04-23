@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -624,8 +625,8 @@ func (w *WhatsAppService) clearOwner() {
 	w.ownerMu.Unlock()
 }
 
-// OwnJID returns the paired account's own JID (the bot's WhatsApp identity),
-// or an empty JID if unpaired.
+// OwnJID returns the paired account's own phone-number JID (the
+// s.whatsapp.net one), or an empty JID if unpaired.
 func (w *WhatsAppService) OwnJID() types.JID {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -635,17 +636,41 @@ func (w *WhatsAppService) OwnJID() types.JID {
 	return *w.client.Store.ID
 }
 
+// OwnLID returns the paired account's LID ("hidden user") JID if one has
+// been assigned. Recent WhatsApp accounts have both a phone-number JID
+// (@s.whatsapp.net) and a LID (@lid); self-chat messages can arrive with
+// either as the chat JID depending on how the message was routed. Empty
+// when unpaired or when the account hasn't been given a LID.
+func (w *WhatsAppService) OwnLID() types.JID {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.client == nil || w.client.Store == nil {
+		return types.JID{}
+	}
+	return w.client.Store.LID
+}
+
 // isSelfChat reports whether the given chat JID is the "Message Yourself"
 // chat — the one whose counterpart is the paired account itself. WhatsApp
 // routes both the user's and the bot's messages into the same thread there,
 // and self-chat is our enabler for letting the owner talk to their own bot
 // without needing a second phone number.
+//
+// Handles both of the paired account's identities: the phone-number JID
+// (chat.Server = "s.whatsapp.net") and the LID (chat.Server = "lid").
+// Recent WhatsApp accounts can arrive on either depending on how the
+// message was routed through the multi-device / privacy protocol.
 func (w *WhatsAppService) isSelfChat(chat types.JID) bool {
-	own := w.OwnJID()
-	if own.IsEmpty() {
+	if chat.User == "" {
 		return false
 	}
-	return chat.Server == types.DefaultUserServer && chat.User == own.User
+	if own := w.OwnJID(); !own.IsEmpty() && chat.Server == types.DefaultUserServer && chat.User == own.User {
+		return true
+	}
+	if lid := w.OwnLID(); !lid.IsEmpty() && chat.Server == types.HiddenUserServer && chat.User == lid.User {
+		return true
+	}
+	return false
 }
 
 // handleEvent is the whatsmeow event dispatcher. We currently care about
@@ -870,6 +895,13 @@ func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID Thread
 	if err != nil {
 		return "", fmt.Errorf("whatsapp: parse JID %q: %w", threadID.ChannelID, err)
 	}
+	// Convert standard markdown to WhatsApp's formatting subset. Even with
+	// Layer 1's channel-aware system prompt telling the LLM to emit WhatsApp
+	// markup directly, tool outputs and cached text can still arrive as
+	// standard markdown — the formatter is the safety net that normalises.
+	formatter := WhatsAppFormatter{}
+	message = formatter.FormatMessage(message)
+
 	if w.selfChatPrefix != "" && w.isSelfChat(jid) {
 		message = w.selfChatPrefix + message
 	}
@@ -1037,13 +1069,138 @@ func (w *WhatsAppService) SendNotification(ctx context.Context, uniqueID, messag
 	return w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: ownJID.String()}, body)
 }
 
-// WhatsAppFormatter maps standard markdown onto WhatsApp's native syntax.
-// WhatsApp uses *bold*, _italic_, ~strike~, and ```code``` already — very
-// close to markdown — so only **bold** → *bold* needs translating.
+// WhatsAppFormatter converts standard markdown into WhatsApp's formatting
+// subset. Layer 1 (channel-formatting system prompt) teaches the agent to
+// emit WhatsApp-native markup directly, so this converter is a safety net
+// for standard markdown that slips through (tool outputs, cached text,
+// upstream agents that forgot the directive).
+//
+// Handled:
+//   - **bold** / __bold__  →  *bold*  (WhatsApp uses single asterisks)
+//   - Markdown headers (#, ##, ###) — strip "# " prefix, bold the line
+//   - [text](url) links    →  text (url)  (just url if text equals url)
+//   - "- item" / "* item"  →  "• item" (WhatsApp does not style markdown bullets)
+//   - Tables → paragraphs of key/value lines (see tableToText)
+//
+// Untouched (native WhatsApp already renders these):
+//   - Single-asterisk *bold*, _italic_, ~strike~, `inline`, ```block```.
 type WhatsAppFormatter struct{}
 
+// waCodeFence matches markdown code fences so the formatter can skip their
+// contents verbatim — converting bullets/headers inside code would corrupt
+// the code.
+var waCodeFence = regexp.MustCompile("(?s)```.*?```")
+
+// waHeader matches a line starting with 1-6 "#" followed by a space. Captures
+// the header text (group 1).
+var waHeader = regexp.MustCompile(`(?m)^#{1,6}\s+(.+?)\s*$`)
+
+// waBoldDouble matches standard markdown **bold** or __bold__ (non-greedy).
+var waBoldDouble = regexp.MustCompile(`(?s)(\*\*|__)(.+?)(\*\*|__)`)
+
+// waMarkdownLink matches [text](url). Non-greedy on text to avoid swallowing
+// consecutive links.
+var waMarkdownLink = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+
+// waBulletLine matches a line-start "- " or "* " bullet. The literal space
+// after the dash/asterisk is intentional — it's how we distinguish a bullet
+// from bold syntax: "**bold**" has no space after the first asterisk and so
+// never matches. Go's regex (RE2) doesn't support lookahead, so the space
+// anchor is load-bearing rather than cosmetic.
+var waBulletLine = regexp.MustCompile(`(?m)^(\s*)[-*] `)
+
+// waTableBlock matches a standard pipe-separated markdown table (header row +
+// separator row + >=1 data row). Multi-line, non-greedy, anchored on line
+// boundaries to avoid eating surrounding prose.
+var waTableBlock = regexp.MustCompile(`(?m)^\|.*\|\s*\n\|[\s|:-]+\|\s*\n(?:\|.*\|\s*\n?)+`)
+
+// FormatMessage applies the regex substitutions in an order that avoids
+// cross-talk: code fences are carved out and preserved first, then tables,
+// then line-level rewrites (headers, bullets), then inline rewrites (bold,
+// links). Code-fenced content is restored last.
 func (f *WhatsAppFormatter) FormatMessage(markdown string) string {
-	return strings.ReplaceAll(markdown, "**", "*")
+	if markdown == "" {
+		return ""
+	}
+	// Pass 1 — pull code fences out so we don't transform their contents.
+	fences := []string{}
+	protected := waCodeFence.ReplaceAllStringFunc(markdown, func(s string) string {
+		fences = append(fences, s)
+		return fmt.Sprintf("\x00WA_CODE_%d\x00", len(fences)-1)
+	})
+
+	// Pass 2 — tables first (they're block-level and need rewriting before
+	// their lines get processed by header/bullet rules).
+	protected = waTableBlock.ReplaceAllStringFunc(protected, tableToText)
+
+	// Pass 3 — line-level: headers become bold lines, bullets become •.
+	protected = waHeader.ReplaceAllString(protected, "*$1*")
+	protected = waBulletLine.ReplaceAllString(protected, "${1}• ")
+
+	// Pass 4 — inline: bold then links (bold first so link text can still
+	// contain bold markers).
+	protected = waBoldDouble.ReplaceAllString(protected, "*$2*")
+	protected = waMarkdownLink.ReplaceAllStringFunc(protected, func(s string) string {
+		parts := waMarkdownLink.FindStringSubmatch(s)
+		if len(parts) != 3 {
+			return s
+		}
+		text, url := strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		if text == "" || text == url {
+			return url
+		}
+		return text + " (" + url + ")"
+	})
+
+	// Pass 5 — restore fenced content.
+	for i, raw := range fences {
+		placeholder := fmt.Sprintf("\x00WA_CODE_%d\x00", i)
+		protected = strings.Replace(protected, placeholder, raw, 1)
+	}
+	return protected
+}
+
+// tableToText renders a markdown table as plain text that survives WhatsApp's
+// lack of table rendering. Strategy: for each data row, emit "*<col>*: <val>"
+// lines, one per cell, then a blank line between rows. Keeps the data
+// scannable even without alignment.
+func tableToText(table string) string {
+	lines := strings.Split(strings.TrimSpace(table), "\n")
+	if len(lines) < 3 {
+		return table // not enough rows to be a real table; leave alone
+	}
+	splitRow := func(row string) []string {
+		row = strings.Trim(strings.TrimSpace(row), "|")
+		cells := strings.Split(row, "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		return cells
+	}
+	headers := splitRow(lines[0])
+	var out strings.Builder
+	for _, rowLine := range lines[2:] {
+		if strings.TrimSpace(rowLine) == "" {
+			continue
+		}
+		cells := splitRow(rowLine)
+		for i, cell := range cells {
+			col := ""
+			if i < len(headers) {
+				col = headers[i]
+			}
+			if col == "" && cell == "" {
+				continue
+			}
+			if col != "" {
+				out.WriteString("*" + col + "*: ")
+			}
+			out.WriteString(cell)
+			out.WriteString("\n")
+		}
+		out.WriteString("\n")
+	}
+	return strings.TrimRight(out.String(), "\n") + "\n"
 }
 
 func (f *WhatsAppFormatter) MaxMessageLength() int { return 4000 }

@@ -552,7 +552,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 				}
@@ -585,7 +585,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil), sid, uid)
+					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -603,7 +603,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -618,7 +618,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil), sid, uid)
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -643,7 +643,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil), sid, uid)
+				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid, "", nil, ""), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -667,7 +667,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -684,7 +684,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil), sid, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -764,7 +764,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil), sessionID, uid)
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid, "", nil, ""), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -788,7 +788,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
 
 	// Track as active session — bot sessions are in-memory only.
 	m.mu.Lock()
@@ -824,7 +824,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform)
 
 	// Track active session — bot sessions are in-memory only.
 	m.mu.Lock()
@@ -1242,9 +1242,16 @@ func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) 
 // existing sessions (routing is ignored for follow-ups).
 // presetRoute, when non-nil, bypasses channel lookup entirely — used by
 // WhatsApp's @<slug> prefix parser to pick a workflow from in-message text.
-func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute) map[string]interface{} {
+// platform is the bot channel ("slack", "whatsapp", …) so the server can
+// inject channel-specific formatting rules into the agent's system prompt.
+// Pass "" for non-bot callers and follow-ups (platform doesn't change
+// mid-session).
+func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string) map[string]interface{} {
 	req := map[string]interface{}{
 		"query": query,
+	}
+	if platform != "" {
+		req["bot_platform"] = platform
 	}
 
 	// Resolve the workflow route: an explicit preset wins over channel lookup,

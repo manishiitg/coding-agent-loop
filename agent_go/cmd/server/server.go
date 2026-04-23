@@ -330,6 +330,11 @@ type QueryRequest struct {
 	ImageGenConfig        *ImageGenConfig `json:"image_gen_config,omitempty"`        // Image generation provider configuration
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
+	// BotPlatform identifies the chat channel the session is talking through
+	// (e.g. "slack", "whatsapp"). Set by the bot manager when wiring a bot
+	// session; empty for chat-UI sessions. Drives channel-specific system
+	// prompt additions (formatting rules), so bot replies render correctly.
+	BotPlatform string `json:"bot_platform,omitempty"`
 	// Selected sub-agent templates to make available for delegation
 	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
@@ -3988,6 +3993,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
 				}
+			}
+
+			// Channel formatting rules — tell the agent which markup subset
+			// the bot platform renders, so replies don't arrive with stray
+			// "## Headers" or "[link](url)" syntax that WhatsApp / Slack
+			// display literally. No-op when BotPlatform is empty (chat UI).
+			if channelPrompt := buildChannelFormattingInstructions(req.BotPlatform); channelPrompt != "" {
+				underlyingAgent.AppendSystemPrompt(channelPrompt)
+				log.Printf("[CHANNEL] Added %s formatting rules to system prompt", req.BotPlatform)
 			}
 
 			// 4. MODE-SPECIFIC — browser, GWS, memory (only when those capabilities are active).

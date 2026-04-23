@@ -883,8 +883,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	} else {
 		for _, f := range learnFiles {
 			fileName := filepath.Base(f)
-			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == ".learning_metadata.json" {
-				continue // skip metadata files, only copy script files
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == ".learning_metadata.json" || strings.HasSuffix(fileName, ".md") {
+				continue // skip metadata and legacy note files; only copy script artifacts
 			}
 			content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
 			if readErr != nil {
@@ -1050,7 +1050,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 	if oldFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
 		for _, f := range oldFiles {
 			fn := filepath.Base(f)
-			if fn == "" || fn == "." || fn == "script_metadata.json" || fn == "SKILL.md" || fn == ".learning_metadata.json" || fn == "diffs" {
+			if fn == "" || fn == "." || fn == "script_metadata.json" || fn == ".learning_metadata.json" || fn == "diffs" || strings.HasSuffix(fn, ".md") {
 				continue
 			}
 			if content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fn); readErr == nil {
@@ -1065,8 +1065,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeScriptToLearnings(
 	if existingFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath); listErr == nil {
 		for _, f := range existingFiles {
 			fileName := filepath.Base(f)
-			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == "SKILL.md" || fileName == "diffs" {
-				continue // keep metadata, supplemental learning notes, and diffs/; refresh script files only
+			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == ".learning_metadata.json" || fileName == "diffs" {
+				continue // keep metadata and diffs/; refresh script files only
 			}
 			entryRelPath := learnDirRelPath + "/" + fileName
 			absPath := filepath.Join(GetPromptDocsRoot(), workspacePath, entryRelPath)

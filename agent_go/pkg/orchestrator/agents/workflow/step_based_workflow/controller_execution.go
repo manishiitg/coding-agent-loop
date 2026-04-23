@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -1402,35 +1401,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		templateVars := map[string]string{
-			"StepTitle":             stepTitleForPrompt,
-			"StepDescription":       stepDescriptionForPrompt,
-			"StepSuccessCriteria":   "",
-			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
-			"WorkspacePath":         toAbsPath(executionWorkspacePath),                         // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
-			"LearningsPath":         toAbsPath(learningsPath),                                  // Absolute learnings folder path
-			"KnowledgebasePath":     toAbsPath(knowledgebasePath),                              // Absolute knowledgebase folder path
-			"DBPath":                toAbsPath(getDBPath(hcpo.GetWorkspacePath())),             // Absolute db folder path (always enabled)
-			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                       // Whether knowledgebase is enabled (deprecated, retained for backward compat)
-			"KbAccess":              kbAccess,                                                  // KB access mode: "read" | "write" | "read-write" | "none"
-			"KbAccessLabel":         kbAccessLabel(kbAccess),                                   // Human-readable label for prompt display
-			"KbWriteMethod":         kbWriteMethod,                                             // "agent" | "direct" — who writes KB
-			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                 // Author's contribution instruction (direct mode surfaces it to the step)
-			"KBGuidanceBlock":       BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance
-			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                    // Code execution mode flag (step-specific or preset)
-			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-			"StepExecutionPath":     toAbsPath(stepExecutionPath),                              // Absolute step execution folder path
-			"FolderGuardReadPaths":  strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),  // Absolute folder guard read paths
-			"FolderGuardWritePaths": strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "), // Absolute folder guard write paths
-			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                  // Evaluation mode flag for eval-specific prompt guidance
-			"WorkflowRoot":          toAbsPath(workflowRoot),                                   // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
-			"IsLearnCodeMode":       fmt.Sprintf("%v", isLearnCodeMode),
-			"IsRelearnMode":         fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
-			"LearnCodePriorScript":  learnCodePriorScript,
-			"LearnCodePriorError":   learnCodePriorError,
-			"LearnCodeInputArgs":    learnCodeInputArgsForPrompt,
-			"LearnCodeEnvVarNames":  buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.snapshotWorkspaceEnv()),
-			"LearnCodeVarMapping":   buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
-			"GroupName":             hcpo.currentGroupName,
+			"StepTitle":                 stepTitleForPrompt,
+			"StepDescription":           stepDescriptionForPrompt,
+			"StepSuccessCriteria":       "",
+			"StepContextOutput":         ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
+			"WorkspacePath":             toAbsPath(executionWorkspacePath),                                                   // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
+			"LearningsPath":             toAbsPath(learningsPath),                                                            // Absolute learnings folder path
+			"KnowledgebasePath":         toAbsPath(knowledgebasePath),                                                        // Absolute knowledgebase folder path
+			"DBPath":                    toAbsPath(getDBPath(hcpo.GetWorkspacePath())),                                       // Absolute db folder path (always enabled)
+			"UseKnowledgebase":          fmt.Sprintf("%v", useKnowledgebase),                                                 // Whether knowledgebase is enabled (deprecated, retained for backward compat)
+			"KbAccess":                  kbAccess,                                                                            // KB access mode: "read" | "write" | "read-write" | "none"
+			"KbAccessLabel":             kbAccessLabel(kbAccess),                                                             // Human-readable label for prompt display
+			"KbWriteMethod":             kbWriteMethod,                                                                       // "agent" | "direct" — who writes KB
+			"KnowledgebaseContribution": kbContributionForPrompt(agentConfigs),                                               // Author's contribution instruction (direct mode surfaces it to the step)
+			"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(agentConfigs)), // Direct-mode-only KB contribution guidance
+			"IsCodeExecutionMode":       fmt.Sprintf("%v", isCodeExecutionMode),                                              // Code execution mode flag (step-specific or preset)
+			"StepNumber":                stepPath,                                                                            // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepExecutionPath":         toAbsPath(stepExecutionPath),                                                        // Absolute step execution folder path
+			"FolderGuardReadPaths":      strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),                            // Absolute folder guard read paths
+			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                           // Absolute folder guard write paths
+			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                            // Evaluation mode flag for eval-specific prompt guidance
+			"WorkflowRoot":              toAbsPath(workflowRoot),                                                             // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
+			"IsLearnCodeMode":           fmt.Sprintf("%v", isLearnCodeMode),
+			"IsRelearnMode":             fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
+			"LearnCodePriorScript":      learnCodePriorScript,
+			"LearnCodePriorError":       learnCodePriorError,
+			"LearnCodeInputArgs":        learnCodeInputArgsForPrompt,
+			"LearnCodeEnvVarNames":      buildLearnCodeEnvVarNamesForPrompt(isLearnCodeMode, hcpo.snapshotWorkspaceEnv()),
+			"LearnCodeVarMapping":       buildLearnCodeVarMappingForPrompt(isCodeExecutionMode || isLearnCodeMode, hcpo.variablesManifest),
+			"GroupName":                 hcpo.currentGroupName,
 		}
 
 		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent
@@ -2418,6 +2417,39 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 										executionResult = learnResult
 										executionConversationHistory = learnHistory
 										hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
+
+										// Direct-mode learnings skip the post-step learning agent, so
+										// metadata + auto-lock bookkeeping must happen here.
+										directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
+										directLearningReasoning := "Direct learnings continuation completed successfully"
+										directLearningLLM := executionLLM
+										result, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+											ctx,
+											stepIndex,
+											stepPath,
+											directLearningPathIdentifier,
+											true, // direct turn ran successfully
+											directLearningReasoning,
+											1.0,
+											turnCount,
+											step,
+											true, // pre-validation already passed
+											executionLLM,
+											directLearningLLM,
+										)
+										if metadataErr != nil {
+											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update direct-learnings metadata for step %s: %v", step.GetID(), metadataErr))
+										} else if result.ShouldAutoLock {
+											if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), result.AutoLockReason); lockErr != nil {
+												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock direct learnings for step %s: %v", step.GetID(), lockErr))
+											} else {
+												hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked direct learnings for step %s (%s)", step.GetID(), result.AutoLockReason))
+											}
+										} else if result.ShouldAutoUnlock {
+											if unlockErr := hcpo.autoUnlockStepLearningsInConfig(ctx, step.GetID(), result.AutoUnlockReason); unlockErr != nil {
+												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock direct learnings for step %s: %v", step.GetID(), unlockErr))
+											}
+										}
 									}
 								}
 								learningsGlobalFileMutex.Unlock()
@@ -3523,7 +3555,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 
 	globalLearningsPath := hcpo.getLearningsBasePath() + "/" + GlobalLearningID
 
-	learningFiles, err := hcpo.readStepLearningFiles(ctx, globalLearningsPath)
+	learningFiles, err := hcpo.listLearningManifestFiles(ctx, globalLearningsPath)
 	if err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read global learning files from %s: %v - will proceed without learning history", globalLearningsPath, err))
 		return "", nil
@@ -3532,21 +3564,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 		docsRoot := GetPromptDocsRoot()
 		absLearningsPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), globalLearningsPath)
 
-		var fileList []string
-		for filename := range learningFiles {
-			fileList = append(fileList, filename)
-		}
-		sort.Strings(fileList)
-
-		// Keep SKILL.md first so the execution prompt's file manifest mirrors the
-		// intended access pattern: read the index first, then follow its linked
-		// references/scripts as needed.
-		if idx := sort.SearchStrings(fileList, "SKILL.md"); idx < len(fileList) && fileList[idx] == "SKILL.md" && idx != 0 {
-			fileList[0], fileList[idx] = fileList[idx], fileList[0]
-		}
-
 		var listedFiles strings.Builder
-		for _, filename := range fileList {
+		for _, filename := range learningFiles {
 			listedFiles.WriteString("- `")
 			listedFiles.WriteString(filename)
 			listedFiles.WriteString("`\n")
@@ -3554,9 +3573,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 
 		formattedLearningHistory = fmt.Sprintf(
 			"📚 **Workflow skill available** at `%s/`.\n"+
-				"Start by reading `SKILL.md` — it is the index and will point you to the right detailed files.\n\n"+
+				"These files capture best practices and reusable patterns from previous successful runs.\n"+
+				"Before executing this step, read the relevant workflow skill file(s) you need.\n"+
+				"`SKILL.md` is the index and will point you to the right detailed files.\n\n"+
 				"Available files:\n%s"+
-				"\nRead additional files from `references/`, `scripts/`, `code/`, or other listed paths only as needed for this step.",
+				"\nThen read the relevant files from `references/`, `scripts/`, `code/`, or other listed paths needed to execute this step.",
 			absLearningsPath, listedFiles.String())
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d global learning file(s) (path reference only)", len(learningFiles)))
 	} else {

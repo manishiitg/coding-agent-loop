@@ -3,7 +3,9 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -31,10 +33,11 @@ func BuildWorkflowSkillPrompt(ctx context.Context, selectedSkills []string, bo *
 
 	var sb strings.Builder
 	sb.WriteString("\n## Active Skills\n\n")
-	sb.WriteString("Skills provide reusable instructions for specific tasks. **Read each skill's SKILL.md before executing the step.**\n\n")
+	sb.WriteString("Skills provide reusable best practices and instructions for specific tasks. They are not specific to this execution, but they should guide how you do the work. **Read each skill's relevant files before executing the step.**\n\n")
 
 	for _, folderName := range selectedSkills {
-		skillPath := filepath.Join(docsRoot, "skills", folderName, "SKILL.md")
+		skillDir := filepath.Join(docsRoot, "skills", folderName)
+		skillPath := filepath.Join(skillDir, "SKILL.md")
 
 		skill, err := skills.GetSkill("", folderName)
 		if err != nil {
@@ -47,14 +50,71 @@ func BuildWorkflowSkillPrompt(ctx context.Context, selectedSkills []string, bo *
 		if name == "" {
 			name = folderName
 		}
-		sb.WriteString(fmt.Sprintf("- **%s** — `%s`", name, skillPath))
+		sb.WriteString(fmt.Sprintf("- **%s** — `%s/`", name, skillDir))
 		if skill.Frontmatter.Description != "" {
 			sb.WriteString(fmt.Sprintf("\n  %s", skill.Frontmatter.Description))
+		}
+		files := listSkillManifestFiles(skillDir)
+		if len(files) > 0 {
+			sb.WriteString("\n  Available files:")
+			for _, file := range files {
+				sb.WriteString(fmt.Sprintf("\n  - `%s`", file))
+			}
 		}
 		sb.WriteString("\n")
 	}
 
 	return sb.String()
+}
+
+func listSkillManifestFiles(skillDir string) []string {
+	var results []string
+
+	var walk func(currentPath string, relPrefix string)
+	walk = func(currentPath string, relPrefix string) {
+		entries, err := os.ReadDir(currentPath)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if shouldSkipSkillManifestEntry(name) {
+				continue
+			}
+			relPath := name
+			if relPrefix != "" {
+				relPath = filepath.Join(relPrefix, name)
+			}
+			if entry.IsDir() {
+				walk(filepath.Join(currentPath, name), relPath)
+				continue
+			}
+			results = append(results, relPath)
+		}
+	}
+
+	walk(skillDir, "")
+
+	sort.Strings(results)
+	if idx := sort.SearchStrings(results, "SKILL.md"); idx < len(results) && results[idx] == "SKILL.md" && idx != 0 {
+		results[0], results[idx] = results[idx], results[0]
+	}
+	return results
+}
+
+func shouldSkipSkillManifestEntry(name string) bool {
+	if name == "" {
+		return true
+	}
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "node_modules", "__pycache__":
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildSkillFolderGuardPaths builds the folder guard paths for skills.

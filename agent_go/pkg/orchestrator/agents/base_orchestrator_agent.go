@@ -16,6 +16,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/mcpagent/observability"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
@@ -185,6 +186,12 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
 	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
+	if sid := boa.config.MCPSessionID; sid != "" {
+		// Workspace tools resolve session-level folder guards from ChatSessionIDKey.
+		// Propagate the per-agent MCP session so tool calls honor the agent's narrow
+		// session guard instead of falling back to the parent workflow context guard.
+		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sid)
+	}
 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
@@ -279,6 +286,9 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
 	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
+	if sid := boa.config.MCPSessionID; sid != "" {
+		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sid)
+	}
 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
@@ -409,6 +419,9 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
 	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
+	if sid := boa.config.MCPSessionID; sid != "" {
+		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sid)
+	}
 
 	// Validate template fields at compile time (skip validation if templateData is nil)
 	if templateData != nil {

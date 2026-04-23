@@ -32,6 +32,7 @@ import { ChatTabs } from "./components/ChatTabs";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useAuthStore } from "./stores/useAuthStore";
+import { waitForChatStoreHydration } from "./stores/useChatStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import "./App.css";
@@ -770,54 +771,52 @@ function App() {
   // In workflow mode, tabs are created when user starts a phase/execution
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
-    
+
     // Only create default tab for multi-agent mode
     // (workflow tabs are created by WorkflowLayout)
     if (selectedModeCategory !== 'multi-agent') {
       return
     }
-    
-    // Prevent duplicate execution (React StrictMode runs effects twice)
-    if (hasCreatedDefaultTabRef.current === selectedModeCategory) {
-      return
-    }
-    
-    const chatStore = useChatStore.getState()
-    const existingTabs = Object.values(chatStore.chatTabs)
-    
-    // Filter to only tabs for current mode
-    const modeTabs = existingTabs.filter(tab => 
-      tab.metadata?.mode === selectedModeCategory
-    )
-    
-    // If tabs already exist for this mode, skip
-    if (modeTabs.length > 0) {
-      return
-    }
-    
-    // Mark as in progress for this mode
-    hasCreatedDefaultTabRef.current = selectedModeCategory
-    
-    // Create default tab with new session ID
+
+    let cancelled = false
+
     const createDefaultTab = async () => {
-      // Double-check tabs don't exist right before creating (race condition protection)
-      const currentTabs = Object.values(useChatStore.getState().chatTabs)
-      const currentModeTabs = currentTabs.filter(tab => 
+      await waitForChatStoreHydration()
+      if (cancelled) return
+
+      // Prevent duplicate execution (React StrictMode runs effects twice)
+      if (hasCreatedDefaultTabRef.current === selectedModeCategory) {
+        return
+      }
+
+      const chatStore = useChatStore.getState()
+      const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
         tab.metadata?.mode === selectedModeCategory
       )
-      if (currentModeTabs.length === 0) {
-        try {
-          const tabName = 'Agent Chat 1'
-          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'workflow' | 'multi-agent' })
-        } catch (error) {
-          console.error('Failed to create default tab:', error)
-          // Reset flag on error so it can retry
-          hasCreatedDefaultTabRef.current = null
-        }
+
+      // If tabs already exist for this mode, skip
+      if (modeTabs.length > 0) {
+        return
+      }
+
+      // Mark as in progress for this mode
+      hasCreatedDefaultTabRef.current = selectedModeCategory
+
+      try {
+        const tabName = 'Agent Chat 1'
+        await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'workflow' | 'multi-agent' })
+      } catch (error) {
+        console.error('Failed to create default tab:', error)
+        // Reset flag on error so it can retry
+        hasCreatedDefaultTabRef.current = null
       }
     }
-    
-    createDefaultTab()
+
+    void createDefaultTab()
+
+    return () => {
+      cancelled = true
+    }
   }, [hasCompletedInitialSetup, selectedModeCategory])
 
   // Ensure a chat tab is selected after restore (fix for page reload issue)
@@ -826,87 +825,100 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
 
-    // When switching back to workflow mode, restore the active workflow execution tab and
-    // ensure the chat panel is visible — otherwise activeTabId stays on whatever mode the
-    // user came from (e.g. multi-agent) and the ChatArea inside WorkflowLayout shows wrong content.
-    if (selectedModeCategory === 'workflow') {
+    let cancelled = false
+
+    const ensureActiveTab = async () => {
+      await waitForChatStoreHydration()
+      if (cancelled) return
+
+      // When switching back to workflow mode, restore the active workflow execution tab and
+      // ensure the chat panel is visible — otherwise activeTabId stays on whatever mode the
+      // user came from (e.g. multi-agent) and the ChatArea inside WorkflowLayout shows wrong content.
+      if (selectedModeCategory === 'workflow') {
+        const chatStore = useChatStore.getState()
+        const workflowStore = useWorkflowStore.getState()
+        const activeTabId = chatStore.activeTabId
+        const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
+        const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
+
+        // Tab must match workflow mode AND the active preset
+        const hasValidActiveTab = activeTab &&
+          activeTab.metadata?.mode === 'workflow' &&
+          activeTab.metadata?.presetQueryId === activePresetId
+
+        // Prefer the workflow tab the user last had active for this preset.
+        let workflowTabs = Object.values(chatStore.chatTabs)
+          .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
+          .sort((a, b) => b.createdAt - a.createdAt)
+
+        if (activePresetId) {
+          const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
+          if (presetTabs.length > 0) workflowTabs = presetTabs
+        }
+
+        const rememberedWorkflowTab = workflowStore.activeWorkflowTabId
+          ? chatStore.getTab(workflowStore.activeWorkflowTabId)
+          : null
+        const rememberedWorkflowTabMatchesPreset = rememberedWorkflowTab &&
+          rememberedWorkflowTab.metadata?.mode === 'workflow' &&
+          rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
+        const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
+        const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
+        const targetWorkflowTab = hasValidActiveTab
+          ? activeTab
+          : (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : (builderTab || streamingTab || workflowTabs[0]))
+
+        if (targetWorkflowTab) {
+          if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {
+            chatStore.switchTab(targetWorkflowTab.tabId)
+          }
+
+          const shouldShowWorkflowChat =
+            workflowStore.showChatArea ||
+            targetWorkflowTab.metadata?.phaseId === 'workflow-builder'
+
+          if (shouldShowWorkflowChat) {
+            workflowStore.setShowChatArea(true)
+          }
+        } else {
+          // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
+          // doesn't display content from another mode
+          useChatStore.setState({ activeTabId: null })
+        }
+        return
+      }
+
+      // For multi-agent: select the first tab of the current mode
+      // if activeTabId is null, invalid, or belongs to a different mode
+      if (selectedModeCategory !== 'multi-agent') {
+        return
+      }
+
       const chatStore = useChatStore.getState()
-      const workflowStore = useWorkflowStore.getState()
       const activeTabId = chatStore.activeTabId
+
+      // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
       const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
-      const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
-
-      // Tab must match workflow mode AND the active preset
       const hasValidActiveTab = activeTab &&
-        activeTab.metadata?.mode === 'workflow' &&
-        activeTab.metadata?.presetQueryId === activePresetId
+        activeTab.metadata?.mode === selectedModeCategory &&
+        activeTab.metadata?.isOrganizationAssistant !== true
 
-      // Prefer the workflow tab the user last had active for this preset.
-      let workflowTabs = Object.values(chatStore.chatTabs)
-        .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
-        .sort((a, b) => b.createdAt - a.createdAt)
+      if (!hasValidActiveTab) {
+        const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
+          tab.metadata?.mode === selectedModeCategory &&
+          tab.metadata?.isOrganizationAssistant !== true
+        ).sort((a, b) => a.createdAt - b.createdAt)
 
-      if (activePresetId) {
-        const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
-        if (presetTabs.length > 0) workflowTabs = presetTabs
-      }
-
-      const rememberedWorkflowTab = workflowStore.activeWorkflowTabId
-        ? chatStore.getTab(workflowStore.activeWorkflowTabId)
-        : null
-      const rememberedWorkflowTabMatchesPreset = rememberedWorkflowTab &&
-        rememberedWorkflowTab.metadata?.mode === 'workflow' &&
-        rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
-      const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
-      const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
-      const targetWorkflowTab = hasValidActiveTab
-        ? activeTab
-        : (rememberedWorkflowTabMatchesPreset ? rememberedWorkflowTab : (builderTab || streamingTab || workflowTabs[0]))
-
-      if (targetWorkflowTab) {
-        if (!hasValidActiveTab || activeTabId !== targetWorkflowTab.tabId) {
-          chatStore.switchTab(targetWorkflowTab.tabId)
+        if (modeTabs.length > 0) {
+          chatStore.switchTab(modeTabs[0].tabId)
         }
-
-        const shouldShowWorkflowChat =
-          workflowStore.showChatArea ||
-          targetWorkflowTab.metadata?.phaseId === 'workflow-builder'
-
-        if (shouldShowWorkflowChat) {
-          workflowStore.setShowChatArea(true)
-        }
-      } else {
-        // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
-        // doesn't display content from another mode
-        useChatStore.setState({ activeTabId: null })
       }
-      return
     }
 
-    // For multi-agent: select the first tab of the current mode
-    // if activeTabId is null, invalid, or belongs to a different mode
-    if (selectedModeCategory !== 'multi-agent') {
-      return
-    }
+    void ensureActiveTab()
 
-    const chatStore = useChatStore.getState()
-    const activeTabId = chatStore.activeTabId
-
-    // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
-    const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
-    const hasValidActiveTab = activeTab &&
-      activeTab.metadata?.mode === selectedModeCategory &&
-      activeTab.metadata?.isOrganizationAssistant !== true
-
-    if (!hasValidActiveTab) {
-      const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
-        tab.metadata?.mode === selectedModeCategory &&
-        tab.metadata?.isOrganizationAssistant !== true
-      ).sort((a, b) => a.createdAt - b.createdAt)
-
-      if (modeTabs.length > 0) {
-        chatStore.switchTab(modeTabs[0].tabId)
-      }
+    return () => {
+      cancelled = true
     }
   }, [hasCompletedInitialSetup, selectedModeCategory])
 

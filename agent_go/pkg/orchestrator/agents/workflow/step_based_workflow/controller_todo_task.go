@@ -10,6 +10,7 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	orchestratoragents "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	baseevents "github.com/manishiitg/mcpagent/events"
@@ -275,6 +276,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	maxRetryAttempts := 3
 	validationSchema := step.GetValidationSchema()
 	var validationResponse *ValidationResponse
+	var todoTaskAgent orchestratoragents.OrchestratorAgent
+	defer func() {
+		if todoTaskAgent != nil {
+			_ = todoTaskAgent.Close()
+		}
+	}()
 
 	for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 		// Check for context cancellation before each attempt
@@ -299,16 +306,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 		attemptStartedAt := time.Now().UTC()
 
-		_, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
-			ctx,
-			todoTaskStep,
-			stepIndex,
-			todoTaskStepPath,
-			templateVars,
-			conversationHistory,
-			allSteps,
-			progress,
+		var (
+			updatedHistory []llmtypes.MessageContent
+			executionLLM   string
+			err            error
 		)
+		shouldContinue := retryAttempt > 1 && todoTaskAgent != nil && len(conversationHistory) > 0
+		if !shouldContinue {
+			if todoTaskAgent != nil {
+				_ = todoTaskAgent.Close()
+				todoTaskAgent = nil
+			}
+			_, updatedHistory, executionLLM, _, todoTaskAgent, err = hcpo.executeTodoTaskOrchestratorAgent(
+				ctx,
+				todoTaskStep,
+				stepIndex,
+				todoTaskStepPath,
+				templateVars,
+				conversationHistory,
+				allSteps,
+				progress,
+			)
+		} else {
+			feedbackUserMsg := buildValidationContinuationUserMessage(validationResponse, retryAttempt)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔁 Todo task step %d attempt %d/%d: continuing existing orchestrator with validation feedback (history=%d turns)",
+				stepIndex+1, retryAttempt, maxRetryAttempts, len(conversationHistory)))
+			if todoTaskAgent.GetConfig() != nil && todoTaskAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+				executionLLM = fmt.Sprintf("%s/%s", todoTaskAgent.GetConfig().LLMConfig.Primary.Provider, todoTaskAgent.GetConfig().LLMConfig.Primary.ModelID)
+			}
+			ba := todoTaskAgent.GetBaseAgent()
+			if ba == nil {
+				return false, "", fmt.Errorf("todo task orchestrator has no base agent for continuation on attempt %d", retryAttempt)
+			}
+			_, updatedHistory, err = ba.Execute(ctx, feedbackUserMsg, conversationHistory, "", false)
+		}
 		attemptCompletedAt := time.Now().UTC()
 		attemptDuration := attemptCompletedAt.Sub(attemptStartedAt)
 
@@ -322,6 +353,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		if err != nil {
 			return false, "", fmt.Errorf("todo task orchestrator failed: %w", err)
 		}
+		conversationHistory = updatedHistory
 
 		// Log execution
 		hcpo.saveTodoTaskExecutionLog(ctx, step.GetID(), todoTaskStepPath, retryAttempt-1, executionLLM, updatedHistory, capturedToolCalls, capturedLLMCalls, attemptStartedAt, attemptCompletedAt, attemptDuration)
@@ -356,8 +388,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			}
 
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for todo task step %d (attempt %d/%d) - retrying with feedback", stepIndex+1, retryAttempt, maxRetryAttempts))
-			// Reset conversation history for retry — LLM gets a fresh start with feedback
-			conversationHistory = nil
 			continue
 		}
 
@@ -461,13 +491,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"PredefinedRoutes":      routesBuilder.String(),
 		"HasBrowserAccess":      fmt.Sprintf("%t", hcpo.HasBrowserCapability()),
 		// Add code execution mode and knowledgebase flags
-		"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode),
-		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
-		"KbAccess":            kbAccess,
-		"KbAccessLabel":       kbAccessLabel(kbAccess),
-		"KbWriteMethod":       resolveKnowledgebaseWriteMethod(stepConfig),
+		"IsCodeExecutionMode":       fmt.Sprintf("%v", isCodeExecutionMode),
+		"UseKnowledgebase":          fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
+		"KbAccess":                  kbAccess,
+		"KbAccessLabel":             kbAccessLabel(kbAccess),
+		"KbWriteMethod":             resolveKnowledgebaseWriteMethod(stepConfig),
 		"KnowledgebaseContribution": kbContributionForPrompt(stepConfig),
-		"KBGuidanceBlock":     BuildStepKBGuidance(kbAccess, resolveKnowledgebaseWriteMethod(stepConfig), kbContributionForPrompt(stepConfig)),
+		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, resolveKnowledgebaseWriteMethod(stepConfig), kbContributionForPrompt(stepConfig)),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),
@@ -589,7 +619,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	conversationHistory []llmtypes.MessageContent,
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
-) (*TodoTaskResponse, []llmtypes.MessageContent, string, *SubAgentExecutionContext, error) {
+) (*TodoTaskResponse, []llmtypes.MessageContent, string, *SubAgentExecutionContext, orchestratoragents.OrchestratorAgent, error) {
 	agentName := step.Title
 	if agentName == "" {
 		agentName = fmt.Sprintf("todo-task-orchestrator-step-%d", stepIndex+1)
@@ -605,7 +635,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 	llmConfig := hcpo.selectTodoTaskOrchestratorLLM(ctx, stepConfig, stepID, stepPath)
 	if llmConfig == nil {
-		return nil, nil, "", nil, fmt.Errorf("no valid LLM configuration found for todo task orchestrator")
+		return nil, nil, "", nil, nil, fmt.Errorf("no valid LLM configuration found for todo task orchestrator")
 	}
 
 	// Capture execution LLM for logging before creating agent
@@ -646,9 +676,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		subAgentExecCtx, // Sub-agent execution context for tool-based delegation
 	)
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("failed to create todo task orchestrator agent: %w", err)
+		return nil, nil, "", nil, nil, fmt.Errorf("failed to create todo task orchestrator agent: %w", err)
 	}
-	defer agent.Close()
 
 	// Sync template vars with actual agent config — the factory may have overridden
 	// code execution mode (for CLI providers) or tool search mode after template vars were built.
@@ -674,10 +703,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	// Execute — single-shot, the agent delegates to sub-agents and runs to completion
 	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
 	if err != nil {
-		return nil, nil, "", subAgentExecCtx, fmt.Errorf("todo task orchestrator execution failed: %w", err)
+		return nil, nil, "", subAgentExecCtx, agent, fmt.Errorf("todo task orchestrator execution failed: %w", err)
 	}
 
-	return nil, updatedHistory, executionLLM, subAgentExecCtx, nil
+	return nil, updatedHistory, executionLLM, subAgentExecCtx, agent, nil
 }
 
 // executeGenericAgent executes a generic task using the standard execution agent

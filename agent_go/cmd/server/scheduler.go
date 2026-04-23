@@ -439,11 +439,75 @@ func (s *SchedulerService) RemoveJob(id string) error {
 // GetRuntimeState returns the in-memory runtime state for a schedule.
 func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeState {
 	s.runtimeStatesMu.RLock()
-	defer s.runtimeStatesMu.RUnlock()
+	var merged ScheduleRuntimeState
 	if state, ok := s.runtimeStates[scheduleID]; ok {
-		return *state
+		merged = *state
 	}
-	return ScheduleRuntimeState{}
+	s.runtimeStatesMu.RUnlock()
+
+	if userID := s.GetUserForSchedule(scheduleID); userID != "" {
+		runs, err := ReadMultiAgentScheduleRuns(context.Background(), userID)
+		if err == nil {
+			return mergeRuntimeStateWithRuns(merged, scheduleID, runs)
+		}
+		return merged
+	}
+
+	if workspacePath := s.GetWorkspaceForSchedule(scheduleID); workspacePath != "" {
+		runs, err := ReadScheduleRuns(context.Background(), workspacePath)
+		if err == nil {
+			return mergeRuntimeStateWithRuns(merged, scheduleID, runs)
+		}
+	}
+
+	return merged
+}
+
+func mergeRuntimeStateWithRuns(state ScheduleRuntimeState, scheduleID string, runs []ScheduleRunEntry) ScheduleRuntimeState {
+	var filtered []ScheduleRunEntry
+	for _, run := range runs {
+		if run.ScheduleID == scheduleID {
+			filtered = append(filtered, run)
+		}
+	}
+	if len(filtered) == 0 {
+		return state
+	}
+
+	latest := filtered[0]
+	if state.RunCount < len(filtered) {
+		state.RunCount = len(filtered)
+	}
+
+	shouldAdoptLatest := state.LastRunAt == nil || latest.StartedAt.After(*state.LastRunAt)
+	sameRun := state.LastRunAt != nil && latest.StartedAt.Equal(*state.LastRunAt)
+
+	if shouldAdoptLatest {
+		startedAt := latest.StartedAt
+		state.LastRunAt = &startedAt
+		state.LastStatus = latest.Status
+		state.LastSessionID = latest.SessionID
+		state.LastError = latest.Error
+		state.LastDurationMs = latest.DurationMs
+		return state
+	}
+
+	if sameRun {
+		if state.LastStatus == "" {
+			state.LastStatus = latest.Status
+		}
+		if state.LastSessionID == "" {
+			state.LastSessionID = latest.SessionID
+		}
+		if state.LastError == "" {
+			state.LastError = latest.Error
+		}
+		if state.LastDurationMs == nil {
+			state.LastDurationMs = latest.DurationMs
+		}
+	}
+
+	return state
 }
 
 // GetWorkspaceForSchedule returns the workspace path for a schedule ID.

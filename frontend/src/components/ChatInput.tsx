@@ -678,6 +678,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return 'loading' as const
   }, [toolList])
 
+  const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
+  const isPlaywrightMissing = browserMode === 'playwright' && playwrightServerStatus === 'not_found'
+  const isCamofoxMissing = browserMode === 'stealth' && (camofoxServerStatus === 'not_found' || camofoxStarting || camofoxConnected === false)
+
 
   const syncGWSChatSkills = useCallback(async () => {
     setGwsChatSyncing(true)
@@ -1449,16 +1453,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return inputText
   }, [inputText])
 
-  // Guard to prevent submission before session is ready
-  // Allow submission if not streaming, or allow queuing if streaming
-  const canSubmit = useMemo(() => {
-    return queryToSubmit?.trim() && tabSessionId
-  }, [queryToSubmit, tabSessionId])
-  
-  // Can submit immediately (not streaming) or can queue (streaming)
-  const canSubmitImmediately = useMemo(() => {
-    return queryToSubmit?.trim() && !isStreaming && tabSessionId
+  const canBootstrapMultiAgentTab = isMultiAgentMode && !showWorkflowsOverview && !isOrganizationAssistant
+  const hasSubmitTarget = Boolean(tabSessionId || canBootstrapMultiAgentTab)
+  const canQueueWhileStreaming = useMemo(() => {
+    return Boolean(queryToSubmit?.trim() && isStreaming && tabSessionId)
   }, [queryToSubmit, isStreaming, tabSessionId])
+
+  const canSubmitImmediately = useMemo(() => {
+    return Boolean(queryToSubmit?.trim() && !isStreaming && hasSubmitTarget)
+  }, [queryToSubmit, isStreaming, hasSubmitTarget])
+
+  const canSubmit = canSubmitImmediately || canQueueWhileStreaming
 
   // Ref for debounced file removal check
   const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -1482,6 +1487,37 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { inputText: '' })
     }
   }, [activeTabId, setTabConfig])
+
+  const ensureMultiAgentTabReady = useCallback(async (): Promise<boolean> => {
+    if (!isMultiAgentMode || showWorkflowsOverview) return false
+
+    const chatStore = useChatStore.getState()
+    const currentActiveTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : null
+    if (
+      currentActiveTab?.metadata?.mode === 'multi-agent' &&
+      currentActiveTab.metadata?.isOrganizationAssistant !== true
+    ) {
+      return true
+    }
+
+    const modeTabs = Object.values(chatStore.chatTabs)
+      .filter(tab => tab.metadata?.mode === 'multi-agent' && tab.metadata?.isOrganizationAssistant !== true)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+
+    if (modeTabs.length > 0) {
+      chatStore.switchTab(modeTabs[0].tabId)
+      return true
+    }
+
+    try {
+      await chatStore.createChatTab('Agent Chat 1', { mode: 'multi-agent' })
+      return true
+    } catch (error) {
+      console.error('Failed to create fallback multi-agent tab:', error)
+      addToast('Unable to initialize a chat tab right now.', 'error')
+      return false
+    }
+  }, [isMultiAgentMode, showWorkflowsOverview, addToast])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2057,6 +2093,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return true
   }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, selectedModeCategory])
 
+  const getSubmitBlockReason = useCallback((): string | null => {
+    if (!queryToSubmit?.trim()) return null
+    if (isViewOnly) return 'This conversation is view only.'
+    if (isCdpDisconnected) return 'CDP browser mode is selected, but the browser is not connected yet.'
+    if (isPlaywrightMissing) return 'Playwright browser support is not available right now.'
+    if (isCamofoxMissing) return 'Camofox is still starting. Try again in a moment.'
+    if (isStreaming && !tabSessionId) return 'This chat is still initializing. Please wait a moment.'
+    if (!isStreaming && !hasSubmitTarget) return 'This chat is still initializing. Please wait a moment.'
+    return null
+  }, [queryToSubmit, isViewOnly, isCdpDisconnected, isPlaywrightMissing, isCamofoxMissing, isStreaming, tabSessionId, hasSubmitTarget])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
     if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup || showSubAgentPopup) {
@@ -2103,6 +2150,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             queuedMessages: [...currentQueued, queryToSubmit.trim()]
           })
         }
+      } else if (trimmedQuery) {
+        const submitBlockReason = getSubmitBlockReason()
+        if (submitBlockReason) {
+          addToast(submitBlockReason, 'info')
+        }
       }
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
@@ -2120,7 +2172,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig])
+  }, [inputText, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, handleSummarize, clearInputState, handleCompact, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2154,8 +2206,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           queuedMessages: [...currentQueued, queryToSubmit.trim()]
         })
       }
+    } else if (trimmedQuery) {
+      const submitBlockReason = getSubmitBlockReason()
+      if (submitBlockReason) {
+        addToast(submitBlockReason, 'info')
+      }
     }
-  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig])
+  }, [queryToSubmit, executeSlashCommandFromQuery, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, clearInputState, canSubmitImmediately, onSubmit, canSubmit, activeTabId, tabConfig?.queuedMessages, setTabConfig, getSubmitBlockReason, addToast])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
@@ -2630,11 +2687,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
-  // Block submission if CDP is enabled but not connected, or playwright server not found
-  const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
-  const isPlaywrightMissing = browserMode === 'playwright' && playwrightServerStatus === 'not_found'
-  const isCamofoxMissing = browserMode === 'stealth' && (camofoxServerStatus === 'not_found' || camofoxStarting || camofoxConnected === false)
-  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly || isCdpDisconnected || isPlaywrightMissing || isCamofoxMissing
+  const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab)
+  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isPlaywrightMissing || isCamofoxMissing
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -2643,9 +2697,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return 'Chat with the workflow builder... (@ files, / commands, # workflows)'
     }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
+    if (!tabSessionId && canBootstrapMultiAgentTab) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
-  }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId])
+  }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId, tabSessionId, canBootstrapMultiAgentTab])
 
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
@@ -2785,6 +2840,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               ref={textareaRef}
               value={inputText}
               onChange={handleTextChange}
+              onFocus={() => { void ensureMultiAgentTabReady() }}
               onKeyDown={handleKeyDown}
               onDragEnter={handleTextareaDragEnter}
               onDragOver={handleTextareaDragOver}
@@ -2794,7 +2850,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               className={`!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs ${
                 isDraggingFiles ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50/30 dark:bg-blue-900/10' : ''
               }`}
-              disabled={isSummarizing || !tabSessionId || isViewOnly}
+              disabled={inputDisabled}
               data-testid="chat-input-textarea"
             />
             {isDraggingFiles && (

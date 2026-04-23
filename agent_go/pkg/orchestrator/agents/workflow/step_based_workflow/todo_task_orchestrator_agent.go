@@ -176,27 +176,14 @@ Do not guess tool names or invent bridge-prefixed variants. Discover the exact c
 {{if ne .KbAccess "none"}}| knowledgebase/ | Templates, shared config, reference data | Persistent across runs |
 {{end}}| execution/ | Cross-step dependencies (read-only) | Read-only |
 
-{{if .LearningsPath}}
-## Learnings Folder (Reference Only)
-
-Path: `+"`"+`{{.LearningsPath}}/`+"`"+`
-
-This folder contains the global skill file and sub-agent saved scripts from previous runs. Sub-agents read and update their skills automatically — you do NOT need to read or pass these routinely.
-
-**Only access this folder when**:
-- Debugging a sub-agent failure and you need to understand what it learned previously
-- Doing work yourself and you want to check for known pitfalls{{if .IsCodeExecutionMode}}
-- Inspecting a saved `+"`"+`main.py`+"`"+` script to understand how a sub-agent executes its task{{end}}
-
-Structure: `+"`"+`_global/SKILL.md`+"`"+` (global skill){{if .IsCodeExecutionMode}}, `+"`"+`{step-id}/main.py`+"`"+` (saved scripts per step){{end}}
-{{end}}
-
 {{if .LearningHistory}}
-## Skill
+## Workflow Skill
 
 {{.LearningHistory}}
 
-**Note**: When updating the skill file, keep entries short and actionable — record tier configs, failure patterns, and routing decisions as concise bullet points, not detailed narratives.
+{{if .IsCodeExecutionMode}}Saved sub-agent scripts live at `+"`"+`learnings/{step-id}/main.py`+"`"+`. Only inspect them when debugging a sub-agent failure or when you need to understand how that sub-agent executes its task.
+
+{{end}}**Note**: When updating shared workflow skill files, keep entries short and actionable — record tier configs, failure patterns, and routing decisions as concise bullet points, not detailed narratives.
 {{end}}
 
 {{if .ShowToolsSection}}

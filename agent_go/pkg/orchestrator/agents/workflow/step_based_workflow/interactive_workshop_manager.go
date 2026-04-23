@@ -3232,7 +3232,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/SKILL.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
@@ -8461,7 +8461,7 @@ All paths relative to workspace root:
    - `+"`learn_code`"+`: Could the observed work be captured as a stable reusable script?
    - `+"`code_exec`"+`: Does the work vary too much between runs for a stable script?
    For each mode considered, cite the concrete evidence from the run.
-4. **Review learning artifacts** — For regular steps, inspect SKILL.md and related learning files. For scripted code steps, inspect saved Python scripts, optional SKILL.md notes, and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
+4. **Review learning artifacts** — For regular steps, inspect shared workflow learnings and related reference files. For scripted code steps, inspect saved Python scripts/helpers and script_metadata.json. Are they specific? Actionable? Or noisy/generic?
 5. **Analyze tool/server usage** — Are there unused servers? Missing tools? Did the run reveal that the step boundary should move so more work can be done in Python?
 6. **Check validation schema** — Does it catch stale files? Are there enough field checks?
 7. **Check step description** — Is it clear, specific, actionable, and free of secrets/hardcoded values?
@@ -8480,8 +8480,8 @@ Produce your report in this exact markdown structure:
 
 ### Hardcoded Values Check
 Scan the step description (from plan.json) and the step's learning artifacts for hardcoded values that will break when running across different users or groups:
-- **Regular steps**: inspect `+"`learnings/{{.StepID}}/SKILL.md`"+` and any related learning files
-- **Scripted code steps**: inspect all saved Python/scripts, any `+"`SKILL.md`"+` notes, and `+"`script_metadata.json`"+` in `+"`learnings/{{.StepID}}/`"+`
+- **Regular steps**: inspect `+"`learnings/_global/SKILL.md`"+` and any related reference files
+- **Scripted code steps**: inspect all saved Python/scripts and `+"`script_metadata.json`"+` in `+"`learnings/{{.StepID}}/`"+`
 - **Paths**: Absolute workspace paths (e.g., `+"`/Users/...`"+`, `+"`/home/...`"+`, `+"`C:\\...`"+`) — should use `+"`"+`{{"{{WORKSPACE_PATH}}"}}`+"`"+` or relative paths
 - **Secrets/credentials**: API keys, tokens, passwords, auth headers — should use secret variables from variables.json
 - **User-specific values**: Account IDs, usernames, emails, phone numbers, sheet/document IDs, URLs with specific domains — should use variable placeholders (e.g., `+"`{USER_ID}`"+`, `+"`{EMAIL}`"+`) in descriptions, or `+"`os.environ['SECRET_<VAR>']`"+` in Python scripts
@@ -8490,8 +8490,8 @@ Scan the step description (from plan.json) and the step's learning artifacts for
 For each hardcoded value found, recommend the specific variable placeholder to use and where to define it. For Python scripts, show the exact `+"`os.environ['SECRET_<VAR>']`"+` replacement.
 
 ### Learnings Review
-- For regular steps: which existing SKILL.md learnings are good (specific, actionable)?
-- For scripted code steps: which saved scripts/helpers are good, which are brittle or outdated, and whether SKILL.md captures the right edge cases and repair notes?
+- For regular steps: which shared workflow learnings are good (specific, actionable)?
+- For scripted code steps: which saved scripts/helpers are good, which are brittle or outdated, and what behavior should be encoded more clearly in code?
 - What patterns are missing that should be captured more clearly in the learning artifact for this mode?
 
 ### Execution Mode Discovery
@@ -8519,14 +8519,14 @@ For each hardcoded value found, recommend the specific variable placeholder to u
 
 {{if .IsLearnCodeMode}}
 ### Scripted Code Review
-This step runs in **scripted code mode** — `+"`main.py`"+` is the executable truth, and `+"`SKILL.md`"+` can exist as secondary notes for edge cases and repair guidance.
+This step runs in **scripted code mode** — `+"`main.py`"+` is the executable truth. Step-local `+"`SKILL.md`"+` notes are deprecated; persistent behavior should live in the saved script and helper modules.
 
 {{if .LearnCodeFiles}}**Saved script files** (`+"`learnings/{{.StepID}}/`"+`):
 {{.LearnCodeFiles}}
 {{else}}**No saved scripts yet** — the step hasn't produced a passing script yet (run it first).
 {{end}}
 
-{{if .ExistingLearnings}}**Supplemental learning notes** (`+"`learnings/{{.StepID}}/SKILL.md`"+`):
+{{if .ExistingLearnings}}**Legacy step-local notes** (`+"`learnings/{{.StepID}}/`"+`):
 {{.ExistingLearnings}}
 {{end}}
 
@@ -10258,11 +10258,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 		}
 		if content, err := iwm.controller.ReadWorkspaceFile(ctx, learnDir+"/script_metadata.json"); err == nil {
 			learnCodeMetadata = content
-		}
-		if content, err := iwm.controller.ReadWorkspaceFile(ctx, learnDir+"/SKILL.md"); err == nil && strings.TrimSpace(content) != "" {
-			existingLearnings = fmt.Sprintf("### SKILL.md\n```markdown\n%s\n```\n", content)
-		} else {
-			existingLearnings = ""
 		}
 	}
 

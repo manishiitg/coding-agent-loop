@@ -779,6 +779,32 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           return { chatTabs: { ...state.chatTabs, [existingTab.tabId]: { ...t, name: desiredName } } }
         })
       }
+      try {
+        const existingEvents = chatStore.getTabEvents(sessionId)
+        const response = await agentApi.getSessionEvents(sessionId, existingEvents.length === 0 ? -1 : chatStore.getTabLastEventIndex(sessionId))
+        if (response.events.length > 0) {
+          if (existingEvents.length === 0) {
+            chatStore.setTabEvents(sessionId, response.events)
+          } else {
+            chatStore.addTabEvents(sessionId, response.events)
+          }
+        }
+        if (response.last_processed_index !== undefined) {
+          chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
+        }
+        if (response.has_more !== undefined) {
+          chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+        }
+        const isDone = response.session_status === 'completed' || response.session_status === 'stopped'
+        const isError = response.session_status === 'error'
+        chatStore.setTabCompleted(existingTab.tabId, isDone)
+        chatStore.setTabStreaming(existingTab.tabId, !isDone && !isError && response.session_status === 'running')
+        chatStore.setTabHasRunningBgAgents(existingTab.tabId, !!response.has_running_background_agents)
+        chatStore.setTabSyntheticTurn(existingTab.tabId, !!response.is_synthetic_turn)
+        chatStore.setTabCanSteer(existingTab.tabId, !!response.can_steer)
+      } catch {
+        // Leave the tab attached even if the ephemeral session buffer is gone.
+      }
       chatStore.switchTab(existingTab.tabId)
       onClose()
       return
@@ -789,6 +815,27 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       metadata,
       sessionId,
     )
+    try {
+      const response = await agentApi.getSessionEvents(sessionId, -1)
+      if (response.events.length > 0) {
+        chatStore.setTabEvents(sessionId, response.events)
+      }
+      if (response.last_processed_index !== undefined) {
+        chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
+      }
+      if (response.has_more !== undefined) {
+        chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+      }
+      const isDone = response.session_status === 'completed' || response.session_status === 'stopped'
+      const isError = response.session_status === 'error'
+      chatStore.setTabCompleted(tabId, isDone)
+      chatStore.setTabStreaming(tabId, !isDone && !isError && response.session_status === 'running')
+      chatStore.setTabHasRunningBgAgents(tabId, !!response.has_running_background_agents)
+      chatStore.setTabSyntheticTurn(tabId, !!response.is_synthetic_turn)
+      chatStore.setTabCanSteer(tabId, !!response.can_steer)
+    } catch {
+      // Scheduled run sessions are in-memory only; after restart there may be nothing to hydrate.
+    }
     chatStore.switchTab(tabId)
     onClose()
   }, [onClose])
@@ -1691,7 +1738,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                       </Tooltip>
                                     )}
                                     {/* Open the scheduled run itself as a read-only chat tab. */}
-                                    {run.status === 'running' && currentSessionId && (
+                                    {currentSessionId && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
@@ -1702,7 +1749,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                           </button>
                                         </TooltipTrigger>
                                         <TooltipContent side="left">
-                                          Open run in chat (read-only)
+                                          {run.status === 'running'
+                                            ? 'Open run in chat (read-only)'
+                                            : 'Restore to chat (read-only)'}
                                         </TooltipContent>
                                       </Tooltip>
                                     )}

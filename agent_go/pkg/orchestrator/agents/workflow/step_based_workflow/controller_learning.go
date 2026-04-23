@@ -466,6 +466,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 // Returns a map of filename -> content
 func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Context, stepLearningsPath string) (map[string]string, error) {
 	learningFiles := make(map[string]string)
+	allowSkillIndex := filepath.Base(filepath.Clean(stepLearningsPath)) == GlobalLearningID
 
 	// List all files in the step folder
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
@@ -485,8 +486,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 	}
 
 	// Read root-level learning files from the step folder.
-	// Root markdown files are traditional learnings; root Python/shell files are learn_code
-	// artifacts (main.py, helpers) saved directly into learnings/{step-id}/.
+	// Only the shared _global folder is allowed to surface SKILL.md as a reusable
+	// index. Step-local SKILL.md is deprecated; learn_code steps should persist
+	// code artifacts (main.py, helpers) here instead.
 	// Exclude metadata files and temporary files used for internal tracking only.
 	for _, file := range files {
 		// Skip metadata files - these should not be passed to execution agents
@@ -495,6 +497,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 		}
 		// Skip temporary learning files - _learning_new.md should have been deleted above, but skip it if still present
 		if file == "_learning_new.md" {
+			continue
+		}
+		if file == "SKILL.md" && !allowSkillIndex {
 			continue
 		}
 		if strings.HasSuffix(file, ".md") {
@@ -575,6 +580,82 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 	// Note: If scripts/ subfolder doesn't exist or is empty, that's fine - it's optional
 
 	return learningFiles, nil
+}
+
+// shouldSkipLearningManifestFile excludes internal tracking/temp files from the
+// execution prompt's learning manifest. The prompt should show reusable skill
+// assets, not runtime metadata.
+func shouldSkipLearningManifestFile(name string) bool {
+	if name == "" {
+		return true
+	}
+	if name == ".learning_metadata.json" || strings.HasSuffix(name, ".learning_metadata.json") || name == "script_metadata.json" {
+		return true
+	}
+	if name == "_learning_new.md" {
+		return true
+	}
+	return false
+}
+
+// listLearningManifestFiles returns all reusable files under a learnings folder,
+// recursively, as relative paths. This is used for prompt manifests so the LLM
+// can see the full skill inventory (for example references/*.md), even when the
+// content itself is not preloaded into context.
+func (hcpo *StepBasedWorkflowOrchestrator) listLearningManifestFiles(ctx context.Context, stepLearningsPath string) ([]string, error) {
+	var results []string
+
+	var walk func(currentPath string, relPrefix string) error
+	walk = func(currentPath string, relPrefix string) error {
+		entries, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, currentPath)
+		if err != nil {
+			return err
+		}
+
+		directories, err := hcpo.BaseOrchestrator.ListWorkspaceDirectories(ctx, currentPath)
+		if err != nil {
+			return err
+		}
+		dirSet := make(map[string]struct{}, len(directories))
+		for _, dir := range directories {
+			dirSet[dir] = struct{}{}
+		}
+
+		for _, entry := range entries {
+			if entry == "" {
+				continue
+			}
+
+			relPath := entry
+			if relPrefix != "" {
+				relPath = filepath.Join(relPrefix, entry)
+			}
+
+			if _, isDir := dirSet[entry]; isDir {
+				if err := walk(filepath.Join(currentPath, entry), relPath); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if shouldSkipLearningManifestFile(entry) {
+				continue
+			}
+			results = append(results, relPath)
+		}
+		return nil
+	}
+
+	if err := walk(stepLearningsPath, ""); err != nil {
+		return nil, err
+	}
+
+	sort.Strings(results)
+	if idx := sort.SearchStrings(results, "SKILL.md"); idx < len(results) && results[idx] == "SKILL.md" && idx != 0 {
+		results[0], results[idx] = results[idx], results[0]
+	}
+
+	return results, nil
 }
 
 // formatStepLearningFilesAsHistory formats a map of learning files (filename -> content) into a formatted history string

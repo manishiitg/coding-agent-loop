@@ -943,7 +943,7 @@ func buildLearningsSummary(client *skills.WorkspaceAPIClient, wsPath string) str
 	for _, entry := range entries {
 		name := path.Base(entry.Filepath)
 		if entry.Type == "folder" {
-			lines = append(lines, fmt.Sprintf("- `learnings/%s/` (step-specific learnings)", name))
+			lines = append(lines, fmt.Sprintf("- `learnings/%s/` (step-specific saved artifacts)", name))
 		} else {
 			lines = append(lines, fmt.Sprintf("- `learnings/%s` (shared learning)", name))
 		}

@@ -749,7 +749,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 			ContextOutput:   FlexibleContextOutput(fmt.Sprintf("%s-result.json", response.TodoIDToExecute)),
 		},
 		HasLoop: false,
-		// Configure to disable learning and validation, but inherit execution modes
+		// Generic agents do not contribute learnings and skip pre-validation, but
+		// they still inherit execution-mode settings from the parent step.
 		AgentConfigs: func() *AgentConfigs {
 			// Inherit parallel tool execution setting from parent step
 			var disableParallelToolExec *bool

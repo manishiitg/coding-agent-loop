@@ -1,4 +1,5 @@
 package agents
+
 import (
 	"context"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	internalLLM "github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -31,18 +33,18 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	TodoPlannerEvaluationDebuggerAgentType   AgentType = "todo_planner_evaluation_debugger"    // Analyzes evaluation execution and provides feedback for evaluation plan improvement
-	TodoPlannerExecutionQAAgentType         AgentType = "todo_planner_execution_qa"           // Answers questions about execution results (read-only)
-	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
-	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
-	TodoPlannerLearningDetectionAgentType    AgentType = "todo_planner_learning_detection"     // Detects if new learnings were generated after learning phase
-	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
-	OrchestrationAgentType                   AgentType = "orchestration"                       // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
-	EvaluationScoringAgentType               AgentType = "evaluation_scoring"                  // Calculates scores for evaluation steps based on success criteria
-	TodoTaskOrchestratorAgentType            AgentType = "todo_task_orchestrator"              // TodoTask orchestrator agent that manages todo lists and delegates to sub-agents
-	GenericExecutionAgentType                AgentType = "generic_execution"                   // Generic execution agent for todo task steps (no learning, no prevalidation)
-	TodoPlannerInteractiveWorkshopAgentType  AgentType = "todo_planner_interactive_workshop"   // Interactive workshop: execute steps, edit plan, update step config in one session
+	TodoPlannerEvaluationDebuggerAgentType  AgentType = "todo_planner_evaluation_debugger"  // Analyzes evaluation execution and provides feedback for evaluation plan improvement
+	TodoPlannerExecutionQAAgentType         AgentType = "todo_planner_execution_qa"         // Answers questions about execution results (read-only)
+	TodoPlannerPlanningAgentType            AgentType = "todo_planner_planning"             // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType           AgentType = "todo_planner_execution"            // Executes first step of plan
+	TodoPlannerSuccessLearningAgentType     AgentType = "todo_planner_success_learning"     // Analyzes successful executions to capture best practices
+	TodoPlannerLearningDetectionAgentType   AgentType = "todo_planner_learning_detection"   // Detects if new learnings were generated after learning phase
+	ConditionalAgentType                    AgentType = "conditional"                       // Conditional decision agent for evaluating step conditions
+	OrchestrationAgentType                  AgentType = "orchestration"                     // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
+	EvaluationScoringAgentType              AgentType = "evaluation_scoring"                // Calculates scores for evaluation steps based on success criteria
+	TodoTaskOrchestratorAgentType           AgentType = "todo_task_orchestrator"            // TodoTask orchestrator agent that manages todo lists and delegates to sub-agents
+	GenericExecutionAgentType               AgentType = "generic_execution"                 // Generic execution agent for todo task steps (no learning, no prevalidation)
+	TodoPlannerInteractiveWorkshopAgentType AgentType = "todo_planner_interactive_workshop" // Interactive workshop: execute steps, edit plan, update step config in one session
 )
 
 // BaseAgentInterface defines the interface for base agent operations
@@ -97,12 +99,13 @@ type BaseAgent struct {
 	previousAgentOutput string
 
 	// Configuration
-	configPath  string
-	modelID     string
-	temperature float64
-	toolChoice  string
-	maxTurns    int
-	provider    string
+	configPath   string
+	modelID      string
+	temperature  float64
+	toolChoice   string
+	maxTurns     int
+	provider     string
+	mcpSessionID string
 }
 
 // NewBaseAgent creates a new BaseAgent instance with comprehensive functionality
@@ -318,6 +321,7 @@ func NewBaseAgent(
 		toolChoice:   toolChoice,
 		maxTurns:     maxTurns,
 		provider:     provider,
+		mcpSessionID: mcpSessionID,
 	}, nil
 }
 
@@ -349,6 +353,12 @@ func (ba *BaseAgent) Execute(ctx context.Context, userMessage string, conversati
 
 	// Execute the agent with orchestrator context and conversation history
 	orchestratorCtx := context.WithValue(ctx, orchestratorIDKey, fmt.Sprintf("%s_%s_%d", ba.agentType, ba.name, time.Now().UnixNano()))
+	if ba.mcpSessionID != "" {
+		// Continuation turns that call BaseAgent.Execute directly must still preserve
+		// the per-agent MCP session so workspace tools resolve the correct session-
+		// scoped folder guard instead of falling back to the parent workflow guard.
+		orchestratorCtx = context.WithValue(orchestratorCtx, common.ChatSessionIDKey, ba.mcpSessionID)
+	}
 	answer, updatedConversationHistory, err := ba.agent.AskWithHistory(orchestratorCtx, messages)
 
 	executionTime := time.Since(startTime)

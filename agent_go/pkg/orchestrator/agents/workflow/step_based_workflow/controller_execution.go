@@ -1513,6 +1513,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// validation retries don't re-fire it, and so the post-step learning-agent
 		// trigger further down can see "already handled direct".
 		var learningsDirectPerformed bool
+		// Direct-mode UI should still emit one final step notification, but its
+		// summary must include the main execution plus any inline KB/learnings turns.
+		var mainExecutionSummary string
+		var directKBReviewSummary string
+		var directLearningsSummary string
 
 		// Learn code mode: attempt fast path execution with saved script (before any LLM work).
 		if isLearnCodeMode && !learnCodeFastPathDone {
@@ -1942,6 +1947,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
+				mainExecutionSummary = summarizeExecutionResultForNotification(executionResult)
 
 				// Save execution logs (result, conversation history, system prompt)
 				hcpo.saveExecutionConversationLogs(stepIndex, step.GetID(), stepPath, retryAttempt, 0,
@@ -2312,7 +2318,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								if reviewErr != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ KB self-review continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, reviewErr))
 								} else {
-									executionResult = reviewResult
+									directKBReviewSummary = summarizeExecutionResultForNotification(reviewResult)
 									executionConversationHistory = updatedHistory
 									hcpo.GetLogger().Info(fmt.Sprintf("🧠 KB self-review completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
 								}
@@ -2414,28 +2420,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									if learnErr != nil {
 										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Direct-learnings continuation failed for step %d: %v (accepting step anyway)", stepIndex+1, learnErr))
 									} else {
-										executionResult = learnResult
+										directLearningsSummary = summarizeExecutionResultForNotification(learnResult)
 										executionConversationHistory = learnHistory
 										hcpo.GetLogger().Info(fmt.Sprintf("🧠 Direct-learnings completed for step %d (history=%d turns)", stepIndex+1, len(executionConversationHistory)))
 
 										// Direct-mode learnings skip the post-step learning agent, so
 										// metadata + auto-lock bookkeeping must happen here.
 										directLearningPathIdentifier := getEffectiveLearningPathIdentifier(step.GetID(), stepPath, stepCfgForLearn)
-										directLearningReasoning := "Direct learnings continuation completed successfully"
+										hasNewLearning, directLearningReasoning, directLearningConfidence := inferHasNewLearningFromResult(learnResult)
 										directLearningLLM := executionLLM
 										result, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 											ctx,
 											stepIndex,
 											stepPath,
 											directLearningPathIdentifier,
-											true, // direct turn ran successfully
+											hasNewLearning,
 											directLearningReasoning,
-											1.0,
+											directLearningConfidence,
 											turnCount,
 											step,
 											true, // pre-validation already passed
 											executionLLM,
 											directLearningLLM,
+											true, // direct-mode rule: require repeated no-new-learning outcomes
 										)
 										if metadataErr != nil {
 											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update direct-learnings metadata for step %s: %v", step.GetID(), metadataErr))
@@ -2449,12 +2456,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 											if unlockErr := hcpo.autoUnlockStepLearningsInConfig(ctx, step.GetID(), result.AutoUnlockReason); unlockErr != nil {
 												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock direct learnings for step %s: %v", step.GetID(), unlockErr))
 											}
+										} else if result.MetadataAutoLocked && hcpo.shouldBackfillAutoLockToConfig(ctx, step.GetID()) {
+											backfillReason := result.AutoLockReason
+											if backfillReason == "" {
+												backfillReason = "backfill_existing_metadata_auto_lock"
+											}
+											if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), backfillReason); lockErr != nil {
+												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to backfill auto-locked direct learnings for step %s: %v", step.GetID(), lockErr))
+											} else {
+												hcpo.GetLogger().Info(fmt.Sprintf("🔒 Backfilled auto-locked direct learnings into step_config for step %s", step.GetID()))
+											}
 										}
 									}
 								}
 								learningsGlobalFileMutex.Unlock()
 							}
 						}
+					}
+					if combinedSummary := buildDirectModeCompletionSummary(mainExecutionSummary, directKBReviewSummary, directLearningsSummary); combinedSummary != "" {
+						executionResult = combinedSummary
 					}
 
 					validationResponse = &ValidationResponse{
@@ -2802,6 +2822,31 @@ func isConditionalStep(step PlanStepInterface) bool {
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)
 	return ok
+}
+
+func summarizeExecutionResultForNotification(result string) string {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" {
+		return ""
+	}
+	if summary := lastNonEmptyLine(trimmed); summary != "" {
+		return summary
+	}
+	return trimmed
+}
+
+func buildDirectModeCompletionSummary(mainSummary, kbSummary, learningsSummary string) string {
+	var parts []string
+	if s := strings.TrimSpace(mainSummary); s != "" {
+		parts = append(parts, fmt.Sprintf("Execution: %s", s))
+	}
+	if s := strings.TrimSpace(kbSummary); s != "" {
+		parts = append(parts, fmt.Sprintf("KB review: %s", s))
+	}
+	if s := strings.TrimSpace(learningsSummary); s != "" {
+		parts = append(parts, fmt.Sprintf("Learnings: %s", s))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // isTodoTaskStep returns true if the step is a todo task step (orchestrator with todo list management)

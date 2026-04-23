@@ -10,13 +10,13 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
-// loadStepProgress is a no-op — steps_done.json is no longer used.
+// loadStepProgress is a no-op — file-backed progress persistence is disabled.
 // Returns nil to signal no existing progress (iteration-0 is always fresh).
 func (hcpo *StepBasedWorkflowOrchestrator) loadStepProgress(ctx context.Context) (*StepProgress, error) {
 	return nil, fmt.Errorf("no progress file")
 }
 
-// saveStepProgress is a no-op — steps_done.json is no longer written.
+// saveStepProgress is a no-op — file-backed progress persistence is disabled.
 func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context, progress *StepProgress) error {
 	return nil
 }
@@ -327,12 +327,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupProgressFromStep(ctx context.C
 	return nil
 }
 
-// deleteStepProgress is a no-op — steps_done.json is no longer used.
+// deleteStepProgress is a no-op — file-backed progress persistence is disabled.
 func (hcpo *StepBasedWorkflowOrchestrator) deleteStepProgress(ctx context.Context) error {
 	return nil
 }
 
-// initializeFreshProgress is a no-op — steps_done.json is no longer used.
+// initializeFreshProgress is a no-op — file-backed progress persistence is disabled.
 func (hcpo *StepBasedWorkflowOrchestrator) initializeFreshProgress(ctx context.Context, newTotalSteps int) error {
 	return nil
 }

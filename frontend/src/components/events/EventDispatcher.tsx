@@ -157,6 +157,7 @@ export interface DelegationStats {
   inputTokens: number
   outputTokens: number
   latestToolName?: string
+  latestToolLabel?: string
   completed?: boolean
   contextUsagePercent?: number
   contextWindowUsage?: number
@@ -591,19 +592,53 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return <CompactWrapper compact={compact}><OrchestratorErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'orchestrator_agent_start')) {
+    const data = getEventData(event)
+    const liveStats = data.correlation_id ? delegationStats?.get(data.correlation_id) : undefined
+    const childCount = childrenCount ?? 0
+    const toolCount = liveStats?.toolCalls ?? 0
+    const nonToolChildCount = Math.max(0, childCount - toolCount)
     return (
       <CompactWrapper compact={compact}>
         <OrchestratorAgentStartEventDisplay
-          event={getEventData(event)}
+          event={data}
           isCollapsed={isCollapsed}
           eventCount={eventCount}
           onToggleCollapse={onToggleCollapse}
+          toolCallCount={liveStats?.toolCalls}
+          latestToolLabel={liveStats?.latestToolLabel || liveStats?.latestToolName}
         />
+        {!childrenNodes && (childrenCount ?? 0) > 0 && onToggleNode && (
+          <div className="mt-1 ml-1">
+            <button
+              onClick={() => onToggleNode(event.id)}
+              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+            >
+              <span className="font-medium">
+                + {childCount} log{childCount !== 1 ? 's' : ''}
+              </span>
+              {toolCount > 0 && (
+                <span className="truncate opacity-60">
+                  • {toolCount} tool{toolCount !== 1 ? 's' : ''}
+                  {nonToolChildCount > 0 ? `, ${nonToolChildCount} other` : ''}
+                </span>
+              )}
+              {!toolCount && nonToolChildCount > 0 && (
+                <span className="truncate opacity-60">• agent/background events</span>
+              )}
+            </button>
+          </div>
+        )}
         {/* Render children (tool calls) when agent has grouped events via correlation_id */}
         {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
+            <button
+              onClick={() => onToggleNode(event.id)}
+              className="mb-1 px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+            >
+              <span className="font-medium">− collapse logs</span>
+            </button>
             <div
-              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words overscroll-y-contain"
+              className="overflow-y-auto overflow-x-hidden pl-4 pr-1 py-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
             >
               <SubAgentHierarchy
@@ -1274,7 +1309,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               {hasLiveStats && (
                 <span className={`text-[10px] text-purple-500 dark:text-purple-400${isCompleted ? '' : ' animate-pulse'}`}>
                   {liveStats.toolCalls ? `${liveStats.toolCalls} tools` : ''}
-                  {liveStats.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
+                  {liveStats.latestToolLabel || liveStats.latestToolName ? ` · ${liveStats.latestToolLabel || liveStats.latestToolName}` : ''}
                   {liveStats.inputTokens ? ` · ${((liveStats.inputTokens + liveStats.outputTokens) / 1000).toFixed(1)}k tok` : ''}
                 </span>
               )}
@@ -1328,7 +1363,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 {liveStats.inputTokens > 0 && <span>In: {liveStats.inputTokens.toLocaleString()} tokens</span>}
                 {liveStats.outputTokens > 0 && <span>Out: {liveStats.outputTokens.toLocaleString()} tokens</span>}
                 {liveStats.toolCalls > 0 && <span>Tool calls: {liveStats.toolCalls}</span>}
-                {liveStats.latestToolName && <span>Latest: {liveStats.latestToolName}</span>}
+                {(liveStats.latestToolLabel || liveStats.latestToolName) && <span>Tool: {liveStats.latestToolLabel || liveStats.latestToolName}</span>}
                 {event.timestamp && !isCompleted && (
                   <span>Elapsed: <ElapsedTimer startTimestamp={event.timestamp} className="font-mono" /></span>
                 )}
@@ -1348,7 +1383,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
               + {childrenCount} event{childrenCount !== 1 ? 's' : ''}
-              {liveStats?.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
+              {liveStats?.latestToolLabel || liveStats?.latestToolName ? ` · ${liveStats.latestToolLabel || liveStats.latestToolName}` : ''}
             </button>
           </div>
         )}
@@ -1363,7 +1398,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             </button>
             <div
               ref={scrollRef}
-              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words overscroll-y-contain"
+              className="overflow-y-auto overflow-x-hidden pl-4 pr-1 py-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
             >
               <SubAgentHierarchy
@@ -1530,7 +1565,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             {hasLiveStats && (
               <span className="text-[10px] text-blue-500 dark:text-blue-400 animate-pulse">
                 {liveStats.toolCalls ? `${liveStats.toolCalls} tools` : ''}
-                {liveStats.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
+                {liveStats.latestToolLabel || liveStats.latestToolName ? ` · ${liveStats.latestToolLabel || liveStats.latestToolName}` : ''}
               </span>
             )}
             {!hasLiveStats && (

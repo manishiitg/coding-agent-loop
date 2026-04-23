@@ -10,6 +10,61 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 )
 
+func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T) {
+	t.Setenv("MCP_API_URL", "http://example.test/s/parent-session")
+
+	var capturedArgs map[string]interface{}
+	executors := map[string]interface{}{
+		"execute_shell_command": func(ctx context.Context, args map[string]interface{}) (string, error) {
+			capturedArgs = args
+			return "ok", nil
+		},
+	}
+
+	injectStepEnvIntoShellExecutor(
+		executors,
+		"/tmp/workflow/execution/math-solver",
+		"/tmp/workflow/execution",
+		"step-session-123",
+	)
+
+	execFn, ok := executors["execute_shell_command"].(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		t.Fatal("expected wrapped execute_shell_command executor")
+	}
+
+	_, err := execFn(context.Background(), map[string]interface{}{
+		"command": "env",
+		"extra_env": map[string]interface{}{
+			"MCP_SESSION_ID":     "parent-session",
+			"MCP_API_URL":        "http://example.test/s/parent-session",
+			"STEP_OUTPUT_DIR":    "/stale/output",
+			"STEP_EXECUTION_DIR": "/stale/execution",
+		},
+	})
+	if err != nil {
+		t.Fatalf("wrapped execute_shell_command returned error: %v", err)
+	}
+
+	rawExtraEnv, ok := capturedArgs["extra_env"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected extra_env map, got %#v", capturedArgs["extra_env"])
+	}
+
+	if got := rawExtraEnv["STEP_OUTPUT_DIR"]; got != "/tmp/workflow/execution/math-solver" {
+		t.Fatalf("expected STEP_OUTPUT_DIR override, got %#v", got)
+	}
+	if got := rawExtraEnv["STEP_EXECUTION_DIR"]; got != "/tmp/workflow/execution" {
+		t.Fatalf("expected STEP_EXECUTION_DIR override, got %#v", got)
+	}
+	if got := rawExtraEnv["MCP_SESSION_ID"]; got != "step-session-123" {
+		t.Fatalf("expected MCP_SESSION_ID override, got %#v", got)
+	}
+	if got := rawExtraEnv["MCP_API_URL"]; got != "http://example.test/s/step-session-123" {
+		t.Fatalf("expected step-scoped MCP_API_URL, got %#v", got)
+	}
+}
+
 func TestApplyStepConfigToAgentConfigForcesCodeExecForCLIProviders(t *testing.T) {
 	base, err := orchestrator.NewBaseOrchestrator(
 		loggerv2.NewNoop(),

@@ -9,6 +9,7 @@ import (
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -291,12 +292,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			continue
 		}
 
+		previousSessionID := hcpo.getSessionID()
+
 		// CRITICAL FIX: Close entire previous session before starting new group
 		// This ensures the new session ID gets fresh connections with the correct Downloads path
 		// We must close the entire session (not just playwright) to ensure all connections are released
 		if groupIndex > 0 {
-			// Get previous session ID BEFORE we set the new one
-			previousSessionID := hcpo.getSessionID()
 			if previousSessionID != "" {
 				hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing entire previous session before starting group %s (session: %s)", group.Name, previousSessionID))
 				mcpagent.CloseSession(previousSessionID)
@@ -319,6 +320,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.sessionID = groupSessionID
 		hcpo.BaseOrchestrator.SetMCPSessionID(groupSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Generated unique MCP session ID for group %s: %s (run folder: %s)", group.Name, groupSessionID, hcpo.selectedRunFolder))
+		if pc := virtualtools.GetParentChat(previousSessionID); pc != nil && pc.SessionID != "" {
+			pcCopy := *pc
+			if pcCopy.GroupName == "" {
+				pcCopy.GroupName = group.Name
+			}
+			virtualtools.RegisterParentChat(groupSessionID, &pcCopy)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Registered parent chat for group session %s from previous session %s", groupSessionID, previousSessionID))
+		}
 		// Track group session under HTTP session so stop handler can close it immediately
 		if hcpo.httpSessionID != "" {
 			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
@@ -338,6 +347,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(group.Name)
 		defer func() {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s (browser=%s)", group.Name, groupSessionID, browserSessionID))
+			virtualtools.UnregisterParentChat(groupSessionID)
 			mcpagent.MarkSessionsStopped([]string{groupSessionID, browserSessionID})
 			mcpagent.CloseSession(groupSessionID)
 			mcpagent.CloseSession(browserSessionID)

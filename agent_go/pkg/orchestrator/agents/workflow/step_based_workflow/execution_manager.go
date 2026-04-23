@@ -392,7 +392,7 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 		if err := orch.deleteStepProgress(ctx); err != nil {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete progress: %v (continuing)", err))
 		} else {
-			orch.GetLogger().Info(fmt.Sprintf("🗑️ Deleted steps_done.json (including all branch progress and decision evaluation counts)"))
+			orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleared persisted progress state (including all branch progress and decision evaluation counts)"))
 		}
 	}
 

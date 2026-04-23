@@ -1555,7 +1555,7 @@ Both learning and knowledgebase are **off by default** for every step. Running t
 - When the user describes what they want, respond with a proposed plan (step breakdown, types, context flow) and ask for confirmation before creating any steps in plan.json
 - If the user is just asking questions, brainstorming, or exploring possibilities, engage in discussion — do NOT jump to creating steps
 - Add, remove, reorder, and configure steps freely once the plan is confirmed
-- Test steps to verify they produce correct output — use execute_step(step_id). Learning runs by default; pass skip_learning=true for fast iteration
+- Test steps to verify they produce correct output — use execute_step(step_id). Post-step learning behavior follows the step's persistent config.
 - Set up servers, tools, and context dependencies
 
 **When creating or configuring each step, choose its execution mode:**
@@ -1771,7 +1771,7 @@ When running a step or the full workflow:
 
 ### Execution Procedure
 1. User says "run step-X" → determine group → call **execute_step("step-id", group_name=group_name)** → get execution_id
-2. By default, execute_step runs with **learning enabled**. Pass skip_learning=true to skip learning for faster iteration.
+2. execute_step follows the step's persistent learnings config (`+"`learnings_access`"+`, `+"`learnings_write_method`"+`, `+"`lock_learnings`"+`).
 3. **Human input steps**: Pass **human_input** parameter with the appropriate answer from your conversation context. This prevents blocking for manual UI input.
 4. Tell user step is running. Move on to other work or wait for the auto-notification.
 5. When the notification arrives:
@@ -1843,7 +1843,7 @@ The learning system has **three dimensions** per step: `+"`learnings_access`"+` 
 - **Opt into writing** by setting `+"`learnings_access: \"read-write\"`"+` AND a non-empty `+"`learning_objective`"+`. Required for steps that produce durable HOW-knowledge (selectors, timings, auth flows, tool-call patterns). The validator enforces the pairing.
 - **Pick who writes** via `+"`learnings_write_method`"+`: runtime fallback is `+"`\"agent\"`"+`, which runs a post-step learning agent that reads the full step trail and extracts patterns into `+"`_global/`"+`; `+"`\"direct\"`"+` fires a dedicated post-completion user-message turn where the step agent itself writes `+"`_global/SKILL.md`"+` (folder guard widens only for that turn — main execution cannot write learnings). **Builder preference:** choose `+"`\"direct\"`"+` in most cases so the step records its own lesson immediately. Use `+"`\"agent\"`"+` only when the user explicitly wants a post-step reviewer or when extraction is unusually messy — long traces, non-obvious patterns, or real cross-step synthesis. Direct mode's guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel sub-agents writing direct are serialized by an in-process mutex.
 - **Use `+"`\"none\"`"+` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
-- **Auto-lock fires automatically** after 3 successful runs against the same step-description hash. Don't pre-emptively set `+"`lock_learnings: true`"+` — the system does it for you once learnings converge. Fallback safety cap: 15 total iterations.
+- **Auto-lock fires automatically** once learnings converge, but the exact rule depends on write method: `+"`agent`"+` mode auto-locks after 3 successful runs against the same step-description hash; `+"`direct`"+` mode is stricter and additionally requires the direct learnings turn to report no materially new learning in 2 consecutive runs. Don't pre-emptively set `+"`lock_learnings: true`"+` — the system does it for you.
 - **Auto-unlock fires automatically** when an auto-locked step's description changes. The old frozen learnings are invalidated and the counter restarts. `+"`optimized`"+` is cleared at the same time (they move together). Manual locks (set by a human without an `+"`auto_locked_at`"+` metadata record) are preserved across description edits.
 - **Global Skill Objective**: set `+"`global_skill_objective`"+` in `+"`execution_defaults`"+` to describe what domain knowledge the skill should accumulate — e.g. *\"Understand this website's structure, auth flows, selectors, and common failure modes so any step can interact with it reliably.\"* Every learning contribution is guided by this objective.
 - **learn_code steps**: usually `+"`learnings_access: \"read\"`"+` (not `+"`\"read-write\"`"+`). The saved `+"`learnings/{step-id}/main.py`"+` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step domain knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
@@ -1855,7 +1855,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 
 | Lock | Scope | Freezes | Prevents | Use when |
 | --- | --- | --- | --- | --- |
-| `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after 3 successful runs with the same description hash. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
+| `+"`lock_learnings`"+` | Per-step | `+"`learnings/_global/SKILL.md`"+` content the step relies on | Learning agent from updating SKILL.md after this step runs | **Auto-set** after learnings converge. In `+"`agent`"+` mode: 3 successful runs with the same description hash. In `+"`direct`"+` mode: same threshold plus 2 consecutive no-new-learning outcomes from the direct learnings turn. **Auto-cleared** when the description changes (for auto-locked steps). Manually set only when you hand-edited SKILL.md and want your edits preserved regardless of description changes. |
 | `+"`lock_code`"+` | Per-step (learn_code only) | `+"`learnings/{step-id}/main.py`"+` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | You hand-patched main.py and want it used exactly as-is, OR the script is stable and code_exec is the declared mode |
 | `+"`lock_knowledgebase`"+` | Workflow-level | `+"`knowledgebase/notes/`"+` auto-updates after step completions | Post-step KB update agent from firing across ALL steps (reads still work) | Domain knowledge has stabilized — keep `+"`reorganize_knowledgebase`"+` for intentional curation but stop paying per-step LLM cost |
 
@@ -1863,7 +1863,7 @@ Mature workflows accumulate three kinds of state that you can freeze independent
 
 **Description changes and lock state**: The step description is the source of truth that learnings and scripted code were generated against.
 
-- **`+"`lock_learnings`"+` auto-unlocks** on any description change for steps that were auto-locked. The description-hash counter resets, and the next 3 successful runs against the new description re-lock automatically. You do not need to manually unlock learnings after a description edit.
+- **`+"`lock_learnings`"+` auto-unlocks** on any description change for steps that were auto-locked. The description-hash counter resets. Re-locking follows the step's write method again: `+"`agent`"+` mode needs 3 successful runs; `+"`direct`"+` mode also needs repeated no-new-learning outcomes. You do not need to manually unlock learnings after a description edit.
 - **`+"`lock_code`"+` does NOT auto-unlock.** If you changed the description semantically and `+"`lock_code`"+` is set, the frozen main.py may now be wrong for the new intent — clear it explicitly: `+"`update_step_config(step_id, lock_code=false, optimized=false)`"+`.
 - Pure **rewording** (clarifying existing instructions without changing intent) typically preserves the hash only if whitespace differs; any material character change flips the hash. If you want to reword without triggering the reset, minimize the edit.
 - When you meaningfully change a step's description, clear `+"`description_reviewed`"+` so future reviewers know the description needs a fresh eyeballing.
@@ -1918,7 +1918,7 @@ For steps in learn_code mode, the saved Python script at `+"`learnings/{step-id}
 
 **3. Test** — Run the patched script:
 - Use `+"`execute_step(step_id, group_name, fast_path_only=true)`"+` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
-- Or use `+"`execute_step(step_id, group_name, skip_learning=true)`"+` to run with LLM fallback if the script fails
+- Or use `+"`execute_step(step_id, group_name)`"+` to run with normal LLM fallback if the script fails
 - After running, you can use MCP tools again to verify the result — e.g., `+"`browser_snapshot`"+` to confirm the page is in the expected state, or read output files to check correctness
 - Check the output files and logs to confirm the fix
 
@@ -2030,7 +2030,7 @@ When the user asks to enable scripted execution for a step, use: update_step_con
 **Optimize each step only once per iteration.** A step should only be marked optimized when ALL of these are in place:
 
 **Checklist before marking optimized=true:**
-1. **Learnings exist** — the step has been executed with learning enabled (`+"`execute_step(step_id, skip_learning=false)`"+`) and produced learning files with correct tool names and sequences. Without learnings, future runs start from scratch.
+1. **Learnings exist** — the step has been executed normally (`+"`execute_step(step_id)`"+`) and produced learning files with correct tool names and sequences. Without learnings, future runs start from scratch.
 2. **Pre-validation schema** — A validation_schema is defined with file checks and/or JSON path rules. This catches structural errors without an LLM validation pass.
 3. **Successful execution** — The step has passed at least once with the current config, learnings, and validation.
 4. **No wasted tool calls** — Review the execution: the agent should not have wasted turns on failed tool searches, wrong server names, retried API calls, or unnecessary exploration. If the agent spent turns searching for tools that don't exist, reading files that aren't there, or trying approaches that the learnings should have prevented — the step is NOT optimized yet. Fix the learnings or description first, re-run to confirm clean execution, then mark optimized.
@@ -2156,7 +2156,7 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "run")}}
 ### Step Execution & Inspection
-- **execute_step(step_id, iteration, group_name?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learning is enabled by default. Pass skip_learning=true to skip. Pass human_input for human input steps.
+- **execute_step(step_id, iteration, group_name?, instructions?, human_input?)** — Start a step in background; returns execution_id. In workshop builder mode, iteration is fixed to iteration-0 and any provided value is ignored. Learnings follow the step's persistent config. Pass human_input for human input steps.
 {{if ne .WorkshopMode "run"}}- **execute_step(step_id, group_name, fast_path_only=true)** — Run the learned step's saved Python `+"`learnings/{step-id}/main.py`"+` directly, using the same workflow env, args, output folder, and validation behavior as a real workflow run. Never falls back to LLM.
 {{end}}
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
@@ -2290,7 +2290,6 @@ All paths below are relative to this root (prepend `+"`{{.AbsWorkspacePath}}/`"+
 |------|----------|
 | runs/{iter}/{group}/execution/{step-id}/ | Step output files (*.json) |
 | runs/{iter}/{group}/execution/Downloads/ | Downloaded files (bank statements, etc.) |
-| runs/{iter}/{group}/execution/steps_done.json | Which steps completed |
 | costs/execution/{group}/{YYYY-MM-DD}.json | Execution token usage ledger for that group/day |
 | costs/phase/token_usage.json | Aggregated phase-only token usage |
 
@@ -2636,7 +2635,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is enabled (skip_learning=false). Set skip_learning=true to skip learning for faster iteration. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Set fast_path_only=true to run ONLY the saved main.py script with no LLM fallback — useful for quickly testing patches to learnings/{step-id}/main.py.",
+		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. Learnings follow the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry). Set fast_path_only=true to run ONLY the saved main.py script with no LLM fallback — useful for quickly testing patches to learnings/{step-id}/main.py.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2647,10 +2646,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable group ID (e.g., 'group-1', 'saurabh'). Required. Read variables.json to see available groups.",
-				},
-				"skip_learning": map[string]interface{}{
-					"type":        "boolean",
-					"description": "If true, skip the learning phase after execution for faster iteration. Default is false (learning enabled).",
 				},
 				"instructions": map[string]interface{}{
 					"type":        "string",
@@ -2667,7 +2662,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"fast_path_only": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true, run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback. Fails if no saved script exists or the step is not in scripted code mode. Implies skip_learning=true. Use this to quickly test patches to main.py.",
+					"description": "If true, run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback. Fails if no saved script exists or the step is not in scripted code mode. Use this to quickly test patches to main.py.",
 				},
 			},
 			"required": []string{"step_id", "group_name"},
@@ -2728,14 +2723,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
 
-			// skip_learning defaults to false — learning is enabled by default
-			skipLearning := false
-			if val, ok := args["skip_learning"]; ok && val != nil {
-				if b, ok := val.(bool); ok {
-					skipLearning = b
-				}
-			}
-
 			// Optional orchestrator instructions for inner steps
 			instructions, _ := args["instructions"].(string)
 
@@ -2762,15 +2749,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					fastPathOnly = b
 				}
 			}
-			if fastPathOnly {
-				skipLearning = true
-			}
 
 			execOpts := &WorkshopExecuteOptions{
 				GroupName:       resolvedGroupName,
 				Iteration:       iteration,
 				RunFolder:       runFolder,
-				SkipLearning:    skipLearning,
 				SavedScriptOnly: fastPathOnly,
 				Instructions:    instructions,
 				HumanInput:      humanInput,
@@ -2830,6 +2813,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(exec)
+			if iwm.mainSessionID != "" {
+				if workflowSessionID := iwm.controller.GetMCPSessionID(); workflowSessionID != "" {
+					parentGroupName := resolvedGroupName
+					if parentGroupName == "" {
+						parentGroupName = groupName
+					}
+					virtualtools.RegisterParentChat(workflowSessionID, &virtualtools.ParentChatContext{
+						SessionID:    iwm.mainSessionID,
+						WorkflowPath: iwm.controller.GetWorkspacePath(),
+						GroupName:    parentGroupName,
+						AgentID:      execID,
+					})
+				}
+			}
 
 			go func() {
 				var result string
@@ -2985,15 +2982,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if groupName != "" {
 				groupInfo = fmt.Sprintf(", group=%q", groupName)
 			}
-			learningInfo := "Learning: skipped (default for faster iteration). To run with learning enabled, use execute_step(step_id, skip_learning=false) — success learnings run in the background."
-			if !skipLearning {
-				if isLearnCodeStep {
-					learningInfo = "Code exec scripted mode: this step does not use separate SKILL learnings. The saved Python script is the learning, and the run may create/update that script directly."
-				} else {
-					learningInfo = "Learning: enabled — success learnings run in background (won't block next step), failure learnings run sequentially (needed for retry)."
-				}
+			learningInfo := "Post-step learning follows the step's persistent config (`learnings_access`, `learnings_write_method`, `lock_learnings`). Success learnings run in background; failure learnings run sequentially when applicable."
+			if isLearnCodeStep {
+				learningInfo = "Code exec scripted mode: this step does not use a separate post-step SKILL learning phase. The saved Python script is the learning artifact, and the run may create/update that script directly."
 			}
-			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, skip_learning=%v", stepID, execID, groupInfo, skipLearning))
+			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, fast_path_only=%v", stepID, execID, groupInfo, fastPathOnly))
 			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\n%s\nYou will be automatically notified when it completes.", stepID, execID, learningInfo), nil
 		},
 		"workflow",
@@ -3236,7 +3229,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a learn_code step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — only consider locking after the step has at least 3 successful runs on the same description hash and repeated no-new-learning outcomes.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
@@ -3627,7 +3620,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"lock_learnings": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET after 3 successful runs against the same step-description hash; AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
+					"description": "Freeze SKILL.md writes for this step. Existing SKILL.md still flows into execution prompts. AUTO-SET when learnings converge: in agent mode, after 3 successful runs against the same step-description hash; in direct mode, after the same threshold plus 2 consecutive no-new-learning outcomes from the direct learnings turn. AUTO-CLEARED when the description changes (for auto-locked steps only — manual locks are preserved). Set this manually only when you hand-edited SKILL.md and want your edits preserved across description changes. Does NOT affect saved main.py — use lock_code for that.",
 				},
 				"lock_code": map[string]interface{}{
 					"type":        "boolean",
@@ -3919,7 +3912,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 								} else {
 									learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
 									if len(learningFiles) == 0 {
-										missing = append(missing, "learnings (no learning files found — run execute_step(step_id, skip_learning=false) to generate them)")
+										missing = append(missing, "learnings (no learning files found — run execute_step(step_id) so the step can generate them according to its persistent learnings config)")
 									}
 								}
 							}
@@ -9640,7 +9633,6 @@ All paths relative to workspace root. Replace {iter} with `+"`{{.TargetRunFolder
 |------|----------|
 | `+"`runs/{iter}/{group}/execution/{step-id}/`"+` | Step output files (*.json) — the primary evidence of what was produced |
 | `+"`runs/{iter}/{group}/execution/Downloads/`"+` | Downloaded files (bank statements, etc.) |
-| `+"`runs/{iter}/{group}/execution/steps_done.json`"+` | Which steps completed |
 
 ### Per-group logs
 | Path | Contents |

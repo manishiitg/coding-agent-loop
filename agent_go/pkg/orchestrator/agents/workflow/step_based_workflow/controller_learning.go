@@ -89,6 +89,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 			false, // validationPassed = false (don't increment counters when learning is skipped, even though validation may have passed)
 			executionLLM,
 			learningLLM,
+			false, // agent-mode rule: no no-new-learning streak required
 		)
 		if metadataErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata (skipped) for %s: %v", learningPathIdentifier, metadataErr))
@@ -321,15 +322,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Extraction agent consolidates and writes directly to final file via LLM instructions
 	// No temp file handling needed - detection agent will read the final consolidated file
 
-	// SKIP learning detection - now using rule-based TurnCount locking
-	// We no longer need to detect "new learning" with an LLM, as stability is determined by
-	// successful execution counts per complexity level.
-	hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping learning detection for %s - using TurnCount-based rule system", learningPathIdentifier))
-
-	// Set default values for metadata update (legacy fields)
-	hasNewLearning := true // Assume true to reset legacy consecutive-no-learning counter
-	reasoning := "TurnCount-based locking active (detection skipped)"
-	confidence := 1.0
+	// Agent-mode learnings keep the simpler lock rule: 3 successful runs against
+	// the same description hash. We still infer/store the semantic signal for
+	// metadata visibility, but it does not gate auto-lock here.
+	hasNewLearning, reasoning, confidence := inferHasNewLearningFromResult(learningResult)
 
 	// Determine which LLM was used for learning (for metadata tracking)
 	learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
@@ -354,6 +350,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		true, // Validation passed
 		executionLLM,
 		learningLLM,
+		false, // agent-mode rule: lock after 3 successful runs
 	)
 	if metadataErr != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
@@ -368,6 +365,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else if result.ShouldAutoUnlock {
 		if unlockErr := hcpo.autoUnlockStepLearningsInConfig(ctx, step.GetID(), result.AutoUnlockReason); unlockErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
+		}
+	} else if result.MetadataAutoLocked && hcpo.shouldBackfillAutoLockToConfig(ctx, step.GetID()) {
+		backfillReason := result.AutoLockReason
+		if backfillReason == "" {
+			backfillReason = "backfill_existing_metadata_auto_lock"
+		}
+		if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), backfillReason); lockErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to backfill auto-locked learnings for step %s: %v", step.GetID(), lockErr))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Backfilled auto-locked learnings into step_config for step %s", step.GetID()))
 		}
 	}
 	return nil

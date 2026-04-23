@@ -17,9 +17,18 @@ interface OrchestratorAgentStartEventDisplayProps {
   isCollapsed?: boolean;
   eventCount?: number;
   onToggleCollapse?: () => void;
+  toolCallCount?: number;
+  latestToolLabel?: string;
 }
 
-export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
+export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({
+  event,
+  isCollapsed,
+  eventCount,
+  onToggleCollapse,
+  toolCallCount,
+  latestToolLabel,
+}) => {
   const { isExpanded: isInputsExpanded, toggle } = useExpandable(true)
   const savedLLMs = useLLMStore(state => state.savedLLMs)
   const availableLLMs = useLLMStore(state => state.availableLLMs)
@@ -216,6 +225,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                     ? ` | ${workshopMeta}`
                     : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
+                  {toolCallCount !== undefined && toolCallCount > 0 && ` | Tools: ${toolCallCount}`}
+                  {latestToolLabel && ` | Tool: ${latestToolLabel}`}
                 </span>
                 {isCollapsed && eventCount !== undefined && (
                   <span className={`text-xs font-normal ${colors.textSecondary}`}> | {eventCount} events collapsed</span>

@@ -51,7 +51,6 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 - **Execution outputs**: '{{.WorkspacePath}}/runs/{iteration}/execution/step-{X}/'
 - **Validation logs**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/validation-{N}.json'
 - **Execution logs**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/execution/'
-- **Progress**: '{{.WorkspacePath}}/runs/{iteration}/execution/steps_done.json'
 - **Conditional evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/conditional-evaluation.json'
 - **Decision evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/decision-evaluation.json'
 - **Routing evaluations**: '{{.WorkspacePath}}/runs/{iteration}/logs/step-{X}/routing-evaluation.json'
@@ -1252,14 +1251,22 @@ func RegisterRunFullWorkflowTool(
 			}
 			session.StepRegistry.Register(exec)
 
-			// Register the background workflow session under the invoking chat so
-			// any SpawnListener (e.g. the Slack bot connector) can mirror agent
-			// messages from this workflow into the parent chat's thread. The
-			// listener decides whether the parent is "interesting" — this is a
-			// no-op for UI-initiated runs.
+			// Register two parent-chat mappings:
+			// 1) The background workflow agent session for SpawnListener mirroring.
+			// 2) The workflow MCP session so human_input / human_feedback lookups
+			//    resolve against the same session ID step agents actually use.
 			workflowGroup := ""
 			if len(enabledGroupNames) > 0 {
 				workflowGroup = enabledGroupNames[0]
+			}
+			workflowSessionID := session.controller.GetMCPSessionID()
+			if workflowSessionID != "" {
+				virtualtools.RegisterParentChat(workflowSessionID, &virtualtools.ParentChatContext{
+					SessionID:    session.mainSessionID,
+					WorkflowPath: cfg.WorkspacePath,
+					GroupName:    workflowGroup,
+					AgentID:      execID,
+				})
 			}
 			virtualtools.RegisterParentChat(agentSessionID, &virtualtools.ParentChatContext{
 				SessionID:    session.mainSessionID,
@@ -1290,6 +1297,9 @@ func RegisterRunFullWorkflowTool(
 				// Tear down the parent-chat mapping when the background workflow
 				// exits. The SpawnListener sees this and stops mirroring the
 				// child's events into the parent chat thread.
+				if workflowSessionID != "" {
+					defer virtualtools.UnregisterParentChat(workflowSessionID)
+				}
 				defer virtualtools.UnregisterParentChat(agentSessionID)
 
 				var result string

@@ -15,18 +15,17 @@ const (
 
 	// ExecutionModeSingleStep runs only one specific step - cleans only that step
 	ExecutionModeSingleStep ExecutionMode = "single_step"
-
 )
 
 // CleanupScope defines WHAT should be cleaned (decided upfront, executed later)
 // This separates the decision-making from the execution
 type CleanupScope struct {
-	// === Progress file (steps_done.json) ===
+	// === Progress state cleanup ===
 
-	// DeleteProgress deletes the existing steps_done.json file
+	// DeleteProgress clears any persisted progress state for a fresh run
 	DeleteProgress bool
 
-	// InitFreshProgress creates a new steps_done.json with empty completed list
+	// InitFreshProgress initializes fresh empty progress state
 	InitFreshProgress bool
 
 	// UpdateProgress updates existing progress by removing steps >= StartFromStep
@@ -75,7 +74,6 @@ type ExecutionSetup struct {
 
 	// VariableValues are the variable values for this execution (for batch: group-specific)
 	VariableValues map[string]string
-
 }
 
 // HasCleanup returns true if any cleanup is needed
@@ -101,11 +99,11 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 	}
 
 	clone := &ExecutionSetup{
-		Mode:                 es.Mode,
-		Cleanup:              es.Cleanup, // CleanupScope is a value type, so this copies
-		StartFromStep:        es.StartFromStep,
-		RunFolder:            es.RunFolder,
-		GroupName:            es.GroupName,
+		Mode:          es.Mode,
+		Cleanup:       es.Cleanup, // CleanupScope is a value type, so this copies
+		StartFromStep: es.StartFromStep,
+		RunFolder:     es.RunFolder,
+		GroupName:     es.GroupName,
 	}
 
 	// Deep copy Context

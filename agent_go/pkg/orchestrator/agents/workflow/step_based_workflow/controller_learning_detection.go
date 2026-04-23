@@ -41,6 +41,7 @@ type LearningMetadata struct {
 	SuccessfulRuns      int    `json:"successful_runs"`                 // Total count of successful runs (all description versions, observability only)
 	LastDescriptionHash string `json:"last_description_hash,omitempty"` // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
 	DescriptionHashRuns int    `json:"description_hash_runs,omitempty"` // Successful runs accumulated under LastDescriptionHash. Auto-lock gate fires at 3.
+	ConsecutiveNoNewLearningRuns int    `json:"consecutive_no_new_learning_runs,omitempty"` // Consecutive successful runs whose learning pass reported no materially new learning.
 	FailureLearningRuns int    `json:"failure_learning_runs"`           // Count of failure learning runs (persisted across iterations)
 	LastTurnCount       int    `json:"last_turn_count"`                 // Last recorded TurnCount
 	LastExecutionLLM    string `json:"last_execution_llm,omitempty"`
@@ -106,10 +107,72 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetLearningMetadata(
 // MetadataUpdateResult describes side effects the caller must apply to step_config.json.
 // Kept intentionally small: the metadata update itself is already written before this is returned.
 type MetadataUpdateResult struct {
-	ShouldAutoLock   bool   // Hash-stable threshold reached OR max-iterations fallback
-	AutoLockReason   string // Human-readable reason to write into review_notes
-	ShouldAutoUnlock bool   // Step was auto-locked and description hash changed → unlock
-	AutoUnlockReason string // Human-readable reason
+	ShouldAutoLock     bool   // Hash-stable threshold reached with repeated "no new learning" signals
+	AutoLockReason     string // Human-readable reason to write into review_notes
+	MetadataAutoLocked bool   // Metadata currently carries an active auto-lock record
+	ShouldAutoUnlock   bool   // Step was auto-locked and description hash changed → unlock
+	AutoUnlockReason   string // Human-readable reason
+}
+
+const (
+	autoLockMinSuccessfulRuns              = 3
+	autoLockConsecutiveNoNewLearningRuns   = 2
+)
+
+func inferHasNewLearningFromResult(result string) (bool, string, float64) {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" {
+		return true, "learning result empty; conservatively treat as new learning", 0.4
+	}
+
+	// TODO: Replace this summary-line string matching with a structured signal
+	// from the learning/direct-learnings turn (e.g. explicit JSON/tool output).
+	// The current prompt-constrained parsing is pragmatic, but still brittle if
+	// the model drifts from the expected summary format.
+	lines := strings.Split(trimmed, "\n")
+	for _, line := range lines {
+		normalized := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.HasPrefix(normalized, "updated: no-op;"):
+			return false, "learning agent reported explicit no-op summary", 0.98
+		case strings.HasPrefix(normalized, "learnings updated: no-op;"):
+			return false, "direct learnings turn reported explicit no-op summary", 0.98
+		case strings.Contains(normalized, "nothing new worth capturing"):
+			return false, "agent said there was nothing new worth capturing", 0.9
+		case strings.Contains(normalized, "already covers it"):
+			return false, "agent said existing learnings already cover the pattern", 0.85
+		}
+	}
+
+	return true, "learning agent reported file updates or non-no-op output", 0.7
+}
+
+func shouldAutoLockLearnings(metadata LearningMetadata, learningPathIdentifier string, requireNoNewLearningStreak bool) (bool, string) {
+	if learningPathIdentifier == GlobalLearningID {
+		return false, ""
+	}
+	if metadata.LastDescriptionHash == "" {
+		return false, ""
+	}
+	if metadata.DescriptionHashRuns < autoLockMinSuccessfulRuns {
+		return false, ""
+	}
+	if requireNoNewLearningStreak {
+		if metadata.ConsecutiveNoNewLearningRuns < autoLockConsecutiveNoNewLearningRuns {
+			return false, ""
+		}
+		return true, fmt.Sprintf(
+			"description_hash_stable (%d successful runs on hash %s, %d consecutive no-new-learning outcomes)",
+			metadata.DescriptionHashRuns,
+			metadata.LastDescriptionHash[:8],
+			metadata.ConsecutiveNoNewLearningRuns,
+		)
+	}
+	return true, fmt.Sprintf(
+		"description_hash_stable (%d successful runs on hash %s)",
+		metadata.DescriptionHashRuns,
+		metadata.LastDescriptionHash[:8],
+	)
 }
 
 // updateLearningMetadataWithTurnCount updates the learning metadata with TurnCount-based complexity tracking.
@@ -127,6 +190,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	validationPassed bool,
 	executionLLM string,
 	learningLLM string,
+	requireNoNewLearningStreak bool,
 ) (MetadataUpdateResult, error) {
 	// Set inside the success branch when a previously-auto-locked step sees its
 	// description hash change. Consumed by the auto-unlock block below.
@@ -202,8 +266,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 				}
 				metadata.LastDescriptionHash = currentHash
 				metadata.DescriptionHashRuns = 0
+				metadata.ConsecutiveNoNewLearningRuns = 0
 			}
 			metadata.DescriptionHashRuns++
+		}
+		if hasNewLearning {
+			metadata.ConsecutiveNoNewLearningRuns = 0
+		} else {
+			metadata.ConsecutiveNoNewLearningRuns++
 		}
 	}
 
@@ -223,28 +293,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	}
 
 	// Check if auto-lock should be triggered.
-	// Global learning: never auto-lock — human decides when to lock.
-	// Per-step learning: lock after 3 successful runs against the SAME step
-	// description hash. When the description changes, DescriptionHashRuns
-	// resets and the lock countdown starts over — so edits to the description
-	// invalidate the "converged" signal the lock is based on.
+	// Agent mode: lock after the same description hash has 3 successful runs.
+	// Direct mode: require the same threshold plus repeated "no materially new
+	// learning" outcomes from the direct learnings turn.
 	shouldAutoLock := false
 	var autoLockReason string
 
-	if learningPathIdentifier != GlobalLearningID {
-		threshold := 3
-
-		if metadata.DescriptionHashRuns >= threshold && metadata.LastDescriptionHash != "" {
-			shouldAutoLock = true
-			autoLockReason = fmt.Sprintf("description_hash_stable (%d successful runs on hash %s)", metadata.DescriptionHashRuns, metadata.LastDescriptionHash[:8])
-		}
-
-		// Fallback to max iterations (safety)
-		if !shouldAutoLock && metadata.TotalIterations >= 15 {
-			shouldAutoLock = true
-			autoLockReason = "maximum_learnings_reached"
-		}
-	}
+	shouldAutoLock, autoLockReason = shouldAutoLockLearnings(metadata, learningPathIdentifier, requireNoNewLearningStreak)
 
 	if shouldAutoLock {
 		metadata.AutoLockedAt = time.Now().Format(time.RFC3339)
@@ -258,8 +313,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Clear the auto-lock markers in metadata so step_config.json can be
 	// unlocked in parallel by the caller.
 	result := MetadataUpdateResult{
-		ShouldAutoLock: shouldAutoLock,
-		AutoLockReason: autoLockReason,
+		ShouldAutoLock:     shouldAutoLock,
+		AutoLockReason:     autoLockReason,
+		MetadataAutoLocked: metadata.AutoLockedAt != "",
 	}
 	if descriptionChangedWhileAutoLocked && !shouldAutoLock {
 		unlockReason := fmt.Sprintf("description_changed (new hash %s) — prior auto-lock invalidated", metadata.LastDescriptionHash[:8])
@@ -347,7 +403,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	}
 
 	// Set LockLearnings = true AND Optimized = true together.
-	// When the skill is built (3 runs on the same description hash), the step is
+	// When the skill is built (minimum stable-run threshold reached and repeated
+	// no-new-learning outcomes confirm convergence), the step is
 	// flagged optimized. NOTE: Optimized is currently a UI/reporting flag only —
 	// it does NOT change runtime LLM tier selection. Learning stays on Tier 2
 	// (Medium) and execution stays on Tier 1 (High) regardless. If you later
@@ -357,7 +414,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
 	stepConfig.AgentConfigs.Optimized = &lockValue
 	if strings.TrimSpace(stepConfig.AgentConfigs.ReviewNotes) == "" {
-		stepConfig.AgentConfigs.ReviewNotes = "Auto-locked after 3 successful runs against the same step description hash (learnings converged). Edit the description to invalidate and regenerate."
+		stepConfig.AgentConfigs.ReviewNotes = "Auto-locked after stable successful runs and repeated no-new-learning outcomes against the same step description hash (learnings converged). Edit the description to invalidate and regenerate."
 	}
 
 	// Update the config in the slice
@@ -382,6 +439,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	}
 
 	return nil
+}
+
+// shouldBackfillAutoLockToConfig reports whether step_config.json is currently
+// missing lock_learnings for a step whose metadata is already auto-locked.
+// We only backfill when the config is unset (nil) to avoid overriding an
+// explicit human unlock (`lock_learnings: false`).
+func (hcpo *StepBasedWorkflowOrchestrator) shouldBackfillAutoLockToConfig(ctx context.Context, stepID string) bool {
+	configs, err := hcpo.ReadStepConfigs(ctx)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step configs while checking auto-lock backfill for %s: %v", stepID, err))
+		return false
+	}
+
+	for i := range configs {
+		if configs[i].ID != stepID {
+			continue
+		}
+		if configs[i].AgentConfigs == nil {
+			return true
+		}
+		return configs[i].AgentConfigs.LockLearnings == nil
+	}
+
+	// Missing config entry entirely — safe to backfill.
+	return true
 }
 
 // autoUnlockStepLearningsInConfig clears LockLearnings and Optimized in step_config.json

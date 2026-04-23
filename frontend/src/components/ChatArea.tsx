@@ -106,7 +106,7 @@ const PHASE_CHAT_INFO: Record<string, {
       'Run any plan step in the background and poll for results',
       'Cancel a running step mid-execution',
       'Update plan steps (add, edit, reorder, delete)',
-      'Update step_config.json — servers, tools, disable learning',
+      'Update step_config.json — servers, tools, learnings access/locks',
       'Generate/update learnings with optional human guidance',
       'View the system prompt and conversation from a past run',
       'Run shell commands for investigation',

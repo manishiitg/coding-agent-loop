@@ -80,7 +80,8 @@ func BuildLearningsContributionTurn(stepID, learningObjective string, isLearnCod
 
 	b.WriteString("**Important:**\n")
 	b.WriteString("- This is your final turn for learnings on this step. After your reply, the step is accepted regardless of whether every gap is closed — there is no second learnings pass.\n")
-	b.WriteString("- If there's genuinely nothing new worth capturing (e.g. the step was trivial and the existing SKILL.md already covers it), reply with a short summary saying so — empty coverage is fine; fabricated coverage is not.\n")
+	b.WriteString("- If there's genuinely nothing new worth capturing (e.g. the step was trivial and the existing SKILL.md already covers it), do NOT force an edit. Reply with exactly: `Learnings updated: no-op; reason: <short reason>`.\n")
+	b.WriteString("- If you did update files, end with exactly one summary line: `Learnings updated: files changed: <comma-separated file list>`.\n")
 	b.WriteString("- Available tools: `execute_shell_command` (for `cat`, `mkdir`, `cp`, heredoc creation), `diff_patch_workspace_file` (for updating existing files).\n")
 
 	return b.String()

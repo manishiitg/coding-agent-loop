@@ -26,6 +26,49 @@ const IN_PROGRESS_CHILD_TYPES = new Set([
   'token_usage', 'llm_generation_end', 'llm_generation_start',
 ]);
 
+const INITIAL_EXPANDED_TOOL_CALLS = 24;
+const EXPANDED_TOOL_CALLS_PAGE_SIZE = 24;
+
+function truncateToolSummary(value: string, maxLength = 120): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function buildToolSummary(payload?: Record<string, unknown>): { toolName?: string; toolLabel?: string } {
+  const toolName = (payload?.tool_name as string) || undefined;
+  if (!toolName) return {};
+
+  const rawArgs = payload?.tool_params as Record<string, unknown> | undefined;
+  const argsStr = rawArgs?.arguments as string | undefined;
+  if (!argsStr) return { toolName, toolLabel: toolName };
+
+  try {
+    const parsed = JSON.parse(argsStr);
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      const previewCandidate =
+        obj.command ||
+        obj.cmd ||
+        obj.query ||
+        obj.path ||
+        obj.url ||
+        obj.pattern;
+
+      if (typeof previewCandidate === 'string' && previewCandidate.trim() !== '') {
+        return {
+          toolName,
+          toolLabel: truncateToolSummary(`${toolName}: ${previewCandidate}`),
+        };
+      }
+    }
+  } catch {
+    // Fall back to tool name only if args are not JSON.
+  }
+
+  return { toolName, toolLabel: toolName };
+}
+
 interface EventHierarchyProps {
   events: PollingEvent[];
   onApproveWorkflow?: (requestId: string) => void
@@ -42,10 +85,12 @@ interface FlattenedItem {
   node?: EventNode;
   uniqueKey: string;
   isToolCallToggle?: boolean;
+  toolCallToggleMode?: 'expand' | 'collapse' | 'show_more';
   hiddenCount?: number;   // Per-group count for the "+" label
+  revealCount?: number;
   groupKey?: string;      // Group key for per-group expand/collapse
   latestToolName?: string;  // Latest tool_call_start tool name in collapsed group
-  latestToolArgs?: string;  // Compact summary of latest tool args
+  latestToolLabel?: string;
 }
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
@@ -65,6 +110,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const userExpandedSessionsRef = useRef<Set<string>>(new Set());
   // Per-group expand state for tool call groups (keyed by first event ID in group)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroupVisibleCounts, setExpandedGroupVisibleCounts] = useState<Record<string, number>>({});
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
@@ -385,8 +431,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         if (type === 'tool_call_start') {
           s.toolCalls++
           const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
-          const toolName = (payload.tool_name as string) || undefined
+          const { toolName, toolLabel } = buildToolSummary(payload)
           if (toolName) s.latestToolName = toolName
+          if (toolLabel) s.latestToolLabel = toolLabel
         }
         if (type === 'tool_call_end' || type === 'token_usage') {
           const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
@@ -500,6 +547,38 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
       return newCollapsed;
     });
+  }, []);
+
+  const toggleToolCallGroup = useCallback((groupKey: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      const isExpanding = !next.has(groupKey);
+      if (isExpanding) next.add(groupKey);
+      else next.delete(groupKey);
+
+      setExpandedGroupVisibleCounts(prevCounts => {
+        if (isExpanding) {
+          if (prevCounts[groupKey] !== undefined) return prevCounts;
+          return {
+            ...prevCounts,
+            [groupKey]: INITIAL_EXPANDED_TOOL_CALLS,
+          };
+        }
+
+        if (prevCounts[groupKey] === undefined) return prevCounts;
+        const { [groupKey]: _removed, ...rest } = prevCounts;
+        return rest;
+      });
+
+      return next;
+    });
+  }, []);
+
+  const showMoreToolCalls = useCallback((groupKey: string) => {
+    setExpandedGroupVisibleCounts(prev => ({
+      ...prev,
+      [groupKey]: (prev[groupKey] ?? INITIAL_EXPANDED_TOOL_CALLS) + EXPANDED_TOOL_CALLS_PAGE_SIZE,
+    }));
   }, []);
 
   const eventTree = useMemo(() => {
@@ -687,18 +766,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         return;
       }
 
-      // For orchestrator_agent_start in non-flat mode: stop flattening so tool calls appear
-      // inside the collapsible agent card (rendered via childrenNodes in EventDispatcher).
-      // In flat-hierarchy mode (workflow tab): the expand button is invisible (indent=0 → left=-25px),
-      // so we MUST inline the children here — otherwise tool calls are inaccessible.
-      if (!flatHierarchy && node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
+      // Keep agent-internal logs inside the agent card in every mode so tool-call
+      // summaries stay attached to the owning agent instead of drifting into the
+      // global tail of the event stream.
+      if (node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
         return;
       }
 
-      // In flat-hierarchy mode always expand orchestrator_agent_start children inline,
-      // otherwise respect the user's explicit expand/collapse state.
-      const shouldExpand = (flatHierarchy && node.event.type === 'orchestrator_agent_start')
-        || node.isExpanded;
+      // Respect the user's explicit expand/collapse state for normal hierarchy nodes.
+      const shouldExpand = node.isExpanded;
       if (shouldExpand && node.children.length > 0) {
         node.children.forEach((child, index) => {
           flatten(child, `${key}-child-${index}`);
@@ -741,55 +817,62 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       // Process in reverse to keep indices stable
       for (let g = groups.length - 1; g >= 0; g--) {
         const group = groups[g];
+        const totalCount = group.endIdx - group.startIdx + 1;
         if (expandedGroups.has(group.groupKey)) {
-          // Insert "− collapse" sentinel after the expanded group
-          list.splice(group.endIdx + 1, 0, {
+          const visibleCount = Math.min(
+            expandedGroupVisibleCounts[group.groupKey] ?? INITIAL_EXPANDED_TOOL_CALLS,
+            totalCount,
+          );
+          const hiddenCount = totalCount - visibleCount;
+          const visibleStartIdx = Math.max(group.startIdx, group.endIdx - visibleCount + 1);
+          const visibleItems = list.slice(visibleStartIdx, group.endIdx + 1);
+          const replacementItems: FlattenedItem[] = [];
+
+          if (hiddenCount > 0) {
+            replacementItems.push({
+              uniqueKey: `tool-call-show-more-${group.groupKey}-${hiddenCount}`,
+              isToolCallToggle: true,
+              toolCallToggleMode: 'show_more',
+              hiddenCount,
+              revealCount: Math.min(EXPANDED_TOOL_CALLS_PAGE_SIZE, hiddenCount),
+              groupKey: group.groupKey,
+            });
+          }
+
+          replacementItems.push(...visibleItems);
+          replacementItems.push({
             uniqueKey: `tool-call-collapse-${group.groupKey}`,
             isToolCallToggle: true,
+            toolCallToggleMode: 'collapse',
             groupKey: group.groupKey,
           });
+
+          list.splice(group.startIdx, totalCount, ...replacementItems);
         } else {
           // Replace entire group with a single "+ N tool calls" sentinel
-          const count = group.endIdx - group.startIdx + 1;
+          const count = totalCount;
           // Find the latest tool_call_start in the group for preview info
           let latestToolName: string | undefined;
-          let latestToolArgs: string | undefined;
+          let latestToolLabel: string | undefined;
           for (let idx = group.endIdx; idx >= group.startIdx; idx--) {
             const n = list[idx].node;
             if (n && n.event.type === 'tool_call_start') {
               const d = n.event.data as Record<string, unknown> | undefined;
               const payload = (d?.data && typeof d.data === 'object') ? d.data as Record<string, unknown> : d;
-              latestToolName = (payload?.tool_name as string) || undefined;
-              // Build compact args summary
-              const rawArgs = (payload as Record<string, unknown> | undefined)?.tool_params as Record<string, unknown> | undefined;
-              const argsStr = rawArgs?.arguments as string | undefined;
-              if (argsStr) {
-                try {
-                  const parsed = JSON.parse(argsStr);
-                  if (typeof parsed === 'object' && parsed !== null) {
-                    latestToolArgs = Object.entries(parsed)
-                      .map(([k, v]) => {
-                        const val = typeof v === 'string' ? v : JSON.stringify(v);
-                        return `${k}: ${val}`;
-                      })
-                      .join(', ');
-                  } else {
-                    latestToolArgs = String(parsed);
-                  }
-                } catch {
-                  latestToolArgs = argsStr;
-                }
-              }
+              const summary = buildToolSummary(payload);
+              latestToolName = summary.toolName;
+              latestToolLabel = summary.toolLabel;
               break;
             }
           }
           list.splice(group.startIdx, count, {
             uniqueKey: `tool-call-expand-${group.groupKey}`,
             isToolCallToggle: true,
+            toolCallToggleMode: 'expand',
             hiddenCount: count,
             groupKey: group.groupKey,
             latestToolName,
-            latestToolArgs,
+            latestToolLabel,
           });
         }
       }
@@ -823,6 +906,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
+        if (list[i].isToolCallToggle && list[i].revealCount !== prev[i]?.revealCount) {
+          togglesMatch = false
+          break
+        }
+        if (list[i].isToolCallToggle && list[i].toolCallToggleMode !== prev[i]?.toolCallToggleMode) {
+          togglesMatch = false
+          break
+        }
         // Check delegation_start expansion state — children render inside the card,
         // not in the flat list, so expansion changes are invisible to length/key checks.
         const node = list[i].node
@@ -836,7 +927,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
     flattenedItemsRef.current = list;
     return list;
-  }, [eventTree, hideToolCalls, expandedGroups, flatHierarchy]);
+  }, [eventTree, hideToolCalls, expandedGroups, expandedGroupVisibleCounts, flatHierarchy]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -880,28 +971,30 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     if (item.isToolCallToggle) {
       const count = item.hiddenCount || 0;
       const key = item.groupKey;
+      const mode = item.toolCallToggleMode || 'expand';
       return (
         <div className="flex items-center py-0.5 pl-5 min-w-0">
           <button
             onClick={() => {
               if (!key) return;
-              setExpandedGroups(prev => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
+              if (mode === 'show_more') {
+                showMoreToolCalls(key);
+                return;
+              }
+              toggleToolCallGroup(key);
             }}
             className="flex items-center gap-1.5 min-w-0 max-w-full px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
           >
-            <span className="flex-shrink-0">
-              {count > 0
-                ? `+ ${count} tool call${count !== 1 ? 's' : ''}`
-                : `− collapse`}
+            <span className="flex-shrink-0 font-medium">
+              {mode === 'show_more'
+                ? `+ show ${item.revealCount || 0} more tool call${(item.revealCount || 0) !== 1 ? 's' : ''} (${count} hidden)`
+                : count > 0
+                  ? `${count} tool call${count !== 1 ? 's' : ''}`
+                  : `− collapse`}
             </span>
-            {count > 0 && item.latestToolName && (
-              <span className="truncate opacity-70">
-                — {item.latestToolName}{item.latestToolArgs ? `(${item.latestToolArgs})` : ''}
+            {mode === 'expand' && count > 0 && (item.latestToolLabel || item.latestToolName) && (
+              <span className="truncate opacity-60">
+                • {item.latestToolLabel || item.latestToolName}
               </span>
             )}
           </button>
@@ -977,7 +1070,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats]);
+  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

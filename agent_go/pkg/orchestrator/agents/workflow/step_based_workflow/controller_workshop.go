@@ -66,7 +66,6 @@ type WorkshopExecuteOptions struct {
 	GroupName       string // e.g., "production" — overrides session-level group
 	Iteration       string // e.g., "iteration-3" — combined with group folder name to form RunFolder
 	RunFolder       string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
-	SkipLearning    bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
 	SavedScriptOnly bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
 	Instructions    string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
 	HumanInput      string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
@@ -180,31 +179,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	for _, info := range allStepInfos {
 		if err := populateRuntimeFields(info.Step, stepConfigs); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Failed to populate runtime fields: %v", err))
-		}
-	}
-
-	// 2b. If skip_learning requested, temporarily override LockLearnings on the target step's config.
-	// This uses LockLearnings (not DisableLearning) so existing learnings are still passed to the
-	// execution agent — only the post-execution learning phase is skipped.
-	// DisableLearning would skip BOTH reading existing learnings AND running the learning phase.
-	if opts != nil && opts.SkipLearning {
-		for i := range stepConfigs {
-			if stepConfigs[i].ID == stepID {
-				if stepConfigs[i].AgentConfigs == nil {
-					stepConfigs[i].AgentConfigs = &AgentConfigs{}
-				}
-				lockVal := true
-				stepConfigs[i].AgentConfigs.LockLearnings = &lockVal
-				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] skip_learning=true: temporarily locked learnings for step %q (existing learnings still used, learning phase skipped)", stepID))
-				// Re-populate runtime fields for this step so the override takes effect
-				for _, info := range allStepInfos {
-					if info.Step.GetID() == stepID {
-						_ = populateRuntimeFields(info.Step, stepConfigs)
-						break
-					}
-				}
-				break
-			}
 		}
 	}
 

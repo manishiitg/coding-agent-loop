@@ -178,7 +178,7 @@ TodoTaskPlanStep (single step, single ID)
 └── Generic Execution (SMALLER CONTEXT - only instructions)
     ├── Uses standard execution_only_agent pattern
     ├── Full tool access (workspace + MCP) - same as predefined
-    ├── No learning (DisableLearning=true)
+    ├── No learnings contribution
     └── No prevalidation (DisableValidation=true)
 ```
 

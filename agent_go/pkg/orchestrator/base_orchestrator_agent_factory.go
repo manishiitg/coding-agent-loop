@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchEvents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchEvents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -354,6 +354,9 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 					origExec := toolExecutor
 					finalExecutor = func(ctx context.Context, args map[string]interface{}) (string, error) {
 						ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, emitter)
+						if sessionID := bo.GetMCPSessionID(); sessionID != "" {
+							ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+						}
 						return origExec(ctx, args)
 					}
 				}

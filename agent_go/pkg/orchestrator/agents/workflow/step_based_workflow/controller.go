@@ -13,6 +13,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -373,6 +374,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName 
 	previousSessionID := hcpo.GetMCPSessionID()
 	hcpo.sessionID = groupSessionID
 	hcpo.BaseOrchestrator.SetMCPSessionID(groupSessionID)
+	if pc := virtualtools.GetParentChat(previousSessionID); pc != nil && pc.SessionID != "" {
+		pcCopy := *pc
+		if pcCopy.GroupName == "" {
+			pcCopy.GroupName = groupName
+		}
+		virtualtools.RegisterParentChat(groupSessionID, &pcCopy)
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Registered parent chat for group session %s from previous session %s", groupSessionID, previousSessionID))
+	}
 
 	cacheAction := "reused"
 	if !exists {
@@ -492,6 +501,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) closeWorkshopGroupSessions(sessionsBy
 		sessionID := sessionsByGroup[groupName]
 		browserSessionID := hcpo.resolveWorkshopBrowserSessionID(groupName)
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] %s: group=%s session=%s browser=%s", action, groupName, sessionID, browserSessionID))
+		virtualtools.UnregisterParentChat(sessionID)
 		// Mark all sessions as stopped BEFORE closing to prevent in-flight tool calls
 		// from resurrecting connections via broken pipe handlers.
 		mcpagent.MarkSessionsStopped([]string{sessionID, browserSessionID})

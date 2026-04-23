@@ -87,7 +87,19 @@ func filterToolsByWorkflow(stepTools, workflowServers []string) []string {
 	return result
 }
 
-func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath string) {
+func buildSessionScopedMCPAPIURL(sessionID string) string {
+	baseURL := strings.TrimSpace(os.Getenv("MCP_API_URL"))
+	sessionID = strings.TrimSpace(sessionID)
+	if baseURL == "" || sessionID == "" {
+		return ""
+	}
+	if idx := strings.Index(baseURL, "/s/"); idx >= 0 {
+		baseURL = baseURL[:idx]
+	}
+	return strings.TrimRight(baseURL, "/") + "/s/" + sessionID
+}
+
+func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutputAbsPath, stepExecutionAbsPath string, mcpSessionID string) {
 	if len(executors) == 0 || strings.TrimSpace(stepOutputAbsPath) == "" {
 		return
 	}
@@ -118,6 +130,14 @@ func injectStepEnvIntoShellExecutor(executors map[string]interface{}, stepOutput
 		// Per-step values must always win over any stale caller-provided value.
 		mergedEnv["STEP_OUTPUT_DIR"] = stepOutputAbsPath
 		mergedEnv["STEP_EXECUTION_DIR"] = stepExecutionAbsPath
+		if strings.TrimSpace(mcpSessionID) != "" {
+			// Shell/file tools must resolve against the step-local MCP session so the
+			// session-level folder guard matches the prompt's narrow read/write scope.
+			mergedEnv["MCP_SESSION_ID"] = mcpSessionID
+			if scopedURL := buildSessionScopedMCPAPIURL(mcpSessionID); scopedURL != "" {
+				mergedEnv["MCP_API_URL"] = scopedURL
+			}
+		}
 		args["extra_env"] = mergedEnv
 		return original(ctx, args)
 	}
@@ -1276,7 +1296,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// group MCP session, the session-level folder guard becomes last-writer-wins and one
 	// step can end up executing another step's commands under the wrong write scope.
 	// Give each execution step its own session-level guard, just like learning/KB agents.
-	// Dedicated tool session for this execution step's shell/filesystem calls.
+	// Dedicated tool session for this execution step's shell/filesystem calls. Browser
+	// reuse is re-bound separately below, so shell isolation does not imply browser isolation.
 	execSessionID := hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths)
 	config.MCPSessionID = execSessionID
 	// Keep browser-sharing behavior unchanged: bind the per-step execution session to the
@@ -1327,8 +1348,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting STEP_OUTPUT_DIR into execute_shell_command for %s: %s", stepID, stepOutputAbsPath))
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 
 	// 6. Use base factory! (This handles all setup automatically)
@@ -1864,8 +1885,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		stepExecutionRelPath := hcpo.getTodoTaskStepExecutionPath(stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionRelPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
-		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting STEP_OUTPUT_DIR/STEP_EXECUTION_DIR into execute_shell_command for todo task %s: %s", stepID, stepOutputAbsPath))
+		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for todo task %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}
 
 	// NOTE: Task management is handled directly by the orchestrator LLM via shell commands

@@ -80,6 +80,8 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     return <ImageGenToolCallEndDisplay event={event} />
   }
 
+  const hasResult = typeof event.result === 'string' && event.result.length > 0
+
   // Function to parse and extract content from JSON results
   const parseResultContent = (result: string): {
     isJson: boolean;
@@ -162,10 +164,29 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     }
   }
 
-  // Parse the result content to extract text
-  const resultInfo = event.result ? parseResultContent(event.result) : null
-  const detectedFormat = resultInfo ? detectOutputFormat(resultInfo.textContent) : null
+  // Parse output lazily. Large tool payloads make group expansion expensive if every
+  // collapsed card eagerly JSON-parses and format-detects its result.
+  const resultInfo = React.useMemo(
+    () => (isExpanded && hasResult && event.result ? parseResultContent(event.result) : null),
+    [event.result, hasResult, isExpanded],
+  )
+  const detectedFormat = React.useMemo(
+    () => (isExpanded && resultInfo ? detectOutputFormat(resultInfo.textContent) : null),
+    [isExpanded, resultInfo],
+  )
   const isFormatted = !!detectedFormat && !isRawMode
+  const outputLineCount = React.useMemo(
+    () => (resultInfo ? resultInfo.textContent.split('\n').length : 0),
+    [resultInfo],
+  )
+  const formattedJsonText = React.useMemo(() => {
+    if (!isExpanded || !resultInfo || detectedFormat !== 'json') return null
+    try {
+      return JSON.stringify(JSON.parse(resultInfo.textContent.trim()), null, 2)
+    } catch {
+      return null
+    }
+  }, [detectedFormat, isExpanded, resultInfo])
 
   // Extract context usage information
   const contextUsagePercent = event.context_usage_percent
@@ -236,7 +257,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
               {new Date(event.timestamp).toLocaleTimeString()}
             </div>
           )}
-          {resultInfo && (
+          {hasResult && (
             <button
               onClick={toggle}
               className={`p-0.5 ${hoverBgColor} rounded ${textColor} transition-colors`}
@@ -257,7 +278,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
             </div>
             <div className="flex items-center gap-2">
               <div className={`text-xs ${isFormatted ? 'text-gray-400 dark:text-gray-500' : 'text-gray-500'}`}>
-                {resultInfo.textContent.split('\n').length} line{resultInfo.textContent.split('\n').length !== 1 ? 's' : ''} • {resultInfo.textContent.length} chars
+                {outputLineCount} line{outputLineCount !== 1 ? 's' : ''} • {resultInfo.textContent.length} chars
               </div>
               {detectedFormat && (
                 <button
@@ -281,7 +302,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
           )}
           {isFormatted && detectedFormat === 'json' && (
             <div className="max-h-96 overflow-y-auto overflow-x-auto">
-              <MarkdownRenderer content={'```json\n' + JSON.stringify(JSON.parse(resultInfo.textContent.trim()), null, 2) + '\n```'} />
+              <MarkdownRenderer content={`\`\`\`json\n${formattedJsonText ?? resultInfo.textContent}\n\`\`\``} />
             </div>
           )}
           {isFormatted && detectedFormat === 'csv' && (

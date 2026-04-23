@@ -123,8 +123,9 @@ Use this block to drive CROSS-STEP consolidation that a single step's learning a
 {{end}}
 
 ## FINAL ACTION
-After writing, list what was updated:
-'Updated: {{.WritePath}}/ (files: <list of files changed>)'`)
+End with exactly one summary line:
+- If you updated files: ` + "`" + `Updated: {{.WritePath}}/ (files: <list of files changed>)` + "`" + `
+- If there is no materially new learning and you made no file changes: ` + "`" + `Updated: no-op; reason: <short reason>` + "`" + ``)
 
 // Global learning user message template
 var globalLearningUserMessageTemplate = MustRegisterTemplate("globalLearningUserMessage", `# Global Workflow Skill Update

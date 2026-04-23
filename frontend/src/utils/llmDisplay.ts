@@ -144,6 +144,10 @@ export function getModelDisplayName({
 }: ModelDisplayNameOptions): string {
   if (!modelId) return 'Unknown'
 
+  if (provider === 'minimax' || provider === 'minimax-coding-plan') {
+    return 'MiniMax'
+  }
+
   const publishedLLM = savedLLMs.find(
     (llm) => llm.provider === provider && llm.model_id === modelId
   )

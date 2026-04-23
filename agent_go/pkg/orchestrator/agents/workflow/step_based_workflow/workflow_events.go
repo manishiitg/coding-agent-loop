@@ -3,8 +3,8 @@ package step_based_workflow
 import (
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // RoutingResponseEvent represents the routing response data for events
@@ -24,15 +24,15 @@ type RoutingRouteEvent struct {
 // RoutingEvaluatedEvent represents the event when a routing step is evaluated
 type RoutingEvaluatedEvent struct {
 	baseevents.BaseEventData
-	StepID           string                `json:"step_id"`
-	StepIndex        int                   `json:"step_index"`
-	StepTitle        string                `json:"step_title"`
-	StepPath         string                `json:"step_path"`
-	RoutingQuestion  string                `json:"routing_question"`
-	RoutingResponse  RoutingResponseEvent  `json:"routing_response"`
-	Routes           []RoutingRouteEvent   `json:"routes"`
-	RunFolder        string                `json:"run_folder"`
-	WorkspacePath    string                `json:"workspace_path"`
+	StepID          string               `json:"step_id"`
+	StepIndex       int                  `json:"step_index"`
+	StepTitle       string               `json:"step_title"`
+	StepPath        string               `json:"step_path"`
+	RoutingQuestion string               `json:"routing_question"`
+	RoutingResponse RoutingResponseEvent `json:"routing_response"`
+	Routes          []RoutingRouteEvent  `json:"routes"`
+	RunFolder       string               `json:"run_folder"`
+	WorkspacePath   string               `json:"workspace_path"`
 }
 
 // GetEventType implements baseevents.EventData interface
@@ -87,7 +87,7 @@ func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptToke
 	}
 }
 
-// StepProgressUpdatedEvent represents the event when step progress is updated (steps_done.json changes)
+// StepProgressUpdatedEvent represents the event when in-memory workflow step progress changes.
 type StepProgressUpdatedEvent struct {
 	baseevents.BaseEventData
 	WorkspacePath string `json:"workspace_path"`            // Workspace path for file operations
@@ -96,9 +96,9 @@ type StepProgressUpdatedEvent struct {
 	Status        string `json:"status,omitempty"`          // Step status: "start", "end", "failed", or empty (for progress updates)
 	Error         string `json:"error,omitempty"`           // Error message (populated when status is "failed")
 	// Batch execution info (always present since backend always runs in batch context)
-	GroupName   string `json:"group_name,omitempty"`   // Current group name being executed
-	GroupIndex  int    `json:"group_index"`            // 0-based index of current group
-	TotalGroups int    `json:"total_groups"`           // Total number of groups in batch
+	GroupName   string `json:"group_name,omitempty"` // Current group name being executed
+	GroupIndex  int    `json:"group_index"`          // 0-based index of current group
+	TotalGroups int    `json:"total_groups"`         // Total number of groups in batch
 	// Tiered LLM allocation info (only populated in tiered mode)
 	UsedTier      int    `json:"used_tier,omitempty"`       // Tier number (1, 2, or 3)
 	UsedTierLabel string `json:"used_tier_label,omitempty"` // Human-readable tier label ("High", "Medium", "Low")
@@ -172,24 +172,24 @@ func (e *PreValidationCompletedEvent) GetEventType() baseevents.EventType {
 // TodoTaskRouteSelectedEvent represents when the todo task orchestrator selects a route/sub-agent
 type TodoTaskRouteSelectedEvent struct {
 	baseevents.BaseEventData
-	StepIndex               int    `json:"step_index"`
-	StepPath                string `json:"step_path"`
-	StepID                  string `json:"step_id"`
-	StepTitle               string `json:"step_title"`
-	Iteration               int    `json:"iteration"`
-	NextAction              string `json:"next_action"`                         // "delegate", "complete", "continue"
-	SelectedRouteID         string `json:"selected_route_id,omitempty"`         // Route ID if predefined agent selected
-	SelectedRouteName       string `json:"selected_route_name,omitempty"`       // Route name if predefined agent selected
-	UseGenericAgent         bool   `json:"use_generic_agent"`                   // True if generic agent selected
-	TodoIDToExecute         string `json:"todo_id_to_execute,omitempty"`        // Todo item being worked on
-	TodoTitle               string `json:"todo_title,omitempty"`                // Title of the todo item
-	InstructionsToSubAgent  string `json:"instructions_to_sub_agent,omitempty"` // Instructions given to sub-agent
-	SelectionReasoning      string `json:"selection_reasoning,omitempty"`       // Why this route was selected
-	AllTasksComplete        bool   `json:"all_tasks_complete"`                  // Whether all tasks are complete
-	ProgressSummary         string `json:"progress_summary,omitempty"`          // Summary of progress
-	Model                   string `json:"model,omitempty"`                     // LLM model used for this decision
-	PreferredTier           int    `json:"preferred_tier,omitempty"`             // LLM tier chosen (1=High, 2=Medium, 3=Low)
-	PreferredTierLabel      string `json:"preferred_tier_label,omitempty"`       // Human-readable tier label
+	StepIndex              int    `json:"step_index"`
+	StepPath               string `json:"step_path"`
+	StepID                 string `json:"step_id"`
+	StepTitle              string `json:"step_title"`
+	Iteration              int    `json:"iteration"`
+	NextAction             string `json:"next_action"`                         // "delegate", "complete", "continue"
+	SelectedRouteID        string `json:"selected_route_id,omitempty"`         // Route ID if predefined agent selected
+	SelectedRouteName      string `json:"selected_route_name,omitempty"`       // Route name if predefined agent selected
+	UseGenericAgent        bool   `json:"use_generic_agent"`                   // True if generic agent selected
+	TodoIDToExecute        string `json:"todo_id_to_execute,omitempty"`        // Todo item being worked on
+	TodoTitle              string `json:"todo_title,omitempty"`                // Title of the todo item
+	InstructionsToSubAgent string `json:"instructions_to_sub_agent,omitempty"` // Instructions given to sub-agent
+	SelectionReasoning     string `json:"selection_reasoning,omitempty"`       // Why this route was selected
+	AllTasksComplete       bool   `json:"all_tasks_complete"`                  // Whether all tasks are complete
+	ProgressSummary        string `json:"progress_summary,omitempty"`          // Summary of progress
+	Model                  string `json:"model,omitempty"`                     // LLM model used for this decision
+	PreferredTier          int    `json:"preferred_tier,omitempty"`            // LLM tier chosen (1=High, 2=Medium, 3=Low)
+	PreferredTierLabel     string `json:"preferred_tier_label,omitempty"`      // Human-readable tier label
 }
 
 func (e *TodoTaskRouteSelectedEvent) GetEventType() baseevents.EventType {
@@ -216,15 +216,15 @@ func (e *TodoTaskItemCreatedEvent) GetEventType() baseevents.EventType {
 // TodoTaskItemUpdatedEvent represents when a todo item is updated
 type TodoTaskItemUpdatedEvent struct {
 	baseevents.BaseEventData
-	StepIndex   int    `json:"step_index"`
-	StepPath    string `json:"step_path"`
-	StepID      string `json:"step_id"`
-	TodoID      string `json:"todo_id"`
-	Title       string `json:"title"`
-	OldStatus   string `json:"old_status,omitempty"`
-	NewStatus   string `json:"new_status"`
-	UpdatedBy   string `json:"updated_by"` // "orchestrator" or agent name
-	Notes       string `json:"notes,omitempty"`
+	StepIndex int    `json:"step_index"`
+	StepPath  string `json:"step_path"`
+	StepID    string `json:"step_id"`
+	TodoID    string `json:"todo_id"`
+	Title     string `json:"title"`
+	OldStatus string `json:"old_status,omitempty"`
+	NewStatus string `json:"new_status"`
+	UpdatedBy string `json:"updated_by"` // "orchestrator" or agent name
+	Notes     string `json:"notes,omitempty"`
 }
 
 func (e *TodoTaskItemUpdatedEvent) GetEventType() baseevents.EventType {
@@ -264,4 +264,3 @@ type TodoTaskStepCompletedEvent struct {
 func (e *TodoTaskStepCompletedEvent) GetEventType() baseevents.EventType {
 	return events.TodoTaskStepCompleted
 }
-

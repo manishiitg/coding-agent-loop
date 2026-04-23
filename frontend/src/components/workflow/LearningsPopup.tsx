@@ -43,6 +43,14 @@ interface LearningMetadata {
   step_contributions?: Record<string, number>
 }
 
+function isStepLocked(metadata: LearningMetadata | null): boolean {
+  return metadata?.lock_learnings === true
+}
+
+function isStepAutoLocked(metadata: LearningMetadata | null): boolean {
+  return isStepLocked(metadata) && !!metadata?.auto_locked_at
+}
+
 function getSuccessfulRuns(metadata: LearningMetadata | null): number {
   if (!metadata) return 0
   return metadata.successful_runs || 0
@@ -778,10 +786,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   if (showOnlyUnlocked) {
     stepsWithLearnings = stepsWithLearnings.filter(step => {
       const metadata = learnings[step.stepId]
-      const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
-      const isManuallyLocked = metadata?.lock_learnings === true
-      const isLocked = isAutoLocked || isManuallyLocked
-      return !isLocked // Show only unlocked steps
+      return !isStepLocked(metadata) // Show only unlocked steps
     })
   }
 
@@ -1072,12 +1077,12 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
             <div className="space-y-2">
               {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
                 const metadata = learnings[stepId]
-                // Lock state: auto_locked_at is the authoritative auto-lock signal;
-                // lock_learnings is the step_config switch (manual or auto-written).
-                // An auto-unlock clears auto_locked_at and writes auto_unlocked_at.
-                const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
-                const isManuallyLocked = metadata?.lock_learnings === true && !isAutoLocked
-                const isLocked = isAutoLocked || metadata?.lock_learnings === true
+                // Lock state comes only from step_config.json (merged by the backend
+                // into metadata.lock_learnings for this API response). Metadata is
+                // used only to explain whether a current lock was auto or manual.
+                const isLocked = isStepLocked(metadata)
+                const isAutoLocked = isStepAutoLocked(metadata)
+                const isManuallyLocked = isLocked && !isAutoLocked
                 const wasRecentlyAutoUnlocked = !!metadata?.auto_unlocked_at &&
                   (!metadata.auto_locked_at || (metadata.auto_unlocked_at > metadata.auto_locked_at))
 
@@ -1229,8 +1234,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                       <>
                                         <Lock className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                                         <span className="text-green-600 dark:text-green-400 font-medium text-xs">
-                                          {isAutoLocked && metadata?.lock_learnings === true ? 'Locked (Auto)' :
-                                           isAutoLocked ? 'Locked (Auto)' :
+                                          {isAutoLocked ? 'Locked (Auto)' :
                                            isManuallyLocked ? 'Locked (Manual)' :
                                            'Locked'}
                                         </span>

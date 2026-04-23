@@ -1063,6 +1063,14 @@ func runServer(cmd *cobra.Command, args []string) {
 	// one-time QR scan; the session DB persists state between restarts.
 	// Disabled by default — the user must set WHATSAPP_ENABLED=true and
 	// optionally WHATSAPP_SESSION_DB (defaults below).
+	//
+	// DB usage note: this server otherwise avoids databases and persists to
+	// workspace/ files only. WhatsApp is an intentional exception because
+	// whatsmeow needs a transactional SQLite store for its Signal-protocol
+	// keys (identity, sessions, prekeys). The file is agent-local — not
+	// shared infra, not replicated across nodes — so it behaves more like a
+	// protocol-state cache than a "database" in the architectural sense.
+	// Deleting the file and re-pairing via QR fully restores functionality.
 	if os.Getenv("WHATSAPP_ENABLED") == "true" {
 		dbPath := os.Getenv("WHATSAPP_SESSION_DB")
 		if dbPath == "" {

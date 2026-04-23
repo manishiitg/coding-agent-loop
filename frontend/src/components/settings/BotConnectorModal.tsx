@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, AlertTriangle,
   Bot, User, Send, RotateCcw, Plus, MessageSquare, Layers, Play, Trash2,
+  Phone,
 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -15,7 +16,22 @@ interface BotConnectorModalProps {
   onClose: () => void
 }
 
-type Section = 'slack' | 'simulate'
+type Section = 'slack' | 'whatsapp' | 'simulate'
+
+// Shape of GET /api/whatsapp/status. enabled = WHATSAPP_ENABLED env var was set
+// at server startup; paired = device identity stored; connected = live WS.
+interface WhatsAppStatus {
+  enabled: boolean
+  paired: boolean
+  connected: boolean
+  own_jid: string
+  qr_available: boolean
+  qr_expires_at?: string
+  owner_user_id?: string
+  owner_email?: string
+  owner_username?: string
+  owner_paired_at?: string
+}
 type SimStatus = 'idle' | 'sending' | 'running' | 'completed' | 'error'
 interface ChatMessage { id: string; text: string; is_bot: boolean; timestamp: string }
 
@@ -47,6 +63,26 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [newChannelID, setNewChannelID] = useState('')
   const [newWorkflowID, setNewWorkflowID] = useState('')
   const [newWorkshopMode, setNewWorkshopMode] = useState<'' | 'builder' | 'optimizer' | 'run'>('')
+
+  // ── WhatsApp ──────────────────────────────────────────────────────────────
+  const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
+  const [waError, setWaError] = useState<string | null>(null)
+  // qrBust changes to force <img> to re-fetch the PNG. Bumped when polling
+  // detects the QR has rotated or the pairing state transitions.
+  const [qrBust, setQrBust] = useState<number>(() => Date.now())
+  const [unpairConfirm, setUnpairConfirm] = useState(false)
+  const [unpairing, setUnpairing] = useState(false)
+  const waPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Routing editor state — a plain array (rather than an object keyed by slug)
+  // so new/empty rows can coexist without slug collisions while the user types.
+  // Converted to object shape on save.
+  type WaRouteRow = { slug: string; workflow_id: string; workshop_mode: string }
+  const [waRoutes, setWaRoutes] = useState<WaRouteRow[]>([])
+  const [waRoutesOriginal, setWaRoutesOriginal] = useState<WaRouteRow[]>([])
+  const [waRoutesSaving, setWaRoutesSaving] = useState(false)
+  const [waRoutesError, setWaRoutesError] = useState<string | null>(null)
+  const [waRoutesSaved, setWaRoutesSaved] = useState(false)
 
   // ── Simulate ──────────────────────────────────────────────────────────────
   const { delegationTierConfig } = useLLMStore()
@@ -145,6 +181,69 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     syncTiers()
   }, [isOpen, delegationTierConfig, loadEmails, loadSlack])
 
+  // ── WhatsApp: status polling ──────────────────────────────────────────────
+  // When the WhatsApp tab is active and not yet paired, poll /status every 3s
+  // so a fresh QR (rotating every ~20s on the server) plus the transition to
+  // "paired" shows up without the user having to refresh. Polls only while
+  // the modal is open and the tab is selected — nothing runs in the
+  // background otherwise.
+  useEffect(() => {
+    if (!isOpen || activeSection !== 'whatsapp') {
+      if (waPollingRef.current) {
+        clearInterval(waPollingRef.current)
+        waPollingRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    let lastExpires: string | undefined
+    const tick = async () => {
+      try {
+        const s = await agentApi.getWhatsAppStatus()
+        if (cancelled) return
+        setWaStatus(s)
+        setWaError(null)
+        // If the QR rotated (new expiry) or pairing just completed, bust the
+        // <img> cache so the browser re-fetches the latest PNG.
+        if (s.qr_expires_at !== lastExpires) {
+          lastExpires = s.qr_expires_at
+          setQrBust(Date.now())
+        }
+      } catch (err) {
+        if (cancelled) return
+        const msg = err instanceof Error ? err.message : String(err)
+        setWaError(msg)
+      }
+    }
+    tick()
+    waPollingRef.current = setInterval(tick, 3000)
+
+    // One-shot fetch of the routing map when the tab opens. The editor is not
+    // polled — we only refresh after explicit save actions.
+    agentApi.getWhatsAppRouting().then(data => {
+      if (cancelled) return
+      const rows = Object.entries(data.routing || {}).map(([slug, r]) => ({
+        slug,
+        workflow_id: r.workflow_id,
+        workshop_mode: r.workshop_mode || '',
+      }))
+      setWaRoutes(rows)
+      setWaRoutesOriginal(rows)
+      setWaRoutesError(null)
+    }).catch(err => {
+      if (cancelled) return
+      setWaRoutesError(err instanceof Error ? err.message : String(err))
+    })
+    return () => {
+      cancelled = true
+      if (waPollingRef.current) {
+        clearInterval(waPollingRef.current)
+        waPollingRef.current = null
+      }
+    }
+  }, [isOpen, activeSection])
+
   // ── Simulate: auto-scroll ─────────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -212,6 +311,75 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     } catch (err) {
       setSlackError(err instanceof Error ? err.message : 'Failed to save Slack configuration')
     } finally { setSlackSaving(false) }
+  }
+
+  // handleUnpairWhatsApp drops the paired phone, restarts the service, and
+  // refreshes local status. Wipes the SQLite session DB on the server so the
+  // user can pair a different account. Two-step confirmation via
+  // unpairConfirm prevents accidental clicks.
+  const handleUnpairWhatsApp = async () => {
+    if (!unpairConfirm) {
+      setUnpairConfirm(true)
+      setTimeout(() => setUnpairConfirm(false), 5000)
+      return
+    }
+    try {
+      setUnpairing(true)
+      setWaError(null)
+      await agentApi.unpairWhatsApp()
+      setUnpairConfirm(false)
+      // Kick polling to reflect the new "unpaired" state immediately.
+      try {
+        const s = await agentApi.getWhatsAppStatus()
+        setWaStatus(s)
+      } catch { /* polling tick will retry */ }
+      setQrBust(Date.now())
+    } catch (err) {
+      setWaError(err instanceof Error ? err.message : 'Failed to unpair')
+    } finally {
+      setUnpairing(false)
+    }
+  }
+
+  // handleSaveWaRoutes persists the slug → workflow map. Empty slugs are
+  // dropped (skipped rather than error) to let users clear a row by blanking
+  // it; everything else is validated server-side (slug charset, workflow_id
+  // non-empty) and any error is surfaced.
+  const handleSaveWaRoutes = async () => {
+    try {
+      setWaRoutesSaving(true)
+      setWaRoutesError(null)
+      const payload: Record<string, { workflow_id: string; workshop_mode?: string; workspace_path?: string }> = {}
+      for (const row of waRoutes) {
+        const slug = row.slug.trim().toLowerCase()
+        if (!slug) continue
+        if (!row.workflow_id) {
+          throw new Error(`Row "@${slug}" has no workflow selected`)
+        }
+        // Look up the workflow's workspace_path from the discovered list so
+        // the backend can read its manifest for workshop_mode fallback.
+        const wf = workflows.find(w => w.manifest.id === row.workflow_id)
+        payload[slug] = {
+          workflow_id: row.workflow_id,
+          workspace_path: wf?.workspace_path || '',
+          workshop_mode: row.workshop_mode || undefined,
+        }
+      }
+      const data = await agentApi.updateWhatsAppRouting(payload)
+      const rows = Object.entries(data.routing || {}).map(([slug, r]) => ({
+        slug,
+        workflow_id: r.workflow_id,
+        workshop_mode: r.workshop_mode || '',
+      }))
+      setWaRoutes(rows)
+      setWaRoutesOriginal(rows)
+      setWaRoutesSaved(true)
+      setTimeout(() => setWaRoutesSaved(false), 2500)
+    } catch (err) {
+      setWaRoutesError(err instanceof Error ? err.message : 'Failed to save routing')
+    } finally {
+      setWaRoutesSaving(false)
+    }
   }
 
   const pollForTestReply = (testId: string) => {
@@ -360,6 +528,22 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                 <MessageSquare className="w-4 h-4 flex-shrink-0" />
                 <span className="flex-1 text-left truncate">Slack</span>
                 {slackConfig.enabled && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                )}
+              </button>
+
+              {/* WhatsApp channel */}
+              <button
+                onClick={() => setActiveSection('whatsapp')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                  activeSection === 'whatsapp'
+                    ? 'bg-accent text-accent-foreground font-medium'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <Phone className="w-4 h-4 flex-shrink-0" />
+                <span className="flex-1 text-left truncate">WhatsApp</span>
+                {waStatus?.connected && (
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
                 )}
               </button>
@@ -700,6 +884,276 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                   </Button>
                 </div>
               </>
+            )}
+
+            {/* ── WhatsApp Section ── */}
+            {activeSection === 'whatsapp' && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {waError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-700 dark:text-red-300">{waError}</p>
+                  </div>
+                )}
+
+                {/* Connector disabled at server startup */}
+                {waStatus && !waStatus.enabled && (
+                  <Card className="p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <h3 className="text-sm font-medium text-foreground">WhatsApp connector is disabled</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Set <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_ENABLED=true</code> in the
+                          server's <code className="px-1 py-0.5 bg-muted rounded">.env</code> and restart the
+                          agent. The session file path can be overridden via{' '}
+                          <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_SESSION_DB</code>.
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Status card */}
+                {waStatus && waStatus.enabled && (
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-medium text-foreground">Status</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Uses the unofficial WhatsApp Web protocol (whatsmeow). Pair your personal number once
+                          by scanning the QR below. On Android: tap the ⋮ menu → Linked Devices → Link a device.
+                          On iPhone: Settings → Linked Devices → Link Device.
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-0.5 text-xs">
+                        <span className="flex items-center gap-1.5">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              waStatus.connected ? 'bg-green-500' : waStatus.paired ? 'bg-amber-500' : 'bg-gray-400'
+                            }`}
+                          />
+                          <span className="text-foreground">
+                            {waStatus.connected ? 'Connected' : waStatus.paired ? 'Paired, offline' : 'Not paired'}
+                          </span>
+                        </span>
+                        {waStatus.own_jid && (
+                          <span className="text-muted-foreground font-mono text-[10px]">{waStatus.own_jid}</span>
+                        )}
+                        {(waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id) && (
+                          <span className="text-muted-foreground text-[10px]">
+                            bound to{' '}
+                            <span className="text-foreground">
+                              {waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                {/* QR pairing card — shown while unpaired */}
+                {waStatus && waStatus.enabled && !waStatus.paired && (
+                  <Card className="p-4">
+                    <div className="flex flex-col items-center gap-3">
+                      <h3 className="text-sm font-medium text-foreground">Scan to pair</h3>
+                      {waStatus.qr_available ? (
+                        <>
+                          <img
+                            src={agentApi.getWhatsAppPairURL(384, qrBust)}
+                            alt="WhatsApp pairing QR"
+                            width={256}
+                            height={256}
+                            className="rounded border border-border bg-white p-2"
+                          />
+                          <p className="text-xs text-muted-foreground text-center max-w-sm">
+                            Open WhatsApp on your phone. <strong>Android</strong>: ⋮ menu → Linked Devices → Link a
+                            device. <strong>iPhone</strong>: Settings → Linked Devices → Link Device. Then scan this
+                            code. The QR rotates every few seconds; this page refreshes it automatically.
+                          </p>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Waiting for the server to generate a QR…
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Workflow routing card — shown once paired. User types
+                    @<slug> at the start of a WhatsApp message to route it
+                    to a specific workflow instead of default multi-agent
+                    chat. Empty table = no routing, everything falls
+                    through to chat. */}
+                {waStatus && waStatus.enabled && waStatus.paired && (
+                  <Card className="p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="text-sm font-medium text-foreground">Workflow routing</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Map an <code>@slug</code> to a workflow. A WhatsApp message that starts with
+                          <code> @rca …</code> routes straight into the matching workflow. No prefix = default chat.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleSaveWaRoutes}
+                        disabled={
+                          waRoutesSaving ||
+                          JSON.stringify(waRoutes) === JSON.stringify(waRoutesOriginal)
+                        }
+                        className={`px-3 py-1 text-xs rounded-md transition-colors flex items-center gap-1 ${
+                          waRoutesSaved
+                            ? 'bg-green-600 text-white'
+                            : 'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50'
+                        }`}
+                      >
+                        {waRoutesSaving
+                          ? 'Saving…'
+                          : waRoutesSaved
+                          ? (<><CheckCircle className="w-3 h-3" /> Saved</>)
+                          : 'Save'}
+                      </button>
+                    </div>
+                    {waRoutesError && (
+                      <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                        {waRoutesError}
+                      </div>
+                    )}
+                    {waRoutes.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic mb-2">
+                        No routes yet. Click <em>Add route</em> below to map a slug.
+                      </p>
+                    )}
+                    {waRoutes.length > 0 && (
+                      <div className="space-y-1.5">
+                        {waRoutes.map((row, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5">
+                            <span className="text-xs text-muted-foreground select-none">@</span>
+                            <input
+                              type="text"
+                              value={row.slug}
+                              onChange={e => {
+                                const next = [...waRoutes]
+                                next[idx] = { ...row, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }
+                                setWaRoutes(next)
+                              }}
+                              placeholder="slug"
+                              className="w-28 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                            <select
+                              value={row.workflow_id}
+                              onChange={e => {
+                                const next = [...waRoutes]
+                                next[idx] = { ...row, workflow_id: e.target.value }
+                                setWaRoutes(next)
+                              }}
+                              className="flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                              <option value="">Select workflow…</option>
+                              {workflows.map(wf => (
+                                <option key={wf.manifest.id} value={wf.manifest.id}>
+                                  {wf.manifest.label || wf.manifest.id}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={row.workshop_mode}
+                              onChange={e => {
+                                const next = [...waRoutes]
+                                next[idx] = { ...row, workshop_mode: e.target.value }
+                                setWaRoutes(next)
+                              }}
+                              className="w-24 px-2 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                              <option value="">manifest</option>
+                              <option value="run">run</option>
+                              <option value="builder">builder</option>
+                              <option value="optimizer">optimizer</option>
+                              <option value="ask">ask</option>
+                            </select>
+                            <button
+                              onClick={() => {
+                                const next = [...waRoutes]
+                                next.splice(idx, 1)
+                                setWaRoutes(next)
+                              }}
+                              className="p-1 text-muted-foreground hover:text-red-600 transition-colors"
+                              title="Delete route"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setWaRoutes([...waRoutes, { slug: '', workflow_id: '', workshop_mode: '' }])}
+                      className="mt-2 px-2 py-1 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded flex items-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" /> Add route
+                    </button>
+                  </Card>
+                )}
+
+                {/* How-to-chat card — shown once paired. */}
+                {waStatus && waStatus.enabled && waStatus.paired && (
+                  <Card className="p-4">
+                    <h3 className="text-sm font-medium text-foreground mb-1.5">How to chat</h3>
+                    <div className="space-y-1.5 text-xs text-muted-foreground">
+                      <p>
+                        Open WhatsApp → <strong>Message Yourself</strong> chat → send any message. The bot replies
+                        in that thread. Messages you send to other contacts are ignored.
+                      </p>
+                      <p className="text-muted-foreground/80">
+                        For a proper separate-bot experience (like Slack's <code>@bot</code>), pair a second
+                        WhatsApp number — a second SIM, WhatsApp Business with a different number, or a virtual
+                        number from Twilio.
+                      </p>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Unpair card — shown once paired */}
+                {waStatus && waStatus.enabled && waStatus.paired && (
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-medium text-foreground">Unpair</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Drops the current device link and deletes the session file. You'll need to scan a new QR
+                          to pair again.
+                        </p>
+                      </div>
+                      <Button
+                        onClick={handleUnpairWhatsApp}
+                        disabled={unpairing}
+                        variant={unpairConfirm ? 'destructive' : 'outline'}
+                        size="sm"
+                        className="flex-shrink-0 whitespace-nowrap"
+                      >
+                        {unpairing ? (
+                          <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Unpairing…</>
+                        ) : unpairConfirm ? (
+                          <><Trash2 className="w-3.5 h-3.5 mr-1.5" /> Confirm unpair</>
+                        ) : (
+                          <>Unpair</>
+                        )}
+                      </Button>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Loading placeholder */}
+                {!waStatus && !waError && (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                )}
+              </div>
             )}
 
             {/* ── Simulate Section ── */}

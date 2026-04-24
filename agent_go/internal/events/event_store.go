@@ -153,14 +153,35 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 	}
 
 	payload := eventPayloadMap(e)
+	metadata := mapField(payload, "metadata")
 	correlationID := firstNonEmptyString(agentEventCorrelationID(e), stringField(payload, "correlation_id"))
 	delegationID := firstNonEmptyString(stringField(payload, "delegation_id"), correlationID)
 	backgroundAgentID := firstNonEmptyString(
 		stringField(payload, "background_agent_id"),
 		stringField(payload, "agent_id"),
 	)
-	workflowID := firstNonEmptyString(stringField(payload, "workflow_run_id"), stringField(payload, "workflow_id"))
-	stepID := firstNonEmptyString(stringField(payload, "workflow_step_id"), stringField(payload, "step_id"), stringField(payload, "route_id"))
+	workflowID := firstNonEmptyString(
+		backgroundAgentID,
+		normalizeWorkshopExecutionID(stringField(metadata, "workshop_step_id")),
+		normalizeWorkshopExecutionID(stringField(payload, "workshop_step_id")),
+		stringField(metadata, "workflow_run_id"),
+		stringField(payload, "workflow_run_id"),
+		stringField(metadata, "workflow_id"),
+		stringField(payload, "workflow_id"),
+		normalizeWorkshopExecutionID(correlationID),
+	)
+	stepID := firstNonEmptyString(
+		stringField(metadata, "current_step_id"),
+		stringField(metadata, "orchestrator_step_id"),
+		stringField(metadata, "workflow_step_id"),
+		stringField(metadata, "step_id"),
+		stringField(metadata, "route_id"),
+		stringField(payload, "current_step_id"),
+		stringField(payload, "orchestrator_step_id"),
+		stringField(payload, "workflow_step_id"),
+		stringField(payload, "step_id"),
+		stringField(payload, "route_id"),
+	)
 
 	if e.ExecutionID == "" {
 		switch {
@@ -170,12 +191,6 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 				e.ParentExecutionID = "main:" + sessionID
 				e.ExecutionKind = "delegation"
 			}
-		case e.Type == "orchestrator_agent_start" || e.Type == "orchestrator_agent_end" || e.Type == "orchestrator_agent_error":
-			if correlationID != "" {
-				e.ExecutionID = "agent:" + correlationID
-				e.ParentExecutionID = "main:" + sessionID
-				e.ExecutionKind = "agent"
-			}
 		case strings.HasPrefix(e.Type, "background_agent_") && backgroundAgentID != "":
 			e.ExecutionID = backgroundAgentID
 			e.ParentExecutionID = "main:" + sessionID
@@ -183,14 +198,25 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 		case stepID != "":
 			if workflowID != "" {
 				e.ExecutionID = "workflow-step:" + workflowID + ":" + stepID
-				e.ParentExecutionID = "workflow:" + workflowID
+				e.ParentExecutionID = workflowID
 			} else {
 				e.ExecutionID = "workflow-step:" + stepID
 				e.ParentExecutionID = "main:" + sessionID
 			}
 			e.ExecutionKind = "workflow_step"
+		case e.Type == "orchestrator_agent_start" || e.Type == "orchestrator_agent_end" || e.Type == "orchestrator_agent_error":
+			switch {
+			case workflowID != "":
+				e.ExecutionID = workflowID
+				e.ParentExecutionID = "main:" + sessionID
+				e.ExecutionKind = "workflow"
+			case correlationID != "":
+				e.ExecutionID = "agent:" + correlationID
+				e.ParentExecutionID = "main:" + sessionID
+				e.ExecutionKind = "agent"
+			}
 		case workflowID != "":
-			e.ExecutionID = "workflow:" + workflowID
+			e.ExecutionID = workflowID
 			e.ParentExecutionID = "main:" + sessionID
 			e.ExecutionKind = "workflow"
 		default:
@@ -241,6 +267,13 @@ func eventPayloadMap(event *Event) map[string]interface{} {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil
 	}
+	if nested := mapField(out, "data"); nested != nil {
+		for key, value := range nested {
+			if _, exists := out[key]; !exists {
+				out[key] = value
+			}
+		}
+	}
 	return out
 }
 
@@ -265,11 +298,36 @@ func stringField(record map[string]interface{}, key string) string {
 	return ""
 }
 
+func mapField(record map[string]interface{}, key string) map[string]interface{} {
+	if record == nil {
+		return nil
+	}
+	value, ok := record[key]
+	if !ok {
+		return nil
+	}
+	if nested, ok := value.(map[string]interface{}); ok {
+		return nested
+	}
+	return nil
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			return trimmed
 		}
+	}
+	return ""
+}
+
+func normalizeWorkshopExecutionID(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "workshop-workflow-") {
+		return strings.TrimPrefix(value, "workshop-")
+	}
+	if strings.HasPrefix(value, "workflow-full-") || strings.HasPrefix(value, "workflow-step-") {
+		return value
 	}
 	return ""
 }
@@ -285,6 +343,8 @@ func inferExecutionKind(executionID, sessionID string) string {
 	case strings.HasPrefix(executionID, "workflow-step:"):
 		return "workflow_step"
 	case strings.HasPrefix(executionID, "workflow:"):
+		return "workflow"
+	case strings.HasPrefix(executionID, "workflow-"):
 		return "workflow"
 	default:
 		return "execution"

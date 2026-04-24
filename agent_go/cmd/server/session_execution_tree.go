@@ -121,6 +121,7 @@ func sortSessionExecutionTree(node *SessionExecutionTreeNode) {
 }
 
 func eventDerivedExecutionName(event internalevents.Event, payload map[string]interface{}) string {
+	metadata := mapValue(payload["metadata"])
 	if name := stringValue(payload["name"]); name != "" {
 		return name
 	}
@@ -131,6 +132,9 @@ func eventDerivedExecutionName(event internalevents.Event, payload map[string]in
 		return agentType
 	}
 	if stepID := firstSessionExecutionString(
+		stringValue(metadata["current_step_id"]),
+		stringValue(metadata["orchestrator_step_id"]),
+		stringValue(metadata["step_id"]),
 		stringValue(payload["step_id"]),
 		stringValue(payload["workflow_step_id"]),
 		stringValue(payload["route_id"]),
@@ -163,6 +167,13 @@ func eventPayloadMap(event internalevents.Event) map[string]interface{} {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil
 	}
+	if nested := mapValue(payload["data"]); nested != nil {
+		for key, value := range nested {
+			if _, exists := payload[key]; !exists {
+				payload[key] = value
+			}
+		}
+	}
 	return payload
 }
 
@@ -171,6 +182,13 @@ func stringValue(value interface{}) string {
 		return strings.TrimSpace(s)
 	}
 	return ""
+}
+
+func mapValue(value interface{}) map[string]interface{} {
+	if nested, ok := value.(map[string]interface{}); ok {
+		return nested
+	}
+	return nil
 }
 
 func firstSessionExecutionString(values ...string) string {

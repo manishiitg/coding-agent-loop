@@ -144,3 +144,45 @@ func TestAddEventAssignsDelegationExecutionOwnership(t *testing.T) {
 		t.Fatalf("expected delegation kind, got %q", events[0].ExecutionKind)
 	}
 }
+
+func TestAddEventAssignsWorkflowStepOwnershipFromMetadata(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "workshop-tool",
+		Type:      string(pkgevents.ToolCallStart),
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:          pkgevents.ToolCallStart,
+			Timestamp:     now,
+			CorrelationID: "workshop-workflow-full-123",
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{
+					"tool_name": "execute_shell_command",
+					"metadata": map[string]interface{}{
+						"workshop_step_id":     "workshop-workflow-full-123",
+						"current_step_id":      "prepare-test-fixtures",
+						"orchestrator_step_id": "prepare-test-fixtures",
+					},
+				},
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "workflow-step:workflow-full-123:prepare-test-fixtures" {
+		t.Fatalf("expected workflow step execution ownership, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "workflow-full-123" {
+		t.Fatalf("expected workflow step parent workflow-full-123, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "workflow_step" {
+		t.Fatalf("expected workflow_step kind, got %q", events[0].ExecutionKind)
+	}
+}

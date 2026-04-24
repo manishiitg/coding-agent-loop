@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	internalevents "mcp-agent-builder-go/agent_go/internal/events"
+
 	"github.com/gorilla/mux"
 )
 
@@ -115,6 +117,150 @@ func sortSessionExecutionTree(node *SessionExecutionTreeNode) {
 	})
 	for _, child := range node.Children {
 		sortSessionExecutionTree(child)
+	}
+}
+
+func eventDerivedExecutionName(event internalevents.Event, payload map[string]interface{}) string {
+	if name := stringValue(payload["name"]); name != "" {
+		return name
+	}
+	if instruction := stringValue(payload["instruction"]); instruction != "" {
+		return instruction
+	}
+	if agentType := stringValue(payload["agent_type"]); agentType != "" {
+		return agentType
+	}
+	if stepID := firstSessionExecutionString(
+		stringValue(payload["step_id"]),
+		stringValue(payload["workflow_step_id"]),
+		stringValue(payload["route_id"]),
+	); stepID != "" {
+		return stepID
+	}
+	switch event.ExecutionKind {
+	case "delegation":
+		return "Delegation"
+	case "agent":
+		return "Agent"
+	case "workflow_step":
+		return "Workflow Step"
+	case "workflow":
+		return "Workflow"
+	default:
+		return "Execution"
+	}
+}
+
+func eventPayloadMap(event internalevents.Event) map[string]interface{} {
+	if event.Data == nil || event.Data.Data == nil {
+		return nil
+	}
+	raw, err := json.Marshal(event.Data.Data)
+	if err != nil {
+		return nil
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	return payload
+}
+
+func stringValue(value interface{}) string {
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func firstSessionExecutionString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]interface{}) (status string, completed bool, failed bool) {
+	switch event.Type {
+	case "delegation_end", "orchestrator_agent_end", "background_agent_completed":
+		if stringValue(payload["error"]) != "" || event.Error != "" {
+			return trackedExecutionStatusFailed, true, true
+		}
+		if success, ok := payload["success"].(bool); ok && !success {
+			return trackedExecutionStatusFailed, true, true
+		}
+		return trackedExecutionStatusCompleted, true, false
+	case "orchestrator_agent_error", "background_agent_failed":
+		return trackedExecutionStatusFailed, true, true
+	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled":
+		return trackedExecutionStatusCanceled, true, false
+	default:
+		return trackedExecutionStatusRunning, false, false
+	}
+}
+
+func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID string, nodes map[string]*SessionExecutionTreeNode) {
+	if api == nil || api.eventStore == nil {
+		return
+	}
+	for _, event := range api.eventStore.GetAllEventsRaw(sessionID) {
+		executionID := strings.TrimSpace(event.ExecutionID)
+		if executionID == "" || executionID == rootID || executionID == "main:"+sessionID {
+			continue
+		}
+		payload := eventPayloadMap(event)
+		parentID := strings.TrimSpace(event.ParentExecutionID)
+		if parentID == "" {
+			parentID = "main:" + sessionID
+		}
+		kind := strings.TrimSpace(event.ExecutionKind)
+		if kind == "" {
+			kind = "execution"
+		}
+
+		node := nodes[executionID]
+		if node == nil {
+			node = &SessionExecutionTreeNode{
+				ExecutionID:       executionID,
+				ParentExecutionID: parentID,
+				SessionID:         sessionID,
+				Source:            "event_stream",
+				Kind:              kind,
+				Name:              eventDerivedExecutionName(event, payload),
+				Status:            trackedExecutionStatusRunning,
+				StartedAt:         event.Timestamp,
+				Metadata: map[string]string{
+					"first_event_type": event.Type,
+				},
+			}
+			nodes[executionID] = node
+		}
+		if node.ParentExecutionID == "" {
+			node.ParentExecutionID = parentID
+		}
+		if node.Kind == "" {
+			node.Kind = kind
+		}
+		if node.Name == "" || node.Name == "Execution" {
+			node.Name = eventDerivedExecutionName(event, payload)
+		}
+		if event.Timestamp.Before(node.StartedAt) {
+			node.StartedAt = event.Timestamp
+		}
+
+		status, completed, failed := eventDerivedExecutionStatus(event, payload)
+		if completed {
+			node.Status = status
+			completedAt := event.Timestamp
+			node.CompletedAt = &completedAt
+			if failed {
+				if errText := firstSessionExecutionString(stringValue(payload["error"]), event.Error); errText != "" {
+					node.Error = errText
+				}
+			}
+		}
 	}
 }
 
@@ -230,6 +376,8 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 			Metadata:          cloneSessionExecutionMetadata(snap.Metadata),
 		}
 	}
+
+	api.addEventDerivedExecutionNodes(session.SessionID, rootID, nodes)
 
 	summary := SessionExecutionTreeSummary{
 		SessionID:     session.SessionID,

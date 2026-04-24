@@ -6673,6 +6673,18 @@
       "type": "string",
       "description": "Session identifier"
     },
+    "execution_id": {
+      "type": "string",
+      "description": "Backend-owned execution node identifier for this event"
+    },
+    "parent_execution_id": {
+      "type": "string",
+      "description": "Parent execution node identifier"
+    },
+    "execution_kind": {
+      "type": "string",
+      "description": "Semantic execution kind for this event"
+    },
     "error": {
       "type": "string",
       "description": "Error message if any"

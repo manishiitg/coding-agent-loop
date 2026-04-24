@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,12 +88,15 @@ func ShouldShowEvent(eventType string) bool {
 // Event represents a generic event that can be stored and retrieved
 // Both MCP agent and orchestrator events now use the same AgentEvent structure
 type Event struct {
-	ID        string             `json:"id"`
-	Type      string             `json:"type"`
-	Timestamp time.Time          `json:"timestamp"`
-	Data      *events.AgentEvent `json:"data,omitempty"` // Use AgentEvent directly - both systems compatible
-	Error     string             `json:"error,omitempty"`
-	SessionID string             `json:"session_id,omitempty"`
+	ID                string             `json:"id"`
+	Type              string             `json:"type"`
+	Timestamp         time.Time          `json:"timestamp"`
+	Data              *events.AgentEvent `json:"data,omitempty"` // Use AgentEvent directly - both systems compatible
+	Error             string             `json:"error,omitempty"`
+	SessionID         string             `json:"session_id,omitempty"`
+	ExecutionID       string             `json:"execution_id,omitempty"`
+	ParentExecutionID string             `json:"parent_execution_id,omitempty"`
+	ExecutionKind     string             `json:"execution_kind,omitempty"`
 }
 
 // MarshalJSON customizes JSON serialization to flatten the event structure for frontend
@@ -109,6 +113,15 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	if e.Error != "" {
 		result["error"] = e.Error
 	}
+	if e.ExecutionID != "" {
+		result["execution_id"] = e.ExecutionID
+	}
+	if e.ParentExecutionID != "" {
+		result["parent_execution_id"] = e.ParentExecutionID
+	}
+	if e.ExecutionKind != "" {
+		result["execution_kind"] = e.ExecutionKind
+	}
 
 	// Add the original data field - this is the only data structure we use now
 	if e.Data != nil {
@@ -116,6 +129,166 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(result)
+}
+
+func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(e.SessionID)
+	}
+	if sessionID == "" {
+		return
+	}
+	if e.SessionID == "" {
+		e.SessionID = sessionID
+	}
+
+	if e.ExecutionID == "" {
+		if inherited := findParentExecutionOwnership(e, previous); inherited != nil {
+			e.ExecutionID = inherited.ExecutionID
+			e.ParentExecutionID = inherited.ParentExecutionID
+			e.ExecutionKind = inherited.ExecutionKind
+			return
+		}
+	}
+
+	payload := eventPayloadMap(e)
+	correlationID := firstNonEmptyString(agentEventCorrelationID(e), stringField(payload, "correlation_id"))
+	delegationID := firstNonEmptyString(stringField(payload, "delegation_id"), correlationID)
+	backgroundAgentID := firstNonEmptyString(
+		stringField(payload, "background_agent_id"),
+		stringField(payload, "agent_id"),
+	)
+	workflowID := firstNonEmptyString(stringField(payload, "workflow_run_id"), stringField(payload, "workflow_id"))
+	stepID := firstNonEmptyString(stringField(payload, "workflow_step_id"), stringField(payload, "step_id"), stringField(payload, "route_id"))
+
+	if e.ExecutionID == "" {
+		switch {
+		case e.Type == "delegation_start" || e.Type == "delegation_end" || strings.HasPrefix(delegationID, "delegation-"):
+			if delegationID != "" {
+				e.ExecutionID = "delegation:" + delegationID
+				e.ParentExecutionID = "main:" + sessionID
+				e.ExecutionKind = "delegation"
+			}
+		case e.Type == "orchestrator_agent_start" || e.Type == "orchestrator_agent_end" || e.Type == "orchestrator_agent_error":
+			if correlationID != "" {
+				e.ExecutionID = "agent:" + correlationID
+				e.ParentExecutionID = "main:" + sessionID
+				e.ExecutionKind = "agent"
+			}
+		case strings.HasPrefix(e.Type, "background_agent_") && backgroundAgentID != "":
+			e.ExecutionID = backgroundAgentID
+			e.ParentExecutionID = "main:" + sessionID
+			e.ExecutionKind = "background_agent"
+		case stepID != "":
+			if workflowID != "" {
+				e.ExecutionID = "workflow-step:" + workflowID + ":" + stepID
+				e.ParentExecutionID = "workflow:" + workflowID
+			} else {
+				e.ExecutionID = "workflow-step:" + stepID
+				e.ParentExecutionID = "main:" + sessionID
+			}
+			e.ExecutionKind = "workflow_step"
+		case workflowID != "":
+			e.ExecutionID = "workflow:" + workflowID
+			e.ParentExecutionID = "main:" + sessionID
+			e.ExecutionKind = "workflow"
+		default:
+			e.ExecutionID = "main:" + sessionID
+			e.ParentExecutionID = "session:" + sessionID
+			e.ExecutionKind = "main_agent"
+		}
+	}
+
+	if e.ParentExecutionID == "" {
+		if e.ExecutionID == "main:"+sessionID {
+			e.ParentExecutionID = "session:" + sessionID
+		} else {
+			e.ParentExecutionID = "main:" + sessionID
+		}
+	}
+	if e.ExecutionKind == "" {
+		e.ExecutionKind = inferExecutionKind(e.ExecutionID, sessionID)
+	}
+}
+
+func findParentExecutionOwnership(event *Event, previous []Event) *Event {
+	if event == nil || event.Data == nil || event.Data.ParentID == "" {
+		return nil
+	}
+	parentID := event.Data.ParentID
+	for i := len(previous) - 1; i >= 0; i-- {
+		prev := previous[i]
+		if prev.ExecutionID == "" {
+			continue
+		}
+		if prev.ID == parentID || (prev.Data != nil && prev.Data.SpanID == parentID) {
+			return &prev
+		}
+	}
+	return nil
+}
+
+func eventPayloadMap(event *Event) map[string]interface{} {
+	if event == nil || event.Data == nil || event.Data.Data == nil {
+		return nil
+	}
+	raw, err := json.Marshal(event.Data.Data)
+	if err != nil {
+		return nil
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func agentEventCorrelationID(event *Event) string {
+	if event == nil || event.Data == nil {
+		return ""
+	}
+	return strings.TrimSpace(event.Data.CorrelationID)
+}
+
+func stringField(record map[string]interface{}, key string) string {
+	if record == nil {
+		return ""
+	}
+	value, ok := record[key]
+	if !ok {
+		return ""
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func inferExecutionKind(executionID, sessionID string) string {
+	switch {
+	case executionID == "main:"+sessionID:
+		return "main_agent"
+	case strings.HasPrefix(executionID, "delegation:"):
+		return "delegation"
+	case strings.HasPrefix(executionID, "agent:"):
+		return "agent"
+	case strings.HasPrefix(executionID, "workflow-step:"):
+		return "workflow_step"
+	case strings.HasPrefix(executionID, "workflow:"):
+		return "workflow"
+	default:
+		return "execution"
+	}
 }
 
 // ActivityCallback is called when an event is added to update session activity
@@ -215,6 +388,7 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 		es.events[sessionID] = make([]Event, 0)
 		es.sessionStartIndices[sessionID] = 0
 	}
+	event.ensureExecutionOwnership(sessionID, es.events[sessionID])
 
 	// Add event
 	es.events[sessionID] = append(es.events[sessionID], event)

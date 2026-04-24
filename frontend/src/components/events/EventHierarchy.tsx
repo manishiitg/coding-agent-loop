@@ -138,6 +138,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Per-group expand state for tool call groups (keyed by first event ID in group)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedGroupVisibleCounts, setExpandedGroupVisibleCounts] = useState<Record<string, number>>({});
+  const [expandedOwnedLogPanels, setExpandedOwnedLogPanels] = useState<Set<string>>(new Set());
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
@@ -409,6 +410,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return (correlationId && agentType) ? `agent_session:${correlationId}:${agentType}` : null;
   }, []);
 
+  const getExecutionId = useCallback((event: PollingEvent): string | undefined => {
+    const direct = event.execution_id?.trim();
+    if (direct) return direct;
+    const data = asRecord(event.data);
+    const payload = asRecord(data?.data) || data;
+    return firstStringField([payload, data], ['execution_id']);
+  }, []);
+
   const summarizeEventForOwnershipDebug = useCallback((event: PollingEvent, index?: number) => {
     const eventRecord = event as unknown as Record<string, unknown>;
     const data = asRecord(event.data);
@@ -422,6 +431,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       type: event.type,
       timestamp: event.timestamp ?? null,
       parentId: getParentId(event) ?? null,
+      executionId: getExecutionId(event) ?? null,
+      parentExecutionId: event.parent_execution_id ?? null,
+      executionKind: event.execution_kind ?? null,
       correlationId: firstStringField([eventRecord, data, payload, metadata], ['correlation_id']) ?? null,
       parentCorrelationId: firstStringField([eventRecord, data, payload, metadata], ['parent_correlation_id']) ?? null,
       delegationId: firstStringField([payload, data], ['delegation_id']) ?? null,
@@ -436,7 +448,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       dataKeys: data ? Object.keys(data).slice(0, 12) : [],
       payloadKeys: payload ? Object.keys(payload).slice(0, 12) : [],
     };
-  }, [getParentId]);
+  }, [getExecutionId, getParentId]);
 
   // Single-pass derivation: delegationStats + backgroundAgentStats + sessionEvents (was 3 separate useMemos)
   const { delegationStats, backgroundAgentStats, findEventsBetweenStartEnd } = useMemo(() => {
@@ -539,16 +551,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         for (let j = startInfo.index + 1; j < endInfo.index; j++) eventIds.add(displayEvents[j].id)
         eventIds.add(endInfo.event.id)
       } else {
-        // In-progress session (no end event yet): include tool-call events after start
-        // that share the same correlation_id. Without this, tool calls from a still-running
-        // agent become root events and appear at the bottom of the timeline instead of being
-        // grouped under their agent card.
-        // Only include agent-internal event types — NOT user_message, delegation_start, etc.
+        // In-progress session (no end event yet): prefer backend-owned execution_id.
+        // Fallback to the older correlation-id allowlist for events emitted before the
+        // backend attached execution ownership.
+        const sessionExecutionId = getExecutionId(startInfo.event)
         const parts = sessionKey.split(':')
         const sessionCorrelationId: string | undefined = parts[1] // agent_session:{correlationId}:{agentType}
-        if (sessionCorrelationId) {
-          for (let j = startInfo.index + 1; j < displayEvents.length; j++) {
-            const evt = displayEvents[j]
+        for (let j = startInfo.index + 1; j < displayEvents.length; j++) {
+          const evt = displayEvents[j]
+          if (sessionExecutionId && getExecutionId(evt) === sessionExecutionId) {
+            eventIds.add(evt.id)
+            continue
+          }
+
+          if (sessionCorrelationId) {
             if (!evt.type || !IN_PROGRESS_CHILD_TYPES.has(evt.type)) continue
             const evtData = evt.data as Record<string, unknown> | undefined
             const innerData = (evtData?.data && typeof evtData.data === 'object') ? evtData.data as Record<string, unknown> : undefined
@@ -566,7 +582,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     })
 
     return { delegationStats: dStats, backgroundAgentStats: bgStats, findEventsBetweenStartEnd: sessionEvents }
-  }, [displayEvents, getAgentSessionKey]);
+  }, [displayEvents, getAgentSessionKey, getExecutionId]);
 
 
   const toggleNode = useCallback((eventId: string) => {
@@ -623,6 +639,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       ...prev,
       [groupKey]: (prev[groupKey] ?? INITIAL_EXPANDED_TOOL_CALLS) + EXPANDED_TOOL_CALLS_PAGE_SIZE,
     }));
+  }, []);
+
+  const toggleOwnedLogPanel = useCallback((eventId: string, open: boolean) => {
+    setExpandedOwnedLogPanels(prev => {
+      const next = new Set(prev);
+      if (open) next.add(eventId);
+      else next.delete(eventId);
+      return next;
+    });
   }, []);
 
   const eventTree = useMemo(() => {
@@ -767,7 +792,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getAgentSessionKey, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -1123,6 +1148,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start';
+    const isOwnedLogPanelOpen = ownsInternalLogPanel && expandedOwnedLogPanels.has(event.id);
     
     // Base indentation - use level + 1 to ensure at least one level of indent (20px) for visibility
     const indentLevel = level + 1;
@@ -1178,16 +1204,18 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 compact={compact}
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
-                childrenNodes={ownsInternalLogPanel ? children : (isExpanded ? children : undefined)}
+                childrenNodes={ownsInternalLogPanel ? (isOwnedLogPanelOpen ? children : undefined) : (isExpanded ? children : undefined)}
                 childrenCount={children.length}
                 onToggleNode={toggleNode}
+                ownedLogPanelOpen={isOwnedLogPanelOpen}
+                onToggleOwnedLogPanel={ownsInternalLogPanel ? (open) => toggleOwnedLogPanel(event.id, open) : undefined}
               />
             </div>
           </div>
         </div>
       </div>
     );
-  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
+  }, [collapsedSessions, expandedOwnedLogPanels, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, toggleOwnedLogPanel, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats, showMoreToolCalls, toggleToolCallGroup]);
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.

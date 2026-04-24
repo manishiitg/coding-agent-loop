@@ -373,6 +373,9 @@ export type PollingEvent = PollingEventSchema & {
   trace_id?: string
   correlation_id?: string
   session_id?: string
+  execution_id?: string
+  parent_execution_id?: string
+  execution_kind?: string
   component?: string
   event_index?: number
 }

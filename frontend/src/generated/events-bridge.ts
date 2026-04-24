@@ -23,6 +23,18 @@ export interface PollingEvent {
    */
   session_id?: string;
   /**
+   * Backend-owned execution node identifier for this event
+   */
+  execution_id?: string;
+  /**
+   * Parent execution node identifier
+   */
+  parent_execution_id?: string;
+  /**
+   * Semantic execution kind for this event
+   */
+  execution_kind?: string;
+  /**
    * Error message if any
    */
   error?: string;

@@ -209,6 +209,8 @@ interface EventDispatcherProps {
   childrenNodes?: EventNode[]
   childrenCount?: number // Total children count (available even when collapsed)
   onToggleNode?: (eventId: string) => void
+  ownedLogPanelOpen?: boolean
+  onToggleOwnedLogPanel?: (open: boolean) => void
 }
 
 /**
@@ -381,14 +383,24 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   backgroundAgentStats,
   childrenNodes,
   childrenCount,
-  onToggleNode
+  onToggleNode,
+  ownedLogPanelOpen,
+  onToggleOwnedLogPanel
 }) => {
   // Ref for auto-scrolling sub-agent logs
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const isAutoScrollingRef = React.useRef(false)
   const userScrolledUpRef = React.useRef(false)
   const prevChildrenLengthRef = React.useRef(0)
-  const [isOwnedLogPanelOpen, setIsOwnedLogPanelOpen] = React.useState(false)
+  const [localOwnedLogPanelOpen, setLocalOwnedLogPanelOpen] = React.useState(false)
+  const isOwnedLogPanelOpen = ownedLogPanelOpen ?? localOwnedLogPanelOpen
+  const setIsOwnedLogPanelOpen = React.useCallback((open: boolean) => {
+    if (onToggleOwnedLogPanel) {
+      onToggleOwnedLogPanel(open)
+      return
+    }
+    setLocalOwnedLogPanelOpen(open)
+  }, [onToggleOwnedLogPanel])
 
   // Handle scroll events to detect if user scrolled up manually
   const handleScroll = React.useCallback(() => {
@@ -596,7 +608,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const liveStats = data.correlation_id ? delegationStats?.get(data.correlation_id) : undefined
     const childCount = childrenCount ?? 0
     const toolCount = liveStats?.toolCalls ?? 0
-    const nonToolChildCount = Math.max(0, childCount - toolCount)
     const hasOwnedLogs = childCount > 0
     return (
       <CompactWrapper compact={compact}>
@@ -620,11 +631,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               {toolCount > 0 && (
                 <span className="truncate opacity-60">
                   • {toolCount} tool{toolCount !== 1 ? 's' : ''}
-                  {nonToolChildCount > 0 ? `, ${nonToolChildCount} other` : ''}
                 </span>
-              )}
-              {!toolCount && nonToolChildCount > 0 && (
-                <span className="truncate opacity-60">• agent/background events</span>
               )}
             </button>
           </div>
@@ -1772,12 +1779,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       prevProps.mode !== nextProps.mode ||
       prevProps.isApproving !== nextProps.isApproving ||
       prevProps.isCollapsed !== nextProps.isCollapsed ||
-      prevProps.eventCount !== nextProps.eventCount) {
+      prevProps.eventCount !== nextProps.eventCount ||
+      prevProps.ownedLogPanelOpen !== nextProps.ownedLogPanelOpen) {
     return false
   }
   // For delegation and background agent events, also compare live stats so they re-render
   if ((prevProps.event.type === 'delegation_start' || prevProps.event.type === 'delegation_end' ||
-       prevProps.event.type === 'background_agent_started' || prevProps.event.type === 'background_agent_completed') && prevProps.delegationStats !== nextProps.delegationStats) {
+       prevProps.event.type === 'background_agent_started' || prevProps.event.type === 'background_agent_completed' ||
+       prevProps.event.type === 'orchestrator_agent_start') && prevProps.delegationStats !== nextProps.delegationStats) {
     return false
   }
   if ((prevProps.event.type === 'background_agent_started') && prevProps.backgroundAgentStats !== nextProps.backgroundAgentStats) {

@@ -388,6 +388,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   const isAutoScrollingRef = React.useRef(false)
   const userScrolledUpRef = React.useRef(false)
   const prevChildrenLengthRef = React.useRef(0)
+  const [isOwnedLogPanelOpen, setIsOwnedLogPanelOpen] = React.useState(false)
 
   // Handle scroll events to detect if user scrolled up manually
   const handleScroll = React.useCallback(() => {
@@ -596,6 +597,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const childCount = childrenCount ?? 0
     const toolCount = liveStats?.toolCalls ?? 0
     const nonToolChildCount = Math.max(0, childCount - toolCount)
+    const hasOwnedLogs = childCount > 0
     return (
       <CompactWrapper compact={compact}>
         <OrchestratorAgentStartEventDisplay
@@ -606,10 +608,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           toolCallCount={liveStats?.toolCalls}
           latestToolLabel={liveStats?.latestToolLabel || liveStats?.latestToolName}
         />
-        {!childrenNodes && (childrenCount ?? 0) > 0 && onToggleNode && (
+        {!isOwnedLogPanelOpen && hasOwnedLogs && (
           <div className="mt-1 ml-1">
             <button
-              onClick={() => onToggleNode(event.id)}
+              onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
               <span className="font-medium">
@@ -628,10 +630,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           </div>
         )}
         {/* Render children (tool calls) when agent has grouped events via correlation_id */}
-        {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
+        {isOwnedLogPanelOpen && childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
             <button
-              onClick={() => onToggleNode(event.id)}
+              onClick={() => setIsOwnedLogPanelOpen(false)}
               className="mb-1 px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
               <span className="font-medium">− collapse logs</span>
@@ -1355,10 +1357,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         </details>
 
         {/* Tool calls toggle — show "+ N tool calls" when collapsed, full list when expanded */}
-        {onToggleNode && !childrenNodes && (childrenCount ?? 0) > 0 && (
+        {!isOwnedLogPanelOpen && (childrenCount ?? 0) > 0 && (
           <div className="mt-1 ml-1">
             <button
-              onClick={() => onToggleNode(event.id)}
+              onClick={() => setIsOwnedLogPanelOpen(true)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
             >
               + {childrenCount} event{childrenCount !== 1 ? 's' : ''}
@@ -1367,10 +1369,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           </div>
         )}
         {/* Hierarchical Execution Logs - Shown when expanded via hierarchy arrow */}
-        {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
+        {isOwnedLogPanelOpen && childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
             <button
-              onClick={() => onToggleNode(event.id)}
+              onClick={() => setIsOwnedLogPanelOpen(false)}
               className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors mb-1"
             >
               − collapse

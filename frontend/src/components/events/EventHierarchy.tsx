@@ -28,6 +28,33 @@ const IN_PROGRESS_CHILD_TYPES = new Set([
 
 const INITIAL_EXPANDED_TOOL_CALLS = 24;
 const EXPANDED_TOOL_CALLS_PAGE_SIZE = 24;
+const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
+
+function isEventHierarchyDebugEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  const debugWindow = window as unknown as { __EVENT_HIERARCHY_DEBUG__?: boolean };
+  if (debugWindow.__EVENT_HIERARCHY_DEBUG__ === true) return true;
+  try {
+    return window.localStorage.getItem(EVENT_HIERARCHY_DEBUG_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+}
+
+function firstStringField(records: Array<Record<string, unknown> | undefined>, fields: string[]): string | undefined {
+  for (const record of records) {
+    if (!record) continue;
+    for (const field of fields) {
+      const value = record[field];
+      if (typeof value === 'string' && value.trim() !== '') return value;
+    }
+  }
+  return undefined;
+}
 
 function truncateToolSummary(value: string, maxLength = 120): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
@@ -329,18 +356,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return returnStable(capped);
   }, [events, loadedOlderEvents, viewMode]);
 
-  useEffect(() => {
-    const interesting = displayEvents.filter(event =>
-      event.type === 'user_message' ||
-      event.type === 'tool_call_start' ||
-      event.type === 'tool_call_end' ||
-      event.type === 'delegation_start' ||
-      event.type === 'orchestrator_agent_start' ||
-      event.type === 'background_agent_started'
-    )
-    console.log('[RENDER_BOUNDARY]', interesting.slice(-20).map(summarizeEventForDebug))
-  }, [displayEvents]);
-
   // Tool call grouping is done in flattenedItems (after tree building + flattening),
   // so sub-agent events — which are excluded from the flat list at delegation_start nodes —
   // are never mixed into main agent tool call groups.
@@ -393,6 +408,35 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
     return (correlationId && agentType) ? `agent_session:${correlationId}:${agentType}` : null;
   }, []);
+
+  const summarizeEventForOwnershipDebug = useCallback((event: PollingEvent, index?: number) => {
+    const eventRecord = event as unknown as Record<string, unknown>;
+    const data = asRecord(event.data);
+    const payload = asRecord(data?.data) || asRecord(data?.fields) || data;
+    const metadata = asRecord(data?.metadata) || asRecord(payload?.metadata);
+    const toolParams = asRecord(payload?.tool_params);
+
+    return {
+      index,
+      id: event.id,
+      type: event.type,
+      timestamp: event.timestamp ?? null,
+      parentId: getParentId(event) ?? null,
+      correlationId: firstStringField([eventRecord, data, payload, metadata], ['correlation_id']) ?? null,
+      parentCorrelationId: firstStringField([eventRecord, data, payload, metadata], ['parent_correlation_id']) ?? null,
+      delegationId: firstStringField([payload, data], ['delegation_id']) ?? null,
+      backgroundAgentId: firstStringField([payload, data], ['background_agent_id']) ?? null,
+      agentId: firstStringField([payload, data], ['agent_id']) ?? null,
+      agentType: firstStringField([payload, data], ['agent_type']) ?? null,
+      workflowId: firstStringField([payload, data, metadata], ['workflow_id', 'workflow_run_id']) ?? null,
+      stepId: firstStringField([payload, data, metadata], ['step_id', 'workflow_step_id']) ?? null,
+      routeId: firstStringField([payload, data, metadata], ['route_id']) ?? null,
+      subAgentStep: firstStringField([payload, data], ['sub_agent_step']) ?? null,
+      toolName: firstStringField([payload, toolParams], ['tool_name', 'name']) ?? null,
+      dataKeys: data ? Object.keys(data).slice(0, 12) : [],
+      payloadKeys: payload ? Object.keys(payload).slice(0, 12) : [],
+    };
+  }, [getParentId]);
 
   // Single-pass derivation: delegationStats + backgroundAgentStats + sessionEvents (was 3 separate useMemos)
   const { delegationStats, backgroundAgentStats, findEventsBetweenStartEnd } = useMemo(() => {
@@ -726,6 +770,78 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
 
   useEffect(() => {
+    if (!isEventHierarchyDebugEnabled()) return;
+
+    const eventById = new Map(displayEvents.map(event => [event.id, event]));
+    const treeRows: Array<Record<string, unknown>> = [];
+    const walk = (nodes: EventNode[], depth: number, path: string) => {
+      nodes.forEach((node, index) => {
+        treeRows.push({
+          ...summarizeEventForOwnershipDebug(node.event),
+          depth,
+          path: path ? `${path}.${index}` : `${index}`,
+          childCount: node.children.length,
+          isExpanded: node.isExpanded,
+        });
+        walk(node.children, depth + 1, path ? `${path}.${index}` : `${index}`);
+      });
+    };
+    walk(eventTree, 0, '');
+
+    const sessionMembership = Array.from(findEventsBetweenStartEnd.entries()).map(([sessionKey, eventIds]) => ({
+      sessionKey,
+      count: eventIds.size,
+      events: Array.from(eventIds).map(eventId => {
+        const event = eventById.get(eventId);
+        return event ? `${event.type}:${event.id}` : `missing:${eventId}`;
+      }),
+    }));
+
+    const delegationStatsRows = Array.from(delegationStats.entries()).map(([id, stats]) => ({ id, ...stats }));
+    const backgroundAgentStatsRows = Array.from(backgroundAgentStats.entries()).map(([id, stats]) => ({ id, ...stats }));
+    const eventRows = displayEvents.map((event, index) => summarizeEventForOwnershipDebug(event, index));
+    const interestingRows = eventRows.filter(row =>
+      row.type === 'user_message' ||
+      row.type === 'tool_call_start' ||
+      row.type === 'tool_call_end' ||
+      row.type === 'delegation_start' ||
+      row.type === 'delegation_end' ||
+      row.type === 'orchestrator_agent_start' ||
+      row.type === 'orchestrator_agent_end' ||
+      row.type === 'background_agent_started' ||
+      row.type === 'background_agent_completed' ||
+      row.type === 'learn_code_script_execution'
+    );
+
+    console.groupCollapsed(
+      `[EVENT_HIERARCHY_DEBUG] tab=${tabIdProp ?? activeTabId ?? 'unknown'} events=${displayEvents.length} roots=${eventTree.length}`
+    );
+    console.log('Enable/disable with localStorage key:', EVENT_HIERARCHY_DEBUG_STORAGE_KEY);
+    console.log('interestingEvents', interestingRows);
+    console.log('allEventOwnershipRows', eventRows);
+    console.log('computedTreeRows', treeRows);
+    console.log('sessionMembership', sessionMembership);
+    console.log('delegationStats', delegationStatsRows);
+    console.log('backgroundAgentStats', backgroundAgentStatsRows);
+    console.log('rawRecentEvents', displayEvents.slice(-50));
+    console.log('renderBoundaryRecent', interestingRows.slice(-20).map(row => {
+      const event = eventById.get(row.id as string);
+      return event ? summarizeEventForDebug(event) : row;
+    }));
+    console.groupEnd();
+  }, [
+    activeTabId,
+    backgroundAgentStats,
+    delegationStats,
+    displayEvents,
+    eventTree,
+    findEventsBetweenStartEnd,
+    summarizeEventForOwnershipDebug,
+    tabIdProp,
+  ]);
+
+  useEffect(() => {
+    if (!isEventHierarchyDebugEnabled()) return;
     const learnCodeEvents = displayEvents.filter(event => event.type === 'learn_code_script_execution');
     if (learnCodeEvents.length === 0) return;
 
@@ -1006,6 +1122,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     if (!node) return null;
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
+    const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start';
     
     // Base indentation - use level + 1 to ensure at least one level of indent (20px) for visibility
     const indentLevel = level + 1;
@@ -1033,7 +1150,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           className="event-tree-item relative z-10"
           style={{ paddingLeft: `${indent}px` }}
         >
-          {hasChildren && event.type !== 'delegation_start' && (
+          {hasChildren && !ownsInternalLogPanel && (
             <button
               onClick={() => toggleNode(event.id)}
               className="expand-button"
@@ -1061,7 +1178,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 compact={compact}
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
-                childrenNodes={isExpanded ? children : undefined}
+                childrenNodes={ownsInternalLogPanel ? children : (isExpanded ? children : undefined)}
                 childrenCount={children.length}
                 onToggleNode={toggleNode}
               />

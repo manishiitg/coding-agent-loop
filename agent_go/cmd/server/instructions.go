@@ -31,6 +31,16 @@ type workspacePaths struct {
 	ChatHistory string
 }
 
+func resolveWorkspacePath(docsRoot, rel string) string {
+	if rel == "" {
+		return rel
+	}
+	if strings.HasPrefix(rel, "/") || docsRoot == "" {
+		return rel
+	}
+	return docsRoot + "/" + rel
+}
+
 func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePaths {
 	if chatsFolder == "" {
 		chatsFolder = "_users/default/Chats"
@@ -38,22 +48,16 @@ func newWorkspacePaths(docsRoot, chatsFolder, memoryFolder string) workspacePath
 	if memoryFolder == "" {
 		memoryFolder = "_users/default/memories"
 	}
-	abs := func(rel string) string {
-		if docsRoot == "" {
-			return rel
-		}
-		return docsRoot + "/" + rel
-	}
 	return workspacePaths{
 		DocsRoot:    docsRoot,
-		Chats:       abs(chatsFolder),
-		Skills:      abs("skills"),
-		Workflow:    abs("Workflow"),
-		Downloads:   abs("Downloads"),
-		Subagents:   abs("subagents"),
-		Config:      abs("config"),
-		Memory:      abs(memoryFolder),
-		ChatHistory: abs(strings.TrimSuffix(chatsFolder, "/Chats") + "/chat_history"),
+		Chats:       resolveWorkspacePath(docsRoot, chatsFolder),
+		Skills:      resolveWorkspacePath(docsRoot, "skills"),
+		Workflow:    resolveWorkspacePath(docsRoot, "Workflow"),
+		Downloads:   resolveWorkspacePath(docsRoot, "Downloads"),
+		Subagents:   resolveWorkspacePath(docsRoot, "subagents"),
+		Config:      resolveWorkspacePath(docsRoot, "config"),
+		Memory:      resolveWorkspacePath(docsRoot, memoryFolder),
+		ChatHistory: resolveWorkspacePath(docsRoot, strings.TrimSuffix(chatsFolder, "/Chats")+"/chat_history"),
 	}
 }
 
@@ -92,6 +96,57 @@ Organize output files under descriptive project folders — never dump files at 
 
 Examples: ` + "`quarterly-sales-analysis/`" + `, ` + "`aws-cost-report/`" + `, ` + "`bank-statement-parsing/`" + `
 Reuse existing project folders for follow-up work on the same topic.
+`
+}
+
+// GetWorkflowPhaseWorkspaceMap returns workflow-phase-specific workspace instructions.
+// Unlike chat mode, workflow-phase work should treat the active workflow folder as the
+// primary writable root and avoid surfacing internal per-user Chats paths.
+func GetWorkflowPhaseWorkspaceMap(docsRoot, workflowFolder, memoryFolder string) string {
+	if strings.TrimSpace(workflowFolder) == "" {
+		return GetWorkspaceMap(docsRoot, "", memoryFolder)
+	}
+
+	workflowFolder = path.Clean(workflowFolder)
+	absWorkflowFolder := resolveWorkspacePath(docsRoot, workflowFolder)
+	absPlanningFolder := resolveWorkspacePath(docsRoot, path.Join(workflowFolder, "planning"))
+	absWorkflowRoot := resolveWorkspacePath(docsRoot, "Workflow")
+	absDownloads := resolveWorkspacePath(docsRoot, "Downloads")
+	absConfig := resolveWorkspacePath(docsRoot, "config")
+	absMemory := resolveWorkspacePath(docsRoot, memoryFolder)
+
+	return `
+## Workspace
+
+**Always use absolute paths** in shell commands. Root: ` + "`" + docsRoot + "`" + `
+
+**Current writable workflow folder:** ` + "`" + absWorkflowFolder + "/`" + `
+
+Save workflow outputs, generated media, test artifacts, and builder-side files inside the active workflow folder above. Do **not** default to Chats for builder work — Chats is internal session storage, not the primary workflow output location.
+
+| Path | Access | Purpose |
+|------|--------|---------|
+| ` + "`" + absWorkflowFolder + "/`" + ` | read/write | Active workflow workspace — save builder outputs and generated files here |
+| ` + "`" + absPlanningFolder + "/`" + ` | read-only via shell | Plan/config source of truth — inspect freely, but change it through workflow/builder tools rather than raw file writes |
+| ` + "`" + absConfig + "/`" + ` | read/write | Session config (tier config, provider auth, image config) |
+| ` + "`" + absMemory + "/`" + ` | read/write | Persistent memory (use save_memory / recall_memory tools) |
+| ` + "`" + absDownloads + "/`" + ` | read/write | Scratchpad for downloads and browser artifacts |
+| ` + "`" + absWorkflowRoot + "/`" + ` | read-only outside the active workflow | Other workflow definitions |
+
+### Builder File Placement
+
+Keep workflow-related files under the active workflow folder so they stay with the workflow:
+
+` + "```" + `
+` + absWorkflowFolder + `/
+  reports/                ← report plan and report assets
+  db/                     ← structured workflow state and results
+  knowledgebase/          ← durable narrative knowledge
+  runs/                   ← execution outputs
+  <other-artifacts>/      ← generated images, videos, temp analysis files
+` + "```" + `
+
+If you generate a test image, video, or other artifact for this workflow, place it somewhere under ` + "`" + absWorkflowFolder + "/`" + `.
 `
 }
 

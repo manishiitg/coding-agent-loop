@@ -1850,10 +1850,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							}
 						}
 						preUserMessage := eoa.executionOnlyUserMessageProcessor(templateVars)
-						var preExecLLM string
-						if executionAgent.GetConfig() != nil && executionAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
-							preExecLLM = fmt.Sprintf("%s/%s", executionAgent.GetConfig().LLMConfig.Primary.Provider, executionAgent.GetConfig().LLMConfig.Primary.ModelID)
-						}
+						preExecLLM := agentConfigModelLabel(executionAgent.GetConfig())
 						fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, 0)
 						hcpo.preSavePromptsJSON(stepIndex, step.GetID(), stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
 					}

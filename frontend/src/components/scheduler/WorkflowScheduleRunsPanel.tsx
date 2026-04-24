@@ -349,7 +349,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+  const [expandedJobIds, setExpandedJobIds] = useState<string[]>([])
   const [activeView, setActiveView] = useState<SchedulePanelView>('workflows')
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -360,17 +360,30 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   // Keep a running workflow expanded so its live run history stays visible.
   useEffect(() => {
-    const runningJob = jobs.find(j => j.last_status === 'running')
-    if (runningJob && expandedJobId !== runningJob.id) {
-      setExpandedJobId(runningJob.id)
-    }
-  }, [jobs, expandedJobId])
+    const runningJobIds = jobs
+      .filter(j => j.last_status === 'running')
+      .map(j => j.id)
+
+    if (runningJobIds.length === 0) return
+
+    setExpandedJobIds(prev => {
+      const next = [...prev]
+      let changed = false
+      runningJobIds.forEach((jobId) => {
+        if (!next.includes(jobId)) {
+          next.push(jobId)
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [jobs])
   const [triggering, setTriggering] = useState<string | null>(null)
   const [popupState, setPopupState] = useState<JobPopupState | null>(null)
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null)
   // Run history per job
   const [jobRuns, setJobRuns] = useState<Record<string, ScheduledJobRun[]>>({})
-  const [loadingRuns, setLoadingRuns] = useState<string | null>(null)
+  const [loadingRunIds, setLoadingRunIds] = useState<Record<string, boolean>>({})
   // Cost summary per run_folder: { totalCost, totalTokens }
   const [runCosts, setRunCosts] = useState<Record<string, RunCostData | null>>({})
   // For running runs without run_folder, we detect the latest iteration folder
@@ -414,14 +427,18 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   }, [loadJobs, refreshPresets])
 
   const loadRunsForJob = useCallback(async (jobId: string) => {
-    setLoadingRuns(jobId)
+    setLoadingRunIds(prev => ({ ...prev, [jobId]: true }))
     try {
       const resp = await schedulerApi.getJobRuns(jobId, 20)
       setJobRuns(prev => ({ ...prev, [jobId]: resp.runs ?? [] }))
     } catch {
       setJobRuns(prev => ({ ...prev, [jobId]: [] }))
     } finally {
-      setLoadingRuns(null)
+      setLoadingRunIds(prev => {
+        const next = { ...prev }
+        delete next[jobId]
+        return next
+      })
     }
   }, [])
 
@@ -485,9 +502,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   // Auto-load runs when a job is expanded
   useEffect(() => {
-    if (!expandedJobId) return
-    loadRunsForJob(expandedJobId)
-  }, [expandedJobId, loadRunsForJob])
+    if (expandedJobIds.length === 0) return
+    expandedJobIds.forEach((jobId) => {
+      loadRunsForJob(jobId)
+    })
+  }, [expandedJobIds, loadRunsForJob])
 
   // Detect the latest run folder so the newest completed run keeps its artifacts
   // even if the explicit run_folder arrives slightly after the run status update.
@@ -528,11 +547,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const previousHasRunningJobRef = useRef(hasRunningJob)
 
   useEffect(() => {
-    if (previousHasRunningJobRef.current && !hasRunningJob && expandedJobId) {
-      loadRunsForJob(expandedJobId)
+    if (previousHasRunningJobRef.current && !hasRunningJob && expandedJobIds.length > 0) {
+      expandedJobIds.forEach((jobId) => {
+        loadRunsForJob(jobId)
+      })
     }
     previousHasRunningJobRef.current = hasRunningJob
-  }, [hasRunningJob, expandedJobId, loadRunsForJob])
+  }, [hasRunningJob, expandedJobIds, loadRunsForJob])
 
   useEffect(() => {
     if (schedulerConfig?.execution_enabled === false) {
@@ -652,11 +673,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     if (!hasRunningJob) return
     const interval = setInterval(async () => {
       loadJobs()
-      if (expandedJobId) {
-        await loadRunsForJob(expandedJobId)
-        const runs = jobRuns[expandedJobId] ?? []
-        const latestRunFolderForJob = latestRunFoldersByJob[expandedJobId]
-        // Clear cached costs for running runs so they re-fetch
+      await Promise.all(expandedJobIds.map(async (jobId) => {
+        await loadRunsForJob(jobId)
+        const runs = jobRuns[jobId] ?? []
+        const latestRunFolderForJob = latestRunFoldersByJob[jobId]
         const runningFolders = runs
           .filter(r => r.status === 'running')
           .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
@@ -668,43 +688,52 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             return next
           })
         }
-        detectRunFolders(expandedJobId, runs)
-      }
+        detectRunFolders(jobId, runs)
+      }))
     }, 5000)
     return () => clearInterval(interval)
-  }, [hasRunningJob, loadJobs, expandedJobId, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders, loadRunsForJob])
+  }, [hasRunningJob, loadJobs, expandedJobIds, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders, loadRunsForJob])
 
   // Auto-load costs when runs are loaded
   useEffect(() => {
-    if (!expandedJobId) return
-    const runs = jobRuns[expandedJobId]
-    if (!runs || runs.length === 0) return
-    loadCostsForRuns(expandedJobId, runs)
-    detectRunFolders(expandedJobId, runs)
-  }, [expandedJobId, jobRuns, loadCostsForRuns, detectRunFolders])
+    expandedJobIds.forEach((jobId) => {
+      const runs = jobRuns[jobId]
+      if (!runs || runs.length === 0) return
+      loadCostsForRuns(jobId, runs)
+      detectRunFolders(jobId, runs)
+    })
+  }, [expandedJobIds, jobRuns, loadCostsForRuns, detectRunFolders])
 
   // Auto-refresh costs for running jobs (every 10s)
   useEffect(() => {
-    if (!expandedJobId) return
-    const runs = jobRuns[expandedJobId]
-    const latestRunFolderForJob = latestRunFoldersByJob[expandedJobId]
-    const runningFolders = (runs ?? [])
-      .filter(r => r.status === 'running')
-      .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
-      .filter((f): f is string => !!f)
-    if (runningFolders.length === 0) return
+    const runningFoldersByJob = expandedJobIds
+      .map((jobId) => {
+        const runs = jobRuns[jobId]
+        const latestRunFolderForJob = latestRunFoldersByJob[jobId]
+        const runningFolders = (runs ?? [])
+          .filter(r => r.status === 'running')
+          .map((run, index) => getResolvedRunFolder(run, index, runningRunFolders, latestRunFolderForJob))
+          .filter((f): f is string => !!f)
+        return { jobId, runs, runningFolders }
+      })
+      .filter(({ runningFolders }) => runningFolders.length > 0)
+    if (runningFoldersByJob.length === 0) return
     const interval = setInterval(() => {
       // Clear cached costs for running runs to force re-fetch
       setRunCosts(prev => {
         const next = { ...prev }
-        runningFolders.forEach(f => delete next[f])
+        runningFoldersByJob.forEach(({ runningFolders }) => {
+          runningFolders.forEach(f => delete next[f])
+        })
         return next
       })
       // Also re-detect folders for runs that still don't have one
-      detectRunFolders(expandedJobId, runs!)
+      runningFoldersByJob.forEach(({ jobId, runs }) => {
+        if (runs) detectRunFolders(jobId, runs)
+      })
     }, 10000)
     return () => clearInterval(interval)
-  }, [expandedJobId, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders])
+  }, [expandedJobIds, jobRuns, runningRunFolders, latestRunFoldersByJob, detectRunFolders])
 
   const handleToggle = async (job: ScheduledJob) => {
     try {
@@ -1197,7 +1226,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         <button
                           key={`missed-${job.id}`}
                           onClick={() => {
-                            setExpandedJobId(job.id)
+                            setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
                             setActiveView('workflows')
                           }}
                           className="rounded-lg border border-amber-400/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
@@ -1249,7 +1278,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         <button
                           key={`upcoming-${job.id}`}
                           onClick={() => {
-                            setExpandedJobId(job.id)
+                            setExpandedJobIds(prev => prev.includes(job.id) ? prev : [...prev, job.id])
                             setActiveView('workflows')
                           }}
                           className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
@@ -1332,10 +1361,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 const cronDesc = describeCron(job.cron_expression)
                 const localizedJobName = getLocalizedJobName(job)
                 const workflowDisplayLabel = preset?.label || job.workflow_label || job.name
-                const isExpanded = expandedJobId === job.id
+                const isExpanded = expandedJobIds.includes(job.id)
                 const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
                 const runs = jobRuns[job.id] ?? []
-                const isLoadingThis = loadingRuns === job.id
+                const isLoadingThis = !!loadingRunIds[job.id]
                 const previousJob = index > 0 ? jobsList[index - 1] : null
                 const isRunningJob = job.last_status === 'running'
                 const isMissedJob = isMissedSchedule(job)
@@ -1587,7 +1616,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                         <button
                           onClick={() => {
                             if (job.last_status === 'running') return
-                            setExpandedJobId(isExpanded ? null : job.id)
+                            setExpandedJobIds(prev => (
+                              isExpanded
+                                ? prev.filter(id => id !== job.id)
+                                : [...prev, job.id]
+                            ))
                           }}
                           disabled={job.last_status === 'running'}
                           className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"

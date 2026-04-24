@@ -3,6 +3,8 @@
 //
 // Input: raw file contents from report_plan.json.
 // Output: ParsedReportPlan — sections + widget entries, ready for ReportViewer to render.
+// Supports both the current JSON format and the legacy fenced-widget markdown
+// format still used by some builder helpers/docs.
 //
 // Grammar recap:
 //   ## Heading              — starts a section
@@ -151,7 +153,49 @@ export function parseReportPlan(rawPlan: string): ParsedReportPlan {
     const parsedJSON = parseReportPlanJSON(trimmed)
     if (parsedJSON) return parsedJSON
   }
-  return { sections: [] }
+  return parseReportPlanMarkdown(rawPlan)
+}
+
+function parseReportPlanMarkdown(raw: string): ParsedReportPlan {
+  const sections: ReportSection[] = []
+  const lines = raw.split(/\r?\n/)
+  let currentSection: ReportSection | null = null
+
+  const ensureSection = (): ReportSection => {
+    if (!currentSection) {
+      currentSection = { heading: 'Report', entries: [] }
+      sections.push(currentSection)
+    }
+    return currentSection
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) continue
+
+    const headingMatch = /^##\s+(.+)$/.exec(trimmed)
+    if (headingMatch) {
+      currentSection = { heading: headingMatch[1].trim(), entries: [] }
+      sections.push(currentSection)
+      continue
+    }
+
+    const widgetMatch = /^```widget:([a-z_/-]+)\s*$/.exec(trimmed)
+    if (!widgetMatch) continue
+
+    const kind = widgetMatch[1].trim().toLowerCase()
+    const body: string[] = []
+    i += 1
+    for (; i < lines.length; i += 1) {
+      if (lines[i].trim() === '```') break
+      body.push(lines[i])
+    }
+
+    const entry = parseWidgetBlock(kind, body)
+    if (entry) ensureSection().entries.push(entry)
+  }
+
+  return { sections: sections.filter(section => section.entries.length > 0) }
 }
 
 function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
@@ -220,7 +264,7 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
   if (typeof source.height === 'number' && Number.isFinite(source.height) && source.height > 0) widget.height = Math.trunc(source.height)
   if (typeof source.showIf === 'string') widget.showIf = source.showIf
 
-  if (widget.kind === 'table') {
+  if (widget.kind === 'table' || widget.kind === 'cards') {
     if (source.formats && typeof source.formats === 'object' && !Array.isArray(source.formats)) {
       const formats: Record<string, ReportFormatterName> = {}
       for (const [key, value] of Object.entries(source.formats as Record<string, unknown>)) {
@@ -244,6 +288,15 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
       const cols = source.hideColumns.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       if (cols.length > 0) widget.hideColumns = cols
     }
+    if (Array.isArray(source.fields)) {
+      const fields = source.fields.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (fields.length > 0) widget.fields = fields
+    }
+    if (typeof source.cardTitleField === 'string') widget.cardTitleField = source.cardTitleField
+    if (typeof source.cardSubtitleField === 'string') widget.cardSubtitleField = source.cardSubtitleField
+    if (typeof source.cardDescriptionField === 'string') widget.cardDescriptionField = source.cardDescriptionField
+    if (typeof source.cardLinkField === 'string') widget.cardLinkField = source.cardLinkField
+    if (typeof source.cardImageField === 'string') widget.cardImageField = source.cardImageField
   } else if (widget.kind === 'chart') {
     if (typeof source.chartType === 'string' && KNOWN_CHART_TYPE_SET.has(source.chartType.toLowerCase())) widget.chartType = source.chartType.toLowerCase() as ReportChartType
     if (typeof source.xAxis === 'string') widget.xAxis = source.xAxis
@@ -302,7 +355,7 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
     if (typeof source.group === 'string') widget.group = source.group
   }
 
-  if (widget.kind === 'chart' || widget.kind === 'table') {
+  if (widget.kind === 'chart' || widget.kind === 'table' || widget.kind === 'cards') {
     if (Array.isArray(source.colors)) {
       const colors = source.colors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
       if (colors.length > 0) widget.colors = colors
@@ -339,8 +392,10 @@ function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {
 function isWidgetKind(kind: string): kind is ReportWidgetKind {
   return (
     kind === 'text' ||
+    kind === 'markdown' ||
     kind === 'chart' ||
     kind === 'table' ||
+    kind === 'cards' ||
     kind === 'stat' ||
     kind === 'alert' ||
     kind === 'pivot' ||
@@ -355,9 +410,9 @@ function isWidgetKind(kind: string): kind is ReportWidgetKind {
 // the source file is itself the array/value a widget wants to render).
 //
 // Optional rich-rendering fields:
-//   formats: <field>=<preset>, ...           (table only)
-//   page_size: <int>                          (table only)
-//   enable_search: true|false                 (table only)
+//   formats: <field>=<preset>, ...           (table/cards only)
+//   page_size: <int>                         (table/cards only)
+//   enable_search: true|false                (table/cards only)
 //   chart_type: bar|line|area|pie             (chart only)
 //   x_axis: <field>                           (chart only)
 //   y_axis: <field>                           (chart only)
@@ -396,7 +451,7 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
     if (n !== undefined) widget.height = n
   }
 
-  if (widget.kind === 'table') {
+  if (widget.kind === 'table' || widget.kind === 'cards') {
     if (fields.formats) {
       const fm = parseFormatsField(fields.formats)
       if (fm) widget.formats = fm
@@ -420,6 +475,15 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
         .filter(Boolean)
       if (list.length > 0) widget.hideColumns = list
     }
+    if (fields.fields) {
+      const list = parseFieldList(fields.fields)
+      if (list) widget.fields = list
+    }
+    if (fields.title_field || fields.titlefield) widget.cardTitleField = fields.title_field || fields.titlefield
+    if (fields.subtitle_field || fields.subtitlefield) widget.cardSubtitleField = fields.subtitle_field || fields.subtitlefield
+    if (fields.description_field || fields.descriptionfield) widget.cardDescriptionField = fields.description_field || fields.descriptionfield
+    if (fields.link_field || fields.linkfield) widget.cardLinkField = fields.link_field || fields.linkfield
+    if (fields.image_field || fields.imagefield) widget.cardImageField = fields.image_field || fields.imagefield
   } else if (widget.kind === 'chart') {
     if (fields.chart_type || fields.charttype) {
       const t = (fields.chart_type || fields.charttype).toLowerCase()
@@ -530,8 +594,8 @@ function applyOptionalFields(widget: ReportWidget, fields: Record<string, string
     if (fields.group) widget.group = fields.group
   }
 
-  // Color options — apply to chart and table; ignored for text widgets.
-  if (widget.kind === 'chart' || widget.kind === 'table') {
+  // Color options — apply to chart, table, and cards; ignored for text widgets.
+  if (widget.kind === 'chart' || widget.kind === 'table' || widget.kind === 'cards') {
     if (fields.colors) {
       const c = parseColorsField(fields.colors)
       if (c) widget.colors = c

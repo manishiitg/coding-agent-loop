@@ -234,10 +234,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		}
 		sp := conditionalAgent.routingSystemPromptProcessor(tv)
 		um := conditionalAgent.routingUserMessageProcessor(tv)
-		var model string
-		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
-			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
-		}
+		model := agentConfigModelLabel(conditionalAgent.GetConfig())
 		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
 	}
 
@@ -252,7 +249,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		// Evaluate routing via LLM
 		hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
 		var err error
-		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, variableNames, variableValues)
+		routingResponse, err = conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, agentConfigUseCodeExecutionMode(conditionalAgent.GetConfig()), variableNames, variableValues)
 		if err != nil {
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
 			hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)

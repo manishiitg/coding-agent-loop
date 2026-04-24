@@ -1036,51 +1036,48 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Build folder info - read progress for all displayed iterations (max 10)
+	// Build folder info - read progress/metadata for all runs before sorting so
+	// "latest N runs" reporting does not depend on workspace listing order.
 	folderInfos := make([]RunFolderInfo, 0, len(existingFolders))
-	maxFoldersWithProgress := 10 // Read progress for all displayed iterations
 
-	for i, folderName := range existingFolders {
+	for _, folderName := range existingFolders {
 		folderInfo := RunFolderInfo{
 			Name: folderName,
 		}
 
-		// Only read progress/metadata for the latest N iterations (most likely to be selected)
-		if i < maxFoldersWithProgress {
-			// Try to read steps_done.json for this folder
-			stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
-			progress, err := readProgressForFolder(r.Context(), stepsFilePath)
-			if err == nil && progress != nil {
-				folderInfo.Progress = progress
-			}
+		// Try to read steps_done.json for this folder
+		stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
+		progress, err := readProgressForFolder(r.Context(), stepsFilePath)
+		if err == nil && progress != nil {
+			folderInfo.Progress = progress
+		}
 
-			// Try to read run_metadata.json
-			metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
-			metadata, _ := readRunMetadata(r.Context(), metadataPath)
+		// Try to read run_metadata.json
+		metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
+		metadata, _ := readRunMetadata(r.Context(), metadataPath)
 
-			if metadata == nil && progress != nil {
-				// Fallback: infer metadata from progress and token_usage for legacy runs
-				metadata = inferRunMetadata(r.Context(), workspacePath, folderName, progress)
-				if metadata != nil {
-					_ = writeRunMetadata(r.Context(), metadataPath, metadata)
-				}
-			} else if metadata != nil && metadata.Status == "running" && progress != nil && progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
-				completedAt := progress.LastUpdated
-				metadata.Status = "completed"
-				metadata.CompletedAt = &completedAt
-				startedAt := metadata.StartedAt
-				if startedAt.IsZero() {
-					startedAt = metadata.CreatedAt
-					metadata.StartedAt = startedAt
-				}
-				durationMs := completedAt.Sub(startedAt).Milliseconds()
-				metadata.DurationMs = &durationMs
+		if metadata == nil && progress != nil {
+			// Fallback: infer metadata from progress and token_usage for legacy runs
+			metadata = inferRunMetadata(r.Context(), workspacePath, folderName, progress)
+			if metadata != nil {
 				_ = writeRunMetadata(r.Context(), metadataPath, metadata)
 			}
-
-			if metadata != nil {
-				folderInfo.Metadata = metadata
+		} else if metadata != nil && metadata.Status == "running" && progress != nil && progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
+			completedAt := progress.LastUpdated
+			metadata.Status = "completed"
+			metadata.CompletedAt = &completedAt
+			startedAt := metadata.StartedAt
+			if startedAt.IsZero() {
+				startedAt = metadata.CreatedAt
+				metadata.StartedAt = startedAt
 			}
+			durationMs := completedAt.Sub(startedAt).Milliseconds()
+			metadata.DurationMs = &durationMs
+			_ = writeRunMetadata(r.Context(), metadataPath, metadata)
+		}
+
+		if metadata != nil {
+			folderInfo.Metadata = metadata
 		}
 
 		folderInfos = append(folderInfos, folderInfo)

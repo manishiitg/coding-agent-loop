@@ -241,10 +241,10 @@ func NewStepBasedWorkflowOrchestrator(
 		} else {
 			logger.Info("🏷️ WARNING: No Phase LLM configured - phase agents will fail")
 		}
-		logger.Info(fmt.Sprintf("🏷️ Tiered LLM allocation mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
-			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
-			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,
-			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID))
+		logger.Info(fmt.Sprintf("🏷️ Tiered LLM allocation mode enabled - Tier1: %s, Tier2: %s, Tier3: %s",
+			formatTierAgentLLM(tieredConfig.Tier1),
+			formatTierAgentLLM(tieredConfig.Tier2),
+			formatTierAgentLLM(tieredConfig.Tier3)))
 	}
 
 	// Create VariableManager for variable extraction operations (independent from controller)

@@ -331,9 +331,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			feedbackUserMsg := buildValidationContinuationUserMessage(validationResponse, retryAttempt)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔁 Todo task step %d attempt %d/%d: continuing existing orchestrator with validation feedback (history=%d turns)",
 				stepIndex+1, retryAttempt, maxRetryAttempts, len(conversationHistory)))
-			if todoTaskAgent.GetConfig() != nil && todoTaskAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
-				executionLLM = fmt.Sprintf("%s/%s", todoTaskAgent.GetConfig().LLMConfig.Primary.Provider, todoTaskAgent.GetConfig().LLMConfig.Primary.ModelID)
-			}
+			executionLLM = agentConfigModelLabel(todoTaskAgent.GetConfig())
 			ba := todoTaskAgent.GetBaseAgent()
 			if ba == nil {
 				return false, "", fmt.Errorf("todo task orchestrator has no base agent for continuation on attempt %d", retryAttempt)
@@ -682,13 +680,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	// Sync template vars with actual agent config — the factory may have overridden
 	// code execution mode (for CLI providers) or tool search mode after template vars were built.
 	if agent.GetConfig() != nil {
-		if agent.GetConfig().UseCodeExecutionMode {
+		if agentConfigUseCodeExecutionMode(agent.GetConfig()) {
 			templateVars["IsCodeExecutionMode"] = "true"
 		}
 		// Show tools reference section for CLI providers ONLY when NOT in code execution mode.
 		// In code exec mode, the {{TOOL_STRUCTURE}} JSON already provides the authoritative tool index.
-		provider := agent.GetConfig().LLMConfig.Primary.Provider
-		if isCliProviderForPrompt(provider) && !agent.GetConfig().UseCodeExecutionMode {
+		provider := agentConfigProvider(agent.GetConfig())
+		if isCliProviderForPrompt(provider) && !agentConfigUseCodeExecutionMode(agent.GetConfig()) {
 			templateVars["ShowToolsSection"] = "true"
 		}
 	}

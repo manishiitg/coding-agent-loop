@@ -16,6 +16,9 @@
       "env": {
         "CAMOFOX_URL": "http://localhost:9377"
       }
+    },
+    "Parallel Search MCP": {
+      "url": "https://search.parallel.ai/mcp"
     }
   }
 }

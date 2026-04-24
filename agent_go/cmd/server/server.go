@@ -3973,7 +3973,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// 2. WORKSPACE MAP — compact folder listing with absolute paths and access levels.
-			underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+			if isWorkflowPhase {
+				underlyingAgent.AppendSystemPrompt(GetWorkflowPhaseWorkspaceMap(shellRoot, workflowPhaseFolder, perUserMemoryFolder))
+			} else {
+				underlyingAgent.AppendSystemPrompt(GetWorkspaceMap(shellRoot, perUserChatsFolder, perUserMemoryFolder))
+			}
 
 			// 3. CONTEXT — employees, workflow references, skills (what the agent needs to know).
 			if !isWorkflowPhase {
@@ -4573,23 +4577,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									workshopSession.UpdatePresetLLMConfigs(phaseLLM)
 
 									if caps.LLMConfig.TieredConfig != nil {
-										refreshedTiered := &todo_creation_human.TieredLLMConfig{
-											Tier1: &todo_creation_human.AgentLLMConfig{
-												Provider:  caps.LLMConfig.TieredConfig.Tier1.Provider,
-												ModelID:   caps.LLMConfig.TieredConfig.Tier1.ModelID,
-												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier1.Fallbacks),
-											},
-											Tier2: &todo_creation_human.AgentLLMConfig{
-												Provider:  caps.LLMConfig.TieredConfig.Tier2.Provider,
-												ModelID:   caps.LLMConfig.TieredConfig.Tier2.ModelID,
-												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier2.Fallbacks),
-											},
-											Tier3: &todo_creation_human.AgentLLMConfig{
-												Provider:  caps.LLMConfig.TieredConfig.Tier3.Provider,
-												ModelID:   caps.LLMConfig.TieredConfig.Tier3.ModelID,
-												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier3.Fallbacks),
-											},
-										}
+										refreshedTiered := workshopConvertTieredLLMConfig(caps.LLMConfig.TieredConfig)
 										workshopSession.UpdateTieredConfig(refreshedTiered)
 										log.Printf("[WORKFLOW_PHASE] Refreshed tiered config from manifest")
 									} else {
@@ -7930,27 +7918,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				// Tiered LLM allocation
 				if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
 					cfg.LLMAllocationMode = "tiered"
-					cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
-						Tier1: &todo_creation_human.AgentLLMConfig{
-							Provider:  llmCfg.TieredConfig.Tier1.Provider,
-							ModelID:   llmCfg.TieredConfig.Tier1.ModelID,
-							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier1.Fallbacks),
-						},
-						Tier2: &todo_creation_human.AgentLLMConfig{
-							Provider:  llmCfg.TieredConfig.Tier2.Provider,
-							ModelID:   llmCfg.TieredConfig.Tier2.ModelID,
-							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier2.Fallbacks),
-						},
-						Tier3: &todo_creation_human.AgentLLMConfig{
-							Provider:  llmCfg.TieredConfig.Tier3.Provider,
-							ModelID:   llmCfg.TieredConfig.Tier3.ModelID,
-							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier3.Fallbacks),
-						},
-					}
-					log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
-						cfg.TieredConfig.Tier1.Provider, cfg.TieredConfig.Tier1.ModelID,
-						cfg.TieredConfig.Tier2.Provider, cfg.TieredConfig.Tier2.ModelID,
-						cfg.TieredConfig.Tier3.Provider, cfg.TieredConfig.Tier3.ModelID)
+					cfg.TieredConfig = workshopConvertTieredLLMConfig(llmCfg.TieredConfig)
+					log.Printf("[WORKSHOP] Tiered mode: T1=%s T2=%s T3=%s",
+						workshopFormatAgentLLM(cfg.TieredConfig.Tier1),
+						workshopFormatAgentLLM(cfg.TieredConfig.Tier2),
+						workshopFormatAgentLLM(cfg.TieredConfig.Tier3))
 				}
 
 				// Image generation tools
@@ -9208,6 +9180,46 @@ func workshopExtractLLM(specific *workflowtypes.AgentLLMConfig, legacyProvider, 
 		}
 	}
 	return nil
+}
+
+func workshopConvertAgentLLMConfig(config *workflowtypes.AgentLLMConfig) *todo_creation_human.AgentLLMConfig {
+	if config == nil {
+		return nil
+	}
+	return &todo_creation_human.AgentLLMConfig{
+		Provider:  config.Provider,
+		ModelID:   config.ModelID,
+		Fallbacks: workshopConvertFallbacks(config.Fallbacks),
+	}
+}
+
+func workshopConvertTieredLLMConfig(config *workflowtypes.TieredLLMConfig) *todo_creation_human.TieredLLMConfig {
+	if config == nil {
+		return nil
+	}
+
+	tiered := &todo_creation_human.TieredLLMConfig{
+		Tier1: workshopConvertAgentLLMConfig(config.Tier1),
+		Tier2: workshopConvertAgentLLMConfig(config.Tier2),
+		Tier3: workshopConvertAgentLLMConfig(config.Tier3),
+	}
+
+	if tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
+		log.Printf("[WORKSHOP] Partial tiered LLM config detected: T1=%t T2=%t T3=%t",
+			tiered.Tier1 != nil, tiered.Tier2 != nil, tiered.Tier3 != nil)
+	}
+
+	return tiered
+}
+
+func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {
+	if config == nil {
+		return "<nil>"
+	}
+	if config.Provider == "" && config.ModelID == "" {
+		return "<empty>"
+	}
+	return fmt.Sprintf("%s/%s", config.Provider, config.ModelID)
 }
 
 // workshopConvertFallbacks converts database fallbacks to step_based_workflow fallbacks.

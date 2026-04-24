@@ -50,6 +50,22 @@ var knownWorkspaceToolNames = map[string]bool{
 
 const workshopFixedIteration = "iteration-0"
 
+const workshopLearningScaffoldTemplate = `---
+name: %s
+description: "Global HOW-to-run notes for this workflow."
+disable-model-invocation: true
+user-invocable: false
+---
+
+# Overview
+
+This skill captures reusable workflow knowledge for future runs.
+
+## References
+
+- Add topic-specific notes under ` + "`references/`" + ` as patterns emerge.
+`
+
 func parseWorkshopIterationNumber(iteration string) int {
 	if iteration == "" {
 		return 0
@@ -71,6 +87,113 @@ func normalizeWorkshopBuilderRunFolder(runFolder string) string {
 		return fmt.Sprintf("%s/%s", workshopFixedIteration, parts[1])
 	}
 	return workshopFixedIteration
+}
+
+func isMissingOrEmptyWorkspaceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "not found") ||
+		strings.Contains(errStr, "no such file") ||
+		strings.Contains(errStr, "no content found")
+}
+
+func (iwm *InteractiveWorkshopManager) readWorkflowLabelForBootstrap(ctx context.Context) string {
+	label := filepath.Base(strings.TrimSpace(iwm.controller.GetWorkspacePath()))
+	content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+	if err != nil || strings.TrimSpace(content) == "" {
+		return label
+	}
+
+	var manifest struct {
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return label
+	}
+	if strings.TrimSpace(manifest.Label) != "" {
+		return strings.TrimSpace(manifest.Label)
+	}
+	return label
+}
+
+func workshopGlobalLearningScaffold(workflowLabel string) string {
+	label := strings.TrimSpace(workflowLabel)
+	if label == "" {
+		label = "Workflow"
+	}
+	return stringsReplace(workshopLearningScaffoldTemplate, "%s", label, 1)
+}
+
+func (iwm *InteractiveWorkshopManager) ensureWorkshopStoreFoldersExist(ctx context.Context) error {
+	workspacePath := iwm.controller.GetWorkspacePath()
+
+	for _, folder := range []string{
+		DBFolderName,
+		KnowledgebaseFolderName,
+		filepath.Join(KnowledgebaseFolderName, KBNotesFolderName),
+		LearningsFolderName,
+		filepath.Join(LearningsFolderName, "_global"),
+		filepath.Join(LearningsFolderName, "_global", "references"),
+	} {
+		if err := createFolderViaAPI(ctx, folder, workspacePath); err != nil {
+			return fmt.Errorf("bootstrap folder %s: %w", folder, err)
+		}
+	}
+
+	if err := InitKBGraphFiles(ctx, iwm.controller.BaseOrchestrator, workspacePath, ""); err != nil {
+		return fmt.Errorf("bootstrap knowledgebase files: %w", err)
+	}
+
+	skillPath := filepath.Join(LearningsFolderName, "_global", "SKILL.md")
+	skillContent, err := iwm.controller.ReadWorkspaceFile(ctx, skillPath)
+	if err == nil && strings.TrimSpace(skillContent) != "" {
+		return nil
+	}
+	if err != nil && !isMissingOrEmptyWorkspaceError(err) {
+		return fmt.Errorf("read %s: %w", skillPath, err)
+	}
+
+	if err := iwm.controller.WriteWorkspaceFile(ctx, skillPath, workshopGlobalLearningScaffold(iwm.readWorkflowLabelForBootstrap(ctx))); err != nil {
+		return fmt.Errorf("bootstrap %s: %w", skillPath, err)
+	}
+	iwm.controller.GetLogger().Info("🆕 Bootstrapped learnings/_global/SKILL.md for workflow workshop")
+	return nil
+}
+
+// ensureWorkshopBootstrapFilesExist bootstraps plan and shared workflow stores for
+// brand-new workflows so the builder can start cleanly and edit those areas on the
+// first turn without hitting missing-path errors.
+func (iwm *InteractiveWorkshopManager) ensureWorkshopBootstrapFilesExist(ctx context.Context) error {
+	if iwm.controller.isEvaluationMode {
+		return nil
+	}
+
+	planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json")
+	if err == nil && strings.TrimSpace(planContent) != "" {
+		return iwm.ensureWorkshopStoreFoldersExist(ctx)
+	}
+
+	if err != nil {
+		if !isMissingOrEmptyWorkspaceError(err) {
+			return err
+		}
+	} else {
+		iwm.controller.GetLogger().Warn("⚠️ planning/plan.json is empty — bootstrapping an empty plan so the workshop can start")
+	}
+
+	emptyPlan := &PlanningResponse{}
+	data, marshalErr := json.MarshalIndent(emptyPlan, "", "  ")
+	if marshalErr != nil {
+		return fmt.Errorf("failed to marshal empty plan.json bootstrap: %w", marshalErr)
+	}
+	if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "planning/plan.json", string(data)); writeErr != nil {
+		return fmt.Errorf("failed to bootstrap empty planning/plan.json: %w", writeErr)
+	}
+
+	iwm.controller.GetLogger().Info("🆕 Bootstrapped empty planning/plan.json for workflow workshop")
+	return iwm.ensureWorkshopStoreFoldersExist(ctx)
 }
 
 // ============================================================================
@@ -811,7 +934,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// Workspace advanced tools
 		"execute_shell_command", "diff_patch_workspace_file",
 		"read_image", "read_pdf", "generate_text_llm", "search_web_llm",
-		"image_gen", "image_edit",
+		"image_gen", "image_edit", "generate_video",
 		// Secret management tools (user-scoped; global secrets are read-only)
 		"list_secrets", "set_user_secret", "delete_user_secret",
 		// Human tools — the builder is already in a chat, so it asks users
@@ -855,6 +978,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Plan modification tools
 	planMod := []string{
+		"create_plan",
 		"add_regular_step", "add_routing_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"update_regular_step", "update_routing_step",
@@ -1094,6 +1218,12 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	if runFolder != "" {
 		iwm.controller.selectedRunFolder = runFolder
 		iwm.controller.GetLogger().Info(fmt.Sprintf("📁 Using provided run folder: %s", runFolder))
+	}
+
+	// Brand-new workflows may not have plan/store scaffolding yet. Seed the minimal
+	// builder workspace so the workshop can open cleanly on the first turn.
+	if err := iwm.ensureWorkshopBootstrapFilesExist(ctx); err != nil {
+		return "", fmt.Errorf("cannot initialize workshop bootstrap files: %w", err)
 	}
 
 	// Load plan — fail early if no plan exists
@@ -2186,7 +2316,7 @@ Rules:
 
 {{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Plan Modification
-- **Steps**: add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Steps**: create_plan, add_regular_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
 - **Update**: update_regular_step, update_human_input_step, update_routing_step, update_todo_task_step
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
   For todo_task routes, choose one pattern per route: inline `+"`sub_agent_step`"+` for a route-specific agent, or `+"`orphan_step_ref`"+` to reuse a shared orphan step already allowlisted via `+"`shared_with.orchestrator_ids`"+`. Do not set both.
@@ -8852,7 +8982,7 @@ For each gap in the objective that no existing step covers:
 - **Description**: <1-2 sentences: what the agent should do and what it should output>
 - **Context output**: <filename>
 - **Context dependencies**: <files it needs from prior steps, or none>
-- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_todo_task_step`"+`
+- **Add using**: `+"`create_plan`"+` first if the workflow has no `+"`planning/plan.json`"+`, then `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_todo_task_step`"+`
 
 ### Redundant / Misplaced Steps
 For each step or route that duplicates work or is in the wrong position:

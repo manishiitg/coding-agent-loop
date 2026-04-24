@@ -174,10 +174,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		}
 		sp := conditionalAgent.conditionalSystemPromptProcessor(tv, isCodeExecutionMode)
 		um := conditionalAgent.conditionalUserMessageProcessor(tv)
-		var model string
-		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
-			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
-		}
+		model := agentConfigModelLabel(conditionalAgent.GetConfig())
 		hcpo.preSavePromptsJSON(stepIndex, step.GetID(), conditionalStepPath, "conditional_evaluation", sp, um, model, "conditional-prompts.json")
 	}
 

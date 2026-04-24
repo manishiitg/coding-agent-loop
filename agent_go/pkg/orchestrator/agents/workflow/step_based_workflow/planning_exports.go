@@ -369,10 +369,10 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetPhaseLLM=%s/%s", cfg.PresetPhaseLLM.Provider, cfg.PresetPhaseLLM.ModelID))
 	}
 	if cfg.TieredConfig != nil {
-		logger.Info(fmt.Sprintf("[WORKSHOP] tiered: T1=%s/%s T2=%s/%s T3=%s/%s",
-			cfg.TieredConfig.Tier1.Provider, cfg.TieredConfig.Tier1.ModelID,
-			cfg.TieredConfig.Tier2.Provider, cfg.TieredConfig.Tier2.ModelID,
-			cfg.TieredConfig.Tier3.Provider, cfg.TieredConfig.Tier3.ModelID))
+		logger.Info(fmt.Sprintf("[WORKSHOP] tiered: T1=%s T2=%s T3=%s",
+			formatTierAgentLLM(cfg.TieredConfig.Tier1),
+			formatTierAgentLLM(cfg.TieredConfig.Tier2),
+			formatTierAgentLLM(cfg.TieredConfig.Tier3)))
 	}
 	// Log tool names for debugging
 	toolNames := make([]string, 0, len(cfg.CustomTools))
@@ -535,6 +535,16 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		resolveSecretValues:    cfg.ResolveSecretValues,
 		workshopNotifier:       wsn,
 	}, nil
+}
+
+func formatTierAgentLLM(cfg *AgentLLMConfig) string {
+	if cfg == nil {
+		return "<nil>"
+	}
+	if cfg.Provider == "" && cfg.ModelID == "" {
+		return "<empty>"
+	}
+	return fmt.Sprintf("%s/%s", cfg.Provider, cfg.ModelID)
 }
 
 // UpdatePresetLLMConfigs refreshes the controller's preset LLM configs.

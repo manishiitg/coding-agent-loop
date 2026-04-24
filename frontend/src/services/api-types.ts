@@ -1324,7 +1324,7 @@ export interface EvaluationAggregate {
 // ---------------------------------------------------------------------------
 
 // Widget types supported by the report plan. See section 2 of the design doc.
-export type ReportWidgetKind = 'text' | 'chart' | 'table' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
+export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
 
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
 
@@ -1390,6 +1390,14 @@ export interface ReportWidget {
   enableSearch?: boolean;     // Show inline search box (default true)
   defaultSort?: ReportDefaultSort;  // Initial sort column + direction
   hideColumns?: string[];     // Columns present in data but suppressed in render
+  // Cards-specific options (ignored for non-card widgets). Cards share the
+  // same row source shape as tables, but render each record as a standalone tile.
+  fields?: string[];          // Optional whitelist/order for rendered fields
+  cardTitleField?: string;    // Preferred field for the card headline
+  cardSubtitleField?: string; // Preferred secondary line under the title
+  cardDescriptionField?: string; // Preferred long-form body field
+  cardLinkField?: string;     // Preferred URL field rendered as an "Open" action
+  cardImageField?: string;    // Preferred image URL field rendered above content
   // Chart-specific options (ignored for non-chart widgets)
   chartType?: ReportChartType;       // bar | line | area | pie (default bar)
   xAxis?: string;             // Field name for x-axis when not the canonical {label} key

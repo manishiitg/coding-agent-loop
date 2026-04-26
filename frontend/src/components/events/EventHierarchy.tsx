@@ -57,6 +57,19 @@ const OWNER_SUMMARY_EVENT_TYPES = new Set([
   'agent_error',
 ]);
 
+const OWNER_PRIMARY_COMPLETION_EVENT_TYPES = new Set([
+  'orchestrator_agent_end',
+  'background_agent_completed',
+  'background_agent_failed',
+  'background_agent_terminated',
+  'delegation_end',
+  'todo_task_step_completed',
+  'batch_group_end',
+  'batch_execution_end',
+  'workflow_end',
+  'agent_end',
+]);
+
 const INITIAL_EXPANDED_TOOL_CALLS = 24;
 const EXPANDED_TOOL_CALLS_PAGE_SIZE = 24;
 const EVENT_HIERARCHY_DEBUG_STORAGE_KEY = 'debug:event-hierarchy';
@@ -93,6 +106,16 @@ function isExecutionOwnerEvent(event: PollingEvent): boolean {
 
 function isOwnerSummaryEvent(event: PollingEvent): boolean {
   return !!event.type && OWNER_SUMMARY_EVENT_TYPES.has(event.type);
+}
+
+function dedupeOwnerSummaryNodes(nodes: EventNode[]): EventNode[] {
+  const hasPrimaryCompletion = nodes.some(node => {
+    const type = node.event.type || '';
+    return OWNER_PRIMARY_COMPLETION_EVENT_TYPES.has(type);
+  });
+
+  if (!hasPrimaryCompletion) return nodes;
+  return nodes.filter(node => node.event.type !== 'unified_completion');
 }
 
 function extractAutoNotificationExecutionId(event: PollingEvent): string | undefined {
@@ -1570,7 +1593,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       ? children.filter(child => !isExecutionOwnerEvent(child.event))
       : [];
     const ownedSummaryChildren = ownsInternalLogPanel
-      ? ownerNonExecutionChildren.filter(child => isOwnerSummaryEvent(child.event))
+      ? dedupeOwnerSummaryNodes(ownerNonExecutionChildren.filter(child => isOwnerSummaryEvent(child.event)))
       : [];
     const ownedLogChildren = ownsInternalLogPanel
       ? ownerNonExecutionChildren.filter(child => !isOwnerSummaryEvent(child.event))

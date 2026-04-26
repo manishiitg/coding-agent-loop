@@ -12,6 +12,7 @@ import { EVENT_TYPES } from '../constants/runningWorkflows'
 
 type BatchGroupStartEventWithLegacyName = BatchGroupStartEventData & {
   group_name?: string
+  group_id?: string
 }
 
 /**
@@ -170,7 +171,8 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
       } else {
         const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
         if (batchGroupStartData) {
-          const groupName = (batchGroupStartData as BatchGroupStartEventWithLegacyName).group_name ?? batchGroupStartData.group_id
+          const legacy = batchGroupStartData as BatchGroupStartEventWithLegacyName
+          const groupName = legacy.group_name ?? legacy.group_id
           if (groupName) {
             info.currentGroupName = groupName
           }

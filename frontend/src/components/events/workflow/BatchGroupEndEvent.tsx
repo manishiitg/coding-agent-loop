@@ -4,6 +4,7 @@ import type { BatchGroupEndEvent as BatchGroupEndEventData } from '../../../gene
 
 type BatchGroupEndDisplayEvent = BatchGroupEndEventData & {
   group_name?: string
+  group_id?: string
 }
 
 interface BatchGroupEndEventProps {
@@ -16,7 +17,8 @@ interface BatchGroupEndEventProps {
 // This component is purely for display purposes.
 export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, compact = false }) => {
   const isSuccess = event.success
-  const groupLabel = ((event as BatchGroupEndDisplayEvent).group_name ?? event.group_id ?? 'N/A').toUpperCase()
+  const display = event as BatchGroupEndDisplayEvent
+  const groupLabel = (display.group_name ?? display.group_id ?? 'N/A').toUpperCase()
 
   if (compact) {
     return (

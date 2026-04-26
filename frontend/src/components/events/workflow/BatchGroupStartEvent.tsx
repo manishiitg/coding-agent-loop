@@ -4,6 +4,7 @@ import type { BatchGroupStartEvent as BatchGroupStartEventData } from '../../../
 
 type BatchGroupStartDisplayEvent = BatchGroupStartEventData & {
   group_name?: string
+  group_id?: string
 }
 
 interface BatchGroupStartEventProps {
@@ -15,7 +16,8 @@ interface BatchGroupStartEventProps {
 // to ensure reliable updates even when events are filtered or not visible in UI.
 // This component is purely for display purposes.
 export const BatchGroupStartEvent: React.FC<BatchGroupStartEventProps> = ({ event, compact = false }) => {
-  const groupLabel = ((event as BatchGroupStartDisplayEvent).group_name ?? event.group_id ?? 'N/A').toUpperCase()
+  const display = event as BatchGroupStartDisplayEvent
+  const groupLabel = (display.group_name ?? display.group_id ?? 'N/A').toUpperCase()
 
   if (compact) {
     return (

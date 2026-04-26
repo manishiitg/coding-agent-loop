@@ -55,7 +55,7 @@ func GetHumanFeedbackStore() *HumanFeedbackStore {
 
 // CreateRequest creates a new feedback request
 func (s *HumanFeedbackStore) CreateRequest(uniqueID, message string) error {
-	return s.CreateRequestWithSlack(context.Background(), uniqueID, message, "", nil)
+	return s.CreateRequestWithSlack(context.Background(), uniqueID, message, "", nil, nil)
 }
 
 // CreateRequestWithoutNotification creates a new feedback request without sending any notifications
@@ -92,8 +92,14 @@ func (s *HumanFeedbackStore) CreateRequestWithoutNotification(uniqueID, message 
 	return nil
 }
 
-// CreateRequestWithSlack creates a new feedback request and sends Slack notification after 2 minutes if no response
-func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions) error {
+// CreateRequestWithSlack creates a new feedback request and sends a notification
+// after 2 minutes if no response arrives via the in-app UI first.
+//
+// dest is an optional destination hint passed through to the notification
+// fanout — connectors use it to override their workspace-wide default
+// (per-user prefs and per-request hints both flow through this). Pass nil
+// for the legacy "use whatever the connectors are configured for" behaviour.
+func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueID, message, contextMsg string, buttonOptions *services.ButtonOptions, dest *services.NotificationDestination) error {
 	// First register the request (without notifications)
 	if err := s.CreateRequestWithoutNotification(uniqueID, message); err != nil {
 		return err
@@ -147,8 +153,8 @@ func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueI
 		}
 
 		// Send notification via notification manager (async, non-blocking)
-		// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
-		if err := notificationManager.SendNotification(context.Background(), uniqueID, message, contextMsg, buttonOptions); err != nil {
+		// This will send to all enabled connectors (Slack, WhatsApp)
+		if err := notificationManager.SendNotification(context.Background(), uniqueID, message, contextMsg, buttonOptions, dest); err != nil {
 			// Log error but don't fail - this is a reminder notification
 			log.Printf("[HUMAN_FEEDBACK_STORE] Failed to send delayed notification: %v", err)
 		} else {

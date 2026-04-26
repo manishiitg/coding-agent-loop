@@ -16,9 +16,9 @@ type ButtonOptions struct {
 }
 
 // NotificationConnector is the interface that all notification connectors must implement
-// This allows for multiple connectors (Slack, Gmail, WhatsApp, etc.) to be registered
+// This allows for multiple connectors (Slack, WhatsApp) to be registered
 type NotificationConnector interface {
-	// Name returns the name of the connector (e.g., "slack", "gmail", "whatsapp")
+	// Name returns the name of the connector (e.g., "slack", "whatsapp")
 	Name() string
 
 	// IsEnabled checks if the connector is enabled and ready to send notifications
@@ -29,8 +29,12 @@ type NotificationConnector interface {
 	// message: the message/question to send
 	// contextMsg: additional context information
 	// buttonOptions: optional button configuration (nil if no buttons)
-	// Returns: message identifier (e.g., Slack timestamp) and error
-	SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions) (string, error)
+	// dest: optional destination hint (per-request channel/thread/recipient
+	//   override). Nil means "use this connector's configured default".
+	// Returns: message identifier (e.g., Slack timestamp) and error.
+	// A connector that receives a dest it can't satisfy and has no default
+	// should return ("", nil) to skip silently.
+	SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions, dest *NotificationDestination) (string, error)
 }
 
 // FeedbackResponseFunc is a function type for submitting feedback responses (to avoid import cycle)
@@ -80,8 +84,11 @@ func (nm *NotificationManager) UnregisterConnector(name string) {
 }
 
 // SendNotification sends a notification to all enabled connectors
-// This is called by the feedback store when a new request is created
-func (nm *NotificationManager) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions) error {
+// This is called by the feedback store when a new request is created.
+// dest is an optional destination hint (channel/thread/recipient) that
+// per-connector resolvers consult before falling back to user prefs and
+// then to workspace defaults.
+func (nm *NotificationManager) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions, dest *NotificationDestination) error {
 	nm.mu.RLock()
 	connectors := make([]NotificationConnector, 0, len(nm.connectors))
 	for _, connector := range nm.connectors {
@@ -99,10 +106,10 @@ func (nm *NotificationManager) SendNotification(ctx context.Context, uniqueID st
 	// Send to all enabled connectors (async, non-blocking)
 	for _, connector := range connectors {
 		go func(conn NotificationConnector) {
-			msgID, err := conn.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions)
+			msgID, err := conn.SendNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest)
 			if err != nil {
 				log.Printf("[NOTIFICATION_MANAGER] Failed to send notification via %s: %v", conn.Name(), err)
-			} else {
+			} else if msgID != "" {
 				log.Printf("[NOTIFICATION_MANAGER] ✅ Notification sent via %s (msgID: %s)", conn.Name(), msgID)
 			}
 		}(connector)

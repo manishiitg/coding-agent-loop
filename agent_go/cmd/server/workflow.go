@@ -1944,7 +1944,6 @@ type PlanStepUpdate struct {
 	// Common fields (shared by all step types)
 	Title               *string                                    `json:"title,omitempty"`
 	Description         *string                                    `json:"description,omitempty"`
-	SuccessCriteria     *string                                    `json:"success_criteria,omitempty"`
 	ContextDependencies *[]string                                  `json:"context_dependencies,omitempty"`
 	ContextOutput       *todo_creation_human.FlexibleContextOutput `json:"context_output,omitempty"`
 
@@ -2464,9 +2463,6 @@ func applyCommonFields(common *todo_creation_human.CommonStepFields, updates *Pl
 	}
 	if updates.Description != nil {
 		common.Description = *updates.Description
-	}
-	if updates.SuccessCriteria != nil {
-		common.SuccessCriteria = *updates.SuccessCriteria
 	}
 	if updates.ContextDependencies != nil {
 		common.ContextDependencies = *updates.ContextDependencies

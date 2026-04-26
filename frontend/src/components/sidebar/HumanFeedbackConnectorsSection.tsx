@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { MessageSquare, ChevronDown, ChevronRight, CheckCircle, XCircle, Settings, Play, Bot } from 'lucide-react'
+import { MessageSquare, ChevronDown, ChevronRight, CheckCircle, XCircle, Settings, Play, Bot, Bell } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { agentApi } from '../../services/api'
 import type { SlackConfigResponse } from '../../services/api-types'
 import SlackFeedbackConfig from '../settings/SlackFeedbackConfig'
 import BotSimulatorModal from '../settings/BotSimulatorModal'
 import BotConfigModal from '../settings/BotConfigModal'
+import NotificationPreferencesModal from '../settings/NotificationPreferencesModal'
 
 interface HumanFeedbackConnectorsSectionProps {
   minimized?: boolean
@@ -18,6 +19,7 @@ export default function HumanFeedbackConnectorsSection({
   const [showSlackConfig, setShowSlackConfig] = useState(false)
   const [showSimulator, setShowSimulator] = useState(false)
   const [showBotConfig, setShowBotConfig] = useState(false)
+  const [showPrefs, setShowPrefs] = useState(false)
   const [slackConfig, setSlackConfig] = useState<SlackConfigResponse | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -177,6 +179,32 @@ export default function HumanFeedbackConnectorsSection({
               </button>
             </div>
 
+            {/* My Notification Preferences */}
+            <div className="bg-card rounded-md p-3 space-y-2 border border-border">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                    <Bell className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-foreground">My Preferences</div>
+                    <div className="text-xs text-muted-foreground">Where my pings go</div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowPrefs(true)
+                }}
+                className="w-full px-2 py-1.5 text-xs font-medium bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Settings className="w-3 h-3" />
+                Configure
+              </button>
+            </div>
+
             {/* Bot Simulator */}
             <div className="bg-card rounded-md p-3 space-y-2 border border-border">
               <div className="flex items-center justify-between">
@@ -228,6 +256,12 @@ export default function HumanFeedbackConnectorsSection({
         <BotConfigModal
           isOpen={showBotConfig}
           onClose={() => setShowBotConfig(false)}
+        />
+
+        {/* Notification Preferences Modal */}
+        <NotificationPreferencesModal
+          isOpen={showPrefs}
+          onClose={() => setShowPrefs(false)}
         />
       </div>
     </TooltipProvider>

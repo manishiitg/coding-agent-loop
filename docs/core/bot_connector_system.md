@@ -146,7 +146,7 @@ Agent emits blocking event → BotEventFilter:
 User responds in thread → HandleMessageSync / handleExistingSession:
   1. Check blockingEventType
   2. For plan_approval: translate "approve" → "Approved. Execute the plan."
-  3. For human_feedback/questions: forward user's text as follow-up
+  3. For human_feedback: forward user's text as follow-up
   4. buildQueryRequest(response) → sendFollowUpInternal(reqMap)
   5. Clear awaitingUserInput
 ```
@@ -155,7 +155,6 @@ User responds in thread → HandleMessageSync / handleExistingSession:
 |---|---|---|
 | `plan_approval` | Plan markdown + "Reply **approve** or **reject**" | "approve" / "reject" / feedback text |
 | `blocking_human_feedback` | Question/prompt from agent | Free text answer |
-| `blocking_human_questions` | Numbered list of questions | Free text answers |
 
 ---
 
@@ -194,7 +193,6 @@ The event filter subscribes to session events and forwards filtered updates to t
 | `unified_completion` | Format with sub-agent name + result + turns/duration stats (main-level triggers session done check) |
 | `plan_approval` | Show plan content + approval instructions, set blocking state |
 | `blocking_human_feedback` | Show feedback question, set blocking state |
-| `blocking_human_questions` | Show numbered questions, set blocking state |
 | `agent_error` / `conversation_error` | Show error message |
 
 ### Sub-Agent Name Tracking

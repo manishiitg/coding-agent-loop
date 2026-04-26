@@ -400,7 +400,6 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
       "id": "step-one",
       "title": "Human readable step title",
       "description": "Detailed instructions for the worker — self-contained, assume no memory of the chat",
-      "success_criteria": "How this step succeeds",
       "context_dependencies": [],
       "context_output": "step_one_output.json"
     },
@@ -409,7 +408,6 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
       "id": "step-two",
       "title": "Next step",
       "description": "Depends on step-one's output",
-      "success_criteria": "...",
       "context_dependencies": ["step_one_output.json"],
       "context_output": "final_report.json"
     }

@@ -58,6 +58,7 @@ import type {
   RunningWorkflowInfo,
   UpdateRunningWorkflowRequest,
   CostSummary,
+  NotificationPreference,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -602,6 +603,19 @@ export const agentApi = {
   // Update Slack configuration
   updateSlackFeedbackConfig: async (config: SlackConfigRequest): Promise<SlackConfigResponse> => {
     const apiResponse = await api.post('/api/human-feedback/slack/config', config)
+    return apiResponse.data
+  },
+
+  // Per-user notification preferences (where workflow questions should land
+  // when this user is the recipient). Falls back to the workspace default
+  // when fields are blank.
+  getNotificationPreferences: async (): Promise<NotificationPreference> => {
+    const apiResponse = await api.get('/api/notification-preferences')
+    return apiResponse.data
+  },
+
+  updateNotificationPreferences: async (pref: NotificationPreference): Promise<{ status: string }> => {
+    const apiResponse = await api.post('/api/notification-preferences', pref)
     return apiResponse.data
   },
 

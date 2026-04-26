@@ -592,6 +592,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("🌐 CORS Origins: %v\n", config.CORSOrigins)
 	fmt.Printf("🔒 LLM Config Locked: %v (Env: %s)\n", isGlobalLLMConfigLocked(), os.Getenv("LLM_CONFIG_LOCKED"))
+
+	// Daily ping to keep a Supabase free-tier auth project from auto-pausing.
+	// No-op unless AUTH_PROVIDERS includes supabase.
+	StartSupabaseKeepalive(context.Background())
 	fmt.Printf("📋 Supported Providers: %s\n", os.Getenv("SUPPORTED_LLM_PROVIDERS"))
 	fmt.Printf("📁 Config: %s\n", config.MCPConfigPath)
 
@@ -996,6 +1000,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api)
+
+	// Per-user notification preferences (Slack channel, WhatsApp number)
+	NotificationPreferencesRoutes(router)
 
 	// Initialize Bot Conversation Manager
 	workspaceURL := os.Getenv("WORKSPACE_API_URL")

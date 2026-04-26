@@ -164,6 +164,16 @@ export interface TabSessionStatus {
   lastActivity: string | null
 }
 
+// Pasted long-text becomes an attachment chip rather than inline text.
+// Stored per-tab; serialized into the outgoing message as fenced blocks.
+export interface PastedAttachment {
+  id: string
+  content: string
+  chars: number
+  lines: number
+  createdAt: number
+}
+
 // Tab-specific configuration (all settings that should be per-tab)
 export interface ChatTabConfig {
   inputText: string  // Chat input text
@@ -188,6 +198,7 @@ export interface ChatTabConfig {
     workspacePath: string
   }>  // Workflow presets selected via # in chat input
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
+  pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
   autoRun?: boolean  // Automatically run the chat when tab is loaded
   defaultReasoningLevel?: 'high' | 'medium' | 'low' | null  // Preferred reasoning level for delegated tasks in multi-agent mode
@@ -276,6 +287,7 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
     delegationTierConfig: undefined,
     queuedMessages: [],
+    pastedAttachments: [],
     autoRun: false,
   }
 }

@@ -606,6 +606,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Always use tab-specific config (ChatInput is only in multi-agent mode)
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
+  const chatPastedAttachments = useMemo(() => tabConfig?.pastedAttachments || [], [tabConfig?.pastedAttachments])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
   const effectiveProviderForSteer = useMemo(() => {
@@ -730,6 +731,29 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
   
+  const addPastedAttachment = useCallback((content: string) => {
+    if (!activeTabId) return
+    const lines = content.split('\n').length
+    const item = {
+      id: `paste_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      content,
+      chars: content.length,
+      lines,
+      createdAt: Date.now(),
+    }
+    setTabConfig(activeTabId, { pastedAttachments: [...chatPastedAttachments, item] })
+  }, [activeTabId, chatPastedAttachments, setTabConfig])
+
+  const removePastedAttachment = useCallback((id: string) => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { pastedAttachments: chatPastedAttachments.filter(p => p.id !== id) })
+  }, [activeTabId, chatPastedAttachments, setTabConfig])
+
+  const clearPastedAttachments = useCallback(() => {
+    if (!activeTabId) return
+    setTabConfig(activeTabId, { pastedAttachments: [] })
+  }, [activeTabId, setTabConfig])
+
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
     if (activeTabId && activeTab) {
       const newFileContext = [...chatFileContext, file]
@@ -1454,10 +1478,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [showSubAgentPopup])
 
-  // Consolidated query selection logic
+  // Consolidated query selection logic — pasted attachments are prepended as
+  // fenced blocks so the LLM sees them as distinct sections, separate from the
+  // user's typed message.
   const queryToSubmit = useMemo(() => {
-    return inputText
-  }, [inputText])
+    if (!chatPastedAttachments.length) return inputText
+    const blocks = chatPastedAttachments.map((p, i) => {
+      const header = `[Pasted attachment ${i + 1} — ${p.lines} line${p.lines === 1 ? '' : 's'}, ${p.chars} char${p.chars === 1 ? '' : 's'}]`
+      return `${header}\n\`\`\`\n${p.content}\n\`\`\``
+    }).join('\n\n')
+    const typed = inputText.trim()
+    return typed ? `${blocks}\n\n${inputText}` : blocks
+  }, [inputText, chatPastedAttachments])
 
   const canBootstrapMultiAgentTab = isMultiAgentMode && !showWorkflowsOverview && !isOrganizationAssistant
   const hasSubmitTarget = Boolean(tabSessionId || canBootstrapMultiAgentTab)
@@ -1490,7 +1522,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       syncToStoreTimeoutRef.current = null
     }
     if (activeTabId) {
-      setTabConfig(activeTabId, { inputText: '' })
+      setTabConfig(activeTabId, { inputText: '', pastedAttachments: [] })
     }
   }, [activeTabId, setTabConfig])
 
@@ -1524,6 +1556,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return false
     }
   }, [isMultiAgentMode, showWorkflowsOverview, addToast])
+
+  // Long pastes (multi-line, or beyond a few words) become an attachment chip
+  // instead of being inserted inline. Short single-line pastes (URLs, file
+  // refs, short phrases) keep the native paste behavior.
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData?.getData('text') ?? ''
+    if (!pasted) return
+    const isLong = pasted.length >= 80 || pasted.includes('\n')
+    if (!isLong) return
+    e.preventDefault()
+    addPastedAttachment(pasted)
+  }, [addPastedAttachment])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2729,6 +2773,52 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   return (
     <TooltipProvider>
       <div className="space-y-2">
+      {/* Pasted-text Attachments */}
+      {chatPastedAttachments.length > 0 && (
+        <div className="px-4">
+          <div className="border rounded px-1.5 py-0.5 mb-1 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                <Paperclip className="w-3 h-3 inline-block mr-0.5 -mt-0.5" />
+                Pasted:
+              </span>
+              {chatPastedAttachments.map((p, index) => {
+                const preview = p.content.slice(0, 240).replace(/\s+/g, ' ').trim()
+                const sizeLabel = p.chars >= 1024 ? `${(p.chars / 1024).toFixed(1)}KB` : `${p.chars}ch`
+                return (
+                  <div key={p.id} className="flex items-center gap-0.5">
+                    <span
+                      className="text-xs text-gray-700 dark:text-gray-300 font-mono"
+                      title={preview + (p.content.length > 240 ? '…' : '')}
+                    >
+                      #{index + 1} · {p.lines}L · {sizeLabel}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removePastedAttachment(p.id)}
+                      className="p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
+                      title="Remove pasted attachment"
+                    >
+                      <X className="w-2 h-2" />
+                    </button>
+                    {index < chatPastedAttachments.length - 1 && (
+                      <span className="text-xs text-gray-400">&bull;</span>
+                    )}
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                onClick={clearPastedAttachments}
+                className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:underline ml-0.5"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* File Context Display */}
       {chatFileContext.length > 0 && (
         <div className="px-4 border-t border-gray-200 dark:border-gray-700">
@@ -2848,6 +2938,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               onChange={handleTextChange}
               onFocus={() => { void ensureMultiAgentTabReady() }}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onDragEnter={handleTextareaDragEnter}
               onDragOver={handleTextareaDragOver}
               onDragLeave={handleTextareaDragLeave}

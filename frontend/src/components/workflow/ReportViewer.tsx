@@ -24,6 +24,17 @@ import {
   resolveJSONPath,
 } from '../../lib/reportPlanParser'
 import { compareValues, formatAuto, formatNamed, rowsToCSV, type FormatResult } from '../../lib/reportFormatters'
+import {
+  evalScoreTone as evalScoreToneFromTokens,
+  scoreTones,
+  scoreTier,
+  severityIcons,
+  severityTones,
+  trendArrow,
+  trendDirection,
+  trendTones,
+  type ScoreTone,
+} from '../../lib/reportTokens'
 import { useTheme } from '../../hooks/useTheme'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import ModalPortal from '../ui/ModalPortal'
@@ -196,44 +207,12 @@ function formatMetricValue(metric: ReportCostsMetric | undefined, value: number)
   return formatAuto(value).text
 }
 
-function evalScoreTone(scorePercentage: number): {
-  pillClassName: string
-  accentClassName: string
-  label: string
-} {
-  if (scorePercentage >= 95) {
-    return {
-      pillClassName: 'border-emerald-500/30 bg-emerald-500/14 text-emerald-300',
-      accentClassName: 'from-emerald-500/18 via-emerald-500/8 to-transparent',
-      label: 'Excellent',
-    }
-  }
-  if (scorePercentage >= 85) {
-    return {
-      pillClassName: 'border-sky-500/30 bg-sky-500/14 text-sky-300',
-      accentClassName: 'from-sky-500/18 via-sky-500/8 to-transparent',
-      label: 'Strong',
-    }
-  }
-  if (scorePercentage >= 70) {
-    return {
-      pillClassName: 'border-amber-500/30 bg-amber-500/14 text-amber-300',
-      accentClassName: 'from-amber-500/18 via-amber-500/8 to-transparent',
-      label: 'Watch',
-    }
-  }
-  return {
-    pillClassName: 'border-red-500/30 bg-red-500/14 text-red-300',
-    accentClassName: 'from-red-500/18 via-red-500/8 to-transparent',
-    label: 'Needs work',
-  }
+function evalScoreTone(scorePercentage: number): ScoreTone {
+  return evalScoreToneFromTokens(scorePercentage)
 }
 
 function evalScoreBarClass(scorePercentage: number): string {
-  if (scorePercentage >= 95) return 'bg-emerald-400'
-  if (scorePercentage >= 85) return 'bg-sky-400'
-  if (scorePercentage >= 70) return 'bg-amber-400'
-  return 'bg-red-400'
+  return scoreTones[scoreTier(scorePercentage)].barClassName
 }
 
 function parseTimestamp(value?: string | null): number | null {
@@ -3327,13 +3306,9 @@ function StatWidget({
     ? (trend as unknown[]).map(v => Number(v)).filter(n => Number.isFinite(n))
     : []
 
-  const deltaTone =
-    Number.isFinite(deltaNum) && deltaNum > 0
-      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/30'
-      : Number.isFinite(deltaNum) && deltaNum < 0
-        ? 'bg-red-500/15 text-red-700 dark:text-red-300 ring-1 ring-red-500/30'
-        : 'bg-muted text-muted-foreground ring-1 ring-border/50'
-  const deltaArrow = Number.isFinite(deltaNum) && deltaNum > 0 ? '▲' : Number.isFinite(deltaNum) && deltaNum < 0 ? '▼' : '·'
+  const direction = trendDirection(Number.isFinite(deltaNum) ? deltaNum : null)
+  const deltaTone = trendTones[direction]
+  const deltaArrow = trendArrow[direction]
 
   return (
     <div className="relative flex h-full flex-col gap-2 overflow-hidden rounded-xl bg-card/75 px-3 py-3 transition-shadow sm:border sm:border-border/60 sm:bg-gradient-to-br sm:from-card sm:via-card sm:to-muted/25 sm:shadow-sm sm:hover:shadow-md">
@@ -3420,13 +3395,8 @@ function AlertWidget({
   }
 
   const severity: ReportAlertSeverity = widget.severity ?? 'info'
-  const tone = {
-    info: 'border-blue-500/30 bg-blue-500/5 text-foreground',
-    warning: 'border-amber-500/40 bg-amber-500/10 text-foreground',
-    error: 'border-red-500/40 bg-red-500/10 text-foreground',
-    success: 'border-emerald-500/40 bg-emerald-500/10 text-foreground',
-  }[severity]
-  const icon = { info: 'ℹ', warning: '⚠', error: '✕', success: '✓' }[severity]
+  const tone = severityTones[severity]
+  const icon = severityIcons[severity]
   const resolvedValue = widget.path ? resolveJSONPath(source, normalizeSingularWidgetPath(widget.path)) : undefined
   const valueText =
     resolvedValue === undefined || resolvedValue === null

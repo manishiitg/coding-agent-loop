@@ -424,3 +424,52 @@ func ApplyStepConfigFromFile(
 
 	return nil
 }
+
+// readStepConfigViaFileCallback reads planning/step_config.json using the same
+// readFile callback shape that plan-mod tool executors get. Returns an empty
+// slice if the file doesn't exist (no configs declared yet) — that's a normal
+// state, not an error.
+func readStepConfigViaFileCallback(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) ([]StepConfig, error) {
+	configPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "step_config.json"), workspacePath)
+	content, err := readFile(ctx, configPath)
+	if err != nil {
+		// File-not-found is the common case for fresh plans; treat as empty.
+		return []StepConfig{}, nil
+	}
+	if content == "" {
+		return []StepConfig{}, nil
+	}
+	return ParseStepConfigContent(content)
+}
+
+// writeStepConfigViaFileCallback persists the given configs back to
+// planning/step_config.json using the same writeFile callback shape that
+// plan-mod tool executors get.
+func writeStepConfigViaFileCallback(ctx context.Context, workspacePath string, configs []StepConfig, writeFile func(context.Context, string, string) error) error {
+	configPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "step_config.json"), workspacePath)
+	file := StepConfigFile{Steps: configs}
+	out, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal step_config.json: %w", err)
+	}
+	return writeFile(ctx, configPath, string(out))
+}
+
+// pruneStepConfigsByID removes entries whose IDs are in deletedSet and returns
+// (newConfigs, deletedIDsActuallyRemoved). The second slice is empty when
+// nothing matched, letting callers skip the write.
+func pruneStepConfigsByID(configs []StepConfig, deletedSet map[string]bool) ([]StepConfig, []string) {
+	if len(configs) == 0 || len(deletedSet) == 0 {
+		return configs, nil
+	}
+	kept := make([]StepConfig, 0, len(configs))
+	var removed []string
+	for _, cfg := range configs {
+		if deletedSet[cfg.ID] {
+			removed = append(removed, cfg.ID)
+			continue
+		}
+		kept = append(kept, cfg)
+	}
+	return kept, removed
+}

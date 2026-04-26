@@ -3115,6 +3115,20 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
+		// Cascade-delete the matching entries from planning/step_config.json so
+		// the step's per-step config doesn't linger as an orphan after its plan
+		// entry is gone. Best-effort: a missing file or write failure is logged
+		// but doesn't fail the plan-deletion call (the plan was already written).
+		if existingConfigs, cfgErr := readStepConfigViaFileCallback(ctx, workspacePath, readFile); cfgErr != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to read step_config.json for cascade-delete: %v", cfgErr))
+		} else if newConfigs, removed := pruneStepConfigsByID(existingConfigs, deletedSet); len(removed) > 0 {
+			if writeErr := writeStepConfigViaFileCallback(ctx, workspacePath, newConfigs, writeFile); writeErr != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to cascade-delete step_config entries %v: %v", removed, writeErr))
+			} else {
+				logger.Info(fmt.Sprintf("🧹 Cascade-removed %d step_config entries: %v", len(removed), removed))
+			}
+		}
+
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for all deleted steps (if unlock function provided)
@@ -3133,6 +3147,60 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 
 		logger.Info(fmt.Sprintf("✅ Deleted %d steps from plan", len(deletedIDs)))
 		return fmt.Sprintf("Successfully deleted %d step(s) from the plan", len(deletedIDs)), nil
+	}
+}
+
+// createCleanupOrphanStepConfigsExecutor creates the executor for the
+// cleanup_orphan_step_configs tool. Reads planning/step_config.json, computes
+// the set of step IDs that no longer exist in plan.json (top-level Steps +
+// OrphanSteps, recursing into nested sub_agent_step / conditional branches),
+// and rewrites step_config.json without those orphan entries.
+func createCleanupOrphanStepConfigsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Build the set of step IDs that legitimately exist anywhere in the plan
+		// (including nested via collectAllSteps). Anything in step_config.json
+		// outside this set is orphan.
+		liveIDs := make(map[string]bool)
+		for _, info := range collectAllSteps(plan.Steps) {
+			liveIDs[info.Step.GetID()] = true
+		}
+		for _, info := range collectAllSteps(plan.OrphanSteps) {
+			liveIDs[info.Step.GetID()] = true
+		}
+
+		configs, err := readStepConfigViaFileCallback(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read step_config.json: %w", err)
+		}
+		if len(configs) == 0 {
+			return "No step_config.json entries found — nothing to clean up.", nil
+		}
+
+		kept := make([]StepConfig, 0, len(configs))
+		var removed []string
+		for _, cfg := range configs {
+			if liveIDs[cfg.ID] {
+				kept = append(kept, cfg)
+				continue
+			}
+			removed = append(removed, cfg.ID)
+		}
+
+		if len(removed) == 0 {
+			return fmt.Sprintf("All %d step_config.json entries match a step in plan.json — nothing to remove.", len(configs)), nil
+		}
+
+		if err := writeStepConfigViaFileCallback(ctx, workspacePath, kept, writeFile); err != nil {
+			return "", fmt.Errorf("failed to write step_config.json: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("🧹 cleanup_orphan_step_configs removed %d orphan entries: %v", len(removed), removed))
+		return fmt.Sprintf("Removed %d orphan step_config.json entries: %v. Kept %d.", len(removed), removed, len(kept)), nil
 	}
 }
 
@@ -3956,12 +4024,30 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
-		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called.",
+		"Delete steps from the plan by providing their IDs. Use the step's id field from the plan. The plan.json file is updated immediately when this tool is called. Any matching entries in planning/step_config.json are also removed in the same call so a deleted step doesn't leave behind an orphan config.",
 		deleteParams,
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register delete_plan_steps tool: %w", err)
+	}
+
+	cleanupOrphanSchema := `{
+		"type": "object",
+		"properties": {}
+	}`
+	cleanupOrphanParams, err := parseSchemaForToolParameters(cleanupOrphanSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse cleanup_orphan_step_configs schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"cleanup_orphan_step_configs",
+		"Sweep planning/step_config.json and remove entries whose step_id no longer exists in plan.json (or plan.OrphanSteps). Use this once when you notice the agent describing orphan step_config entries it can't reach via update_step_config. Idempotent: returns the list of IDs removed (empty if nothing was orphaned).",
+		cleanupOrphanParams,
+		createCleanupOrphanStepConfigsExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register cleanup_orphan_step_configs tool: %w", err)
 	}
 
 	// Register type-specific step addition tools

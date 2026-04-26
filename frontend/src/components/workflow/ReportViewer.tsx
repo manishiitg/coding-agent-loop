@@ -50,6 +50,7 @@ import type {
   ReportEntry,
   ReportFormatterName,
   ReportWidget,
+  ReportWidgetKind,
   RunFoldersResponse,
   TokenUsageFile,
   WorkflowCostsResponse,
@@ -1678,6 +1679,52 @@ function resolveSingularWidgetSource(source: unknown, widget: ReportWidget): Sin
   return { status: 'multi-match', value: filtered }
 }
 
+// Source mode classifies how WidgetCard should resolve data for each widget
+// kind. The four modes determine the dispatch path:
+//   - api-*       — pulls from a workflow-level API endpoint, ignores `source`
+//   - singular    — narrows the source to a single row (for stat / alert)
+//   - pivot       — feeds the raw source straight to the renderer
+//   - collection  — resolves `path` + `filter` then hands an array/value to
+//                   the renderer
+type WidgetSourceMode = 'api-costs' | 'api-evals' | 'api-runs' | 'singular' | 'pivot' | 'collection'
+
+const WIDGET_SOURCE_MODE: Record<ReportWidgetKind, WidgetSourceMode> = {
+  costs: 'api-costs',
+  evals: 'api-evals',
+  runs: 'api-runs',
+  stat: 'singular',
+  alert: 'singular',
+  pivot: 'pivot',
+  text: 'collection',
+  markdown: 'collection',
+  table: 'collection',
+  cards: 'collection',
+  chart: 'collection',
+}
+
+// Standalone widgets render their own outer container; everything else gets
+// wrapped in WidgetShell. This is also the set whose loading / missing-source
+// notices use StandaloneWidgetNotice instead of the standard shell.
+const STANDALONE_WIDGET_KINDS: ReadonlySet<ReportWidgetKind> = new Set(['stat', 'alert'])
+
+const isStandaloneWidget = (kind: ReportWidgetKind) => STANDALONE_WIDGET_KINDS.has(kind)
+
+// Renderer registries. Each map covers one source mode. Adding a new widget
+// kind: extend ReportWidgetKind, add an entry to WIDGET_SOURCE_MODE, and
+// register the renderer here — WidgetCard itself doesn't change.
+type CollectionWidgetRenderer = React.FC<{ value: unknown; widget: ReportWidget }>
+type SingularWidgetRenderer = React.FC<{
+  source: unknown
+  resolution: SingularWidgetSourceResolution
+  widget: ReportWidget
+  onToggleHidden?: () => void
+}>
+type PivotWidgetRenderer = React.FC<{ source: unknown; widget: ReportWidget }>
+
+const COLLECTION_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, CollectionWidgetRenderer>> = {}
+const SINGULAR_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, SingularWidgetRenderer>> = {}
+const PIVOT_WIDGET_RENDERERS: Partial<Record<ReportWidgetKind, PivotWidgetRenderer>> = {}
+
 function HiddenWidgetCard({
   widget,
   onShow,
@@ -1733,85 +1780,61 @@ function WidgetCard({
     return <HiddenWidgetCard widget={widget} onShow={onToggleHidden} />
   }
 
-  if (widget.kind === 'costs') {
+  const mode = WIDGET_SOURCE_MODE[widget.kind]
+
+  // API-driven widgets bypass the file-source pipeline.
+  if (mode === 'api-costs') {
     return (
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <CostsWidget
-          widget={widget}
-          costsData={costsData}
-          loading={costsLoading}
-          error={costsError}
-        />
+        <CostsWidget widget={widget} costsData={costsData} loading={costsLoading} error={costsError} />
+      </WidgetShell>
+    )
+  }
+  if (mode === 'api-evals') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <EvalsWidget widget={widget} evalsData={evalsData} loading={evalsLoading} error={evalsError} />
+      </WidgetShell>
+    )
+  }
+  if (mode === 'api-runs') {
+    return (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
+        <RunsWidget widget={widget} runsData={runsData} loading={runsLoading} error={runsError} />
       </WidgetShell>
     )
   }
 
-  if (widget.kind === 'evals') {
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <EvalsWidget
-          widget={widget}
-          evalsData={evalsData}
-          loading={evalsLoading}
-          error={evalsError}
-        />
-      </WidgetShell>
+  const wrapNotice = (content: React.ReactNode) =>
+    isStandaloneWidget(widget.kind) ? (
+      <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
+    ) : (
+      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>{content}</WidgetShell>
     )
-  }
-
-  if (widget.kind === 'runs') {
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <RunsWidget
-          widget={widget}
-          runsData={runsData}
-          loading={runsLoading}
-          error={runsError}
-        />
-      </WidgetShell>
-    )
-  }
 
   const raw = sources[widget.source]
   if (raw === undefined) {
-    const content = (
-      <div className="py-1.5 text-xs italic text-muted-foreground">
-        Loading {widget.source}…
-      </div>
-    )
-    if (widget.kind === 'stat' || widget.kind === 'alert') {
-      return <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
-    }
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        {content}
-      </WidgetShell>
+    return wrapNotice(
+      <div className="py-1.5 text-xs italic text-muted-foreground">Loading {widget.source}…</div>,
     )
   }
   if (raw === null) {
-    const content = (
+    return wrapNotice(
       <div className="py-1.5 text-xs italic text-muted-foreground">
         Source not available: <code className="px-1 rounded bg-muted">{widget.source}</code>
-      </div>
-    )
-    if (widget.kind === 'stat' || widget.kind === 'alert') {
-      return <StandaloneWidgetNotice onToggleHidden={onToggleHidden}>{content}</StandaloneWidgetNotice>
-    }
-    return (
-      <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        {content}
-      </WidgetShell>
+      </div>,
     )
   }
-  const singularSource =
-    widget.kind === 'stat' || widget.kind === 'alert'
-      ? resolveSingularWidgetSource(raw, widget)
-      : null
+
+  const singularSource = mode === 'singular' ? resolveSingularWidgetSource(raw, widget) : null
   const conditionalSource = singularSource?.status === 'ok' ? singularSource.value : raw
   if (!evaluateShowIf(conditionalSource, widget.showIf)) return null
-  if (widget.kind === 'stat') {
+
+  if (mode === 'singular') {
+    const Renderer = SINGULAR_WIDGET_RENDERERS[widget.kind]
+    if (!Renderer) return null
     return (
-      <StatWidget
+      <Renderer
         source={singularSource?.status === 'ok' ? singularSource.value : undefined}
         resolution={singularSource ?? { status: 'ok', value: raw }}
         widget={widget}
@@ -1819,24 +1842,18 @@ function WidgetCard({
       />
     )
   }
-  if (widget.kind === 'alert') {
-    return (
-      <AlertWidget
-        source={singularSource?.status === 'ok' ? singularSource.value : undefined}
-        resolution={singularSource ?? { status: 'ok', value: raw }}
-        widget={widget}
-        onToggleHidden={onToggleHidden}
-      />
-    )
-  }
-  if (widget.kind === 'pivot') {
+
+  if (mode === 'pivot') {
+    const Renderer = PIVOT_WIDGET_RENDERERS[widget.kind]
+    if (!Renderer) return null
     return (
       <WidgetShell widget={widget} onToggleHidden={onToggleHidden}>
-        <PivotWidget source={raw} widget={widget} />
+        <Renderer source={raw} widget={widget} />
       </WidgetShell>
     )
   }
 
+  // Collection mode: resolve path → filter → render.
   const resolvedRaw = resolveJSONPath(raw, widget.path)
   let content: React.ReactNode = null
   if (resolvedRaw === undefined) {
@@ -1859,16 +1876,9 @@ function WidgetCard({
           severity="info"
         />
       )
-    } else if (widget.kind === 'text') {
-      content = <TextWidget value={resolved} widget={widget} />
-    } else if (widget.kind === 'markdown') {
-      content = <MarkdownWidget value={resolved} widget={widget} />
-    } else if (widget.kind === 'table') {
-      content = <TableWidget value={resolved} widget={widget} />
-    } else if (widget.kind === 'cards') {
-      content = <CardsWidget value={resolved} widget={widget} />
-    } else if (widget.kind === 'chart') {
-      content = <ChartWidget value={resolved} widget={widget} />
+    } else {
+      const Renderer = COLLECTION_WIDGET_RENDERERS[widget.kind]
+      if (Renderer) content = <Renderer value={resolved} widget={widget} />
     }
   }
 
@@ -4240,3 +4250,19 @@ function ChartWidget({ value, widget }: { value: unknown; widget: ReportWidget }
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Widget registry. Each kind registers its renderer into the map matching its
+// source mode (see WIDGET_SOURCE_MODE). WidgetCard reads from these maps so
+// adding a new widget kind doesn't require editing the dispatcher.
+// ---------------------------------------------------------------------------
+COLLECTION_WIDGET_RENDERERS.text = TextWidget
+COLLECTION_WIDGET_RENDERERS.markdown = MarkdownWidget
+COLLECTION_WIDGET_RENDERERS.table = TableWidget
+COLLECTION_WIDGET_RENDERERS.cards = CardsWidget
+COLLECTION_WIDGET_RENDERERS.chart = ChartWidget
+
+SINGULAR_WIDGET_RENDERERS.stat = StatWidget
+SINGULAR_WIDGET_RENDERERS.alert = AlertWidget
+
+PIVOT_WIDGET_RENDERERS.pivot = PivotWidget

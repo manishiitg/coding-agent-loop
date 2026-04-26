@@ -1777,7 +1777,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 </p>
               )}
               <button
-                onClick={loadLogs}
+                onClick={() => loadLogs()}
                 disabled={loading || !selectedRunFolder}
                 className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Refresh logs"
@@ -1806,7 +1806,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               <AlertCircle className="w-12 h-12 mb-3" />
               <p>{error}</p>
               <button 
-                onClick={loadLogs}
+                onClick={() => loadLogs()}
                 className="mt-4 px-4 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors text-sm font-medium"
               >
                 Retry

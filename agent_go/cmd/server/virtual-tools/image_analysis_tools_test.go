@@ -27,3 +27,29 @@ func TestNormalizeImageAnalysisProviderAndModelInfersMiniMaxFromClaudeModel(t *t
 		t.Fatalf("modelID = %q, want claude-sonnet-4-5", modelID)
 	}
 }
+
+func TestNormalizeImageAnalysisProviderAndModelKimiDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("kimi", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "kimi" {
+		t.Fatalf("provider = %q, want kimi", provider)
+	}
+	if modelID != "kimi-k2.6" {
+		t.Fatalf("modelID = %q, want kimi-k2.6", modelID)
+	}
+}
+
+func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "kimi-k2.6")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "kimi" {
+		t.Fatalf("provider = %q, want kimi", provider)
+	}
+	if modelID != "kimi-k2.6" {
+		t.Fatalf("modelID = %q, want kimi-k2.6", modelID)
+	}
+}

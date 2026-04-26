@@ -206,10 +206,11 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
 - Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
 - Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-2.5-flash\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-2.5-flash\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - If you want to use MiniMax for image understanding, configure provider ` + "`minimax-coding-plan`" + `, not plain ` + "`minimax`" + `.
+- Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 
 ## Employees & Workflows

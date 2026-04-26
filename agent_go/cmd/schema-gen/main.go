@@ -727,7 +727,49 @@ type UnifiedEvent struct {
 }
 
 // =============================================================================
-// SECTION 6: Main Entry Point
+// SECTION 6: Report Plan Schema
+// =============================================================================
+// The report plan structure is owned by Go (the validator runs in the builder
+// loop). The frontend ReportViewer types, parser, and validator are derived
+// from the schema we emit here. To add or rename a field, edit the
+// reportPlanDocument* types in pkg/.../report_plan_helpers.go, run
+// `go run ./agent_go/cmd/schema-gen` (or `npm run types:generate`), and the
+// frontend types regenerate.
+
+// writeReportPlanSchema reflects the public ReportPlanDocument alias and
+// writes the schema to disk. Pre-existing schemas in this repo deliberately
+// keep $ref-style nesting so json-schema-to-typescript can produce real
+// interfaces for nested types (sections, widgets, layout).
+func writeReportPlanSchema(filename string) error {
+	r := new(jsonschema.Reflector)
+	r.ExpandedStruct = true
+	r.DoNotReference = false
+	r.RequiredFromJSONSchemaTags = true
+
+	schema := r.Reflect(&todo_creation_human.ReportPlanDocument{})
+
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	//nolint:gosec // G304: filename is set in main, not user input
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", filename, err)
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(schema); err != nil {
+		return fmt.Errorf("failed to encode report plan schema: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// SECTION 7: Main Entry Point
 // =============================================================================
 
 func main() {
@@ -756,9 +798,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Generate report plan schema. Go is the canonical source of truth for the
+	// report plan shape; the frontend types/parser/validator are generated from
+	// this output via json-schema-to-typescript (frontend/scripts/generate-event-types.mjs).
+	if err := writeReportPlanSchema("schemas/report-plan.schema.json"); err != nil {
+		fmt.Printf("Error generating report plan schema: %v\n", err)
+		os.Exit(1)
+	}
+	if err := writeReportPlanSchema("../schemas/report-plan.schema.json"); err != nil {
+		fmt.Printf("Error generating report plan schema to ../schemas: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Println("✅ Successfully generated schemas:")
 	fmt.Println("  - schemas/unified-events-complete.schema.json")
 	fmt.Println("  - schemas/polling-event.schema.json")
+	fmt.Println("  - schemas/report-plan.schema.json")
 	fmt.Println("")
 	fmt.Println("📋 Schema Structure (matching actual wire format):")
 	fmt.Println("  PollingEventActual")

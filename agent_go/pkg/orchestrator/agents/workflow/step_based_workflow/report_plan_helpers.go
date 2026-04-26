@@ -166,6 +166,23 @@ type reportPlanDocumentWidget struct {
 	Layout        *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
 }
 
+// Public aliases for schema generation. The package-private types above are
+// the canonical definitions; these aliases just expose them under stable
+// names that the schema-gen command (and any other downstream tooling) can
+// reference without the package having to broaden the surface of every
+// callsite. Type aliases are zero-cost — they refer to the same underlying
+// type — so no runtime or memory implications.
+type (
+	ReportPlanDocument              = reportPlanDocument
+	ReportPlanDocumentSection       = reportPlanDocumentSection
+	ReportPlanDocumentSectionLayout = reportPlanDocumentSectionLayout
+	ReportPlanDocumentEntry         = reportPlanDocumentEntry
+	ReportPlanDocumentRow           = reportPlanDocumentRow
+	ReportPlanDocumentWidget        = reportPlanDocumentWidget
+	ReportPlanDocumentWidgetLayout  = reportPlanDocumentWidgetLayout
+	ReportPlanDocumentDefaultSort   = reportPlanDocumentDefaultSort
+)
+
 type reportPlanReadResult struct {
 	Document   *reportPlanDocument
 	RawContent string

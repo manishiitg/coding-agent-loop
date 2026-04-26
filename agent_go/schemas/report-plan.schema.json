@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "reportPlanDocumentDefaultSort": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentEntry": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "widget": {
+          "$ref": "#/$defs/reportPlanDocumentWidget"
+        },
+        "row": {
+          "$ref": "#/$defs/reportPlanDocumentRow"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentRow": {
+      "properties": {
+        "widgets": {
+          "items": {
+            "$ref": "#/$defs/reportPlanDocumentWidget"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentSection": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "heading": {
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/reportPlanDocumentEntry"
+          },
+          "type": "array"
+        },
+        "layout": {
+          "$ref": "#/$defs/reportPlanDocumentSectionLayout"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentSectionLayout": {
+      "properties": {
+        "columns": {
+          "type": "integer"
+        },
+        "gap": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentWidget": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "filter": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "formats": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pageSize": {
+          "type": "integer"
+        },
+        "enableSearch": {
+          "type": "boolean"
+        },
+        "defaultSort": {
+          "$ref": "#/$defs/reportPlanDocumentDefaultSort"
+        },
+        "hideColumns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "chartType": {
+          "type": "string"
+        },
+        "xAxis": {
+          "type": "string"
+        },
+        "yAxis": {
+          "type": "string"
+        },
+        "topN": {
+          "type": "integer"
+        },
+        "sort": {
+          "type": "string"
+        },
+        "showValues": {
+          "type": "boolean"
+        },
+        "colors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "colorsDark": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "colorBy": {
+          "type": "string"
+        },
+        "colorMap": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "showIf": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "suffix": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "deltaPath": {
+          "type": "string"
+        },
+        "deltaFormat": {
+          "type": "string"
+        },
+        "trendPath": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "rowsField": {
+          "type": "string"
+        },
+        "columnsField": {
+          "type": "string"
+        },
+        "valuesField": {
+          "type": "string"
+        },
+        "aggregate": {
+          "type": "string"
+        },
+        "heatmap": {
+          "type": "boolean"
+        },
+        "heatmapColors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "series": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "seriesColors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stacked": {
+          "type": "boolean"
+        },
+        "costsScope": {
+          "type": "string"
+        },
+        "costsView": {
+          "type": "string"
+        },
+        "costsMetric": {
+          "type": "string"
+        },
+        "evalsView": {
+          "type": "string"
+        },
+        "evalsMetric": {
+          "type": "string"
+        },
+        "runsView": {
+          "type": "string"
+        },
+        "runFolder": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "layout": {
+          "$ref": "#/$defs/reportPlanDocumentWidgetLayout"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "reportPlanDocumentWidgetLayout": {
+      "properties": {
+        "span": {
+          "type": "integer"
+        },
+        "minWidth": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "properties": {
+    "version": {
+      "type": "integer"
+    },
+    "theme": {
+      "type": "string"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/reportPlanDocumentSection"
+      },
+      "type": "array"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object"
+}

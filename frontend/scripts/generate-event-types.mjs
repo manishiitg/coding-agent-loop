@@ -15,6 +15,10 @@ const jobs = [
     schemaPath: path.resolve(frontendDir, '../agent_go/schemas/polling-event.schema.json'),
     outputPath: path.resolve(frontendDir, 'src/generated/events-bridge.ts'),
   },
+  {
+    schemaPath: path.resolve(frontendDir, '../agent_go/schemas/report-plan.schema.json'),
+    outputPath: path.resolve(frontendDir, 'src/generated/report-plan.ts'),
+  },
 ]
 
 for (const job of jobs) {

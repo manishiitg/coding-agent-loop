@@ -18,14 +18,14 @@ export interface ReportPlanDocumentSection {
 }
 export interface ReportPlanDocumentEntry {
   id?: string;
-  kind?: string;
+  kind?: "single" | "row";
   widget?: ReportPlanDocumentWidget;
   row?: ReportPlanDocumentRow;
 }
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind?: string;
+  kind?: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "costs" | "evals" | "runs";
   source?: string;
   path?: string;
   filter?: string;
@@ -39,11 +39,11 @@ export interface ReportPlanDocumentWidget {
   enableSearch?: boolean;
   defaultSort?: ReportPlanDocumentDefaultSort;
   hideColumns?: string[];
-  chartType?: string;
+  chartType?: "bar" | "line" | "area" | "pie";
   xAxis?: string;
   yAxis?: string;
   topN?: number;
-  sort?: string;
+  sort?: "asc" | "desc" | "none";
   showValues?: boolean;
   colors?: string[];
   colorsDark?: string[];
@@ -55,34 +55,58 @@ export interface ReportPlanDocumentWidget {
   label?: string;
   prefix?: string;
   suffix?: string;
-  format?: string;
+  format?:
+    | "currency-inr"
+    | "currency-usd"
+    | "percent"
+    | "percent-1dp"
+    | "short-date"
+    | "long-date"
+    | "datetime"
+    | "number"
+    | "number-1dp"
+    | "number-2dp"
+    | "bytes"
+    | "boolean-icon";
   deltaPath?: string;
-  deltaFormat?: string;
+  deltaFormat?:
+    | "currency-inr"
+    | "currency-usd"
+    | "percent"
+    | "percent-1dp"
+    | "short-date"
+    | "long-date"
+    | "datetime"
+    | "number"
+    | "number-1dp"
+    | "number-2dp"
+    | "bytes"
+    | "boolean-icon";
   trendPath?: string;
-  severity?: string;
+  severity?: "info" | "warning" | "error" | "success";
   message?: string;
   rowsField?: string;
   columnsField?: string;
   valuesField?: string;
-  aggregate?: string;
+  aggregate?: "sum" | "avg" | "count" | "min" | "max" | "first";
   heatmap?: boolean;
   heatmapColors?: string[];
   series?: string[];
   seriesColors?: string[];
   stacked?: boolean;
-  costsScope?: string;
-  costsView?: string;
-  costsMetric?: string;
-  evalsView?: string;
-  evalsMetric?: string;
-  runsView?: string;
+  costsScope?: "phase" | "execution" | "evaluation" | "all";
+  costsView?: "summary" | "stage-breakdown" | "run-table" | "step-table" | "model-table";
+  costsMetric?: "cost" | "total_tokens" | "input_tokens" | "output_tokens" | "llm_calls";
+  evalsView?: "summary" | "run-chart" | "run-table" | "step-table";
+  evalsMetric?: "score_percentage" | "total_score";
+  runsView?: "summary" | "duration-chart" | "status-chart" | "table";
   runFolder?: string;
   group?: string;
   layout?: ReportPlanDocumentWidgetLayout;
 }
 export interface ReportPlanDocumentDefaultSort {
   field?: string;
-  direction?: string;
+  direction?: "asc" | "desc";
 }
 export interface ReportPlanDocumentWidgetLayout {
   span?: number;

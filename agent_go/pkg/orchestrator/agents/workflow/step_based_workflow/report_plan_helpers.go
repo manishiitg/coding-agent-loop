@@ -97,7 +97,7 @@ type reportPlanDocumentWidgetLayout struct {
 
 type reportPlanDocumentEntry struct {
 	ID     string                    `json:"id,omitempty"`
-	Kind   string                    `json:"kind"`
+	Kind   string                    `json:"kind" jsonschema:"enum=single,enum=row"`
 	Widget *reportPlanDocumentWidget `json:"widget,omitempty"`
 	Row    *reportPlanDocumentRow    `json:"row,omitempty"`
 }
@@ -108,13 +108,13 @@ type reportPlanDocumentRow struct {
 
 type reportPlanDocumentDefaultSort struct {
 	Field     string `json:"field"`
-	Direction string `json:"direction,omitempty"`
+	Direction string `json:"direction,omitempty" jsonschema:"enum=asc,enum=desc"`
 }
 
 type reportPlanDocumentWidget struct {
 	ID            string                         `json:"id,omitempty"`
 	Hidden        bool                           `json:"hidden,omitempty"`
-	Kind          string                         `json:"kind"`
+	Kind          string                         `json:"kind" jsonschema:"enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=costs,enum=evals,enum=runs"`
 	Source        string                         `json:"source,omitempty"`
 	Path          string                         `json:"path,omitempty"`
 	Filter        string                         `json:"filter,omitempty"`
@@ -126,11 +126,11 @@ type reportPlanDocumentWidget struct {
 	EnableSearch  *bool                          `json:"enableSearch,omitempty"`
 	DefaultSort   *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
 	HideColumns   []string                       `json:"hideColumns,omitempty"`
-	ChartType     string                         `json:"chartType,omitempty"`
+	ChartType     string                         `json:"chartType,omitempty" jsonschema:"enum=bar,enum=line,enum=area,enum=pie"`
 	XAxis         string                         `json:"xAxis,omitempty"`
 	YAxis         string                         `json:"yAxis,omitempty"`
 	TopN          int                            `json:"topN,omitempty"`
-	Sort          string                         `json:"sort,omitempty"`
+	Sort          string                         `json:"sort,omitempty" jsonschema:"enum=asc,enum=desc,enum=none"`
 	ShowValues    *bool                          `json:"showValues,omitempty"`
 	Colors        []string                       `json:"colors,omitempty"`
 	ColorsDark    []string                       `json:"colorsDark,omitempty"`
@@ -140,27 +140,27 @@ type reportPlanDocumentWidget struct {
 	Label         string                         `json:"label,omitempty"`
 	Prefix        string                         `json:"prefix,omitempty"`
 	Suffix        string                         `json:"suffix,omitempty"`
-	Format        string                         `json:"format,omitempty"`
+	Format        string                         `json:"format,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
 	DeltaPath     string                         `json:"deltaPath,omitempty"`
-	DeltaFormat   string                         `json:"deltaFormat,omitempty"`
+	DeltaFormat   string                         `json:"deltaFormat,omitempty" jsonschema:"enum=currency-inr,enum=currency-usd,enum=percent,enum=percent-1dp,enum=short-date,enum=long-date,enum=datetime,enum=number,enum=number-1dp,enum=number-2dp,enum=bytes,enum=boolean-icon"`
 	TrendPath     string                         `json:"trendPath,omitempty"`
-	Severity      string                         `json:"severity,omitempty"`
+	Severity      string                         `json:"severity,omitempty" jsonschema:"enum=info,enum=warning,enum=error,enum=success"`
 	Message       string                         `json:"message,omitempty"`
 	RowsField     string                         `json:"rowsField,omitempty"`
 	ColumnsField  string                         `json:"columnsField,omitempty"`
 	ValuesField   string                         `json:"valuesField,omitempty"`
-	Aggregate     string                         `json:"aggregate,omitempty"`
+	Aggregate     string                         `json:"aggregate,omitempty" jsonschema:"enum=sum,enum=avg,enum=count,enum=min,enum=max,enum=first"`
 	Heatmap       *bool                          `json:"heatmap,omitempty"`
 	HeatmapColors []string                       `json:"heatmapColors,omitempty"`
 	Series        []string                       `json:"series,omitempty"`
 	SeriesColors  []string                       `json:"seriesColors,omitempty"`
 	Stacked       *bool                          `json:"stacked,omitempty"`
-	CostsScope    string                         `json:"costsScope,omitempty"`
-	CostsView     string                         `json:"costsView,omitempty"`
-	CostsMetric   string                         `json:"costsMetric,omitempty"`
-	EvalsView     string                         `json:"evalsView,omitempty"`
-	EvalsMetric   string                         `json:"evalsMetric,omitempty"`
-	RunsView      string                         `json:"runsView,omitempty"`
+	CostsScope    string                         `json:"costsScope,omitempty" jsonschema:"enum=phase,enum=execution,enum=evaluation,enum=all"`
+	CostsView     string                         `json:"costsView,omitempty" jsonschema:"enum=summary,enum=stage-breakdown,enum=run-table,enum=step-table,enum=model-table"`
+	CostsMetric   string                         `json:"costsMetric,omitempty" jsonschema:"enum=cost,enum=total_tokens,enum=input_tokens,enum=output_tokens,enum=llm_calls"`
+	EvalsView     string                         `json:"evalsView,omitempty" jsonschema:"enum=summary,enum=run-chart,enum=run-table,enum=step-table"`
+	EvalsMetric   string                         `json:"evalsMetric,omitempty" jsonschema:"enum=score_percentage,enum=total_score"`
+	RunsView      string                         `json:"runsView,omitempty" jsonschema:"enum=summary,enum=duration-chart,enum=status-chart,enum=table"`
 	RunFolder     string                         `json:"runFolder,omitempty"`
 	Group         string                         `json:"group,omitempty"`
 	Layout        *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`

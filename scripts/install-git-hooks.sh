@@ -139,6 +139,15 @@ if [ -n "$SENSITIVE_FILES" ]; then
 fi
 echo -e "${GREEN}✅ No sensitive file patterns detected.${NC}"
 
+# Schema drift — runs only when staged files plausibly affect generated
+# schemas/types. See scripts/check-schema-drift.sh for the exact paths.
+REPO_ROOT_FOR_DRIFT="$(git rev-parse --show-toplevel)"
+if [ -x "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh" ]; then
+    if ! "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh"; then
+        exit 1
+    fi
+fi
+
 # Run golangci-lint on Go files
 echo -e "${BLUE}🔍 Running golangci-lint...${NC}"
 

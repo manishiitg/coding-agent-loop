@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -591,10 +592,17 @@ func generateDiscriminatedUnionSchema(filename string) error {
 	// Generate the base schema first to get all definitions
 	baseSchema := r.Reflect(&PollingEventActual{})
 
-	// Generate all event type enum values
+	// Generate all event type enum values. Go map iteration order is
+	// non-deterministic, so sort the output to keep the generated schema
+	// stable across runs (required by the drift-check pre-commit hook).
 	eventTypes := make([]interface{}, 0, len(EventTypeMapping))
+	eventTypeStrings := make([]string, 0, len(EventTypeMapping))
 	for eventType := range EventTypeMapping {
-		eventTypes = append(eventTypes, string(eventType))
+		eventTypeStrings = append(eventTypeStrings, string(eventType))
+	}
+	sort.Strings(eventTypeStrings)
+	for _, s := range eventTypeStrings {
+		eventTypes = append(eventTypes, s)
 	}
 
 	// Add EventType enum to definitions if not present

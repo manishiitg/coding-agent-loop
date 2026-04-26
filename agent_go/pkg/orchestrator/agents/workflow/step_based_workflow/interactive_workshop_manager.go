@@ -4185,9 +4185,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			var errors []string
 			warnings := make([]string, 0)
 
-			// 1. Validate step ID exists in the plan
-			if iwm.controller.approvedPlan != nil {
+			// 1. Validate step ID exists in the plan.
+			// Refresh from disk first so steps just added by other plan-mod tools in the
+			// same turn (e.g. add_todo_task_route on a nested parent) are visible — the
+			// controller's approvedPlan cache is otherwise stale until the next reload.
+			if loadErr := iwm.controller.LoadPlanForWorkshop(ctx); loadErr != nil {
+				errors = append(errors, fmt.Sprintf("Failed to refresh plan for validation: %v", loadErr))
+			} else if iwm.controller.approvedPlan != nil {
 				stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID)
+				if stepInfo == nil {
+					stepInfo = findWorkshopStepByID(iwm.controller.approvedPlan.OrphanSteps, stepID)
+				}
 				if stepInfo == nil {
 					errors = append(errors, fmt.Sprintf("Step ID %q not found in the current plan. Valid step IDs can be found in planning/plan.json.", stepID))
 				}

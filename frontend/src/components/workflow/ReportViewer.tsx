@@ -1365,7 +1365,10 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   }
 
   return (
-    <div className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground">
+    <div
+      className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
+      data-report-theme={plan.theme || undefined}
+    >
       {onClose && (
         <div className="flex flex-shrink-0 items-center justify-end border-b border-border/50 bg-background/80 px-3 py-2.5 backdrop-blur-sm sm:px-5">
           <button
@@ -1403,35 +1406,72 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
 
             {!loading && !error && hasAnyContent && (
               <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-                {visibleSections.map(({ section, sectionIndex, entries }) => (
-                  <section key={sectionIndex} className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
-                    <SectionHeader
-                      heading={section.heading}
-                    />
-                    <div className="flex flex-col gap-3">
-                      {entries.map(({ entry, entryIndex }) => (
-                        <EntryRenderer
-                          key={entryIndex}
-                          entry={entry}
-                          entryIndex={entryIndex}
-                          sectionIndex={sectionIndex}
-                          sources={sources}
-                          costsData={costsData}
-                          costsLoading={costsLoading}
-                          costsError={costsError}
-                          evalsData={evalsData}
-                          evalsLoading={evalsLoading}
-                          evalsError={evalsError}
-                          runsData={runsData}
-                          runsLoading={runsLoading}
-                          runsError={runsError}
-                          hiddenWidgetKeys={hiddenWidgetKeys}
-                          onToggleWidgetHidden={handleToggleWidgetHidden}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
+                {visibleSections.map(({ section, sectionIndex, entries }) => {
+                  const gridColumns = section.layout?.columns
+                  const gridGap = section.layout?.gap ?? 12
+                  const containerClassName = gridColumns
+                    ? 'grid'
+                    : 'flex flex-col gap-3'
+                  const containerStyle = gridColumns
+                    ? {
+                        gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
+                        gap: `${gridGap}px`,
+                      }
+                    : undefined
+                  return (
+                    <section key={sectionIndex} className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
+                      <SectionHeader
+                        heading={section.heading}
+                      />
+                      <div className={containerClassName} style={containerStyle}>
+                        {entries.map(({ entry, entryIndex }) => {
+                          const span = entry.kind === 'single'
+                            ? entry.widget.layout?.span
+                            : undefined
+                          // Row entries always span the full grid; widgets within reflow via the row's own flex.
+                          const cellSpan = gridColumns
+                            ? entry.kind === 'row'
+                              ? gridColumns
+                              : Math.min(span ?? gridColumns, gridColumns)
+                            : undefined
+                          const cellMinWidth = entry.kind === 'single'
+                            ? entry.widget.layout?.minWidth
+                            : undefined
+                          const cellStyle = gridColumns
+                            ? {
+                                gridColumn: `span ${cellSpan} / span ${cellSpan}`,
+                                ...(cellMinWidth ? { minWidth: `${cellMinWidth}px` } : {}),
+                              }
+                            : undefined
+                          const renderer = (
+                            <EntryRenderer
+                              entry={entry}
+                              entryIndex={entryIndex}
+                              sectionIndex={sectionIndex}
+                              sources={sources}
+                              costsData={costsData}
+                              costsLoading={costsLoading}
+                              costsError={costsError}
+                              evalsData={evalsData}
+                              evalsLoading={evalsLoading}
+                              evalsError={evalsError}
+                              runsData={runsData}
+                              runsLoading={runsLoading}
+                              runsError={runsError}
+                              hiddenWidgetKeys={hiddenWidgetKeys}
+                              onToggleWidgetHidden={handleToggleWidgetHidden}
+                            />
+                          )
+                          return gridColumns ? (
+                            <div key={entryIndex} style={cellStyle}>{renderer}</div>
+                          ) : (
+                            <div key={entryIndex}>{renderer}</div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  )
+                })}
               </div>
             )}
           </div>

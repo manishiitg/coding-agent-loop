@@ -406,6 +406,13 @@ export interface ActiveSessionInfo {
   created_at: string
   query?: string
   title?: string
+  has_running_background_agents?: boolean
+  running_background_agent_count?: number
+  current_execution_name?: string
+  needs_user_input?: boolean
+  waiting_event_type?: string
+  waiting_message?: string
+  waiting_since?: string
 }
 
 export interface GetActiveSessionsResponse {
@@ -1481,6 +1488,9 @@ export interface ReportWidget {
   runsView?: ReportRunsView;
   runFolder?: string;
   group?: string;
+  // Layout overrides applied when the parent section opts into a grid layout.
+  // Ignored in flex sections (default).
+  layout?: ReportWidgetLayout;
 }
 
 // `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`
@@ -1494,13 +1504,34 @@ export type ReportEntry =
   | { kind: 'single'; widget: ReportWidget }
   | { kind: 'row'; row: ReportWidgetRow };
 
+// Per-widget layout overrides. Apply only when the parent section opts into a
+// grid layout; in flex sections widgets reflow as before. All fields optional.
+export interface ReportWidgetLayout {
+  span?: number;       // Number of grid columns this widget spans
+  minWidth?: number;   // Minimum width in pixels (clamps reflow on small screens)
+}
+
+// Per-section layout overrides. When `columns` is set, the section's entries
+// flow into a CSS Grid of that width and widgets honor `widget.layout.span`.
+// When omitted, the section uses the legacy flex layout — no plan migration
+// is needed for plans authored before layout support landed.
+export interface ReportSectionLayout {
+  columns?: number;   // Number of grid columns (typically 1–12)
+  gap?: number;       // Gap between grid cells, in pixels (default 12)
+}
+
 export interface ReportSection {
   heading: string;   // H2 heading text, e.g. "Overview"
   entries: ReportEntry[];
+  layout?: ReportSectionLayout;
 }
 
 export interface ParsedReportPlan {
   sections: ReportSection[];
+  // Optional theme name applied to the report root via data-report-theme.
+  // Maps to a CSS block in index.css that overrides --chart-* / --primary
+  // and friends. Unknown / unset themes fall back to the workspace defaults.
+  theme?: string;
 }
 
 // Consolidated workspace state (NEW - single API call for all workspace data)

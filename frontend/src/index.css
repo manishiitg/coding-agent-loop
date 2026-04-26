@@ -128,6 +128,38 @@
     --chart-4: 280 60% 60%;               /* Purple chart */
     --chart-5: 0 70% 60%;                 /* Red chart */
   }
+
+  /* ===== REPORT THEMES =====
+   * Selected per-report via plan.theme; applied via the data-report-theme
+   * attribute on the report root. Themes scope to the report subtree so they
+   * don't leak into surrounding app chrome. Override any chart or semantic
+   * CSS variable; unspecified ones inherit the active light/dark theme.
+   * Add new themes by following the same pattern.
+   */
+  [data-report-theme="brand"] {
+    --chart-1: 250 70% 55%;
+    --chart-2: 280 60% 55%;
+    --chart-3: 320 65% 55%;
+    --chart-4: 200 70% 50%;
+    --chart-5: 30 80% 55%;
+    --primary: 250 70% 55%;
+  }
+
+  [data-report-theme="warm"] {
+    --chart-1: 0 70% 55%;
+    --chart-2: 20 75% 55%;
+    --chart-3: 35 80% 55%;
+    --chart-4: 50 75% 55%;
+    --chart-5: 280 50% 60%;
+  }
+
+  [data-report-theme="cool"] {
+    --chart-1: 200 70% 45%;
+    --chart-2: 180 60% 45%;
+    --chart-3: 220 65% 50%;
+    --chart-4: 240 60% 55%;
+    --chart-5: 160 60% 45%;
+  }
 }
 
 @layer base {

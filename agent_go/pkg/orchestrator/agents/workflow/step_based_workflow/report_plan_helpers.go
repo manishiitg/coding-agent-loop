@@ -74,13 +74,25 @@ type reportPlanSection struct {
 
 type reportPlanDocument struct {
 	Version  int                         `json:"version,omitempty"`
+	Theme    string                      `json:"theme,omitempty"`
 	Sections []reportPlanDocumentSection `json:"sections"`
 }
 
 type reportPlanDocumentSection struct {
-	ID      string                    `json:"id,omitempty"`
-	Heading string                    `json:"heading"`
-	Entries []reportPlanDocumentEntry `json:"entries"`
+	ID      string                       `json:"id,omitempty"`
+	Heading string                       `json:"heading"`
+	Entries []reportPlanDocumentEntry    `json:"entries"`
+	Layout  *reportPlanDocumentSectionLayout `json:"layout,omitempty"`
+}
+
+type reportPlanDocumentSectionLayout struct {
+	Columns int `json:"columns,omitempty"`
+	Gap     int `json:"gap,omitempty"`
+}
+
+type reportPlanDocumentWidgetLayout struct {
+	Span     int `json:"span,omitempty"`
+	MinWidth int `json:"minWidth,omitempty"`
 }
 
 type reportPlanDocumentEntry struct {
@@ -151,6 +163,7 @@ type reportPlanDocumentWidget struct {
 	RunsView      string                         `json:"runsView,omitempty"`
 	RunFolder     string                         `json:"runFolder,omitempty"`
 	Group         string                         `json:"group,omitempty"`
+	Layout        *reportPlanDocumentWidgetLayout `json:"layout,omitempty"`
 }
 
 type reportPlanReadResult struct {

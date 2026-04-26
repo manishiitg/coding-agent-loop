@@ -201,6 +201,7 @@ function parseReportPlanMarkdown(raw: string): ParsedReportPlan {
 function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
   try {
     const parsed = JSON.parse(raw) as {
+      theme?: unknown
       sections?: Array<{
         heading?: unknown
         entries?: Array<{
@@ -232,9 +233,15 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
           if (widgets.length > 0) entries.push({ kind: 'row', row: { widgets } })
         }
       }
-      sections.push({ heading: section.heading.trim(), entries })
+      const layout = parseSectionLayout((section as Record<string, unknown>).layout)
+      const built: ReportSection = { heading: section.heading.trim(), entries }
+      if (layout) built.layout = layout
+      sections.push(built)
     }
-    return { sections }
+    const theme = typeof parsed.theme === 'string' && parsed.theme.trim() !== ''
+      ? parsed.theme.trim()
+      : undefined
+    return theme ? { sections, theme } : { sections }
   } catch {
     return null
   }
@@ -374,7 +381,36 @@ function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {
     }
   }
 
+  const widgetLayout = parseWidgetLayout(source.layout)
+  if (widgetLayout) widget.layout = widgetLayout
+
   return widget
+}
+
+function parseSectionLayout(raw: unknown): { columns?: number; gap?: number } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const obj = raw as Record<string, unknown>
+  const layout: { columns?: number; gap?: number } = {}
+  if (typeof obj.columns === 'number' && Number.isFinite(obj.columns) && obj.columns > 0) {
+    layout.columns = Math.min(24, Math.trunc(obj.columns))
+  }
+  if (typeof obj.gap === 'number' && Number.isFinite(obj.gap) && obj.gap >= 0) {
+    layout.gap = Math.min(64, Math.trunc(obj.gap))
+  }
+  return Object.keys(layout).length > 0 ? layout : null
+}
+
+function parseWidgetLayout(raw: unknown): { span?: number; minWidth?: number } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const obj = raw as Record<string, unknown>
+  const layout: { span?: number; minWidth?: number } = {}
+  if (typeof obj.span === 'number' && Number.isFinite(obj.span) && obj.span > 0) {
+    layout.span = Math.min(24, Math.trunc(obj.span))
+  }
+  if (typeof obj.minWidth === 'number' && Number.isFinite(obj.minWidth) && obj.minWidth > 0) {
+    layout.minWidth = Math.min(2000, Math.trunc(obj.minWidth))
+  }
+  return Object.keys(layout).length > 0 ? layout : null
 }
 
 function parseWidgetBlock(kind: string, body: string[]): ReportEntry | null {

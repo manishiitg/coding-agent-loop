@@ -214,7 +214,13 @@ Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
 
 ## Employees & Workflows
-Employees are virtual team members assigned to workflows. When creating employees, give them realistic human first names (e.g., "Priya", "Arjun", "Sarah") — not functional titles or descriptions.
+Employees are virtual team members assigned to workflows. Each employee has a ` + "`name`" + ` (a person) and a ` + "`role`" + ` (what they do) — these are **separate fields** and must not be collapsed.
+
+**Naming rule — read before creating any employee:**
+- ` + "`name`" + ` must be a realistic human first name (e.g., "Priya", "Arjun", "Sarah", "Marco", "Linh"). If the user did not provide names, invent them — one per employee, varied and plausible.
+- ` + "`name`" + ` must NEVER be a job title, function, or description. Strings like "HR Manager", "Software Engineer", "Data Analyst", "Marketing", "Finance Lead" are **roles**, not names.
+- Put the job title in the ` + "`role`" + ` field, and a one-sentence description of what the employee does in ` + "`description`" + `.
+- This rule applies whether you are creating employees directly, delegating the task to a sub-agent, or organizing existing workflows under employees. If the request is "organize these workflows under an employee", that means **invent a named person** and assign workflows to them — do not use the role as the person's name.
 
 ### Quick Reference
 - Employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
@@ -275,11 +281,23 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Latest final reports:** ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/reports/\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
 
-### When the user mentions an employee by name
-If the employee list is already in this prompt (see "Current Employees & Workflow Assignments" section below), use it directly — no need to read config files. Otherwise:
-1. Read employees: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employees.json\")`" + `
-2. Read assignments: ` + "`execute_shell_command(command: \"cat " + absConfig + "/employee-workflows.json\")`" + `
-3. Then check workflow details: browse ` + "`" + absWorkflow + `/<name>/` + "`" + ` for runs, learnings, reports
+### When the user addresses or mentions an employee by name
+**Trigger**: any message that names an employee — direct address ("Hey Manish, …", "Priya, can you …"), reference ("what did Arjun's workflows find?", "tell me about Sarah's reports"), or any other mention of a name present in the employee list. Match case-insensitively and tolerate first-name-only references.
+
+**When triggered, treat the employee's assigned workflows as the primary source of truth for answering.** Do not answer from general knowledge or ask the user for more context until you have looked at the relevant workflows.
+
+**Flow:**
+1. **Identify the employee.** If the employee list is already in this prompt (see "Current Employees & Workflow Assignments" section below), use it directly — no need to read config files. Otherwise read ` + "`" + absConfig + `/employees.json` + "`" + ` and ` + "`" + absConfig + `/employee-workflows.json` + "`" + `.
+2. **Look up their assigned workflows.** Every workflow path listed under that employee is in scope.
+3. **Read workflow state to answer the question.** Pick the right source per the question:
+   - "What has the workflow produced / found / extracted?" → ` + "`runs/iteration-0/`" + ` (latest run outputs) or ` + "`db/*.json`" + ` (accumulated structured state across runs).
+   - "What does the workflow know about X?" → ` + "`knowledgebase/graph.json`" + ` (entities/relationships) and ` + "`knowledgebase/notes/`" + ` (narratives).
+   - "How does the workflow do X?" → ` + "`learnings/_global/SKILL.md`" + `.
+   - "Why does the workflow exist / what's its goal?" → ` + "`soul/soul.md`" + ` or ` + "`planning/plan.json`" + ` (objective, success criteria).
+   - "Latest results / most recent report?" → ` + "`reports/`" + ` (most recent markdown file).
+4. **Synthesize a direct answer** grounded in what you read. If an employee has multiple workflows, scan all of them before answering "I don't know." If none of the workflows cover the question, say so explicitly and offer to look elsewhere.
+
+**Do not**: answer a question about a named employee without first consulting their workflows, even if the question seems general ("tell me about some recent findings") — the user's intent is almost always "via this employee's workflows."
 
 ### What You Can Do
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains accumulated domain knowledge for a workflow (how to log into a bank, parsing quirks, conventions). Read it and reuse the guidance in your own delegated tasks for related work.
@@ -459,7 +477,7 @@ func buildEmployeesWorkflowsContext() string {
 
 	var sb strings.Builder
 	sb.WriteString("\n## Current Employees & Workflow Assignments\n\n")
-	sb.WriteString("This workspace has the following employees with their assigned workflows. When the user mentions an employee by name, use this list directly — do not read config files. Go straight to inspecting the relevant workflow folder.\n\n")
+	sb.WriteString("This workspace has the following employees with their assigned workflows. **If the user's message names any employee below — whether addressing them directly (\"Hey Priya, …\"), asking about them (\"what has Arjun's workflows found?\"), or mentioning them in passing — treat that employee's assigned workflows as the primary source of truth.** Go straight to inspecting the relevant workflow folder (runs, reports, knowledgebase, learnings) to ground your answer; do not answer from general knowledge without checking the workflow state first. Match names case-insensitively and accept first-name-only references.\n\n")
 
 	for _, emp := range sortedEmployees {
 		name := strings.TrimSpace(emp.Name)

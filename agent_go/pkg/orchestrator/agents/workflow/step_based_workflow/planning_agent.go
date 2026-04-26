@@ -4292,22 +4292,18 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Find the parent todo task step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
+		// Find the parent todo task step by ID. Recurses into nested steps
+		// (e.g. a todo_task sitting in another todo_task's predefined_routes.sub_agent_step).
+		parentStep, _, _ := findStepByID(plan.Steps, parentStepID)
+		if parentStep == nil {
+			parentStep, _, _ = findStepByID(plan.OrphanSteps, parentStepID)
 		}
 		if parentStep == nil {
 			availableIDs := make([]string, 0, len(plan.Steps))
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
 		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
@@ -4348,7 +4344,6 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 		if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
 			return "", fmt.Errorf("validation failed after adding route: %w", err)
 		}
-		plan.Steps[parentStepIndex] = todoTaskStep
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
@@ -4383,22 +4378,18 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Find the parent todo task step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
+		// Find the parent todo task step by ID. Recurses into nested steps
+		// (e.g. a todo_task sitting in another todo_task's predefined_routes.sub_agent_step).
+		parentStep, _, _ := findStepByID(plan.Steps, parentStepID)
+		if parentStep == nil {
+			parentStep, _, _ = findStepByID(plan.OrphanSteps, parentStepID)
 		}
 		if parentStep == nil {
 			availableIDs := make([]string, 0, len(plan.Steps))
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
 		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
@@ -4485,9 +4476,6 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("validation failed after route update: %w", err)
 		}
 
-		// Update the todo task step in the plan
-		plan.Steps[parentStepIndex] = todoTaskStep
-
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
@@ -4521,22 +4509,18 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Find the parent todo task step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
+		// Find the parent todo task step by ID. Recurses into nested steps
+		// (e.g. a todo_task sitting in another todo_task's predefined_routes.sub_agent_step).
+		parentStep, _, _ := findStepByID(plan.Steps, parentStepID)
+		if parentStep == nil {
+			parentStep, _, _ = findStepByID(plan.OrphanSteps, parentStepID)
 		}
 		if parentStep == nil {
 			availableIDs := make([]string, 0, len(plan.Steps))
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
 		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
@@ -4569,7 +4553,6 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			todoTaskStep.PredefinedRoutes[:routeIndex],
 			todoTaskStep.PredefinedRoutes[routeIndex+1:]...,
 		)
-		plan.Steps[parentStepIndex] = todoTaskStep
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/cmd/server/services"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -195,8 +196,18 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 		}
 	}
 
+	// Build a destination hint so connector resolvers can consult per-user
+	// preferences. The userID is set on the context by the server when it
+	// dispatches an agent or workflow run. Origin auto-detection (e.g.
+	// route back to the originating Slack thread) is a follow-up — for now
+	// we only carry the userID, which is enough for per-user prefs.
+	var dest *services.NotificationDestination
+	if uid, ok := ctx.Value(common.UserIDKey).(string); ok && uid != "" {
+		dest = &services.NotificationDestination{UserID: uid}
+	}
+
 	// Create feedback request (automatically sends notifications via notification manager)
-	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", buttonOptions); err != nil {
+	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", buttonOptions, dest); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 

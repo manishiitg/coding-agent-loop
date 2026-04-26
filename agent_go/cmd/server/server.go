@@ -1001,6 +1001,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api)
 
+	// Per-user notification preferences (Slack channel, WhatsApp number)
+	NotificationPreferencesRoutes(router)
+
 	// Initialize Bot Conversation Manager
 	workspaceURL := os.Getenv("WORKSPACE_API_URL")
 	if workspaceURL == "" {

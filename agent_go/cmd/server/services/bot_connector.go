@@ -748,7 +748,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 		}
 
 	default:
-		// blocking_human_feedback, blocking_human_questions, or unknown — forward as follow-up
+		// blocking_human_feedback or unknown — forward as follow-up
 		log.Printf("[BOT_MANAGER] Responding to %s for session %s: %s", blockingEvt, sid, botTruncate(msg.Text, 80))
 		m.clearBlockingState(active)
 		if m.followUpSession != nil && sid != "" {
@@ -817,7 +817,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}, nil
 
 	default:
-		// blocking_human_feedback, blocking_human_questions — forward as follow-up
+		// blocking_human_feedback — forward as follow-up
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {

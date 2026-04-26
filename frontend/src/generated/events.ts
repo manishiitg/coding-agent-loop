@@ -904,6 +904,7 @@ export interface OrchestratorAgentStartEvent {
   timestamp?: string;
   trace_id?: string;
   use_code_execution_mode?: boolean;
+  use_learn_code_mode?: boolean;
   use_tool_search_mode?: boolean;
   user_message?: string;
 }
@@ -1108,8 +1109,8 @@ export interface StepProgressUpdatedEvent {
   current_step_id?: string;
   error?: string;
   event_id?: string;
-  group_id?: string;
   group_index?: number;
+  group_name?: string;
   hierarchy_level?: number;
   is_end_event?: boolean;
   metadata?: {

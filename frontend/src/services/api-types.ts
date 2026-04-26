@@ -1968,3 +1968,13 @@ export interface WorkflowOutputPlanStep {
 export interface WorkflowOutputPlan {
   step: WorkflowOutputPlanStep | null
 }
+
+// Per-user override for where workflow questions should land. Empty fields
+// fall back to the connector's workspace-wide default. The Disabled flags let
+// a user opt out of one connector entirely (e.g. only Slack, never WhatsApp).
+export interface NotificationPreference {
+  slack_channel_id?: string
+  slack_disabled?: boolean
+  whatsapp_phone?: string
+  whatsapp_disabled?: boolean
+}

@@ -1052,7 +1052,11 @@ func (w *WhatsAppService) GetFormatter() MessageFormatter {
 // SendNotification satisfies NotificationConnector. A notification becomes a
 // DM to the paired account's own number; any button options are flattened
 // into numbered choices the user replies with.
-func (w *WhatsAppService) SendNotification(ctx context.Context, uniqueID, message, contextMsg string, opts *ButtonOptions) (string, error) {
+//
+// dest is currently ignored — destination resolution from per-user prefs is
+// a follow-up. The receiver is always the paired account's own JID for now.
+func (w *WhatsAppService) SendNotification(ctx context.Context, uniqueID, message, contextMsg string, opts *ButtonOptions, dest *NotificationDestination) (string, error) {
+	_ = dest
 	ownJID := w.OwnJID()
 	if ownJID.IsEmpty() {
 		return "", fmt.Errorf("whatsapp: not paired — cannot send notification")

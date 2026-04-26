@@ -144,7 +144,6 @@ export interface EventDataUnion {
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
-  decision_evaluated?: DecisionEvaluatedEvent;
   routing_evaluated?: RoutingEvaluatedEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
   learn_code_script_execution?: LearnCodeScriptExecutionEvent;
@@ -153,7 +152,6 @@ export interface EventDataUnion {
   independent_steps_selected?: IndependentStepsSelectedEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
   blocking_human_feedback?: BlockingHumanFeedbackEvent;
-  blocking_human_questions?: BlockingHumanQuestionsEvent;
   human_verification_response?: HumanVerificationResponseEvent;
   structured_output_start?: StructuredOutputStartEvent;
   structured_output_end?: StructuredOutputEndEvent;
@@ -1358,6 +1356,7 @@ export interface OrchestratorAgentStartEvent {
   step_index?: number;
   iteration?: number;
   use_code_execution_mode?: boolean;
+  use_learn_code_mode?: boolean;
   use_tool_search_mode?: boolean;
   system_prompt?: string;
   user_message?: string;
@@ -1481,41 +1480,11 @@ export interface StepProgressUpdatedEvent {
   current_step_id?: string;
   status?: string;
   error?: string;
-  group_id?: string;
+  group_name?: string;
   group_index?: number;
   total_groups?: number;
   used_tier?: number;
   used_tier_label?: string;
-}
-export interface DecisionEvaluatedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  decision_question?: string;
-  decision_response?: DecisionResponseEvent;
-  run_folder?: string;
-  workspace_path?: string;
-}
-export interface DecisionResponseEvent {
-  result?: boolean;
-  reasoning?: string;
-  confidence?: string;
-  feedback?: unknown[];
-  evidence?: string[];
 }
 export interface RoutingEvaluatedEvent {
   timestamp?: string;
@@ -1739,27 +1708,6 @@ export interface BlockingHumanFeedbackEvent {
   yes_label?: string;
   no_label?: string;
   options?: string[];
-}
-export interface BlockingHumanQuestionsEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  request_id?: string;
-  questions?: BlockingHumanQuestionsQuestion[];
-}
-export interface BlockingHumanQuestionsQuestion {
-  id?: string;
-  question?: string;
 }
 export interface HumanVerificationResponseEvent {
   timestamp?: string;
@@ -2328,7 +2276,7 @@ export interface BatchExecutionStartEvent {
     [k: string]: unknown;
   };
   total_groups?: number;
-  enabled_group_ids?: string[];
+  enabled_group_names?: string[];
   iteration_number?: number;
   workspace_path?: string;
   execution_options?: {
@@ -2349,7 +2297,7 @@ export interface BatchGroupStartEvent {
   metadata?: {
     [k: string]: unknown;
   };
-  group_id?: string;
+  group_name?: string;
   group_index?: number;
   total_groups?: number;
   variable_values?: {
@@ -2373,7 +2321,7 @@ export interface BatchGroupEndEvent {
   metadata?: {
     [k: string]: unknown;
   };
-  group_id?: string;
+  group_name?: string;
   group_index?: number;
   total_groups?: number;
   success?: boolean;
@@ -2406,6 +2354,6 @@ export interface BatchExecutionEndEvent {
   success?: boolean;
   error?: string;
   iteration_number?: number;
-  completed_group_ids?: string[];
-  failed_group_ids?: string[];
+  completed_group_names?: string[];
+  failed_group_names?: string[];
 }

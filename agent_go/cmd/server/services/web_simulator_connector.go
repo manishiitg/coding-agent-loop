@@ -98,7 +98,7 @@ func (w *WebSimulatorConnector) IsThreaded() bool {
 	return w.threaded
 }
 
-func (w *WebSimulatorConnector) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions) (string, error) {
+func (w *WebSimulatorConnector) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions, dest *NotificationDestination) (string, error) {
 	// Not a notification connector — no-op
 	return "", nil
 }

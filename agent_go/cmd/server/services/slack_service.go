@@ -199,8 +199,8 @@ func (s *SlackService) Name() string {
 
 // SendNotification implements NotificationConnector interface
 // This is a wrapper around SendFeedbackNotification for the interface
-func (s *SlackService) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions) (string, error) {
-	return s.SendFeedbackNotification(ctx, uniqueID, message, contextMsg, buttonOptions)
+func (s *SlackService) SendNotification(ctx context.Context, uniqueID string, message string, contextMsg string, buttonOptions *ButtonOptions, dest *NotificationDestination) (string, error) {
+	return s.SendFeedbackNotification(ctx, uniqueID, message, contextMsg, buttonOptions, dest)
 }
 
 var (
@@ -301,6 +301,26 @@ func (s *SlackService) IsEnabled() bool {
 	return s.enabled && s.client != nil && s.channelID != ""
 }
 
+// pickDestination resolves where this Slack feedback notification should land.
+// Precedence:
+//  1. dest.Slack (explicit per-request hint)
+//  2. per-user preference (looked up via dest.UserID)
+//  3. workspace-wide default (s.channelID)
+//
+// Returns ("", "") only if Slack is disabled or has no default and no hint —
+// the caller should treat that as "skip silently".
+func (s *SlackService) pickDestination(dest *NotificationDestination) (channelID, threadTS string) {
+	if dest != nil && dest.Slack != nil && dest.Slack.ChannelID != "" {
+		return dest.Slack.ChannelID, dest.Slack.ThreadTS
+	}
+	if dest != nil && dest.UserID != "" {
+		if pref := getNotificationPreferences(dest.UserID); pref != nil && pref.SlackChannelID != "" && !pref.SlackDisabled {
+			return pref.SlackChannelID, ""
+		}
+	}
+	return s.channelID, ""
+}
+
 // SendFeedbackNotification sends a feedback request to Slack
 // Returns Slack message timestamp for tracking
 func (s *SlackService) SendFeedbackNotification(
@@ -309,9 +329,16 @@ func (s *SlackService) SendFeedbackNotification(
 	message string,
 	contextMsg string,
 	buttonOptions *ButtonOptions,
+	dest *NotificationDestination,
 ) (string, error) {
-	if !s.IsEnabled() {
+	if !s.enabled || s.client == nil {
 		return "", fmt.Errorf("slack service is not enabled")
+	}
+
+	channelID, threadTS := s.pickDestination(dest)
+	if channelID == "" {
+		// No hint, no preference, no default — skip silently.
+		return "", nil
 	}
 
 	// Format Slack message with blocks
@@ -326,17 +353,18 @@ func (s *SlackService) SendFeedbackNotification(
 		slack.NewTextBlockObject("mrkdwn", footerText, false, false),
 	))
 
-	channelID, timestamp, err := s.client.PostMessage(
-		s.channelID,
-		slack.MsgOptionBlocks(blocks...),
-	)
+	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
+	if threadTS != "" {
+		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
+	}
 
+	postedChannelID, timestamp, err := s.client.PostMessage(channelID, postOpts...)
 	if err != nil {
 		return "", fmt.Errorf("failed to post Slack message: %w", err)
 	}
 
 	// Store message mapping
-	if err := s.StoreMessageMapping(ctx, uniqueID, timestamp, channelID); err != nil {
+	if err := s.StoreMessageMapping(ctx, uniqueID, timestamp, postedChannelID); err != nil {
 		log.Printf("[SLACK] Failed to store message mapping: %v", err)
 		// Don't fail the whole operation if mapping storage fails
 	}

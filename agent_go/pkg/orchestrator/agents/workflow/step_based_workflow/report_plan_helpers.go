@@ -79,9 +79,9 @@ type reportPlanDocument struct {
 }
 
 type reportPlanDocumentSection struct {
-	ID      string                       `json:"id,omitempty"`
-	Heading string                       `json:"heading"`
-	Entries []reportPlanDocumentEntry    `json:"entries"`
+	ID      string                           `json:"id,omitempty"`
+	Heading string                           `json:"heading" jsonschema:"required"`
+	Entries []reportPlanDocumentEntry        `json:"entries"`
 	Layout  *reportPlanDocumentSectionLayout `json:"layout,omitempty"`
 }
 
@@ -97,13 +97,13 @@ type reportPlanDocumentWidgetLayout struct {
 
 type reportPlanDocumentEntry struct {
 	ID     string                    `json:"id,omitempty"`
-	Kind   string                    `json:"kind" jsonschema:"enum=single,enum=row"`
+	Kind   string                    `json:"kind" jsonschema:"required,enum=single,enum=row"`
 	Widget *reportPlanDocumentWidget `json:"widget,omitempty"`
 	Row    *reportPlanDocumentRow    `json:"row,omitempty"`
 }
 
 type reportPlanDocumentRow struct {
-	Widgets []reportPlanDocumentWidget `json:"widgets"`
+	Widgets []reportPlanDocumentWidget `json:"widgets" jsonschema:"required"`
 }
 
 type reportPlanDocumentDefaultSort struct {
@@ -114,7 +114,7 @@ type reportPlanDocumentDefaultSort struct {
 type reportPlanDocumentWidget struct {
 	ID            string                         `json:"id,omitempty"`
 	Hidden        bool                           `json:"hidden,omitempty"`
-	Kind          string                         `json:"kind" jsonschema:"enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=costs,enum=evals,enum=runs"`
+	Kind          string                         `json:"kind" jsonschema:"required,enum=text,enum=markdown,enum=chart,enum=table,enum=cards,enum=stat,enum=alert,enum=pivot,enum=costs,enum=evals,enum=runs"`
 	Source        string                         `json:"source,omitempty"`
 	Path          string                         `json:"path,omitempty"`
 	Filter        string                         `json:"filter,omitempty"`
@@ -126,6 +126,15 @@ type reportPlanDocumentWidget struct {
 	EnableSearch  *bool                          `json:"enableSearch,omitempty"`
 	DefaultSort   *reportPlanDocumentDefaultSort `json:"defaultSort,omitempty"`
 	HideColumns   []string                       `json:"hideColumns,omitempty"`
+	// Cards-specific layout overrides. Tables ignore them at render time, but
+	// the schema accepts them on every widget so a single hand-edited plan can
+	// switch a widget between table and cards without losing the field hints.
+	Fields                []string `json:"fields,omitempty"`
+	CardTitleField        string   `json:"cardTitleField,omitempty"`
+	CardSubtitleField     string   `json:"cardSubtitleField,omitempty"`
+	CardDescriptionField  string   `json:"cardDescriptionField,omitempty"`
+	CardLinkField         string   `json:"cardLinkField,omitempty"`
+	CardImageField        string   `json:"cardImageField,omitempty"`
 	ChartType     string                         `json:"chartType,omitempty" jsonschema:"enum=bar,enum=line,enum=area,enum=pie"`
 	XAxis         string                         `json:"xAxis,omitempty"`
 	YAxis         string                         `json:"yAxis,omitempty"`

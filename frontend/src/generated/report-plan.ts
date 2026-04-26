@@ -12,20 +12,20 @@ export interface ReportPlan {
 }
 export interface ReportPlanDocumentSection {
   id?: string;
-  heading?: string;
+  heading: string;
   entries?: ReportPlanDocumentEntry[];
   layout?: ReportPlanDocumentSectionLayout;
 }
 export interface ReportPlanDocumentEntry {
   id?: string;
-  kind?: "single" | "row";
+  kind: "single" | "row";
   widget?: ReportPlanDocumentWidget;
   row?: ReportPlanDocumentRow;
 }
 export interface ReportPlanDocumentWidget {
   id?: string;
   hidden?: boolean;
-  kind?: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "costs" | "evals" | "runs";
+  kind: "text" | "markdown" | "chart" | "table" | "cards" | "stat" | "alert" | "pivot" | "costs" | "evals" | "runs";
   source?: string;
   path?: string;
   filter?: string;
@@ -39,6 +39,12 @@ export interface ReportPlanDocumentWidget {
   enableSearch?: boolean;
   defaultSort?: ReportPlanDocumentDefaultSort;
   hideColumns?: string[];
+  fields?: string[];
+  cardTitleField?: string;
+  cardSubtitleField?: string;
+  cardDescriptionField?: string;
+  cardLinkField?: string;
+  cardImageField?: string;
   chartType?: "bar" | "line" | "area" | "pie";
   xAxis?: string;
   yAxis?: string;
@@ -113,7 +119,7 @@ export interface ReportPlanDocumentWidgetLayout {
   minWidth?: number;
 }
 export interface ReportPlanDocumentRow {
-  widgets?: ReportPlanDocumentWidget[];
+  widgets: ReportPlanDocumentWidget[];
 }
 export interface ReportPlanDocumentSectionLayout {
   columns?: number;

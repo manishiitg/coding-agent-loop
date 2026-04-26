@@ -1347,31 +1347,39 @@ export interface EvaluationAggregate {
 // Dynamic report system (docs/workflow/persistent_stores_design.md section 2)
 // Replaces the static final_output.go agent. The report is a live frontend
 // view over db/, defined by reports/report_plan.json.
-// Files are fetched via the
-// existing workspace document API (agentApi.getPlannerFileContent).
+//
+// The Go reportPlanDocument types in agent_go are the canonical source of
+// truth — the validator runs in the builder loop. The interfaces below are
+// re-exports of the auto-generated types under their public names, narrowed
+// where the parser provides stronger guarantees than the schema alone (e.g.
+// source/path always set post-parse, entries always discriminated).
+//
+// To add or rename a field: edit the Go struct, then run
+// `cd frontend && npm run types:generate`. The pre-commit drift check fails
+// commits that forget the regen step.
 // ---------------------------------------------------------------------------
 
-// Widget types supported by the report plan. See section 2 of the design doc.
+import type {
+  ReportPlanDocumentDefaultSort,
+  ReportPlanDocumentSection,
+  ReportPlanDocumentSectionLayout,
+  ReportPlanDocumentWidget,
+  ReportPlanDocumentWidgetLayout,
+} from '../generated/report-plan'
+
+// Enum aliases — the codegen embeds the same literal unions inline on each
+// consuming field, so these are independently useful where callsites need
+// to name an enum (function args, switch exhaustiveness checks, etc.). They
+// must mirror the Go enum tags; if these drift, callsites will break.
 export type ReportWidgetKind = 'text' | 'markdown' | 'chart' | 'table' | 'cards' | 'stat' | 'alert' | 'pivot' | 'costs' | 'evals' | 'runs';
-
 export type ReportAlertSeverity = 'info' | 'warning' | 'error' | 'success';
-
 export type ReportPivotAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'first';
-
 export type ReportCostsScope = 'phase' | 'execution' | 'evaluation' | 'all';
-
 export type ReportCostsView = 'summary' | 'stage-breakdown' | 'run-table' | 'step-table' | 'model-table';
-
 export type ReportCostsMetric = 'cost' | 'total_tokens' | 'input_tokens' | 'output_tokens' | 'llm_calls';
-
 export type ReportEvalsView = 'summary' | 'run-chart' | 'run-table' | 'step-table';
-
 export type ReportEvalsMetric = 'score_percentage' | 'total_score';
-
 export type ReportRunsView = 'summary' | 'duration-chart' | 'status-chart' | 'table';
-
-// Named formatter presets for table cells. Maps to functions in reportFormatters.ts.
-// Used in `formats:` block of widget:table definitions.
 export type ReportFormatterName =
   | 'currency-inr'
   | 'currency-usd'
@@ -1385,145 +1393,41 @@ export type ReportFormatterName =
   | 'number-2dp'
   | 'bytes'
   | 'boolean-icon';
-
 export type ReportChartType = 'bar' | 'line' | 'area' | 'pie';
-
 export type ReportSortDirection = 'asc' | 'desc';
 
-export interface ReportDefaultSort {
-  field: string;
-  direction: ReportSortDirection;
-}
+// Direct re-exports of the generated types under their public names. Adding
+// a field to any of these = edit the Go struct and regenerate.
+export type ReportDefaultSort = ReportPlanDocumentDefaultSort;
+export type ReportWidgetLayout = ReportPlanDocumentWidgetLayout;
+export type ReportSectionLayout = ReportPlanDocumentSectionLayout;
 
-// A single widget. `source` is a workspace-relative path (db/x.json).
-// `path` is a dot-notation key into the JSON. `filter` is an optional
-// `key=value` string for filtering arrays.
-//
-// All fields beyond source/path/kind are optional. The renderer applies
-// sensible defaults so a minimal widget (just source + path) still renders.
-// See workshop builder prompt for the full markdown grammar.
-export interface ReportWidget {
-  kind: ReportWidgetKind;
-  hidden?: boolean;
+// Narrowed widget type. The parser always sets `source` and `path` to a
+// string (possibly empty for costs/evals/runs widgets), so callsites can
+// rely on those being defined — the schema makes them optional because Go's
+// omitempty allows them to be absent on the wire.
+export type ReportWidget = ReportPlanDocumentWidget & {
   source: string;
   path: string;
-  filter?: string;
-  // Common to every widget kind
-  title?: string;            // Header label rendered above the widget body
-  description?: string;       // Small subtitle below the title (one line)
-  height?: number;            // Pixel height; defaults vary by kind
-  // Table-specific options (ignored for non-table widgets)
-  formats?: Record<string, ReportFormatterName>;  // field → named formatter preset
-  pageSize?: number;          // Rows per page (default 25)
-  enableSearch?: boolean;     // Show inline search box (default true)
-  defaultSort?: ReportDefaultSort;  // Initial sort column + direction
-  hideColumns?: string[];     // Columns present in data but suppressed in render
-  // Cards-specific options (ignored for non-card widgets). Cards share the
-  // same row source shape as tables, but render each record as a standalone tile.
-  fields?: string[];          // Optional whitelist/order for rendered fields
-  cardTitleField?: string;    // Preferred field for the card headline
-  cardSubtitleField?: string; // Preferred secondary line under the title
-  cardDescriptionField?: string; // Preferred long-form body field
-  cardLinkField?: string;     // Preferred URL field rendered as an "Open" action
-  cardImageField?: string;    // Preferred image URL field rendered above content
-  // Chart-specific options (ignored for non-chart widgets)
-  chartType?: ReportChartType;       // bar | line | area | pie (default bar)
-  xAxis?: string;             // Field name for x-axis when not the canonical {label} key
-  yAxis?: string;             // Field name for y-axis when not the canonical {value} key
-  topN?: number;              // Cap rendered points to top N by value
-  sort?: ReportSortDirection | 'none';  // Sort points by y-axis value; default 'none' (source order)
-  showValues?: boolean;       // Show value labels on bars/lines (default false)
-  // Color overrides — chart: cycled across slices/bars; table: only used with colorBy.
-  // Accepts hex (#rrggbb or #rgb) and CSS named colors.
-  colors?: string[];
-  colorsDark?: string[];      // Theme override — used in dark mode; falls back to `colors` when unset.
-  // Semantic coloring — `colorBy` is a field name in each row; `colorMap` maps
-  // the value at that field to a color. Chart: colors per bar/slice. Table:
-  // tints the row background subtly. If `colorBy` is set but `colorMap` is not,
-  // the renderer cycles `colors` (or default palette) across distinct values.
-  colorBy?: string;
-  colorMap?: Record<string, string>;
-  // Universal conditional rendering. Evaluated against the raw source (before
-  // `path:` / `filter:`). Grammar: `<path> [op] [value]` where op ∈ { >, <, >=,
-  // <=, ==, != }. Bare `<path>` is truthy; `!<path>` is falsy. Numeric rhs is
-  // parsed as number; otherwise compared as string. Widgets whose show_if
-  // evaluates to false are skipped entirely (row peers re-flow around them).
-  showIf?: string;
-  // Stat-specific options (ignored for non-stat widgets). `path:` still points
-  // at the scalar to render; stat fields decorate it.
-  label?: string;             // Headline above the value (often redundant with title — label sits inline with the number)
-  prefix?: string;            // Rendered immediately before the value (e.g. "₹")
-  suffix?: string;            // Rendered immediately after the value (e.g. " active")
-  format?: ReportFormatterName; // Single-value formatter (stat + pivot). Table uses `formats` (plural) per-column.
-  deltaPath?: string;         // Optional path to a signed-number delta; renders arrow + colored value
-  deltaFormat?: ReportFormatterName;
-  trendPath?: string;         // Optional path to an array of numbers rendered as a sparkline
-  // Alert-specific options
-  severity?: ReportAlertSeverity; // default 'info'
-  message?: string;           // Body text; supports {value} interpolation (resolved path value)
-  // Pivot-specific options. `path:` points at an array of records; rows/columns/values
-  // declare which fields form the 2-D grid.
-  rowsField?: string;         // Field grouping rows (y-axis of the pivot)
-  columnsField?: string;      // Field grouping columns (x-axis of the pivot)
-  valuesField?: string;       // Field being aggregated into each cell
-  aggregate?: ReportPivotAggregate; // default 'sum'
-  heatmap?: boolean;          // When true, cells tinted by magnitude
-  heatmapColors?: [string, string]; // [low, high] gradient override; defaults to accent tint
-  // Multi-series chart options — when `series` is set, it overrides single `y_axis`.
-  // Each field in `series` becomes one plotted series using the x_axis key.
-  series?: string[];
-  seriesColors?: string[];    // Per-series colors (parallel to `series`); falls back to `colors`
-  stacked?: boolean;          // For bar/area charts, stack series instead of grouping
-  // Costs-widget options. Costs come from `/api/workflow/costs`, so `source`
-  // and `path` are ignored for this widget kind.
-  costsScope?: ReportCostsScope;
-  costsView?: ReportCostsView;
-  costsMetric?: ReportCostsMetric;
-  // Evaluations-widget options. Evaluation reports come from
-  // `/api/workflow/evaluation-reports`, so `source` and `path` are ignored.
-  evalsView?: ReportEvalsView;
-  evalsMetric?: ReportEvalsMetric;
-  // Runs-widget options. Run metadata comes from `/api/workflow/run-folders`,
-  // so `source` and `path` are ignored.
-  runsView?: ReportRunsView;
-  runFolder?: string;
-  group?: string;
-  // Layout overrides applied when the parent section opts into a grid layout.
-  // Ignored in flex sections (default).
-  layout?: ReportWidgetLayout;
-}
+};
 
-// `widget:row` groups widgets side by side. Only ever appears in `widgetsInRow`
-// entries of a parent section; never nested.
+// Narrowed row — widgets is a ReportWidget[] (with source/path defined),
+// not the looser ReportPlanDocumentWidget[] from the raw schema.
 export interface ReportWidgetRow {
   widgets: ReportWidget[];
 }
 
-// One entry under a section — either a full-width widget or a row of widgets.
+// One entry under a section. The schema models this as a flat record with
+// optional widget/row fields; the parser narrows to a discriminated union
+// keyed on `kind` so callsites get the matching variant.
 export type ReportEntry =
   | { kind: 'single'; widget: ReportWidget }
   | { kind: 'row'; row: ReportWidgetRow };
 
-// Per-widget layout overrides. Apply only when the parent section opts into a
-// grid layout; in flex sections widgets reflow as before. All fields optional.
-export interface ReportWidgetLayout {
-  span?: number;       // Number of grid columns this widget spans
-  minWidth?: number;   // Minimum width in pixels (clamps reflow on small screens)
-}
-
-// Per-section layout overrides. When `columns` is set, the section's entries
-// flow into a CSS Grid of that width and widgets honor `widget.layout.span`.
-// When omitted, the section uses the legacy flex layout — no plan migration
-// is needed for plans authored before layout support landed.
-export interface ReportSectionLayout {
-  columns?: number;   // Number of grid columns (typically 1–12)
-  gap?: number;       // Gap between grid cells, in pixels (default 12)
-}
-
-export interface ReportSection {
-  heading: string;   // H2 heading text, e.g. "Overview"
+// Narrowed section — entries is the discriminated ReportEntry[] (parser
+// output) rather than the loose generated array.
+export interface ReportSection extends Omit<ReportPlanDocumentSection, 'entries'> {
   entries: ReportEntry[];
-  layout?: ReportSectionLayout;
 }
 
 export interface ParsedReportPlan {

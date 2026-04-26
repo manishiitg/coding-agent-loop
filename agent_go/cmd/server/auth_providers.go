@@ -346,6 +346,68 @@ func NewSupabaseProvider() *SupabaseProvider {
 	}
 }
 
+// StartSupabaseKeepalive launches a background goroutine that pings the
+// configured Supabase project every 24h to prevent the free-tier auto-pause
+// (kicks in after 7 days idle, removes the project subdomain from DNS, and
+// breaks all logins until manually restored).
+//
+// No-op if Supabase isn't an active auth provider or URL/anon key are missing.
+// Best-effort: failures are logged and the loop keeps running.
+func StartSupabaseKeepalive(ctx context.Context) {
+	enabled := false
+	for _, name := range getEnabledProviderNames() {
+		if name == "supabase" {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
+		return
+	}
+	supabaseURL := strings.TrimSuffix(os.Getenv("SUPABASE_URL"), "/")
+	anonKey := os.Getenv("SUPABASE_ANON_KEY")
+	if supabaseURL == "" || anonKey == "" {
+		log.Printf("[SUPABASE_KEEPALIVE] supabase enabled but URL/ANON_KEY missing — skipping")
+		return
+	}
+	pingURL := supabaseURL + "/rest/v1/?apikey=" + anonKey
+	client := &http.Client{Timeout: 15 * time.Second}
+	ping := func() {
+		req, err := http.NewRequestWithContext(ctx, "GET", pingURL, nil)
+		if err != nil {
+			log.Printf("[SUPABASE_KEEPALIVE] build request failed: %v", err)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("[SUPABASE_KEEPALIVE] %s -> error: %v", supabaseURL, err)
+			return
+		}
+		_ = resp.Body.Close()
+		log.Printf("[SUPABASE_KEEPALIVE] %s -> HTTP %d", supabaseURL, resp.StatusCode)
+	}
+	go func() {
+		// Initial 5min delay so a restart loop doesn't hammer the project.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
+		}
+		ping()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ping()
+			}
+		}
+	}()
+	log.Printf("[SUPABASE_KEEPALIVE] enabled for %s (24h interval)", supabaseURL)
+}
+
 func (p *SupabaseProvider) Name() string {
 	return "supabase"
 }

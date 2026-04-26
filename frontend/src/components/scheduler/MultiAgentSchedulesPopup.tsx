@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
 import { X, CalendarDays, Play, Trash2, Square, ToggleLeft, ToggleRight, RefreshCw, AlertCircle, CheckCircle2, ClockAlert } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import type { ScheduledJob } from '../../services/api-types'
+import ModalPortal from '../ui/ModalPortal'
 
 const MISSED_SCHEDULE_GRACE_MS = 60_000
 
@@ -191,7 +191,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
     return null
   }
 
-  return ReactDOM.createPortal(
+  return (
+    <ModalPortal>
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
@@ -363,8 +364,8 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
           )}
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
+    </ModalPortal>
   )
 }
 

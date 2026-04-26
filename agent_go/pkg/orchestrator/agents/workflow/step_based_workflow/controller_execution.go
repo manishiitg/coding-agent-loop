@@ -829,7 +829,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	if executionAgent != nil && executionAgent.GetBaseAgent() != nil {
 		agentName = executionAgent.GetBaseAgent().GetName()
 	}
+	traceSpans, timingBreakdown := buildTimingTrace(stepID, agentName, executionLLM, attemptStartedAt, attemptCompletedAt, attemptDuration, llmTiming, toolTiming)
 	timingData := map[string]interface{}{
+		"schema_version": 2,
 		"step_index":     stepIndex + 1,
 		"step_id":        stepID,
 		"step_path":      stepPath,
@@ -847,8 +849,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 			"llm_duration_ms":               llmTiming.TotalDurationMs,
 			"llm_time_to_first_response_ms": llmTiming.TimeToFirstResponseMs,
 		},
-		"llm":   llmTiming,
-		"tools": toolTiming,
+		"llm":         llmTiming,
+		"tools":       toolTiming,
+		"trace_spans": traceSpans,
+		"breakdown":   timingBreakdown,
 	}
 
 	// Save execution result
@@ -870,6 +874,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		"llm_time_to_first_response_ms": llmTiming.TimeToFirstResponseMs,
 		"tool_call_count":               toolTiming.Count,
 		"tool_duration_ms":              toolTiming.TotalDurationMs,
+		"tracked_union_duration_ms":     timingBreakdown.TrackedUnionDurationMs,
+		"untracked_duration_ms":         timingBreakdown.UntrackedDurationMs,
+		"total_input_tokens":            timingBreakdown.TotalInputTokens,
+		"total_output_tokens":           timingBreakdown.TotalOutputTokens,
+		"total_tokens":                  timingBreakdown.TotalTokens,
+		"tool_args_bytes":               timingBreakdown.ToolArgsBytes,
+		"tool_result_bytes":             timingBreakdown.ToolResultBytes,
 		"timing":                        timingData,
 		"timestamp":                     attemptCompletedAt.Format(time.RFC3339),
 	}

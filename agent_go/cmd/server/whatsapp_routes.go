@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -52,6 +53,10 @@ func whatsappPairHandler(svc *slackservice.WhatsAppService) http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
 			}
+		}
+		if err := svc.EnsurePairingQR(context.Background()); err != nil {
+			http.Error(w, "pairing QR unavailable: "+err.Error(), http.StatusServiceUnavailable)
+			return
 		}
 		size := 384
 		if s := r.URL.Query().Get("size"); s != "" {
@@ -140,6 +145,11 @@ func whatsappPutRoutingHandler(svc *slackservice.WhatsAppService) http.HandlerFu
 //	                when no QR is active)
 func whatsappStatusHandler(svc *slackservice.WhatsAppService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if svc.IsEnabled() && !svc.IsPaired() {
+			if err := svc.EnsurePairingQR(context.Background()); err != nil {
+				log.Printf("[WHATSAPP] refresh pairing QR failed: %v", err)
+			}
+		}
 		resp := map[string]interface{}{
 			"enabled":   svc.IsEnabled(),
 			"paired":    svc.IsPaired(),

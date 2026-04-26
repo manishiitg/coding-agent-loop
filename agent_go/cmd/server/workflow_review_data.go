@@ -16,6 +16,7 @@ type workflowCostsResponse struct {
 	Success         bool                              `json:"success"`
 	PhaseTokenUsage *orchestrator.PhaseTokenUsageFile `json:"phase_token_usage,omitempty"`
 	PhaseDailyCosts []workflowPhaseDailyCostEntry     `json:"phase_daily_costs"`
+	RunDailyCosts   []workflowRunDailyCostEntry       `json:"run_daily_costs"`
 	Runs            []workflowRunCostEntry            `json:"runs"`
 }
 
@@ -93,12 +94,35 @@ func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsR
 		evaluationCosts = map[string]*orchestrator.TokenUsageFile{}
 	}
 
+	runDailyCosts := readWorkflowRunDailyCosts(ctx, workspacePath)
+
 	return workflowCostsResponse{
 		Success:         true,
 		PhaseTokenUsage: phaseTokenUsage,
 		PhaseDailyCosts: phaseDailyCosts,
+		RunDailyCosts:   runDailyCosts,
 		Runs:            buildWorkflowRunCostEntries(executionCosts, evaluationCosts),
 	}
+}
+
+func readWorkflowRunDailyCosts(ctx context.Context, workspacePath string) []workflowRunDailyCostEntry {
+	entries := make([]workflowRunDailyCostEntry, 0)
+	if executionDailyCosts, err := readAllRunDailyTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeExecution); err == nil {
+		entries = append(entries, executionDailyCosts...)
+	}
+	if evaluationDailyCosts, err := readAllRunDailyTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeEvaluation); err == nil {
+		entries = append(entries, evaluationDailyCosts...)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Date != entries[j].Date {
+			return entries[i].Date > entries[j].Date
+		}
+		if entries[i].RunFolder != entries[j].RunFolder {
+			return entries[i].RunFolder < entries[j].RunFolder
+		}
+		return entries[i].Scope < entries[j].Scope
+	})
+	return entries
 }
 
 func loadWorkflowEvaluationReports(ctx context.Context, workspacePath, runFolder string) workflowEvaluationReportsResponse {

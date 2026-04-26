@@ -12,6 +12,7 @@ import {
 import { agentApi } from '../../services/api'
 import type { WorkflowVersionMeta } from '../../services/api-types'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
+import ModalPortal from '../ui/ModalPortal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 
 interface WorkflowVersionsPopupProps {
@@ -131,8 +132,9 @@ const WorkflowVersionsPopup: React.FC<WorkflowVersionsPopupProps> = ({
   if (!isOpen) return null
 
   return (
+    <ModalPortal>
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
         <div className="bg-background rounded-lg shadow-xl w-full max-w-lg max-h-[calc(100dvh-1rem)] sm:max-h-[80vh] flex flex-col border border-border relative">
           {/* Header */}
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-5 sm:py-3.5">
@@ -301,6 +303,7 @@ const WorkflowVersionsPopup: React.FC<WorkflowVersionsPopupProps> = ({
         isLoading={isDeleting}
       />
     </>
+    </ModalPortal>
   )
 }
 

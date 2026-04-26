@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
 import { X, Clock, Play, Trash2, Save, ChevronDown, ChevronUp, ExternalLink, AlertTriangle } from 'lucide-react'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
 import type { ScheduledJob, CreateScheduledJobRequest, VariableGroup, SchedulerConfig } from '../services/api-types'
+import ModalPortal from './ui/ModalPortal'
 
 const LOCAL_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 
@@ -193,7 +193,8 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
     }
   }
 
-  return ReactDOM.createPortal(
+  return (
+    <ModalPortal>
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
@@ -452,8 +453,8 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
           </div>
         )}
       </div>
-    </div>,
-    document.body
+    </div>
+    </ModalPortal>
   )
 }
 

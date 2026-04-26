@@ -2,6 +2,7 @@ import React from 'react'
 import { AlertTriangle, ArrowRight } from 'lucide-react'
 import { type ModeCategory } from '../../stores/useModeStore'
 import { getModeIcon, getModeName, getModeDescription } from '../../utils/modeHelpers'
+import ModalPortal from './ModalPortal'
 
 interface ModeSwitchDialogProps {
   isOpen: boolean
@@ -21,7 +22,8 @@ export const ModeSwitchDialog: React.FC<ModeSwitchDialogProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="relative bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-8 max-w-md mx-4 shadow-xl">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
@@ -98,5 +100,6 @@ export const ModeSwitchDialog: React.FC<ModeSwitchDialogProps> = ({
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

@@ -56,6 +56,35 @@ func imageToolDef() llmtypes.Tool {
 	}
 }
 
+// videoReadToolDef returns the read_video tool definition (single source of truth).
+func videoReadToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "read_video",
+			Description: "Read a video file from workspace and ask a question about it. This tool uploads the video to the configured video-understanding provider and returns a text analysis.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"filepath": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the video file. Must always be workspace-relative (e.g., 'Downloads/demo.mp4', 'videos/clip.mov'). Do not use absolute paths.",
+					},
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Question to ask about the video (e.g., 'Summarize this video', 'What actions happen?', 'Extract visible text and events').",
+					},
+					"provider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional video-understanding provider override. Supported: 'kimi' (default) or 'z-ai' (Z.AI Vision MCP video_analysis).",
+					},
+				},
+				"required": []string{"filepath", "query"},
+			}),
+		},
+	}
+}
+
 // pdfToolDef returns the read_pdf tool definition (single source of truth).
 func pdfToolDef() llmtypes.Tool {
 	return llmtypes.Tool{
@@ -129,10 +158,10 @@ func searchWebLLMToolDef() llmtypes.Tool {
 						"type":        "string",
 						"description": "The web search query.",
 					},
-						"provider": map[string]interface{}{
-							"type":        "string",
-							"description": "Optional published provider override to use for this search, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan.",
-						},
+					"provider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional published provider override to use for this search, e.g. gemini-cli, vertex, claude-code, codex-cli, or minimax-coding-plan.",
+					},
 				},
 				"required": []string{"query"},
 			}),
@@ -170,9 +199,9 @@ func GetShellToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{shellToolDef()}
 }
 
-// GetImageToolDefinitions returns only the image (read_image) tool.
+// GetImageToolDefinitions returns image/video understanding tools.
 func GetImageToolDefinitions() []llmtypes.Tool {
-	return []llmtypes.Tool{imageToolDef()}
+	return []llmtypes.Tool{imageToolDef(), videoReadToolDef()}
 }
 
 // GetPDFToolDefinitions returns only the PDF (read_pdf) tool.
@@ -195,7 +224,7 @@ func GetDiffPatchToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{diffPatchToolDef()}
 }
 
-// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, PDF, text generation, diff patch).
+// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image/video, PDF, text generation, diff patch).
 func GetAdvancedToolDefinitions() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 	tools = append(tools, GetShellToolDefinitions()...)

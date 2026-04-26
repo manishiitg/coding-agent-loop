@@ -67,11 +67,12 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 
 	// Tool classification (same as in WrapWorkspaceToolsWithFolderGuard)
 	readOnlyTools := map[string]bool{
-		"read_workspace_file":             true,
+		"read_workspace_file":   true,
 		"list_workspace_files":  true,
 		"execute_shell_command": true,
-		"read_image":                      true,
-		"read_pdf":                        true,
+		"read_image":            true,
+		"read_video":            true,
+		"read_pdf":              true,
 	}
 
 	writeTools := map[string]bool{
@@ -189,11 +190,12 @@ func (bo *BaseOrchestrator) wrapWorkspaceToolsWithPaths(snapshotReadPaths, snaps
 	// Tools that need path validation with their parameter names
 	// Classify as read-only or write operations
 	readOnlyTools := map[string][]string{
-		"read_workspace_file":             {"filepath"},
-		"list_workspace_files":            {"folder"},
-		"execute_shell_command":           {},
-		"read_image":                      {"filepath"},
-		"read_pdf":                        {"filepath"},
+		"read_workspace_file":   {"filepath"},
+		"list_workspace_files":  {"folder"},
+		"execute_shell_command": {},
+		"read_image":            {"filepath"},
+		"read_video":            {"filepath"},
+		"read_pdf":              {"filepath"},
 	}
 
 	writeTools := map[string][]string{

@@ -18,8 +18,8 @@ interface BotConnectorModalProps {
 
 type Section = 'slack' | 'whatsapp' | 'simulate'
 
-// Shape of GET /api/whatsapp/status. enabled = WHATSAPP_ENABLED env var was set
-// at server startup; paired = device identity stored; connected = live WS.
+// Shape of GET /api/whatsapp/status. enabled = connector started at server
+// startup; paired = device identity stored; connected = live WS.
 interface WhatsAppStatus {
   enabled: boolean
   paired: boolean
@@ -904,9 +904,9 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                       <div className="space-y-1">
                         <h3 className="text-sm font-medium text-foreground">WhatsApp connector is disabled</h3>
                         <p className="text-xs text-muted-foreground">
-                          Set <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_ENABLED=true</code> in the
-                          server's <code className="px-1 py-0.5 bg-muted rounded">.env</code> and restart the
-                          agent. The session file path can be overridden via{' '}
+                          Remove <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_ENABLED=false</code> from
+                          the server's <code className="px-1 py-0.5 bg-muted rounded">.env</code> and restart the
+                          agent. The connector is enabled by default, and the session file path can be overridden via{' '}
                           <code className="px-1 py-0.5 bg-muted rounded">WHATSAPP_SESSION_DB</code>.
                         </p>
                       </div>

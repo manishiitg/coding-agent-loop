@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import ModalPortal from '../ui/ModalPortal'
 
 interface KBPopupProps {
   isOpen: boolean
@@ -126,7 +127,8 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
   const hasNotesContent = topics.length > 0
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+    <ModalPortal>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-2 sm:p-4">
       <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-3 border-b border-border flex-shrink-0 sm:p-4">
@@ -286,5 +288,6 @@ export default function KBPopup({ isOpen, onClose, workspacePath }: KBPopupProps
       </div>
 
     </div>
+    </ModalPortal>
   )
 }

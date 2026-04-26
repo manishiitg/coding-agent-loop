@@ -310,6 +310,14 @@ type workflowRunCostEntry struct {
 	EvaluationTokenUsage *orchestrator.TokenUsageFile `json:"evaluation_token_usage,omitempty"`
 }
 
+type workflowRunDailyCostEntry struct {
+	Date        string                       `json:"date"`
+	Scope       orchestrator.CostScope       `json:"scope"`
+	GroupFolder string                       `json:"group_folder"`
+	RunFolder   string                       `json:"run_folder"`
+	TokenUsage  *orchestrator.TokenUsageFile `json:"token_usage,omitempty"`
+}
+
 type workflowPhaseDailyCostEntry struct {
 	Date       string                            `json:"date"`
 	TokenUsage *orchestrator.PhaseTokenUsageFile `json:"token_usage,omitempty"`
@@ -423,6 +431,79 @@ func readAllPhaseTokenUsageFromCosts(ctx context.Context, workspacePath string) 
 			jUpdated = entries[j].TokenUsage.UpdatedAt
 		}
 		return jUpdated.Before(iUpdated)
+	})
+
+	return entries, nil
+}
+
+func readAllRunDailyTokenUsageFromCosts(ctx context.Context, workspacePath string, scope orchestrator.CostScope) ([]workflowRunDailyCostEntry, error) {
+	if err := ensureWorkspaceCostMigration(ctx, workspacePath); err != nil {
+		return nil, err
+	}
+
+	root := workspaceCostPath(workspacePath, "costs", string(scope))
+
+	entries := make([]workflowRunDailyCostEntry, 0)
+	filePaths, err := listWorkspaceFilesRecursive(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, filePath := range filePaths {
+		if !strings.HasSuffix(filePath, ".json") {
+			continue
+		}
+
+		content, exists, err := readFileFromWorkspace(ctx, filePath)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+
+		var dailyFile orchestrator.DailyGroupTokenUsageFile
+		if err := json.Unmarshal([]byte(content), &dailyFile); err != nil {
+			continue
+		}
+		orchestrator.EnsureDailyGroupTokenUsageFilePricing(&dailyFile)
+		if len(dailyFile.RunFolders) == 0 {
+			continue
+		}
+
+		date := strings.TrimSuffix(pathpkg.Base(filePath), pathpkg.Ext(filePath))
+		if strings.TrimSpace(dailyFile.Date) != "" {
+			date = dailyFile.Date
+		}
+		groupFolder := strings.TrimSpace(dailyFile.GroupFolder)
+		if groupFolder == "" {
+			groupFolder = pathpkg.Base(pathpkg.Dir(filePath))
+		}
+
+		for runFolder, tokenFile := range dailyFile.RunFolders {
+			if tokenFile == nil {
+				continue
+			}
+			entries = append(entries, workflowRunDailyCostEntry{
+				Date:        date,
+				Scope:       scope,
+				GroupFolder: groupFolder,
+				RunFolder:   runFolder,
+				TokenUsage:  tokenFile,
+			})
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Date != entries[j].Date {
+			return entries[i].Date > entries[j].Date
+		}
+		if entries[i].GroupFolder != entries[j].GroupFolder {
+			return entries[i].GroupFolder < entries[j].GroupFolder
+		}
+		if entries[i].RunFolder != entries[j].RunFolder {
+			return entries[i].RunFolder < entries[j].RunFolder
+		}
+		return entries[i].Scope < entries[j].Scope
 	})
 
 	return entries, nil

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   X,
   Loader2,
@@ -28,6 +28,7 @@ import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
 import { ConversationViewer } from './ConversationViewer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import ModalPortal from '../ui/ModalPortal'
 
 interface ValidationFeedback {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | string
@@ -49,6 +50,9 @@ const isIterationZeroRunFolder = (folder: string) => (
 )
 
 const getDefaultRunFolder = (initialRunFolder: string | null | undefined, runFolders: string[]) => {
+  if (initialRunFolder && initialRunFolder !== 'new' && initialRunFolder.includes('/')) return initialRunFolder
+  const groupedRunFolder = runFolders.find(folder => folder.includes('/'))
+  if (groupedRunFolder) return groupedRunFolder
   if (initialRunFolder && initialRunFolder !== 'new') return initialRunFolder
   const iterationZeroFolder = runFolders.find(isIterationZeroRunFolder)
   if (iterationZeroFolder) return iterationZeroFolder
@@ -98,8 +102,10 @@ const getStepIcon = (type: string) => {
       return <Bot className="w-4 h-4 text-indigo-500" />
     case 'branch':
       return <Split className="w-4 h-4 text-indigo-500" />
+    case 'regular':
+      return <FileText className="w-4 h-4 text-muted-foreground" />
     default:
-      return <Terminal className="w-4 h-4 text-muted-foreground" />
+      return <FileText className="w-4 h-4 text-muted-foreground" />
   }
 }
 
@@ -158,6 +164,80 @@ const sortStepIds = (a: string, b: string): number => {
 
   // Shorter one (parent) comes first
   return segA.length - segB.length
+}
+
+const timestampToMs = (value: unknown): number => {
+  if (typeof value !== 'string' || value.trim() === '') return 0
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const firstPositive = (...values: number[]) => values.find(value => value > 0) || 0
+
+const minPositive = (values: number[]) => {
+  const positives = values.filter(value => value > 0)
+  return positives.length > 0 ? Math.min(...positives) : 0
+}
+
+const getExecutionStartedAtMs = (exec: unknown): number => {
+  const execRecord = asRecord(exec)
+  const content = asRecord(execRecord?.content)
+  const timing = asRecord(execRecord?.timing) || asRecord(content?.timing)
+  const agent = asRecord(timing?.agent)
+
+  return firstPositive(
+    timestampToMs(agent?.started_at),
+    timestampToMs(content?.started_at),
+    timestampToMs(execRecord?.started_at),
+    timestampToMs(content?.timestamp),
+    timestampToMs(agent?.completed_at),
+    timestampToMs(content?.completed_at),
+  )
+}
+
+const getStepFirstActivityMs = (stepLogs: unknown): number => {
+  const stepRecord = asRecord(stepLogs)
+  if (!stepRecord) return 0
+
+  const timestamps: number[] = []
+  const addTimestamp = (value: unknown) => {
+    const ms = timestampToMs(value)
+    if (ms > 0) timestamps.push(ms)
+  }
+
+  if (Array.isArray(stepRecord.executions)) {
+    stepRecord.executions.forEach(exec => {
+      const ms = getExecutionStartedAtMs(exec)
+      if (ms > 0) timestamps.push(ms)
+    })
+  }
+
+  ;['learnings', 'todo_task', 'orchestration', 'conditionals', 'validations'].forEach(key => {
+    const items = stepRecord[key]
+    if (!Array.isArray(items)) return
+    items.forEach(item => {
+      const record = asRecord(item)
+      addTimestamp(record?.timestamp)
+      addTimestamp(asRecord(record?.content)?.timestamp)
+    })
+  })
+
+  return minPositive(timestamps)
+}
+
+const sortStepEntriesByExecution = (
+  a: [string, unknown],
+  b: [string, unknown],
+): number => {
+  const aStartedAt = getStepFirstActivityMs(a[1])
+  const bStartedAt = getStepFirstActivityMs(b[1])
+
+  if (aStartedAt > 0 && bStartedAt > 0 && aStartedAt !== bStartedAt) {
+    return aStartedAt - bStartedAt
+  }
+  if (aStartedAt > 0 && bStartedAt === 0) return -1
+  if (aStartedAt === 0 && bStartedAt > 0) return 1
+  return sortStepIds(a[0], b[0])
 }
 
 // Calculate nesting level based on step ID pattern
@@ -337,6 +417,24 @@ const hasStepMetrics = (metrics: StepMetrics) => (
   metrics.durationMs > 0 || metrics.totalTokens > 0 || metrics.inputTokens > 0 || metrics.outputTokens > 0 || metrics.llmCalls > 0
 )
 
+const hasLearningSignal = (stepLogs: {
+  learnings?: unknown[]
+  learning_objective?: string
+  learnings_access?: string
+}) => (
+  (stepLogs.learnings?.length || 0) > 0 ||
+  Boolean(stepLogs.learning_objective?.trim()) ||
+  Boolean(stepLogs.learnings_access && stepLogs.learnings_access !== 'none')
+)
+
+const hasKnowledgebaseSignal = (stepLogs: {
+  knowledgebase_access?: string
+  knowledgebase_contribution?: string
+}) => (
+  Boolean(stepLogs.knowledgebase_contribution?.trim()) ||
+  Boolean(stepLogs.knowledgebase_access && stepLogs.knowledgebase_access !== 'none')
+)
+
 const StepMetricChip = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <span
     title={title}
@@ -373,15 +471,21 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [fileContents, setFileContents] = useState<Record<string, string>>({})
   const [loadingFiles, setLoadingFiles] = useState<Set<string>>(new Set())
+  const autoExpandedRunRef = useRef<string | null>(null)
 
   // Update selected run folder when prop changes
   useEffect(() => {
     setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, runFolders))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialRunFolder, runFolders])
+  }, [initialRunFolder, runFolders, isOpen])
 
   useEffect(() => {
     if (isOpen && workspacePath && selectedRunFolder) {
+      autoExpandedRunRef.current = null
+      setExpandedSteps(new Set())
+      setExpandedValidations(new Set())
+      setExpandedExecutions(new Set())
+      setExpandedArchived(new Set())
       loadLogs()
     } else {
       setLogs(null)
@@ -413,16 +517,20 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       const data = await agentApi.getExecutionLogs(workspacePath, selectedRunFolder)
       setLogs(data)
       
-      // Auto-expand steps with failures or recent activity
-      const newExpanded = new Set<string>()
-      Object.entries(data.steps).forEach(([stepId, stepLogs]) => {
-        // Expand if any validation failed
-        const hasFailure = stepLogs.validations.some(v => v.content?.execution_status === 'FAILED')
-        if (hasFailure) {
-          newExpanded.add(stepId)
-        }
-      })
-      setExpandedSteps(newExpanded)
+      const failedStepIds = Object.entries(data.steps)
+        .filter(([, stepLogs]) => stepLogs.validations.some(v => v.content?.execution_status === 'FAILED'))
+        .map(([stepId]) => stepId)
+
+      if (autoExpandedRunRef.current !== selectedRunFolder) {
+        autoExpandedRunRef.current = selectedRunFolder
+        setExpandedSteps(new Set(failedStepIds))
+      } else if (failedStepIds.length > 0) {
+        setExpandedSteps(prev => {
+          const next = new Set(prev)
+          failedStepIds.forEach(stepId => next.add(stepId))
+          return next
+        })
+      }
     } catch (err) {
       console.error('Failed to load execution logs:', err)
       setError('Failed to load execution logs')
@@ -1745,7 +1853,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
       <div className="bg-background rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-[90vw] h-[calc(100dvh-1rem)] sm:h-[95vh] flex flex-col border border-border relative">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
@@ -1838,7 +1947,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               )}
 
               {Object.entries(logs?.steps || {})
-                .sort((a, b) => sortStepIds(a[0], b[0]))
+                .sort(sortStepEntriesByExecution)
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
                   // Determine overall status based on step_done.json, validations, or other activity
@@ -1864,12 +1973,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           
                           <div className="flex flex-col items-start text-left min-w-0">
                             <div className="flex items-center gap-2">
+                              <span className="flex-shrink-0" title={`Step type: ${stepLogs.type || 'regular'}`}>
                                 {getStepIcon(stepLogs.type)}
-                                <span className="font-mono text-xs opacity-50">{stepLogs.original_id || stepId}</span>
-                                <span className="text-sm font-medium text-foreground truncate">{title}</span>
+                              </span>
+                              <span className="font-mono text-xs opacity-50">{stepLogs.original_id || stepId}</span>
+                              <span className="text-sm font-medium text-foreground truncate">{title}</span>
                             </div>
                             {description && (
-                                <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full">{description}</span>
+                              <span className="text-xs text-muted-foreground line-clamp-1 truncate w-full">{description}</span>
                             )}
                           </div>
                         </div>
@@ -1891,7 +2002,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                             </>
                           )}
                           <span className="whitespace-nowrap">
-                            {stepLogs.executions.length} exec • {stepLogs.validations.length} val
+                            {stepLogs.executions.length} exec
+                            {hasLearningSignal(stepLogs) && ' • learning'}
+                            {hasKnowledgebaseSignal(stepLogs) && ' • kb'}
                             {stepLogs.todo_task && stepLogs.todo_task.length > 0 && ` • ${stepLogs.todo_task.length} todo`}
                           </span>
                         </div>
@@ -1916,6 +2029,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }
 

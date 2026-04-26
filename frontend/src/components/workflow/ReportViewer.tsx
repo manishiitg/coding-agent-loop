@@ -26,6 +26,7 @@ import {
 import { compareValues, formatAuto, formatNamed, rowsToCSV, type FormatResult } from '../../lib/reportFormatters'
 import { useTheme } from '../../hooks/useTheme'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import ModalPortal from '../ui/ModalPortal'
 import type {
   EvaluationReportsResponse,
   ModelTokenUsage,
@@ -1005,8 +1006,9 @@ function widgetShouldRender(widget: ReportWidget, raw: unknown) {
 export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerProps) {
   if (!isOpen) return null
   return (
+    <ModalPortal>
     <div
-      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 px-2 py-3 backdrop-blur-sm sm:px-4 sm:py-6"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 px-2 py-3 backdrop-blur-sm sm:px-4 sm:py-6"
       onClick={onClose}
     >
       <div
@@ -1016,6 +1018,7 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
         <ReportView workspacePath={workspacePath} onClose={onClose} />
       </div>
     </div>
+    </ModalPortal>
   )
 }
 

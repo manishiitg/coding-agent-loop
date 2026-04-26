@@ -1064,10 +1064,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	api.webSimulator = webSimulator
 	log.Printf("✅ Web bot simulator enabled")
 
-	// Register WhatsApp connector when explicitly enabled. Pairing is a
+	// Register WhatsApp connector unless explicitly disabled. Pairing is a
 	// one-time QR scan; the session DB persists state between restarts.
-	// Disabled by default — the user must set WHATSAPP_ENABLED=true and
-	// optionally WHATSAPP_SESSION_DB (defaults below).
+	// Set WHATSAPP_ENABLED=false to disable and optionally WHATSAPP_SESSION_DB
+	// to override the default session DB path.
 	//
 	// DB usage note: this server otherwise avoids databases and persists to
 	// workspace/ files only. WhatsApp is an intentional exception because
@@ -1076,10 +1076,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	// shared infra, not replicated across nodes — so it behaves more like a
 	// protocol-state cache than a "database" in the architectural sense.
 	// Deleting the file and re-pairing via QR fully restores functionality.
-	if os.Getenv("WHATSAPP_ENABLED") == "true" {
+	whatsappEnabled := strings.ToLower(strings.TrimSpace(os.Getenv("WHATSAPP_ENABLED")))
+	if whatsappEnabled != "false" && whatsappEnabled != "0" {
 		dbPath := os.Getenv("WHATSAPP_SESSION_DB")
 		if dbPath == "" {
-			dbPath = "/var/lib/mcp-agent/whatsapp-session.db"
+			dbPath = filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "whatsapp-session.db")
 		}
 		whatsappSvc := slackservice.NewWhatsAppService(dbPath)
 		botManager.RegisterConnector(whatsappSvc)

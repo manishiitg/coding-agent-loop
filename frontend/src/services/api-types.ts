@@ -1139,6 +1139,11 @@ export interface StepExecutionLogs {
   description: string;
   success_criteria?: string;
   context_output?: string;  // Expected output filename
+  learning_objective?: string;
+  learnings_access?: string;
+  knowledgebase_access?: string;
+  knowledgebase_write_method?: string;
+  knowledgebase_contribution?: string;
   is_completed?: boolean;   // Explicit completion marker
   output_content?: StepOutputContent;  // Actual output file content
   artifacts?: { file_name: string; file_path: string }[]; // Other output files
@@ -1204,10 +1209,19 @@ export interface WorkflowPhaseDailyCostsEntry {
   token_usage?: PhaseTokenUsageFile;
 }
 
+export interface WorkflowRunDailyCostsEntry {
+  date: string;
+  scope: 'execution' | 'evaluation' | string;
+  group_folder: string;
+  run_folder: string;
+  token_usage?: TokenUsageFile;
+}
+
 export interface WorkflowCostsResponse {
   success: boolean;
   phase_token_usage?: PhaseTokenUsageFile;
   phase_daily_costs: WorkflowPhaseDailyCostsEntry[];
+  run_daily_costs?: WorkflowRunDailyCostsEntry[];
   runs: WorkflowRunCostsEntry[];
 }
 

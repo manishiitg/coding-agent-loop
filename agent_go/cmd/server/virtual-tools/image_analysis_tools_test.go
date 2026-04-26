@@ -2,6 +2,19 @@ package virtualtools
 
 import "testing"
 
+func TestNormalizeImageAnalysisProviderAndModelVertexDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("vertex", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "vertex" {
+		t.Fatalf("provider = %q, want vertex", provider)
+	}
+	if modelID != "gemini-3-pro-preview" {
+		t.Fatalf("modelID = %q, want gemini-3-pro-preview", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelMiniMaxDefault(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("minimax-coding-plan", "")
 	if err != nil {

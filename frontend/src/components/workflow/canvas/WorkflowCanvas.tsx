@@ -479,15 +479,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     const availableRunFolders = new Set(workspaceState.run_folders.map(folder => folder.name))
-    const selectedBuilderIteration = selectedRunFolder && selectedRunFolder !== 'new'
-      ? selectedRunFolder.split('/')[0]
-      : null
+    const activeRunFolder = workspaceState.active_executions?.find(execution => execution.run_folder)?.run_folder
+    if (activeRunFolder && availableRunFolders.has(activeRunFolder) && selectedRunFolder !== activeRunFolder) {
+      setSelectedRunFolder(activeRunFolder)
+      return
+    }
 
     if (
       selectedRunFolder &&
       selectedRunFolder !== 'new' &&
-      availableRunFolders.has(selectedRunFolder) &&
-      selectedBuilderIteration === 'iteration-0'
+      availableRunFolders.has(selectedRunFolder)
     ) {
       return
     }
@@ -512,6 +513,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [
     isBuilderWorkspace,
     workspaceState?.run_folders,
+    workspaceState?.active_executions,
     selectedRunFolder,
     selectedGroupIds,
     variablesManifest,

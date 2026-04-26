@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import ReactDOM from 'react-dom'
 import { X, Radio, MessageSquare } from 'lucide-react'
 import { SSEConnection } from '../../services/sse'
 import { EventList } from '../events'
@@ -7,6 +6,7 @@ import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { useChatStore } from '../../stores'
 import type { PollingEvent, SSEEventMessage } from '../../services/api-types'
 import { getTypedEventData } from '../../generated/event-types'
+import ModalPortal from '../ui/ModalPortal'
 
 interface ScheduleLiveEventsPopupProps {
   sessionId: string
@@ -133,5 +133,5 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, o
     </div>
   )
 
-  return ReactDOM.createPortal(popup, document.body)
+  return <ModalPortal>{popup}</ModalPortal>
 }

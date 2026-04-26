@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { EvaluationReportsResponse } from '../../services/api-types'
+import ModalPortal from '../ui/ModalPortal'
 
 interface EvaluationPopupProps {
   isOpen: boolean
@@ -206,7 +207,8 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
       <div className="bg-background rounded-lg shadow-xl w-full max-w-5xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col border border-border relative">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
@@ -673,6 +675,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }
 

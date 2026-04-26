@@ -12,7 +12,6 @@ const IMAGE_GEN_MODELS: Record<string, { id: string; label: string; cost: string
   vertex: [
     { id: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2 (Gemini 3.1 Flash Image)', cost: '$0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K' },
     { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro (Gemini 3 Pro Image)', cost: '$0.134/1K-2K · $0.24/4K' },
-    { id: 'gemini-2.5-flash-image', label: 'Nano Banana (Gemini 2.5 Flash Image)', cost: '$0.039/image' },
   ],
   'minimax-coding-plan': [
     { id: 'image-01', label: 'MiniMax Image-01', cost: '$0.0035/image' },

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,12 @@ type persistedToolCallTiming struct {
 	Args                   string `json:"args,omitempty"`
 	Result                 string `json:"result,omitempty"`
 	Error                  string `json:"error,omitempty"`
+	ArgsBytes              int    `json:"args_bytes,omitempty"`
+	ResultBytes            int    `json:"result_bytes,omitempty"`
+	ErrorBytes             int    `json:"error_bytes,omitempty"`
+	EstimatedArgsTokens    int    `json:"estimated_args_tokens,omitempty"`
+	EstimatedResultTokens  int    `json:"estimated_result_tokens,omitempty"`
+	EstimatedErrorTokens   int    `json:"estimated_error_tokens,omitempty"`
 	DurationNs             int64  `json:"duration_ns,omitempty"`
 	DurationMs             int64  `json:"duration_ms,omitempty"`
 	Timestamp              string `json:"timestamp,omitempty"`
@@ -88,12 +95,66 @@ type persistedLLMTimingSummary struct {
 	Calls                 []persistedLLMCallTiming `json:"calls,omitempty"`
 }
 
+type persistedTraceSpan struct {
+	SpanID                 string                 `json:"span_id"`
+	ParentSpanID           string                 `json:"parent_span_id,omitempty"`
+	Type                   string                 `json:"type"`
+	Name                   string                 `json:"name"`
+	Status                 string                 `json:"status,omitempty"`
+	StartedAt              string                 `json:"started_at,omitempty"`
+	CompletedAt            string                 `json:"completed_at,omitempty"`
+	OffsetFromAgentStartMs int64                  `json:"offset_from_agent_start_ms,omitempty"`
+	DurationNs             int64                  `json:"duration_ns,omitempty"`
+	DurationMs             int64                  `json:"duration_ms,omitempty"`
+	InputTokens            int                    `json:"input_tokens,omitempty"`
+	OutputTokens           int                    `json:"output_tokens,omitempty"`
+	TotalTokens            int                    `json:"total_tokens,omitempty"`
+	CacheTokens            int                    `json:"cache_tokens,omitempty"`
+	ReasoningTokens        int                    `json:"reasoning_tokens,omitempty"`
+	ToolCalls              int                    `json:"tool_calls,omitempty"`
+	ArgsBytes              int                    `json:"args_bytes,omitempty"`
+	ResultBytes            int                    `json:"result_bytes,omitempty"`
+	ErrorBytes             int                    `json:"error_bytes,omitempty"`
+	EstimatedArgsTokens    int                    `json:"estimated_args_tokens,omitempty"`
+	EstimatedResultTokens  int                    `json:"estimated_result_tokens,omitempty"`
+	EstimatedErrorTokens   int                    `json:"estimated_error_tokens,omitempty"`
+	Error                  string                 `json:"error,omitempty"`
+	Metadata               map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type persistedTimingBreakdown struct {
+	WallDurationMs         int64 `json:"wall_duration_ms"`
+	LLMDurationMs          int64 `json:"llm_duration_ms"`
+	ToolDurationMs         int64 `json:"tool_duration_ms"`
+	TrackedUnionDurationMs int64 `json:"tracked_union_duration_ms"`
+	UntrackedDurationMs    int64 `json:"untracked_duration_ms"`
+	LLMCallCount           int   `json:"llm_call_count"`
+	ToolCallCount          int   `json:"tool_call_count"`
+	TotalInputTokens       int   `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens      int   `json:"total_output_tokens,omitempty"`
+	TotalTokens            int   `json:"total_tokens,omitempty"`
+	TotalCacheTokens       int   `json:"total_cache_tokens,omitempty"`
+	TotalReasoningTokens   int   `json:"total_reasoning_tokens,omitempty"`
+	ToolArgsBytes          int   `json:"tool_args_bytes,omitempty"`
+	ToolResultBytes        int   `json:"tool_result_bytes,omitempty"`
+	ToolErrorBytes         int   `json:"tool_error_bytes,omitempty"`
+}
+
 //nolint:unused // staged for the run-metadata timing persistence rollout.
 func durationToMillis(d time.Duration) int64 {
 	if d <= 0 {
 		return 0
 	}
 	return d.Milliseconds()
+}
+
+func approxTokensFromBytes(byteCount int) int {
+	if byteCount <= 0 {
+		return 0
+	}
+	// A coarse, model-independent estimate used only for diagnosing large tool
+	// payloads before provider-side token accounting sees them in a later prompt.
+	return (byteCount + 3) / 4
 }
 
 //nolint:unused // staged for the run-metadata timing persistence rollout.
@@ -136,6 +197,12 @@ func normalizeToolTimingEntries(toolCalls []orchestrator.ToolCallEntry, agentSta
 			Args:                   call.Args,
 			Result:                 call.Result,
 			Error:                  call.Error,
+			ArgsBytes:              len([]byte(call.Args)),
+			ResultBytes:            len([]byte(call.Result)),
+			ErrorBytes:             len([]byte(call.Error)),
+			EstimatedArgsTokens:    approxTokensFromBytes(len([]byte(call.Args))),
+			EstimatedResultTokens:  approxTokensFromBytes(len([]byte(call.Result))),
+			EstimatedErrorTokens:   approxTokensFromBytes(len([]byte(call.Error))),
 			DurationNs:             durationNs,
 			DurationMs:             durationMs,
 			Timestamp:              formatRFC3339UTC(call.Timestamp),
@@ -150,6 +217,205 @@ func normalizeToolTimingEntries(toolCalls []orchestrator.ToolCallEntry, agentSta
 	}
 
 	return summary
+}
+
+func buildTimingTrace(
+	stepID string,
+	agentName string,
+	modelID string,
+	agentStartedAt time.Time,
+	agentCompletedAt time.Time,
+	agentDuration time.Duration,
+	llmTiming persistedLLMTimingSummary,
+	toolTiming persistedToolTimingSummary,
+) ([]persistedTraceSpan, persistedTimingBreakdown) {
+	wallDurationMs := durationToMillis(agentDuration)
+	agentSpanID := fmt.Sprintf("%s:agent", stepID)
+	if agentName == "" {
+		agentName = stepID
+	}
+
+	spans := make([]persistedTraceSpan, 0, 2+len(llmTiming.Calls)+len(toolTiming.Calls))
+	spans = append(spans, persistedTraceSpan{
+		SpanID:      agentSpanID,
+		Type:        "agent",
+		Name:        agentName,
+		Status:      "completed",
+		StartedAt:   formatRFC3339UTC(agentStartedAt),
+		CompletedAt: formatRFC3339UTC(agentCompletedAt),
+		DurationNs:  int64(agentDuration),
+		DurationMs:  wallDurationMs,
+		Metadata: map[string]interface{}{
+			"model": modelID,
+		},
+	})
+
+	breakdown := persistedTimingBreakdown{
+		WallDurationMs: wallDurationMs,
+		LLMDurationMs:  llmTiming.TotalDurationMs,
+		ToolDurationMs: toolTiming.TotalDurationMs,
+		LLMCallCount:   llmTiming.Count,
+		ToolCallCount:  toolTiming.Count,
+	}
+
+	for i, call := range llmTiming.Calls {
+		totalTokens := call.TotalTokens
+		if totalTokens == 0 {
+			totalTokens = call.PromptTokens + call.CompletionTokens + call.ReasoningTokens
+		}
+		breakdown.TotalInputTokens += call.PromptTokens
+		breakdown.TotalOutputTokens += call.CompletionTokens
+		breakdown.TotalTokens += totalTokens
+		breakdown.TotalCacheTokens += call.CacheTokens
+		breakdown.TotalReasoningTokens += call.ReasoningTokens
+
+		spans = append(spans, persistedTraceSpan{
+			SpanID:                 fmt.Sprintf("%s:llm:%d", stepID, i+1),
+			ParentSpanID:           agentSpanID,
+			Type:                   "llm",
+			Name:                   call.ModelID,
+			Status:                 call.Status,
+			StartedAt:              call.StartedAt,
+			CompletedAt:            call.CompletedAt,
+			OffsetFromAgentStartMs: call.OffsetFromAgentStartMs,
+			DurationNs:             call.DurationNs,
+			DurationMs:             call.DurationMs,
+			InputTokens:            call.PromptTokens,
+			OutputTokens:           call.CompletionTokens,
+			TotalTokens:            totalTokens,
+			CacheTokens:            call.CacheTokens,
+			ReasoningTokens:        call.ReasoningTokens,
+			ToolCalls:              call.ToolCalls,
+			Error:                  call.Error,
+			Metadata: map[string]interface{}{
+				"turn":                       call.Turn,
+				"time_to_first_response_ms":  call.TimeToFirstResponseMs,
+				"time_to_first_content_ms":   call.TimeToFirstContentMs,
+				"time_to_first_tool_call_ms": call.TimeToFirstToolCallMs,
+				"context_usage_percent":      call.ContextUsagePercent,
+				"model_context_window":       call.ModelContextWindow,
+				"fixed_threshold_percent":    call.FixedThresholdPercent,
+			},
+		})
+	}
+
+	for i, call := range toolTiming.Calls {
+		breakdown.ToolArgsBytes += call.ArgsBytes
+		breakdown.ToolResultBytes += call.ResultBytes
+		breakdown.ToolErrorBytes += call.ErrorBytes
+
+		spanID := call.ToolCallID
+		if spanID == "" {
+			spanID = fmt.Sprintf("%s:tool:%d", stepID, i+1)
+		}
+		spans = append(spans, persistedTraceSpan{
+			SpanID:                 spanID,
+			ParentSpanID:           agentSpanID,
+			Type:                   "tool",
+			Name:                   call.ToolName,
+			Status:                 call.Status,
+			StartedAt:              call.StartedAt,
+			CompletedAt:            call.CompletedAt,
+			OffsetFromAgentStartMs: call.OffsetFromAgentStartMs,
+			DurationNs:             call.DurationNs,
+			DurationMs:             call.DurationMs,
+			ArgsBytes:              call.ArgsBytes,
+			ResultBytes:            call.ResultBytes,
+			ErrorBytes:             call.ErrorBytes,
+			EstimatedArgsTokens:    call.EstimatedArgsTokens,
+			EstimatedResultTokens:  call.EstimatedResultTokens,
+			EstimatedErrorTokens:   call.EstimatedErrorTokens,
+			Error:                  call.Error,
+			Metadata: map[string]interface{}{
+				"tool_call_id": call.ToolCallID,
+			},
+		})
+	}
+
+	breakdown.TrackedUnionDurationMs = computeTrackedUnionDurationMs(spans, agentSpanID, wallDurationMs)
+	breakdown.UntrackedDurationMs = wallDurationMs - breakdown.TrackedUnionDurationMs
+	if breakdown.UntrackedDurationMs < 0 {
+		breakdown.UntrackedDurationMs = 0
+	}
+	if breakdown.UntrackedDurationMs > 0 {
+		spans = append(spans, persistedTraceSpan{
+			SpanID:       fmt.Sprintf("%s:untracked", stepID),
+			ParentSpanID: agentSpanID,
+			Type:         "overhead",
+			Name:         "untracked orchestration / IO",
+			Status:       "inferred",
+			DurationMs:   breakdown.UntrackedDurationMs,
+			Metadata: map[string]interface{}{
+				"explanation":  "Wall-clock time not covered by captured LLM/tool spans. This usually includes prompt construction, orchestration, file IO, log persistence, validation bookkeeping, or instrumentation gaps.",
+				"distribution": "unknown",
+			},
+		})
+	}
+
+	sort.SliceStable(spans, func(i, j int) bool {
+		if spans[i].Type == "agent" {
+			return true
+		}
+		if spans[j].Type == "agent" {
+			return false
+		}
+		if spans[i].OffsetFromAgentStartMs != spans[j].OffsetFromAgentStartMs {
+			return spans[i].OffsetFromAgentStartMs < spans[j].OffsetFromAgentStartMs
+		}
+		return spans[i].DurationMs > spans[j].DurationMs
+	})
+
+	return spans, breakdown
+}
+
+func computeTrackedUnionDurationMs(spans []persistedTraceSpan, agentSpanID string, wallDurationMs int64) int64 {
+	type interval struct {
+		start int64
+		end   int64
+	}
+
+	intervals := make([]interval, 0, len(spans))
+	for _, span := range spans {
+		if span.ParentSpanID != agentSpanID || span.DurationMs <= 0 || (span.Type != "llm" && span.Type != "tool") {
+			continue
+		}
+		start := span.OffsetFromAgentStartMs
+		if start < 0 {
+			start = 0
+		}
+		end := start + span.DurationMs
+		if wallDurationMs > 0 && end > wallDurationMs {
+			end = wallDurationMs
+		}
+		if end > start {
+			intervals = append(intervals, interval{start: start, end: end})
+		}
+	}
+	if len(intervals) == 0 {
+		return 0
+	}
+
+	sort.Slice(intervals, func(i, j int) bool {
+		if intervals[i].start != intervals[j].start {
+			return intervals[i].start < intervals[j].start
+		}
+		return intervals[i].end < intervals[j].end
+	})
+
+	total := int64(0)
+	current := intervals[0]
+	for _, next := range intervals[1:] {
+		if next.start <= current.end {
+			if next.end > current.end {
+				current.end = next.end
+			}
+			continue
+		}
+		total += current.end - current.start
+		current = next
+	}
+	total += current.end - current.start
+	return total
 }
 
 func normalizeLLMTimingEntries(llmCalls []orchestrator.LLMCallEntry, agentStartedAt time.Time) persistedLLMTimingSummary {

@@ -1143,6 +1143,7 @@ export const agentApi = {
         ...response.data?.costs,
         runs: Array.isArray(response.data?.costs?.runs) ? response.data.costs.runs : [],
         phase_daily_costs: Array.isArray(response.data?.costs?.phase_daily_costs) ? response.data.costs.phase_daily_costs : [],
+        run_daily_costs: Array.isArray(response.data?.costs?.run_daily_costs) ? response.data.costs.run_daily_costs : [],
       },
       evaluations: {
         ...response.data?.evaluations,

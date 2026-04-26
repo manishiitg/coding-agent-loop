@@ -11,16 +11,21 @@ import {
   Award,
   TrendingUp,
   TrendingDown,
-  RefreshCw
+  RefreshCw,
+  Plus,
+  Minus
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type {
+  ModelTokenUsage,
   TokenUsageFile,
   StepExecutionLogs,
   PhaseTokenUsageFile,
   WorkflowRunCostsEntry,
-  WorkflowPhaseDailyCostsEntry
+  WorkflowPhaseDailyCostsEntry,
+  WorkflowRunDailyCostsEntry
 } from '../../services/api-types'
+import ModalPortal from '../ui/ModalPortal'
 
 interface CostsPopupProps {
   isOpen: boolean
@@ -125,7 +130,54 @@ interface PhaseCostSummary {
 
 interface PhaseDailyCostSummaryEntry {
   date: string
+  tokenUsage: PhaseTokenUsageFile
   summary: PhaseCostSummary
+}
+
+interface RunDailyCostSummaryEntry {
+  date: string
+  scope: string
+  groupFolder: string
+  runFolder: string
+  updatedAt: string | null
+  tokenUsage: TokenUsageFile
+  summary: NonNullable<RunCosts['costSummary']>
+}
+
+interface CombinedDailyCostSummaryEntry {
+  date: string
+  executionCost: number
+  evaluationCost: number
+  builderCost: number
+  totalCost: number
+  totalTokens: number
+  totalLLMCalls: number
+  runCount: number
+  updatedAt: string | null
+}
+
+interface DailyModelCostEntry {
+  modelID: string
+  provider: string
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+  llmCalls: number
+  totalCost: number
+}
+
+interface DailyStepCostEntry {
+  key: string
+  stepID: string
+  stepTitle: string
+  stageLabel: string
+  totalCost: number
+  inputTokens: number
+  outputTokens: number
+  llmCalls: number
+  models: DailyModelCostEntry[]
 }
 
 const formatPhaseTitle = (phaseID: string) => {
@@ -173,6 +225,31 @@ const classifyPhase = (phase: string): StageBucket => {
   if (phase === 'conditional_evaluation' || phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
   if (phase === 'harden_workflow' || phase === 'review_step_code' || phase === 'replan_workflow_from_results' || phase === 'optimize_step') return 'workshop'
   return 'other'
+}
+
+const formatStageLabel = (phase: string, scope?: string) => {
+  if (scope === 'evaluation') return 'Evaluation'
+  const bucket = classifyPhase(phase)
+  const labels: Record<StageBucket, string> = {
+    execution: 'Execution',
+    learning: 'Learning',
+    evaluation: 'Evaluation',
+    knowledgebase: 'Knowledgebase',
+    routing: 'Routing',
+    workshop: 'Workshop',
+    other: formatPhaseTitle(phase)
+  }
+  return labels[bucket]
+}
+
+const addModelUsage = (target: DailyModelCostEntry, usage: ModelTokenUsage) => {
+  target.inputTokens += usage.input_tokens || 0
+  target.outputTokens += usage.output_tokens || 0
+  target.cacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
+  target.cacheWriteTokens += usage.cache_write_tokens || 0
+  target.reasoningTokens += usage.reasoning_tokens || 0
+  target.llmCalls += usage.llm_call_count || 0
+  target.totalCost += usage.total_cost_usd || 0
 }
 
 const getRunTimestamp = (runCost: Pick<RunCosts, 'tokenUsage' | 'evaluationTokenUsage'>) => {
@@ -272,7 +349,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   const [runCosts, setRunCosts] = useState<RunCosts[]>([])
   const [phaseCostSummary, setPhaseCostSummary] = useState<PhaseCostSummary | null>(null)
   const [phaseDailyCostSummaries, setPhaseDailyCostSummaries] = useState<PhaseDailyCostSummaryEntry[]>([])
+  const [runDailyCostSummaries, setRunDailyCostSummaries] = useState<RunDailyCostSummaryEntry[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [expandedDailyDates, setExpandedDailyDates] = useState<Set<string>>(new Set())
   const [expandedRunFolders, setExpandedRunFolders] = useState<Set<string>>(new Set())
   const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
   const [costViewMode, setCostViewMode] = useState<Record<string, 'step' | 'model'>>({})
@@ -571,7 +650,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       setRunCosts([])
       setPhaseCostSummary(null)
       setPhaseDailyCostSummaries([])
+      setRunDailyCostSummaries([])
       setError(null)
+      setExpandedDailyDates(new Set())
       setExpandedRunFolders(new Set())
       setExpandedCostModels(new Set())
       setCostViewMode({})
@@ -603,32 +684,56 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       )
       let nextPhaseCostSummary: PhaseCostSummary | null = null
       let nextPhaseDailyCostSummaries: PhaseDailyCostSummaryEntry[] = []
+      let nextRunDailyCostSummaries: RunDailyCostSummaryEntry[] = []
       const costs: RunCosts[] = []
 
       nextPhaseCostSummary = calculatePhaseCostSummary(costsResponse.phase_token_usage ?? null)
       nextPhaseDailyCostSummaries = (costsResponse.phase_daily_costs || [])
         .map((entry: WorkflowPhaseDailyCostsEntry) => {
+          if (!entry.token_usage) return null
           const summary = calculatePhaseCostSummary(entry.token_usage ?? null)
           if (!summary) return null
           return {
             date: entry.date,
+            tokenUsage: entry.token_usage,
             summary
           }
         })
         .filter((entry): entry is PhaseDailyCostSummaryEntry => entry !== null)
         .sort((a, b) => b.date.localeCompare(a.date))
+
+      const runDailyEntriesByKey = new Map<string, WorkflowRunDailyCostsEntry>()
+      ;(costsResponse.run_daily_costs || []).forEach((entry: WorkflowRunDailyCostsEntry) => {
+        runDailyEntriesByKey.set(`${entry.date}:${entry.scope}:${entry.run_folder}`, entry)
+      })
+
+      nextRunDailyCostSummaries = Array.from(runDailyEntriesByKey.values())
+        .map((entry: WorkflowRunDailyCostsEntry) => {
+          if (!entry.token_usage) return null
+          const summary = calculateCostSummary(entry.token_usage ?? null, null)
+          if (!summary) return null
+          return {
+            date: entry.date,
+            scope: entry.scope,
+            groupFolder: entry.group_folder,
+            runFolder: entry.run_folder,
+            updatedAt: entry.token_usage?.updated_at || null,
+            tokenUsage: entry.token_usage,
+            summary
+          }
+        })
+        .filter((entry): entry is RunDailyCostSummaryEntry => entry !== null)
+        .sort((a, b) => {
+          if (a.date !== b.date) return b.date.localeCompare(a.date)
+          return a.runFolder.localeCompare(b.runFolder)
+        })
       
       // Costs are stored keyed by "{iteration}/{group}" (e.g. "iteration-0/xspaces") —
       // multi-group workflows produce one entry per iteration-group pair. The
-      // runFolders prop passed by parents is iteration-only (no group info), so
-      // using it as an index into costEntriesByRunFolder would miss everything.
-      // Always load every key present in the cost map; prop-supplied iteration
-      // filtering is applied below via startsWith when we need to restrict the
-      // view.
+      // runFolders prop passed by parents can be stale or iteration-only (no group
+      // info), so always trust the API cost keys as the source of truth.
       const allCostKeys = Array.from(costEntriesByRunFolder.keys())
-      const foldersToLoad = runFolders.length > 0
-        ? allCostKeys.filter(key => runFolders.some(it => key === it || key.startsWith(it + '/')))
-        : allCostKeys
+      const foldersToLoad = allCostKeys
 
       for (const runFolder of foldersToLoad) {
         try {
@@ -663,6 +768,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       setRunCosts(costs)
       setPhaseCostSummary(nextPhaseCostSummary)
       setPhaseDailyCostSummaries(nextPhaseDailyCostSummaries)
+      setRunDailyCostSummaries(nextRunDailyCostSummaries)
 
       // Auto-expand selected run folder if provided
       if (selectedRunFolder && costs.some(c => c.runFolder === selectedRunFolder)) {
@@ -683,6 +789,18 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         next.delete(runFolder)
       } else {
         next.add(runFolder)
+      }
+      return next
+    })
+  }
+
+  const toggleDailyDate = (date: string) => {
+    setExpandedDailyDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) {
+        next.delete(date)
+      } else {
+        next.add(date)
       }
       return next
     })
@@ -782,10 +900,222 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     }
   }, [aggregateSummary, phaseCostSummary])
 
+  const combinedDailyCostSummaries = useMemo(() => {
+    const byDate = new Map<string, CombinedDailyCostSummaryEntry & { runKeys: Set<string> }>()
+
+    const ensureEntry = (date: string) => {
+      let entry = byDate.get(date)
+      if (!entry) {
+        entry = {
+          date,
+          executionCost: 0,
+          evaluationCost: 0,
+          builderCost: 0,
+          totalCost: 0,
+          totalTokens: 0,
+          totalLLMCalls: 0,
+          runCount: 0,
+          updatedAt: null,
+          runKeys: new Set<string>()
+        }
+        byDate.set(date, entry)
+      }
+      return entry
+    }
+
+    const setLatestUpdate = (entry: CombinedDailyCostSummaryEntry, updatedAt: string | null) => {
+      if (!updatedAt) return
+      if (!entry.updatedAt || new Date(updatedAt).getTime() > new Date(entry.updatedAt).getTime()) {
+        entry.updatedAt = updatedAt
+      }
+    }
+
+    phaseDailyCostSummaries.forEach(daily => {
+      const entry = ensureEntry(daily.date)
+      entry.builderCost += daily.summary.totalCost
+      entry.totalCost += daily.summary.totalCost
+      entry.totalTokens += daily.summary.totalTokens
+      entry.totalLLMCalls += daily.summary.totalLLMCalls
+      setLatestUpdate(entry, daily.summary.updatedAt)
+    })
+
+    runDailyCostSummaries.forEach(daily => {
+      const entry = ensureEntry(daily.date)
+      if (daily.scope === 'evaluation') {
+        entry.evaluationCost += daily.summary.totalCost
+      } else {
+        entry.executionCost += daily.summary.totalCost
+      }
+      entry.totalCost += daily.summary.totalCost
+      entry.totalTokens += daily.summary.totalTokens
+      entry.totalLLMCalls += daily.summary.totalLLMCalls
+      entry.runKeys.add(`${daily.scope}:${daily.runFolder}`)
+      entry.runCount = entry.runKeys.size
+      setLatestUpdate(entry, daily.updatedAt)
+    })
+
+    return Array.from(byDate.values())
+      .map(({ runKeys: _runKeys, ...entry }) => entry)
+      .sort((a, b) => b.date.localeCompare(a.date))
+  }, [phaseDailyCostSummaries, runDailyCostSummaries])
+
+  const dailyStepCostsByDate = useMemo(() => {
+    const stepInfoById = new Map<string, { stepNum: number; title: string }>()
+    runCosts.forEach(runCost => {
+      Object.entries(runCost.steps || {}).forEach(([key, stepData]) => {
+        const stepID = stepData.step_id
+        if (!stepID) return
+        const match = key.match(/step-(\d+)/)
+        stepInfoById.set(stepID, {
+          stepNum: match ? parseInt(match[1], 10) : 0,
+          title: stepData.title || stepID
+        })
+      })
+    })
+
+    const byDate = new Map<string, Map<string, DailyStepCostEntry & { modelMap: Map<string, DailyModelCostEntry> }>>()
+
+    const ensureDateMap = (date: string) => {
+      let dateMap = byDate.get(date)
+      if (!dateMap) {
+        dateMap = new Map()
+        byDate.set(date, dateMap)
+      }
+      return dateMap
+    }
+
+    const ensureStep = (
+      date: string,
+      key: string,
+      stepID: string,
+      stepTitle: string,
+      stageLabel: string
+    ) => {
+      const dateMap = ensureDateMap(date)
+      let step = dateMap.get(key)
+      if (!step) {
+        step = {
+          key,
+          stepID,
+          stepTitle,
+          stageLabel,
+          totalCost: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          llmCalls: 0,
+          models: [],
+          modelMap: new Map<string, DailyModelCostEntry>()
+        }
+        dateMap.set(key, step)
+      }
+      return step
+    }
+
+    const addUsageToStep = (step: DailyStepCostEntry & { modelMap: Map<string, DailyModelCostEntry> }, modelID: string, usage: ModelTokenUsage) => {
+      step.inputTokens += usage.input_tokens || 0
+      step.outputTokens += usage.output_tokens || 0
+      step.llmCalls += usage.llm_call_count || 0
+      step.totalCost += usage.total_cost_usd || 0
+
+      let model = step.modelMap.get(modelID)
+      if (!model) {
+        model = {
+          modelID,
+          provider: usage.provider || 'unknown',
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+          llmCalls: 0,
+          totalCost: 0
+        }
+        step.modelMap.set(modelID, model)
+      }
+      addModelUsage(model, usage)
+    }
+
+    runDailyCostSummaries.forEach(daily => {
+      const stepMap = daily.tokenUsage.by_step_and_model || {}
+      Object.entries(stepMap).forEach(([stepKey, modelMap]) => {
+        const parts = stepKey.split(':')
+        const phase = parts[0] || ''
+        const stepID = parts.slice(1).join(':') || phase || 'run'
+        const info = stepInfoById.get(stepID)
+        const stepTitle = info
+          ? `Step ${info.stepNum}: ${info.title}`
+          : stepID
+        const step = ensureStep(
+          daily.date,
+          `${daily.scope}:${stepKey}`,
+          stepID,
+          stepTitle,
+          formatStageLabel(phase, daily.scope)
+        )
+
+        Object.entries(modelMap).forEach(([modelID, usage]) => {
+          addUsageToStep(step, modelID, usage)
+        })
+      })
+
+      if (Object.keys(stepMap).length === 0 && daily.tokenUsage.by_model) {
+        const step = ensureStep(
+          daily.date,
+          `${daily.scope}:${daily.runFolder}:total`,
+          daily.runFolder,
+          getRunFolderDisplayName(daily.runFolder),
+          daily.scope === 'evaluation' ? 'Evaluation' : 'Execution'
+        )
+        Object.entries(daily.tokenUsage.by_model).forEach(([modelID, usage]) => {
+          addUsageToStep(step, modelID, usage)
+        })
+      }
+    })
+
+    phaseDailyCostSummaries.forEach(daily => {
+      const phaseMap = daily.tokenUsage.by_phase_and_model || {}
+      Object.entries(phaseMap).forEach(([phaseID, modelMap]) => {
+        const step = ensureStep(
+          daily.date,
+          `builder:${phaseID}`,
+          phaseID,
+          formatPhaseTitle(phaseID),
+          'Builder'
+        )
+        Object.entries(modelMap).forEach(([modelID, usage]) => {
+          addUsageToStep(step, modelID, usage)
+        })
+      })
+
+      if (Object.keys(phaseMap).length === 0 && daily.tokenUsage.by_model) {
+        const step = ensureStep(
+          daily.date,
+          'builder:total',
+          'builder',
+          'Workflow Builder',
+          'Builder'
+        )
+        Object.entries(daily.tokenUsage.by_model).forEach(([modelID, usage]) => {
+          addUsageToStep(step, modelID, usage)
+        })
+      }
+    })
+
+    return new Map(Array.from(byDate.entries()).map(([date, stepMap]) => {
+      const steps = Array.from(stepMap.values()).map(({ modelMap, ...step }) => ({
+        ...step,
+        models: Array.from(modelMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.modelID.localeCompare(b.modelID))
+      }))
+      steps.sort((a, b) => b.totalCost - a.totalCost || a.stepTitle.localeCompare(b.stepTitle))
+      return [date, steps]
+    }))
+  }, [runCosts, runDailyCostSummaries, phaseDailyCostSummaries])
+
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
       <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col border border-border relative">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
@@ -861,6 +1191,153 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Daily Costs */}
+              {combinedDailyCostSummaries.length > 0 && (
+                <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-primary" />
+                        Daily Cost Breakdown
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Includes execution, evaluation, and builder costs from daily ledgers.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-muted-foreground border-b border-border pb-2">
+                          <th className="w-9 pb-2"></th>
+                          <th className="text-left font-medium pb-2">Date</th>
+                          <th className="text-right font-medium pb-2">Runs</th>
+                          <th className="text-right font-medium pb-2">Exec</th>
+                          <th className="text-right font-medium pb-2">Eval</th>
+                          <th className="text-right font-medium pb-2">Builder</th>
+                          <th className="text-right font-medium pb-2">Calls</th>
+                          <th className="text-right font-medium pb-2">Tokens</th>
+                          <th className="text-right font-medium pb-2">Total</th>
+                          <th className="text-right font-medium pb-2">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {combinedDailyCostSummaries.map(entry => {
+                          const isExpanded = expandedDailyDates.has(entry.date)
+                          const dailySteps = dailyStepCostsByDate.get(entry.date) || []
+
+                          return (
+                            <React.Fragment key={entry.date}>
+                              <tr className="hover:bg-accent/50 transition-colors">
+                                <td className="py-2">
+                                  <button
+                                    onClick={() => toggleDailyDate(entry.date)}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    title={isExpanded ? 'Hide daily step costs' : 'Show daily step costs'}
+                                    aria-label={isExpanded ? 'Hide daily step costs' : 'Show daily step costs'}
+                                  >
+                                    {isExpanded ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                                  </button>
+                                </td>
+                                <td className="py-2">
+                                  <div className="font-medium text-foreground">{entry.date}</div>
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {entry.runCount.toLocaleString()}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {formatUSD(entry.executionCost)}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {formatUSD(entry.evaluationCost)}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {formatUSD(entry.builderCost)}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {entry.totalLLMCalls.toLocaleString()}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {formatTokens(entry.totalTokens)}
+                                </td>
+                                <td className="py-2 text-right font-bold text-green-600 dark:text-green-400">
+                                  {formatUSD(entry.totalCost)}
+                                </td>
+                                <td className="py-2 text-right text-muted-foreground">
+                                  {formatTimestampLabel(entry.updatedAt) || '-'}
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-muted/20">
+                                  <td colSpan={10} className="p-0">
+                                    <div className="p-3 sm:p-4">
+                                      {dailySteps.length === 0 ? (
+                                        <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
+                                          No step-level costs were recorded for this date.
+                                        </div>
+                                      ) : (
+                                        <div className="overflow-x-auto rounded-md border border-border bg-background">
+                                          <table className="w-full text-xs">
+                                            <thead>
+                                              <tr className="border-b border-border bg-muted/40 text-muted-foreground">
+                                                <th className="px-3 py-2 text-left font-medium">Step / Model</th>
+                                                <th className="px-3 py-2 text-left font-medium">Type</th>
+                                                <th className="px-3 py-2 text-right font-medium">Calls</th>
+                                                <th className="px-3 py-2 text-right font-medium">Input</th>
+                                                <th className="px-3 py-2 text-right font-medium">Cached</th>
+                                                <th className="px-3 py-2 text-right font-medium">Output</th>
+                                                <th className="px-3 py-2 text-right font-medium">Cost</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-border">
+                                              {dailySteps.map(step => (
+                                                <React.Fragment key={step.key}>
+                                                  <tr className="bg-card/60">
+                                                    <td className="px-3 py-2">
+                                                      <div className="font-medium text-foreground">{step.stepTitle}</div>
+                                                      <div className="font-mono text-[10px] text-muted-foreground">{step.stepID}</div>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-muted-foreground">{step.stageLabel}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{step.llmCalls.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{step.inputTokens.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">-</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{step.outputTokens.toLocaleString()}</td>
+                                                    <td className="px-3 py-2 text-right font-bold text-foreground">{formatUSD(step.totalCost)}</td>
+                                                  </tr>
+                                                  {step.models.map(model => (
+                                                    <tr key={`${step.key}:${model.modelID}`} className="hover:bg-muted/30">
+                                                      <td className="px-3 py-2 pl-8">
+                                                        <div className="font-mono text-foreground">{model.modelID}</div>
+                                                        <div className="text-[10px] uppercase text-muted-foreground">{model.provider}</div>
+                                                      </td>
+                                                      <td className="px-3 py-2 text-muted-foreground">Model</td>
+                                                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{model.llmCalls.toLocaleString()}</td>
+                                                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{model.inputTokens.toLocaleString()}</td>
+                                                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{model.cacheReadTokens.toLocaleString()}</td>
+                                                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{model.outputTokens.toLocaleString()}</td>
+                                                      <td className="px-3 py-2 text-right font-semibold text-green-600 dark:text-green-400">{formatUSD(model.totalCost)}</td>
+                                                    </tr>
+                                                  ))}
+                                                </React.Fragment>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Workflow Builder / Phase Costs */}
               {phaseCostSummary && (
                 <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
@@ -992,46 +1469,6 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                               </td>
                               <td className="py-2 text-right font-bold text-amber-600 dark:text-amber-400">
                                 {formatUSD(model.totalCost)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {phaseDailyCostSummaries.length > 0 && (
-                    <div className="mt-5 overflow-x-auto">
-                      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-                        Daily Breakdown
-                      </div>
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="text-muted-foreground border-b border-border pb-2">
-                            <th className="text-left font-medium pb-2">Date</th>
-                            <th className="text-right font-medium pb-2">Updated</th>
-                            <th className="text-right font-medium pb-2">Calls</th>
-                            <th className="text-right font-medium pb-2">Tokens</th>
-                            <th className="text-right font-medium pb-2">Cost</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {phaseDailyCostSummaries.map(entry => (
-                            <tr key={entry.date} className="hover:bg-accent/50 transition-colors">
-                              <td className="py-2">
-                                <div className="font-medium text-foreground">{entry.date}</div>
-                              </td>
-                              <td className="py-2 text-right text-muted-foreground">
-                                {formatTimestampLabel(entry.summary.updatedAt) || '-'}
-                              </td>
-                              <td className="py-2 text-right font-mono text-muted-foreground">
-                                {entry.summary.totalLLMCalls.toLocaleString()}
-                              </td>
-                              <td className="py-2 text-right font-mono text-muted-foreground">
-                                {entry.summary.totalTokens.toLocaleString()}
-                              </td>
-                              <td className="py-2 text-right font-bold text-amber-600 dark:text-amber-400">
-                                {formatUSD(entry.summary.totalCost)}
                               </td>
                             </tr>
                           ))}
@@ -1591,6 +2028,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }
 

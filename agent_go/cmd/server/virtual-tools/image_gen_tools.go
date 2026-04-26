@@ -19,13 +19,12 @@ import (
 var imageGenModelCosts = map[string]float64{
 	"gemini-3.1-flash-image-preview": 0.067,  // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
 	"gemini-3-pro-image-preview":     0.134,  // $0.134/1K-2K image · $0.24/4K image
-	"gemini-2.5-flash-image":         0.039,  // $0.039/image flat
 	"image-01":                       0.0035, // MiniMax Image-01
 	"codex-cli":                      0.0,    // Token-priced; per-image cost not exposed by Codex CLI
 }
 
 var imageProviderModels = map[string][]string{
-	"vertex":              {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview", "gemini-2.5-flash-image"},
+	"vertex":              {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
 	"minimax-coding-plan": {"image-01"},
 	"codex-cli":           {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 }
@@ -87,11 +86,11 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
+						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview and gemini-3-pro-image-preview. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
+						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -163,7 +162,7 @@ func defaultImageAnalysisModelForProvider(provider string) string {
 	case "kimi":
 		return "kimi-k2.6"
 	default:
-		return "gemini-2.5-flash"
+		return "gemini-3-pro-preview"
 	}
 }
 
@@ -264,7 +263,7 @@ func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys)
 }
 
 func supportedImageProviderSummary() string {
-	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image), minimax-coding-plan (image-01), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark)"
+	return "Supported image providers: vertex (gemini-3.1-flash-image-preview, gemini-3-pro-image-preview), minimax-coding-plan (image-01), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark)"
 }
 
 func supportedImageAnalysisProviderSummary() string {
@@ -718,11 +717,11 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 					},
 					"provider": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
+						"description": "Optional provider override. Supported values: vertex, minimax-coding-plan, or codex-cli. Vertex supports gemini-3.1-flash-image-preview and gemini-3-pro-image-preview. MiniMax coding plan supports image-01. Codex CLI supports native image generation and editing via models like codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, and gpt-5.3-codex-spark.",
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, gemini-2.5-flash-image, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
+						"description": "Optional image model override. Examples: gemini-3.1-flash-image-preview, gemini-3-pro-image-preview, image-01, codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, or gpt-5.3-codex-spark. If omitted, the default for the selected provider is used.",
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",

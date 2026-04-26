@@ -174,6 +174,7 @@ Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change wh
 
 ## Published LLMs & Provider Auth
 Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Provider authentication lives separately in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
+- To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, and ` + "`generate_image`" + `, including auth/runtime availability.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses the same shared metadata catalog as the frontend model picker.
 - List published LLMs: ` + "`execute_shell_command(command: \"cat " + absConfig + "/published-llms.json\")`" + `
@@ -206,12 +207,20 @@ Image generation defaults live in ` + "`" + absConfig + `/image-generation-confi
 Image understanding for the ` + "`read_image`" + ` tool can be routed via ` + "`" + absConfig + `/image-analysis-config.json` + "`" + `.
 - Read: ` + "`execute_shell_command(command: \"cat " + absConfig + "/image-analysis-config.json\")`" + `
 - Write: ` + "`execute_shell_command(command: \"printf '%s' '{...json...}' > " + absConfig + "/image-analysis-config.json\")`" + `
-- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-2.5-flash\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"}]}`" + `
+- Schema: ` + "`{\"primary\":{\"provider\":\"vertex\",\"model_id\":\"gemini-3-pro-preview\"},\"fallbacks\":[{\"provider\":\"minimax-coding-plan\",\"model_id\":\"claude-sonnet-4-5\"},{\"provider\":\"kimi\",\"model_id\":\"kimi-k2.6\"}]}`" + `
 - If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
 - If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
 - If you want to use MiniMax for image understanding, configure provider ` + "`minimax-coding-plan`" + `, not plain ` + "`minimax`" + `.
 - Kimi image understanding is supported via provider ` + "`kimi`" + ` with model ` + "`kimi-k2.6`" + `.
 - Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using the ` + "`set_provider_auth`" + ` tool; do not hand-edit the encrypted auth file.
+
+## Video Analysis
+Video understanding is available through the ` + "`read_video(filepath, query, provider?)`" + ` tool.
+- Default provider/model: ` + "`kimi`" + ` with ` + "`kimi-k2.6`" + `. It uploads the workspace video to Moonshot/Kimi file storage with ` + "`purpose=video`" + `, then references it as ` + "`ms://<file-id>`" + ` in the chat request.
+- Optional provider: ` + "`z-ai`" + `. It invokes the Z.AI Vision MCP server (` + "`npx -y @z_ai/mcp-server@latest`" + `) and calls the ` + "`video_analysis`" + ` tool with ` + "`Z_AI_MODE=ZAI`" + `.
+- Kimi-supported formats: ` + "`mp4`" + `, ` + "`mpeg`" + `, ` + "`mov`" + `, ` + "`avi`" + `, ` + "`flv`" + `, ` + "`mpg`" + `, ` + "`webm`" + `, ` + "`wmv`" + `, ` + "`3gp`" + `, ` + "`3gpp`" + `.
+- Z.AI MCP-supported formats: ` + "`mp4`" + `, ` + "`mov`" + `, ` + "`m4v`" + `; max file size ` + "`8 MB`" + `.
+- Keep provider auth in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + ` using ` + "`set_provider_auth(provider=\"kimi\", api_key=\"...\")`" + ` or ` + "`set_provider_auth(provider=\"z-ai\", api_key=\"...\")`" + `; do not hand-edit the encrypted auth file.
 
 ## Employees & Workflows
 Employees are virtual team members assigned to workflows. Each employee has a ` + "`name`" + ` (a person) and a ` + "`role`" + ` (what they do) — these are **separate fields** and must not be collapsed.

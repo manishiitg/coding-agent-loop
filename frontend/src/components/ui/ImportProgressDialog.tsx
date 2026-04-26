@@ -1,5 +1,6 @@
 import React from 'react'
 import { Loader2, Upload } from 'lucide-react'
+import ModalPortal from './ModalPortal'
 
 interface ImportProgressDialogProps {
   isOpen: boolean
@@ -11,7 +12,8 @@ export default function ImportProgressDialog({ isOpen, progress, fileName }: Imp
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <ModalPortal>
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
         <div className="p-6">
           <div className="flex items-center gap-3 mb-6">
@@ -57,5 +59,6 @@ export default function ImportProgressDialog({ isOpen, progress, fileName }: Imp
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }

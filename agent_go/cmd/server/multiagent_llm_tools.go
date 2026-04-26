@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -114,6 +115,300 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 	return true
 }
 
+type llmCapabilityProvider struct {
+	Provider          string                 `json:"provider"`
+	Models            []string               `json:"models,omitempty"`
+	ModelCount        int                    `json:"model_count,omitempty"`
+	DefaultModel      string                 `json:"default_model,omitempty"`
+	ConfigFile        string                 `json:"config_file,omitempty"`
+	AuthSource        string                 `json:"auth_source,omitempty"`
+	AuthConfigured    bool                   `json:"auth_configured"`
+	RuntimeDependency string                 `json:"runtime_dependency,omitempty"`
+	RuntimeAvailable  *bool                  `json:"runtime_available,omitempty"`
+	Usable            bool                   `json:"usable"`
+	Notes             []string               `json:"notes,omitempty"`
+	Extra             map[string]interface{} `json:"extra,omitempty"`
+}
+
+func runtimeAvailable(command string) *bool {
+	if command == "" {
+		return nil
+	}
+	_, err := exec.LookPath(command)
+	ok := err == nil
+	return &ok
+}
+
+func providerRuntime(provider string) string {
+	switch normalizeManagedProvider(provider) {
+	case string(llm.ProviderClaudeCode):
+		return "claude"
+	case string(llm.ProviderCodexCLI):
+		return "codex"
+	case string(llm.ProviderGeminiCLI):
+		return "gemini"
+	case string(llm.ProviderMiniMaxCodingPlan):
+		return "mmx"
+	default:
+		return ""
+	}
+}
+
+func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, string) {
+	if keys == nil {
+		keys = &llm.ProviderAPIKeys{}
+	}
+	switch normalizeManagedProvider(provider) {
+	case string(llm.ProviderOpenRouter):
+		return keys.OpenRouter != nil && strings.TrimSpace(*keys.OpenRouter) != "", "OPENROUTER_API_KEY or workspace provider auth"
+	case string(llm.ProviderOpenAI):
+		return keys.OpenAI != nil && strings.TrimSpace(*keys.OpenAI) != "", "OPENAI_API_KEY or workspace provider auth"
+	case string(llm.ProviderAnthropic):
+		return keys.Anthropic != nil && strings.TrimSpace(*keys.Anthropic) != "", "ANTHROPIC_API_KEY or workspace provider auth"
+	case string(llm.ProviderClaudeCode):
+		return keys.Anthropic != nil && strings.TrimSpace(*keys.Anthropic) != "", "ANTHROPIC_API_KEY or workspace provider auth"
+	case string(llm.ProviderZAI):
+		return keys.ZAI != nil && strings.TrimSpace(*keys.ZAI) != "", "Z_AI_API_KEY/ZAI_API_KEY or workspace provider auth"
+	case string(llm.ProviderKimi):
+		return keys.Kimi != nil && strings.TrimSpace(*keys.Kimi) != "", "KIMI_API_KEY or workspace provider auth"
+	case string(llm.ProviderVertex):
+		return keys.Vertex != nil && strings.TrimSpace(*keys.Vertex) != "", "VERTEX_API_KEY/GOOGLE_API_KEY/GEMINI_API_KEY/ADC or workspace provider auth"
+	case string(llm.ProviderGeminiCLI):
+		return keys.GeminiCLI != nil && strings.TrimSpace(*keys.GeminiCLI) != "", "GEMINI_API_KEY or workspace provider auth"
+	case string(llm.ProviderCodexCLI):
+		return true, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
+	case string(llm.ProviderMiniMax):
+		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
+	case string(llm.ProviderMiniMaxCodingPlan):
+		return keys.MiniMaxCodingPlan != nil && strings.TrimSpace(*keys.MiniMaxCodingPlan) != "", "MINIMAX_CODING_PLAN_API_KEY or workspace provider auth"
+	case string(llm.ProviderBedrock):
+		return keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "", "BEDROCK_REGION or workspace provider auth"
+	case string(llm.ProviderAzure):
+		return keys.Azure != nil && strings.TrimSpace(keys.Azure.APIKey) != "" && strings.TrimSpace(keys.Azure.Endpoint) != "", "AZURE_AI_ENDPOINT/AZURE_AI_API_KEY or workspace provider auth"
+	default:
+		return false, "unknown provider"
+	}
+}
+
+func providerUsable(provider string, authConfigured bool) (bool, string, *bool) {
+	runtime := providerRuntime(provider)
+	runtimeOK := runtimeAvailable(runtime)
+	usable := authConfigured
+	if runtimeOK != nil {
+		usable = usable && *runtimeOK
+	}
+	return usable, runtime, runtimeOK
+}
+
+func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []llmCapabilityProvider {
+	metadata := utils.GetAllModelMetadata()
+	modelsByProvider := map[string][]string{}
+	for _, model := range metadata {
+		if model == nil {
+			continue
+		}
+		provider := normalizeManagedProvider(model.Provider)
+		modelID := strings.TrimSpace(model.ModelID)
+		if provider == "" || modelID == "" {
+			continue
+		}
+		modelsByProvider[provider] = append(modelsByProvider[provider], modelID)
+	}
+
+	providers := getSupportedProviders()
+	result := make([]llmCapabilityProvider, 0, len(providers))
+	for _, provider := range providers {
+		authConfigured, authSource := providerAuthConfigured(provider, keys)
+		usable, runtime, runtimeOK := providerUsable(provider, authConfigured)
+		entry := llmCapabilityProvider{
+			Provider:          provider,
+			ModelCount:        len(modelsByProvider[provider]),
+			DefaultModel:      llm.GetDefaultModel(llm.Provider(provider)),
+			AuthSource:        authSource,
+			AuthConfigured:    authConfigured,
+			RuntimeDependency: runtime,
+			RuntimeAvailable:  runtimeOK,
+			Usable:            usable,
+			Notes:             []string{"Use list_provider_models for full chat/text model metadata."},
+		}
+		if includeModels {
+			entry.Models = modelsByProvider[provider]
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string, providerModels map[string][]string, defaults map[string]string, notes map[string][]string) []llmCapabilityProvider {
+	result := make([]llmCapabilityProvider, 0, len(providerModels))
+	for _, provider := range []string{
+		string(llm.ProviderVertex),
+		string(llm.ProviderMiniMaxCodingPlan),
+		string(llm.ProviderCodexCLI),
+		string(llm.ProviderZAI),
+		string(llm.ProviderKimi),
+		string(llm.ProviderClaudeCode),
+		string(llm.ProviderGeminiCLI),
+	} {
+		models, ok := providerModels[provider]
+		if !ok {
+			continue
+		}
+		authConfigured, authSource := providerAuthConfigured(provider, keys)
+		usable, runtime, runtimeOK := providerUsable(provider, authConfigured)
+		result = append(result, llmCapabilityProvider{
+			Provider:          provider,
+			Models:            models,
+			ModelCount:        len(models),
+			DefaultModel:      defaults[provider],
+			ConfigFile:        configFile,
+			AuthSource:        authSource,
+			AuthConfigured:    authConfigured,
+			RuntimeDependency: runtime,
+			RuntimeAvailable:  runtimeOK,
+			Usable:            usable,
+			Notes:             notes[provider],
+		})
+	}
+	return result
+}
+
+func buildLLMCapabilities(ctx context.Context, capability string, includeModels bool) map[string]interface{} {
+	keys := MergedProviderAPIKeys(ctx)
+	capability = normalizeManagedProvider(capability)
+	if capability == "" {
+		capability = "all"
+	}
+
+	all := map[string]interface{}{
+		"schema_version": 1,
+		"notes": []string{
+			"usable means required workspace/env auth is configured and any required CLI runtime is installed.",
+			"Provider auth is managed in config/provider-api-keys.json; do not hand-edit that encrypted file.",
+		},
+	}
+
+	if capability == "all" || capability == "chat" || capability == "text" {
+		all["chat"] = map[string]interface{}{
+			"description": "Providers usable for normal chat/text LLM calls.",
+			"providers":   buildChatLLMCapabilities(keys, includeModels),
+		}
+	}
+
+	if capability == "all" || capability == "search" || capability == "search_web" {
+		all["search_web"] = map[string]interface{}{
+			"description": "Providers usable by search_web_llm. Routing is configured in config/published-llms.json with search_role/search_priority.",
+			"config_file": "config/published-llms.json",
+			"providers": buildFixedCapabilityProviders(
+				keys,
+				"config/published-llms.json",
+				map[string][]string{
+					string(llm.ProviderClaudeCode):        {"claude-code"},
+					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderGeminiCLI):         {"gemini CLI models"},
+					string(llm.ProviderMiniMaxCodingPlan): {"MiniMax coding-plan search via mmx"},
+					string(llm.ProviderVertex):            {"gemini* models only"},
+				},
+				map[string]string{},
+				map[string][]string{
+					string(llm.ProviderVertex): {"Only published Vertex models whose model_id starts with gemini are search-capable."},
+				},
+			),
+			"routing_fields": map[string]interface{}{
+				"search_role":     []string{"primary", "fallback"},
+				"search_priority": "lower number wins within the same role",
+			},
+		}
+	}
+
+	if capability == "all" || capability == "read_image" || capability == "image_analysis" {
+		all["read_image"] = map[string]interface{}{
+			"description": "Providers usable by read_image for image understanding.",
+			"config_file": "config/image-analysis-config.json",
+			"providers": buildFixedCapabilityProviders(
+				keys,
+				"config/image-analysis-config.json",
+				map[string][]string{
+					string(llm.ProviderVertex):            {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
+					string(llm.ProviderMiniMaxCodingPlan): {"claude-sonnet-4-5", "claude-opus-4-6", "claude-haiku-4-5-20251001"},
+					string(llm.ProviderZAI):               {"glm-4.6v", "glm-5v-turbo"},
+					string(llm.ProviderKimi):              {"kimi-k2.6"},
+				},
+				map[string]string{
+					string(llm.ProviderVertex):            "gemini-3-pro-preview",
+					string(llm.ProviderMiniMaxCodingPlan): "claude-sonnet-4-5",
+					string(llm.ProviderZAI):               "glm-4.6v",
+					string(llm.ProviderKimi):              "kimi-k2.6",
+				},
+				map[string][]string{
+					string(llm.ProviderMiniMaxCodingPlan): {"Use minimax-coding-plan, not plain minimax, for image understanding."},
+				},
+			),
+		}
+	}
+
+	if capability == "all" || capability == "read_video" || capability == "video_analysis" {
+		kimiAuth, kimiAuthSource := providerAuthConfigured(string(llm.ProviderKimi), keys)
+		kimiUsable, kimiRuntime, kimiRuntimeOK := providerUsable(string(llm.ProviderKimi), kimiAuth)
+		zaiAuth, zaiAuthSource := providerAuthConfigured(string(llm.ProviderZAI), keys)
+		zaiRuntimeOK := runtimeAvailable("npx")
+		zaiUsable := zaiAuth && zaiRuntimeOK != nil && *zaiRuntimeOK
+		all["read_video"] = map[string]interface{}{
+			"description": "Providers usable by read_video for video understanding.",
+			"providers": []llmCapabilityProvider{
+				{
+					Provider:          string(llm.ProviderKimi),
+					Models:            []string{"kimi-k2.6"},
+					ModelCount:        1,
+					DefaultModel:      "kimi-k2.6",
+					AuthSource:        kimiAuthSource,
+					AuthConfigured:    kimiAuth,
+					RuntimeDependency: kimiRuntime,
+					RuntimeAvailable:  kimiRuntimeOK,
+					Usable:            kimiUsable,
+					Notes:             []string{"Uploads videos to Moonshot/Kimi file storage and references them as ms://<file-id>.", "Supported formats: mp4, mpeg, mov, avi, flv, mpg, webm, wmv, 3gp, 3gpp."},
+				},
+				{
+					Provider:          string(llm.ProviderZAI),
+					Models:            []string{"glm-4.6v"},
+					ModelCount:        1,
+					DefaultModel:      "glm-4.6v",
+					AuthSource:        zaiAuthSource,
+					AuthConfigured:    zaiAuth,
+					RuntimeDependency: "npx",
+					RuntimeAvailable:  zaiRuntimeOK,
+					Usable:            zaiUsable,
+					Notes:             []string{"Uses Z.AI Vision MCP server tool video_analysis via npx -y @z_ai/mcp-server@latest.", "Supported formats: mp4, mov, m4v. Max file size: 8 MB."},
+				},
+			},
+		}
+	}
+
+	if capability == "all" || capability == "generate_image" || capability == "image_generation" {
+		all["generate_image"] = map[string]interface{}{
+			"description": "Providers usable by image_gen/image_edit.",
+			"config_file": "config/image-generation-config.json",
+			"providers": buildFixedCapabilityProviders(
+				keys,
+				"config/image-generation-config.json",
+				map[string][]string{
+					string(llm.ProviderVertex):            {"gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"},
+					string(llm.ProviderMiniMaxCodingPlan): {"image-01"},
+					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+				},
+				map[string]string{
+					string(llm.ProviderVertex):            "gemini-3.1-flash-image-preview",
+					string(llm.ProviderMiniMaxCodingPlan): "image-01",
+					string(llm.ProviderCodexCLI):          "codex-cli",
+				},
+				map[string][]string{},
+			),
+		}
+	}
+
+	return all
+}
+
 func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Agent) error {
 	if underlyingAgent == nil {
 		return fmt.Errorf("underlying agent is nil")
@@ -121,6 +416,31 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 
 	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
 		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "llm_config_tools")
+	}
+
+	if err := registerTool(
+		"list_llm_capabilities",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, and generate_image. Includes config files, auth requirements, and CLI runtime availability.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"capability": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image.",
+				},
+				"include_models": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true, include full chat/text model id lists. Defaults to false because chat catalogs can be large.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			capability, _ := args["capability"].(string)
+			includeModels, _ := args["include_models"].(bool)
+			return prettyJSON(buildLLMCapabilities(ctx, capability, includeModels)), nil
+		},
+	); err != nil {
+		return err
 	}
 
 	if err := registerTool(

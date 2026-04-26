@@ -3481,6 +3481,11 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			stepType := "regular"
 			contextOutput := ""
 			successCriteria := ""
+			learningObjective := ""
+			learningsAccess := ""
+			knowledgebaseAccess := ""
+			knowledgebaseWriteMethod := ""
+			knowledgebaseContribution := ""
 			if meta != nil {
 				if t := meta["title"]; t != "" {
 					title = t
@@ -3492,27 +3497,37 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				}
 				contextOutput = meta["context_output"]
 				successCriteria = meta["success_criteria"]
+				learningObjective = meta["learning_objective"]
+				learningsAccess = meta["learnings_access"]
+				knowledgebaseAccess = meta["knowledgebase_access"]
+				knowledgebaseWriteMethod = meta["knowledgebase_write_method"]
+				knowledgebaseContribution = meta["knowledgebase_contribution"]
 			}
 
 			stepsLogs[stepId] = map[string]interface{}{
-				"step_id":             stepId,
-				"original_id":         originalId,
-				"type":                stepType,
-				"title":               title,
-				"description":         desc,
-				"success_criteria":    successCriteria,
-				"context_output":      contextOutput,
-				"is_completed":        false,
-				"output_content":      nil, // Will be populated if output file exists
-				"artifacts":           []map[string]interface{}{},
-				"validations":         []map[string]interface{}{},
-				"executions":          []map[string]interface{}{},
-				"decisions":           []map[string]interface{}{},
-				"orchestration":       []map[string]interface{}{},
-				"conditionals":        []map[string]interface{}{},
-				"learnings":           []map[string]interface{}{},
-				"archived_logs":       []map[string]interface{}{}, // Archived logs from previous runs
-				"archived_executions": []map[string]interface{}{}, // Archived execution outputs from decision step routing
+				"step_id":                    stepId,
+				"original_id":                originalId,
+				"type":                       stepType,
+				"title":                      title,
+				"description":                desc,
+				"success_criteria":           successCriteria,
+				"context_output":             contextOutput,
+				"learning_objective":         learningObjective,
+				"learnings_access":           learningsAccess,
+				"knowledgebase_access":       knowledgebaseAccess,
+				"knowledgebase_write_method": knowledgebaseWriteMethod,
+				"knowledgebase_contribution": knowledgebaseContribution,
+				"is_completed":               false,
+				"output_content":             nil, // Will be populated if output file exists
+				"artifacts":                  []map[string]interface{}{},
+				"validations":                []map[string]interface{}{},
+				"executions":                 []map[string]interface{}{},
+				"decisions":                  []map[string]interface{}{},
+				"orchestration":              []map[string]interface{}{},
+				"conditionals":               []map[string]interface{}{},
+				"learnings":                  []map[string]interface{}{},
+				"archived_logs":              []map[string]interface{}{}, // Archived logs from previous runs
+				"archived_executions":        []map[string]interface{}{}, // Archived execution outputs from decision step routing
 			}
 		}
 		return stepsLogs[stepId]
@@ -4313,6 +4328,12 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		if criteria == "" {
 			criteria, _ = step["success_reasoning"].(string)
 		}
+		agentConfigs, _ := step["agent_configs"].(map[string]interface{})
+		learningObjective := stringFromStepOrAgentConfig(step, agentConfigs, "learning_objective")
+		learningsAccess := stringFromStepOrAgentConfig(step, agentConfigs, "learnings_access")
+		knowledgebaseAccess := stringFromStepOrAgentConfig(step, agentConfigs, "knowledgebase_access")
+		knowledgebaseWriteMethod := stringFromStepOrAgentConfig(step, agentConfigs, "knowledgebase_write_method")
+		knowledgebaseContribution := stringFromStepOrAgentConfig(step, agentConfigs, "knowledgebase_contribution")
 
 		// Handle inner steps for complex types
 		if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
@@ -4350,12 +4371,17 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		}
 
 		meta := map[string]string{
-			"title":            title,
-			"description":      desc,
-			"success_criteria": criteria,
-			"original_id":      id,
-			"type":             resolvedType,
-			"context_output":   strings.Join(contextOutputs, ","), // Store as comma-separated string for simplicity in meta
+			"title":                      title,
+			"description":                desc,
+			"success_criteria":           criteria,
+			"original_id":                id,
+			"type":                       resolvedType,
+			"context_output":             strings.Join(contextOutputs, ","), // Store as comma-separated string for simplicity in meta
+			"learning_objective":         learningObjective,
+			"learnings_access":           learningsAccess,
+			"knowledgebase_access":       knowledgebaseAccess,
+			"knowledgebase_write_method": knowledgebaseWriteMethod,
+			"knowledgebase_contribution": knowledgebaseContribution,
 		}
 
 		// Store metadata by multiple keys to ensure it's found
@@ -4382,12 +4408,18 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 						subAgentKey := fmt.Sprintf("%s-sub-agent-%d", stepKey, j+1)
 						subId, _ := subStep["id"].(string)
 						subCriteria, _ := subStep["success_criteria"].(string)
+						subAgentConfigs, _ := subStep["agent_configs"].(map[string]interface{})
 						subMeta := map[string]string{
-							"title":            subStep["title"].(string),
-							"description":      subStep["description"].(string),
-							"success_criteria": subCriteria,
-							"original_id":      subId,
-							"type":             "sub-agent",
+							"title":                      subStep["title"].(string),
+							"description":                subStep["description"].(string),
+							"success_criteria":           subCriteria,
+							"original_id":                subId,
+							"type":                       "sub-agent",
+							"learning_objective":         stringFromStepOrAgentConfig(subStep, subAgentConfigs, "learning_objective"),
+							"learnings_access":           stringFromStepOrAgentConfig(subStep, subAgentConfigs, "learnings_access"),
+							"knowledgebase_access":       stringFromStepOrAgentConfig(subStep, subAgentConfigs, "knowledgebase_access"),
+							"knowledgebase_write_method": stringFromStepOrAgentConfig(subStep, subAgentConfigs, "knowledgebase_write_method"),
+							"knowledgebase_contribution": stringFromStepOrAgentConfig(subStep, subAgentConfigs, "knowledgebase_contribution"),
 						}
 						metadata[subAgentKey] = subMeta
 						if subId != "" {
@@ -4398,6 +4430,16 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			}
 		}
 	}
+}
+
+func stringFromStepOrAgentConfig(step map[string]interface{}, agentConfigs map[string]interface{}, key string) string {
+	if value, ok := step[key].(string); ok {
+		return value
+	}
+	if value, ok := agentConfigs[key].(string); ok {
+		return value
+	}
+	return ""
 }
 
 // convertToMapList converts a list of interfaces to a list of maps

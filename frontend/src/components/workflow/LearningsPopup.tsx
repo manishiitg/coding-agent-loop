@@ -6,6 +6,7 @@ import { isConditionalStep, isTodoTaskStep } from '../../utils/stepConfigMatchin
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import type { PlannerFile } from '../../services/api-types'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
+import ModalPortal from '../ui/ModalPortal'
 
 interface LearningsPopupProps {
   isOpen: boolean
@@ -826,7 +827,8 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4" style={{ zIndex: 50 }}>
+    <ModalPortal>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-2 sm:p-4">
       <div className="bg-background text-foreground border border-border rounded-lg shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[calc(100dvh-1rem)] sm:h-[92vh] flex flex-col">
         {/* Header — title + close only. Step search / filter / expand controls
             moved to sit above the step list so they're visually adjacent to what
@@ -1513,5 +1515,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         type="danger"
       />
     </div>
+    </ModalPortal>
   )
 }

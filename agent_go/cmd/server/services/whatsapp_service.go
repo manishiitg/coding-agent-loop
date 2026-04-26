@@ -64,6 +64,7 @@ type WhatsAppService struct {
 	container *sqlstore.Container
 	device    *store.Device
 	client    *whatsmeow.Client
+	pairingMu sync.Mutex
 	// metaDB is a lightweight second connection to the same SQLite file
 	// holding non-whatsmeow metadata (currently the owner binding). Using
 	// one store keeps everything in a single file that Unpair can wipe
@@ -156,18 +157,10 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.loadOwner(ctx)
 	w.loadRouting(ctx)
 
-	// Name shown in the paired phone's "Linked Devices" list. Default would be
-	// the literal string "whatsmeow", which looks suspicious; override it so
-	// the user can clearly identify this bot. Takes effect only on fresh
-	// pairings — if a device is already paired, it keeps whatever name was
-	// registered when it first linked, and you need to unpair + re-pair to
-	// see the new name.
-	//
-	// Note: Meta's fraud heuristics are more trusting of common OS names
-	// ("Chrome", "Linux", "Windows") than arbitrary strings. If this name
-	// turns out to trigger "can't link new devices" on new pairings, we may
-	// need to switch back to a more generic one.
-	store.SetOSInfo("AgentForge", [3]uint32{1, 0, 0})
+	// Name shown in the paired phone's "Linked Devices" list. Keep this close
+	// to a normal browser name; arbitrary app names are more likely to be
+	// rejected by WhatsApp during the device-link flow.
+	store.SetOSInfo("Chrome", [3]uint32{120, 0, 0})
 
 	// Build the whatsmeow loggers. Default is silent; set WHATSAPP_DEBUG=true
 	// to see the underlying protocol exchange (QR flow, handshake, device-add
@@ -227,6 +220,18 @@ func (w *WhatsAppService) connectLoop(ctx context.Context) {
 	}
 
 	if client.Store.ID == nil {
+		if !w.pairingMu.TryLock() {
+			return
+		}
+		defer w.pairingMu.Unlock()
+
+		w.mu.RLock()
+		client = w.client
+		w.mu.RUnlock()
+		if client == nil || client.Store.ID != nil {
+			return
+		}
+
 		qrChan, err := client.GetQRChannel(ctx)
 		if err != nil {
 			log.Printf("[WHATSAPP] GetQRChannel failed: %v", err)
@@ -251,6 +256,10 @@ func (w *WhatsAppService) connectLoop(ctx context.Context) {
 				w.qrMu.Unlock()
 			case "timeout":
 				log.Printf("[WHATSAPP] QR timeout — request a new QR to pair again")
+				w.qrMu.Lock()
+				w.lastQR = ""
+				w.qrExpires = time.Time{}
+				w.qrMu.Unlock()
 			}
 		}
 		return
@@ -325,7 +334,40 @@ func (w *WhatsAppService) Unpair(ctx context.Context) error {
 func (w *WhatsAppService) GetQR() (code string, expires time.Time) {
 	w.qrMu.RLock()
 	defer w.qrMu.RUnlock()
+	if w.lastQR != "" && !w.qrExpires.IsZero() && time.Now().After(w.qrExpires) {
+		return "", time.Time{}
+	}
 	return w.lastQR, w.qrExpires
+}
+
+// EnsurePairingQR starts a fresh QR flow when the service is unpaired and the
+// previous code has expired or timed out. The new code arrives asynchronously;
+// callers should poll status until qr_available flips true.
+func (w *WhatsAppService) EnsurePairingQR(ctx context.Context) error {
+	if w.IsPaired() {
+		return nil
+	}
+	if code, expires := w.GetQR(); code != "" && !expires.IsZero() {
+		return nil
+	}
+
+	w.mu.RLock()
+	client := w.client
+	w.mu.RUnlock()
+	if client == nil {
+		return fmt.Errorf("whatsapp: client not initialised")
+	}
+	if client.IsConnected() {
+		client.Disconnect()
+	}
+
+	w.qrMu.Lock()
+	w.lastQR = ""
+	w.qrExpires = time.Time{}
+	w.qrMu.Unlock()
+
+	go w.connectLoop(ctx)
+	return nil
 }
 
 // GetQRImagePNG renders the active QR code as a PNG image of the requested
@@ -850,9 +892,9 @@ func (w *WhatsAppService) handleIncomingMessage(evt *events.Message) {
 		Text:            text,
 		MessageTS:       info.ID,
 		PresetWorkflow:  presetRoute,
-		Timestamp:     info.Timestamp,
-		IsThreadReply: false,
-		IsMention:     true, // every DM effectively addresses the bot
+		Timestamp:       info.Timestamp,
+		IsThreadReply:   false,
+		IsMention:       true, // every DM effectively addresses the bot
 	})
 }
 

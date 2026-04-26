@@ -21,3 +21,5 @@
 84. properly sohws agents and tools in ui.. so its clear whats going on
 
 85. how to proper merge human tools with workflow builder.  i think we should make human inputs steps in workflow more tighly integrated with workflow builder and maybe not have in direct execute at all
+
+86. see how we can define goal properly for a workflow and improve it better overitime

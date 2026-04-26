@@ -19,6 +19,7 @@ import { useMCPStore } from '../stores/useMCPStore';
 import { agentApi, getApiBaseUrl } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import type { LLMOption } from '../types/llm';
+import ModalPortal from './ui/ModalPortal';
 
 interface PresetModalProps {
   isOpen: boolean;
@@ -448,21 +449,22 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   if (!isOpen) return null;
 
   return (
+    <ModalPortal>
     <div 
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4"
       onClick={handleBackdropClick}
     >
       <Card
-        className="w-full max-w-6xl mx-4 p-6 max-h-[90vh] overflow-y-auto"
+        className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden p-0 sm:max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-semibold">
+        <div className="flex flex-shrink-0 flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+          <h2 className="min-w-0 text-lg font-semibold text-foreground sm:text-2xl">
             {effectiveAgentMode === 'workflow'
               ? (editingPreset ? 'Edit Workflow' : 'Add Workflow')
               : (editingPreset ? 'Edit Preset' : 'Add New Preset')}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             {editingPreset && effectiveAgentMode === 'workflow' && onDeleteWorkflow && (
               <Button
                 type="button"
@@ -471,7 +473,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                 onClick={() => setShowDeleteWorkflowConfirm(true)}
                 className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
               >
-                <Trash2 className="w-4 h-4 mr-1" />
+                <Trash2 className="mr-1 h-4 w-4" />
                 Delete Workflow
               </Button>
             )}
@@ -489,12 +491,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               variant="outline"
               size="sm"
               onClick={onClose}
+              aria-label="Close"
             >
-              ✕
+              <X className="h-4 w-4" />
             </Button>
           </div>
         </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <form id="preset-form" onSubmit={handleSubmit} className="space-y-6">
           {/* Two Column Layout for both modes */}
           {effectiveAgentMode === 'workflow' ? (
@@ -659,9 +663,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="space-y-2">
                     {selectedFolder && (
                       <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <Folder className="w-5 h-5 text-blue-600" />
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
+                          <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
                         </div>
                         <button
                           type="button"
@@ -907,7 +911,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     {/* CDP configuration sub-panel */}
                     {browserMode === 'cdp' && (
                       <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
-                        <div className="flex gap-4 items-stretch">
+                        <div className="flex flex-col gap-4 items-stretch xl:flex-row">
                           {/* Left: port + status */}
                           <div className="flex-1 space-y-3">
                             <div className="flex items-center gap-3">
@@ -952,7 +956,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           </div>
 
                           {/* Right: instructions */}
-                          <div className="w-64 flex-shrink-0 rounded-lg bg-white dark:bg-gray-900/80 border border-gray-300 dark:border-gray-600 p-2.5 space-y-1.5 flex flex-col">
+                          <div className="w-full flex-shrink-0 rounded-lg bg-white dark:bg-gray-900/80 border border-gray-300 dark:border-gray-600 p-2.5 space-y-1.5 flex flex-col xl:w-64">
                             <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Launch Chrome with CDP</p>
                             {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
                               <div className="space-y-1">
@@ -1216,9 +1220,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <div className="space-y-2">
                     {selectedFolder && (
                       <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <Folder className="w-4 h-4 text-blue-600" />
-                          <span className="text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
+                          <span className="truncate text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
                         </div>
                         <button
                           type="button"
@@ -1324,8 +1328,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           type="danger"
           isLoading={deletingWorkflow}
         />
+        </div>
       </Card>
     </div>
+    </ModalPortal>
   );
 });
 

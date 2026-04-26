@@ -154,6 +154,17 @@ func defaultImageModelForProvider(provider string) string {
 	}
 }
 
+func defaultImageAnalysisModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "minimax-coding-plan":
+		return "claude-sonnet-4-5"
+	case "z-ai":
+		return "glm-4.6v"
+	default:
+		return "gemini-2.5-flash"
+	}
+}
+
 func inferImageProviderFromModel(modelID string) string {
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
 	switch {
@@ -173,6 +184,8 @@ func inferImageAnalysisProviderFromModel(modelID string) string {
 	switch {
 	case strings.HasPrefix(modelID, "glm-"):
 		return "z-ai"
+	case strings.HasPrefix(modelID, "claude-"):
+		return "minimax-coding-plan"
 	default:
 		return inferImageProviderFromModel(modelID)
 	}
@@ -211,7 +224,7 @@ func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, s
 		provider = defaultImageGenProvider
 	}
 	if modelID == "" {
-		modelID = defaultImageModelForProvider(provider)
+		modelID = defaultImageAnalysisModelForProvider(provider)
 	}
 
 	switch provider {
@@ -249,7 +262,7 @@ func supportedImageProviderSummary() string {
 }
 
 func supportedImageAnalysisProviderSummary() string {
-	return "Supported image analysis providers: vertex (Gemini vision models), minimax-coding-plan (image-01), z-ai (glm-4.6v, glm-5v-turbo)"
+	return "Supported image analysis providers: vertex (Gemini vision models), minimax-coding-plan (claude-sonnet-4-5, claude-opus-4-6, claude-haiku-4-5-20251001), z-ai (glm-4.6v, glm-5v-turbo)"
 }
 
 func imageModelsSummaryForProvider(provider string) string {

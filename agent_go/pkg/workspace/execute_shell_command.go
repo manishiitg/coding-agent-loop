@@ -211,7 +211,7 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Native: sandbox-exec profile only restricts workspace-docs subpaths, not the wider
 	// filesystem, so this check is needed here too as defense-in-depth.
 	if params.FolderGuard != nil && params.FolderGuard.Enabled {
-		if err := blockAbsoluteHostPaths(params.Command); err != nil {
+		if err := blockAbsoluteHostPaths(params.Command, params.FolderGuard); err != nil {
 			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", params.Command)
 			return ShellCommandResult{}, err
 		}
@@ -480,17 +480,23 @@ func rewriteGeminiRelativePaths(command, projectDirID string) string {
 }
 
 // blockAbsoluteHostPaths rejects commands containing absolute paths that
-// reference the host filesystem outside the workspace.
+// reference the host filesystem outside the workspace, and also rejects
+// absolute workspace-docs paths that fall outside the current folder guard.
 //
 // In Docker, VirtioFS auto-mounts /Users/ into containers — an LLM-generated
 // command like "cat /Users/foo/secret.txt" would bypass workspace isolation.
 // This function blocks /Users/, /home/, /root/ to prevent that.
 //
-// On desktop Mac (WORKSPACE_DOCS_PATH set), the workspace root IS under /Users/,
-// so we skip blocking when the workspace root is a subdirectory of a blocked dir.
-// The workspace server's own sandbox-exec isolation handles fine-grained access.
-func blockAbsoluteHostPaths(command string) error {
-	if !strings.Contains(command, "/") {
+// On desktop Mac the workspace root itself is also under /Users/, so we allow
+// absolute paths only when they stay under workspace-docs AND under the active
+// folder guard. Everything else is rejected before the shell request is sent.
+func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
+	if !strings.Contains(command, "/") || guard == nil {
+		return nil
+	}
+
+	candidates := extractAbsoluteShellPaths(command)
+	if len(candidates) == 0 {
 		return nil
 	}
 
@@ -500,27 +506,192 @@ func blockAbsoluteHostPaths(command string) error {
 		"/root",
 	}
 
-	// If workspace root is under a blocked dir (e.g. /Users/.../workspace-docs on Mac),
-	// allow commands that reference paths under the workspace root.
-	wsRoot := strings.ToLower(os.Getenv("WORKSPACE_DOCS_PATH"))
+	for _, candidate := range candidates {
+		if relPath, ok := normalizeAbsoluteWorkspacePath(candidate); ok {
+			unionGuard := &FolderGuardConfig{
+				Enabled:      true,
+				ReadPaths:    deduplicateStrings(append(append([]string{}, guard.ReadPaths...), guard.WritePaths...)),
+				BlockedPaths: guard.BlockedPaths,
+			}
+			if err := validatePathAgainstGuard(unionGuard, relPath, false); err != nil {
+				return fmt.Errorf("access denied: absolute workspace path %q is outside this step's allowed folders: %w", candidate, err)
+			}
+			continue
+		}
 
-	cmdLower := strings.ToLower(command)
-	for _, dir := range blockedDirs {
-		matched := strings.Contains(cmdLower, dir+"/") ||
-			strings.Contains(cmdLower, dir+" ") ||
-			strings.HasSuffix(cmdLower, dir)
-		if !matched {
-			continue
+		candidateLower := strings.ToLower(candidate)
+		for _, dir := range blockedDirs {
+			if candidateLower == dir || strings.HasPrefix(candidateLower, dir+"/") {
+				return fmt.Errorf(
+					"access denied: shell command references absolute host path (%s). "+
+						"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
+						"absolute workspace paths inside the step's allowed folders instead",
+					candidate,
+				)
+			}
 		}
-		// If the workspace root is under this blocked dir, skip blocking —
-		// the command is likely referencing workspace paths.
-		if wsRoot != "" && strings.HasPrefix(wsRoot, dir+"/") {
-			continue
-		}
-		return fmt.Errorf(
-			"access denied: shell command references absolute host path (%s). "+
-				"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
-				"absolute workspace paths instead", dir)
 	}
 	return nil
+}
+
+func normalizeAbsoluteWorkspacePath(inputPath string) (string, bool) {
+	cleanPath := filepath.Clean(inputPath)
+	for _, root := range workspaceDocsRoots() {
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if cleanPath == root {
+			return ".", true
+		}
+		prefix := root + string(filepath.Separator)
+		if strings.HasPrefix(cleanPath, prefix) {
+			return strings.TrimPrefix(cleanPath, prefix), true
+		}
+	}
+	return "", false
+}
+
+func workspaceDocsRoots() []string {
+	roots := make([]string, 0, 3)
+	if envRoot := strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH")); envRoot != "" {
+		roots = append(roots, envRoot)
+	}
+	roots = append(roots, "/app/workspace-docs", "/workspace-docs")
+	return deduplicateStrings(roots)
+}
+
+func extractAbsoluteShellPaths(command string) []string {
+	sanitized := stripShellHeredocBodies(command)
+	seen := make(map[string]struct{})
+	var paths []string
+
+	addPath := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		raw = strings.TrimRight(raw, ",)")
+		if raw == "" || !filepath.IsAbs(raw) {
+			return
+		}
+		clean := filepath.Clean(raw)
+		if _, exists := seen[clean]; exists {
+			return
+		}
+		seen[clean] = struct{}{}
+		paths = append(paths, clean)
+	}
+
+	for i := 0; i < len(sanitized); {
+		switch sanitized[i] {
+		case '\'':
+			start := i + 1
+			i++
+			for i < len(sanitized) && sanitized[i] != '\'' {
+				i++
+			}
+			if start < len(sanitized) {
+				addPath(sanitized[start:i])
+			}
+			if i < len(sanitized) {
+				i++
+			}
+		case '"':
+			start := i + 1
+			i++
+			for i < len(sanitized) && sanitized[i] != '"' {
+				if sanitized[i] == '\\' && i+1 < len(sanitized) {
+					i += 2
+					continue
+				}
+				i++
+			}
+			if start < len(sanitized) {
+				addPath(sanitized[start:i])
+			}
+			if i < len(sanitized) {
+				i++
+			}
+		default:
+			if sanitized[i] == '/' && (i == 0 || isShellPathBoundary(sanitized[i-1])) {
+				start := i
+				i++
+				for i < len(sanitized) && !isShellPathTerminator(sanitized[i]) {
+					i++
+				}
+				addPath(sanitized[start:i])
+				continue
+			}
+			i++
+		}
+	}
+
+	return paths
+}
+
+func isShellPathBoundary(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', '\r', '=', '(', ':', '<', '>':
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellPathTerminator(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', '\r', '\'', '"', '|', '&', ';', '<', '>', ')':
+		return true
+	default:
+		return false
+	}
+}
+
+func stripShellHeredocBodies(cmd string) string {
+	var out strings.Builder
+	out.Grow(len(cmd))
+
+	i := 0
+	n := len(cmd)
+	for i < n {
+		if i+2 <= n && cmd[i] == '<' && cmd[i+1] == '<' {
+			if loc := heredocStartRe.FindStringSubmatchIndex(cmd[i:]); loc != nil && loc[0] == 0 {
+				full := cmd[i : i+loc[1]]
+				var delim string
+				for g := 1; g <= 3; g++ {
+					if loc[2*g] >= 0 {
+						delim = cmd[i+loc[2*g] : i+loc[2*g+1]]
+						break
+					}
+				}
+				out.WriteString(full)
+				i += loc[1]
+				for i < n && cmd[i] != '\n' {
+					out.WriteByte(cmd[i])
+					i++
+				}
+				if i < n {
+					out.WriteByte('\n')
+					i++
+				}
+				for i < n {
+					lineStart := i
+					for i < n && cmd[i] != '\n' {
+						i++
+					}
+					line := cmd[lineStart:i]
+					if i < n {
+						i++
+					}
+					if strings.TrimSpace(line) == delim {
+						out.WriteString(line)
+						out.WriteByte('\n')
+						break
+					}
+				}
+				continue
+			}
+		}
+		out.WriteByte(cmd[i])
+		i++
+	}
+	return out.String()
 }

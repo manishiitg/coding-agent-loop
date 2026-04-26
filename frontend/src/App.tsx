@@ -50,6 +50,26 @@ import { copyToClipboard } from './utils/textUtils'
 
 const queryClient = new QueryClient();
 
+const WORKSPACE_COLLAPSING_POPUP_SELECTOR = [
+  '[data-workspace-popup="true"]',
+  '[role="dialog"]',
+  '[class~="fixed"][class~="inset-0"]'
+].join(',')
+
+const hasOpenWorkspaceCollapsingPopup = () => {
+  if (typeof document === 'undefined') return false
+
+  return Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_COLLAPSING_POPUP_SELECTOR))
+    .some((element) => {
+      const style = window.getComputedStyle(element)
+      return (
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.position === 'fixed'
+      )
+    })
+}
+
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so header with mode/preset selectors is visible
@@ -1122,6 +1142,27 @@ function App() {
     setWorkspaceMinimized(showWorkflowsOverview)
   }, [showWorkflowsOverview, setWorkspaceMinimized])
 
+  useEffect(() => {
+    const collapseWorkspaceForPopup = () => {
+      const { workspaceMinimized: currentWorkspaceMinimized } = useAppStore.getState()
+      if (!currentWorkspaceMinimized && hasOpenWorkspaceCollapsingPopup()) {
+        setWorkspaceMinimized(true)
+      }
+    }
+
+    collapseWorkspaceForPopup()
+
+    const observer = new MutationObserver(collapseWorkspaceForPopup)
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'role', 'data-workspace-popup'],
+    })
+
+    return () => observer.disconnect()
+  }, [setWorkspaceMinimized])
+
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
@@ -1624,12 +1665,14 @@ function App() {
           {/* Right Workspace Area - auto-minimize in workflow mode */}
           <div className={`${
             // Use workspaceMinimized state directly - user can toggle regardless of mode
-            workspaceMinimized ? 'w-16' : 'w-96'
-          } transition-all duration-300 ease-in-out border-l border-gray-200 dark:border-gray-700 relative z-20`}>
-            <Workspace 
-              minimized={workspaceMinimized}
-              onToggleMinimize={toggleWorkspaceMinimize}
-            />
+            workspaceMinimized ? 'w-0 border-l-0' : 'w-96 border-l border-gray-200 dark:border-gray-700'
+          } flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out relative z-20`}>
+            {!workspaceMinimized && (
+              <Workspace 
+                minimized={false}
+                onToggleMinimize={toggleWorkspaceMinimize}
+              />
+            )}
           </div>
         </div>
 

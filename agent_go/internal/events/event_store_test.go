@@ -55,6 +55,22 @@ func TestAddEventSnapshotsAgentEvent(t *testing.T) {
 	}
 }
 
+func TestEventStoreTracksSessionOwner(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	store.SetSessionOwner("session-1", "user-1")
+
+	if owner := store.GetSessionOwner("session-1"); owner != "user-1" {
+		t.Fatalf("expected owner user-1, got %q", owner)
+	}
+
+	store.SetSessionOwner("session-2", "")
+	if owner := store.GetSessionOwner("session-2"); owner != "" {
+		t.Fatalf("expected blank owner to be ignored, got %q", owner)
+	}
+}
+
 func TestAddEventAssignsExecutionOwnership(t *testing.T) {
 	store := NewEventStore(10)
 	defer store.Stop()
@@ -145,6 +161,79 @@ func TestAddEventAssignsDelegationExecutionOwnership(t *testing.T) {
 	}
 }
 
+func TestAddEventParentsDelegationToBackgroundAgent(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "delegation-start",
+		Type:      "delegation_start",
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:          pkgevents.EventType("delegation_start"),
+			Timestamp:     now,
+			CorrelationID: "delegation-123",
+			Data: &DelegationStartEventData{
+				DelegationID:      "delegation-123",
+				BackgroundAgentID: "bg-agent-1",
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "delegation:delegation-123" {
+		t.Fatalf("expected delegation execution ownership, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "bg-agent-1" {
+		t.Fatalf("expected delegation parent bg-agent-1, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "delegation" {
+		t.Fatalf("expected delegation kind, got %q", events[0].ExecutionKind)
+	}
+}
+
+func TestAddEventUsesBackgroundAgentParentExecutionID(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "background-start",
+		Type:      "background_agent_started",
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("background_agent_started"),
+			Timestamp: now,
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{
+					"agent_id":            "bg-agent-1",
+					"parent_execution_id": "parent-bg-agent",
+				},
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "bg-agent-1" {
+		t.Fatalf("expected background execution ownership, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "parent-bg-agent" {
+		t.Fatalf("expected background parent parent-bg-agent, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "background_agent" {
+		t.Fatalf("expected background_agent kind, got %q", events[0].ExecutionKind)
+	}
+}
+
 func TestAddEventAssignsWorkflowStepOwnershipFromMetadata(t *testing.T) {
 	store := NewEventStore(10)
 	defer store.Stop()
@@ -184,5 +273,123 @@ func TestAddEventAssignsWorkflowStepOwnershipFromMetadata(t *testing.T) {
 	}
 	if events[0].ExecutionKind != "workflow_step" {
 		t.Fatalf("expected workflow_step kind, got %q", events[0].ExecutionKind)
+	}
+}
+
+func TestAddEventParentsWorkflowStepOwnershipToBackgroundExecution(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "workshop-tool",
+		Type:      string(pkgevents.ToolCallStart),
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:          pkgevents.ToolCallStart,
+			Timestamp:     now,
+			CorrelationID: "workshop-step-prepare-test-fixtures-123",
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{
+					"tool_name": "execute_shell_command",
+					"metadata": map[string]interface{}{
+						"workshop_step_id":    "workshop-step-prepare-test-fixtures-123",
+						"current_step_id":     "prepare-test-fixtures",
+						"parent_execution_id": "exec-prepare-test-fixtures-84000",
+					},
+				},
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "workflow-step:exec-prepare-test-fixtures-84000:prepare-test-fixtures" {
+		t.Fatalf("expected background-owned workflow step execution, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "exec-prepare-test-fixtures-84000" {
+		t.Fatalf("expected background execution parent, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "workflow_step" {
+		t.Fatalf("expected workflow_step kind, got %q", events[0].ExecutionKind)
+	}
+}
+
+func TestAddEventUsesParentExecutionForWorkflowLifecycleOwnership(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "workflow-start",
+		Type:      "orchestrator_agent_start",
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:          pkgevents.EventType("orchestrator_agent_start"),
+			Timestamp:     now,
+			CorrelationID: "workshop-workflow-full-generated-id",
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"workshop_step_id":    "workshop-workflow-full-generated-id",
+						"parent_execution_id": "workflow-full-real-id",
+					},
+				},
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "workflow-full-real-id" {
+		t.Fatalf("expected parent workflow execution ownership, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "main:session-1" {
+		t.Fatalf("expected workflow parent main:session-1, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "workflow" {
+		t.Fatalf("expected workflow kind, got %q", events[0].ExecutionKind)
+	}
+}
+
+func TestAddEventAssignsAutoNotificationToCompletedBackgroundExecution(t *testing.T) {
+	store := NewEventStore(10)
+	defer store.Stop()
+
+	now := time.Now()
+	store.AddEvent("session-1", Event{
+		ID:        "auto-notification",
+		Type:      "user_message",
+		Timestamp: now,
+		SessionID: "session-1",
+		Data: &pkgevents.AgentEvent{
+			Type:      pkgevents.EventType("user_message"),
+			Timestamp: now,
+			Data: &pkgevents.GenericEventData{
+				Data: map[string]interface{}{
+					"content": "[AUTO-NOTIFICATION]\nAgent 'step-1' (ID: workflow-full-abc-step-0-def) completed.\nStatus: completed",
+				},
+			},
+		},
+	})
+
+	events := store.GetAllEventsRaw("session-1")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ExecutionID != "workflow-full-abc-step-0-def" {
+		t.Fatalf("expected auto-notification to belong to background execution, got %q", events[0].ExecutionID)
+	}
+	if events[0].ParentExecutionID != "main:session-1" {
+		t.Fatalf("expected parent main:session-1, got %q", events[0].ParentExecutionID)
+	}
+	if events[0].ExecutionKind != "workflow" {
+		t.Fatalf("expected workflow kind, got %q", events[0].ExecutionKind)
 	}
 }

@@ -3708,7 +3708,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 									execName := filepath.Base(execChild.FilePath)
 
 									// Handle standard execution attempts
-									if strings.HasPrefix(execName, "execution-attempt-") && strings.HasSuffix(execName, ".json") && !strings.Contains(execName, "-conversation") {
+									if strings.HasPrefix(execName, "execution-attempt-") && strings.HasSuffix(execName, ".json") && !strings.Contains(execName, "-conversation") && !strings.Contains(execName, "-timing") && !strings.Contains(execName, "-prompts") {
 										execPath := execChild.FilePath
 										if processedPaths[execPath] {
 											continue
@@ -3730,12 +3730,22 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 											}
 										}
 
+										timingPath := strings.Replace(execPath, ".json", "-timing.json", 1)
+										timingContent, timingExists, _ := readFileFromWorkspace(r.Context(), timingPath)
+										var timingData interface{} = nil
+										if timingExists {
+											if err := json.Unmarshal([]byte(timingContent), &timingData); err != nil {
+												fmt.Printf("Error unmarshalling execution timing data for %s: %v\n", timingPath, err)
+											}
+										}
+
 										executions = append(executions, map[string]interface{}{
 											"attempt":           attempt,
 											"iteration":         iteration,
 											"file_path":         execPath,
 											"conversation_path": strings.Replace(execPath, ".json", "-conversation.json", 1),
-											"timing_path":       strings.Replace(execPath, ".json", "-timing.json", 1),
+											"timing_path":       timingPath,
+											"timing":            timingData,
 											"content":           execData,
 										})
 

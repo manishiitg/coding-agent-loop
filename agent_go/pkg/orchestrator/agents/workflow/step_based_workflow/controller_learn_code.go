@@ -650,8 +650,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveLearnCodeShellGuard(
 	stepConfig := getAgentConfigs(step)
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
+	learningsAccess := resolveLearningsAccess(stepConfig)
 
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, kbWriteMethod)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, kbWriteMethod)
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}

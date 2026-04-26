@@ -160,8 +160,14 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 		stringField(payload, "background_agent_id"),
 		stringField(payload, "agent_id"),
 	)
+	parentExecutionID := firstNonEmptyString(
+		stringField(metadata, "parent_execution_id"),
+		stringField(payload, "parent_execution_id"),
+	)
+	autoNotificationExecutionID := autoNotificationExecutionID(e)
 	workflowID := firstNonEmptyString(
 		backgroundAgentID,
+		autoNotificationExecutionID,
 		normalizeWorkshopExecutionID(stringField(metadata, "workshop_step_id")),
 		normalizeWorkshopExecutionID(stringField(payload, "workshop_step_id")),
 		stringField(metadata, "workflow_run_id"),
@@ -188,15 +194,22 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 		case e.Type == "delegation_start" || e.Type == "delegation_end" || strings.HasPrefix(delegationID, "delegation-"):
 			if delegationID != "" {
 				e.ExecutionID = "delegation:" + delegationID
-				e.ParentExecutionID = "main:" + sessionID
+				e.ParentExecutionID = firstNonEmptyString(parentExecutionID, backgroundAgentID, "main:"+sessionID)
 				e.ExecutionKind = "delegation"
 			}
 		case strings.HasPrefix(e.Type, "background_agent_") && backgroundAgentID != "":
 			e.ExecutionID = backgroundAgentID
-			e.ParentExecutionID = "main:" + sessionID
+			e.ParentExecutionID = firstNonEmptyString(parentExecutionID, "main:"+sessionID)
 			e.ExecutionKind = "background_agent"
+		case autoNotificationExecutionID != "":
+			e.ExecutionID = autoNotificationExecutionID
+			e.ParentExecutionID = "main:" + sessionID
+			e.ExecutionKind = inferExecutionKind(autoNotificationExecutionID, sessionID)
 		case stepID != "":
-			if workflowID != "" {
+			if parentExecutionID != "" {
+				e.ExecutionID = "workflow-step:" + parentExecutionID + ":" + stepID
+				e.ParentExecutionID = parentExecutionID
+			} else if workflowID != "" {
 				e.ExecutionID = "workflow-step:" + workflowID + ":" + stepID
 				e.ParentExecutionID = workflowID
 			} else {
@@ -206,6 +219,10 @@ func (e *Event) ensureExecutionOwnership(sessionID string, previous []Event) {
 			e.ExecutionKind = "workflow_step"
 		case e.Type == "orchestrator_agent_start" || e.Type == "orchestrator_agent_end" || e.Type == "orchestrator_agent_error":
 			switch {
+			case parentExecutionID != "":
+				e.ExecutionID = parentExecutionID
+				e.ParentExecutionID = "main:" + sessionID
+				e.ExecutionKind = inferExecutionKind(parentExecutionID, sessionID)
 			case workflowID != "":
 				e.ExecutionID = workflowID
 				e.ParentExecutionID = "main:" + sessionID
@@ -282,6 +299,31 @@ func agentEventCorrelationID(event *Event) string {
 		return ""
 	}
 	return strings.TrimSpace(event.Data.CorrelationID)
+}
+
+func autoNotificationExecutionID(event *Event) string {
+	if event == nil || event.Type != "user_message" {
+		return ""
+	}
+	payload := eventPayloadMap(event)
+	content := firstNonEmptyString(
+		stringField(payload, "content"),
+		stringField(payload, "message"),
+	)
+	if !strings.HasPrefix(content, "[AUTO-NOTIFICATION]") {
+		return ""
+	}
+	const marker = "(ID:"
+	start := strings.Index(content, marker)
+	if start < 0 {
+		return ""
+	}
+	start += len(marker)
+	end := strings.Index(content[start:], ")")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(content[start : start+end])
 }
 
 func stringField(record map[string]interface{}, key string) string {
@@ -365,6 +407,7 @@ type Subscriber struct {
 type EventStore struct {
 	events              map[string][]Event // sessionID -> events
 	sessionStartIndices map[string]int     // sessionID -> startIndex (offset for events in memory)
+	sessionOwners       map[string]string  // sessionID -> userID
 	mu                  sync.RWMutex
 	maxEvents           int // Maximum events per session
 	cleanupTicker       *time.Ticker
@@ -386,6 +429,7 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 	store := &EventStore{
 		events:              make(map[string][]Event),
 		sessionStartIndices: make(map[string]int),
+		sessionOwners:       make(map[string]string),
 		maxEvents:           maxEvents,
 		cleanupTicker:       time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
 		stopCh:              make(chan struct{}),
@@ -397,6 +441,31 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 	go store.cleanupRoutine()
 
 	return store
+}
+
+// SetSessionOwner records the user that owns a session's in-memory events.
+func (es *EventStore) SetSessionOwner(sessionID, userID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	userID = strings.TrimSpace(userID)
+	if sessionID == "" || userID == "" {
+		return
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.sessionOwners[sessionID] = userID
+}
+
+// GetSessionOwner returns the user that owns a session's in-memory events.
+func (es *EventStore) GetSessionOwner(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	return es.sessionOwners[sessionID]
 }
 
 // SetActivityCallback sets the activity callback (can be called after creation)

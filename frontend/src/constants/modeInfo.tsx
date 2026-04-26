@@ -28,7 +28,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'multi-agent': {
     icon: <Users className="w-16 h-16 text-indigo-500" />,
     title: 'Multi Agent Chat',
-    description: 'Delegate complex tasks to a team of AI sub-agents in autonomous spawn mode, with optional planning when needed',
+    description: 'Use this chat as the operations hub for memory, employee ownership, and workflow work.',
     features: [
       'Autonomous spawn delegation',
       'Optional planner usage',

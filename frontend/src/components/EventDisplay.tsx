@@ -9,7 +9,7 @@ import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
-import type { PollingEvent } from '../services/api-types'
+import type { PollingEvent, SessionExecutionTreeResponse } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 
 interface EventDisplayProps {
@@ -18,6 +18,7 @@ interface EventDisplayProps {
   compact?: boolean
   flatHierarchy?: boolean
   events?: PollingEvent[]  // Required: events should always be passed from ChatArea (tab-specific)
+  executionTree?: SessionExecutionTreeResponse
   sessionId?: string | null  // Session ID for streaming text lookup
   tabId?: string  // Specific tab ID for independent tool-call toggling in multi-chat
 }
@@ -117,7 +118,7 @@ const getMarkdownComponents = (compact: boolean) => ({
 })
 
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, sessionId, tabId }) => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, executionTree, sessionId, tabId }) => {
   // Store subscriptions (only for finalResponse and isCompleted - not events)
   const {
     finalResponse,
@@ -201,6 +202,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
           <div className="min-w-0" data-testid="event-list-wrapper" data-event-count={events.length}>
             <EventList
               events={events}
+              executionTree={executionTree}
               onApproveWorkflow={handleApproveWorkflow}
               onSubmitFeedback={handleSubmitFeedback}
               onFeedbackSubmitted={onFeedbackSubmitted}

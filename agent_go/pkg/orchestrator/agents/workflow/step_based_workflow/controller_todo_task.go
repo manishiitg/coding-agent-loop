@@ -78,23 +78,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	executionWorkspacePath := hcpo.getTodoTaskExecutionWorkspacePath()
 	stepExecutionPath := hcpo.getTodoTaskStepExecutionPath(stepID, todoTaskStepPath)
-	// Run workspace path: the base workspace (e.g., Workflow/codeanalysis)
-	runWorkspacePath := baseWorkspacePath
-	// Step-specific learnings folder: Workflow/codeanalysis/learnings/{stepID}/
-	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
-	// Knowledgebase folder: Workflow/codeanalysis/knowledgebase/ (persistent files across runs)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	// DB folder: Workflow/codeanalysis/db/ (structured JSON data, always enabled, shared across runs)
 	dbPath := getDBPath(baseWorkspacePath)
+	skillStepConfig := getAgentConfigs(step)
+	kbAccessForGuard := resolveKnowledgebaseAccess(skillStepConfig, hcpo.UseKnowledgebase())
+	kbWriteMethodForGuard := resolveKnowledgebaseWriteMethod(skillStepConfig)
+	learningsAccessForGuard := resolveLearningsAccess(skillStepConfig)
 
-	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder + db folder
-	// WRITE: full execution folder (so orchestrator can do work directly) + knowledgebase + learnings + db
-
-	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath, dbPath}
-	writePaths := []string{executionWorkspacePath, knowledgebasePath, stepLearningsPath, dbPath}
+	// READ: current group's execution folder + db, plus KB/learnings only when
+	// the step config grants those stores. WRITE: current group's execution
+	// folder + db, plus KB notes only for direct KB writes.
+	// Do not grant the workflow root here. That would expose workflow.json, variables/,
+	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
+	// to coordinate work inside the current run, not inspect global workflow state.
+	readPaths := []string{executionWorkspacePath, dbPath}
+	writePaths := []string{executionWorkspacePath, dbPath}
+	if learningsAccessForGuard != LearningsAccessNone {
+		readPaths = append(readPaths, filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID))
+	}
+	if kbAccessAllowsRead(kbAccessForGuard) {
+		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
+	}
+	if kbAccessAllowsWrite(kbAccessForGuard) && kbWriteMethodForGuard == KBWriteMethodDirect {
+		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
+	}
 
 	// Add skill folder paths to read paths (skills are read-only)
-	skillStepConfig := getAgentConfigs(step)
 	effectiveSkills := GetEffectiveSkills(skillStepConfig, hcpo.BaseOrchestrator)
 	if len(effectiveSkills) > 0 {
 		skillReadPaths, _ := BuildSkillFolderGuardPaths(effectiveSkills)
@@ -445,21 +454,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	// Resolve KB access mode for this step (explicit step config > preset default).
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
+	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
+	learningsAccess := resolveLearningsAccess(stepConfig)
 	useKnowledgebase := kbAccess != KBAccessNone
 
 	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
 	docsRoot := GetPromptDocsRoot()
 	fgExecPath := hcpo.getTodoTaskExecutionWorkspacePath()
-	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings")
+	fgGlobalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgDBPath := getDBPath(baseWorkspacePath)
-	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgDBPath}
-	fgWritePaths := []string{fgExecPath, fgLearningsPath, fgDBPath}
+	fgReadPaths := []string{fgExecPath, fgDBPath}
+	fgWritePaths := []string{fgExecPath, fgDBPath}
+	if learningsAccess != LearningsAccessNone {
+		fgReadPaths = append(fgReadPaths, fgGlobalLearningsPath)
+	}
 	if kbAccessAllowsRead(kbAccess) {
 		fgReadPaths = append(fgReadPaths, fgKnowledgebasePath)
 	}
-	if kbAccessAllowsWrite(kbAccess) {
-		fgWritePaths = append(fgWritePaths, fgKnowledgebasePath)
+	if kbAccessAllowsWrite(kbAccess) && kbWriteMethod == KBWriteMethodDirect {
+		fgWritePaths = append(fgWritePaths, filepath.Join(fgKnowledgebasePath, "notes"))
 	}
 
 	templateVars := map[string]string{
@@ -493,16 +507,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"UseKnowledgebase":          fmt.Sprintf("%v", useKnowledgebase), // deprecated, retained for back-compat in template
 		"KbAccess":                  kbAccess,
 		"KbAccessLabel":             kbAccessLabel(kbAccess),
-		"KbWriteMethod":             resolveKnowledgebaseWriteMethod(stepConfig),
+		"KbWriteMethod":             kbWriteMethod,
 		"KnowledgebaseContribution": kbContributionForPrompt(stepConfig),
-		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, resolveKnowledgebaseWriteMethod(stepConfig), kbContributionForPrompt(stepConfig)),
+		"KBGuidanceBlock":           BuildStepKBGuidance(kbAccess, kbWriteMethod, kbContributionForPrompt(stepConfig)),
 		// Workspace paths and folder guard (consistent with execution agent)
 		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
 		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),
 		"KnowledgebasePath":     filepath.Join(docsRoot, fgKnowledgebasePath),
 		"DBPath":                filepath.Join(docsRoot, fgDBPath),
 		"WorkflowRoot":          filepath.Join(docsRoot, baseWorkspacePath),
-		"LearningsPath":         filepath.Join(docsRoot, fgLearningsPath),
+		"LearningsPath":         filepath.Join(docsRoot, fgGlobalLearningsPath),
 	}
 
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
@@ -794,6 +808,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		})
 	}
 	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, agentID)
+	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, agentID)
 
 	// Push context before sub-agent execution (preserve orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
@@ -1049,6 +1064,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		})
 	}
 	subAgentCtx = context.WithValue(subAgentCtx, virtualtools.BackgroundAgentIDKey, subAgentNotifID)
+	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, subAgentNotifID)
 
 	// Push context before sub-agent execution (preserve orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {

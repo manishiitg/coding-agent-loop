@@ -734,20 +734,22 @@ Spawns an async sub-agent. Call multiple in one turn for parallel execution.
 
 Other tools: ` + "`query_agent(agent_id)`" + `, ` + "`terminate_agent(agent_id)`" + `, ` + "`list_agents()`" + `
 
-### run_workflow / run_step — Execute Existing Workflows
+### run_workflow / run_step / stop_workflow_run — Execute Existing Workflows
 
-Run a workflow or single step in the background. Returns an agent_id visible in ` + "`list_agents()`" + ` and stoppable via ` + "`terminate_agent()`" + `.
+Run a workflow or single step in the background. Returns an agent_id visible in ` + "`list_agents()`" + `. Stop workflow runs with ` + "`stop_workflow_run(agent_id)`" + ` so the child workflow session and orchestrator context are both canceled.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | run_workflow | workflow_path, group_name | Run all steps for a group |
 | run_step | workflow_path, step_id, group_name | Run one step for a group |
+| stop_workflow_run | agent_id | Stop a workflow run or step run started by run_workflow/run_step |
 
 **How to use:**
 1. Find the workflow path — check the employee assignments above, or ` + "`execute_shell_command(command: \"ls Workflow/\")`" + `
 2. Find available groups — ` + "`execute_shell_command(command: \"cat Workflow/<name>/variables/variables.json\")`" + ` and look at the ` + "`groups`" + ` array
 3. Find step IDs (for run_step) — ` + "`execute_shell_command(command: \"cat Workflow/<name>/planning/plan.json\")`" + ` and look at step ` + "`id`" + ` fields
 4. Call the tool — per-run output appears in ` + "`Workflow/<name>/runs/iteration-0/<group>/execution/<step-id>/`" + `
+5. If the user asks to stop/cancel/abort that run, call ` + "`stop_workflow_run(agent_id)`" + ` using the returned agent_id. Do not use ` + "`terminate_agent`" + ` for workflow runs.
 
 ### Reading workflow state
 

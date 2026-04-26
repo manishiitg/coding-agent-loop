@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Settings, ChevronDown, ChevronRight } from 'lucide-react'
+import { BrainCircuit, Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useLLMStore, useAppStore } from '../../stores'
 import { getModelDisplayName, getProviderDisplayInfo } from '../../utils/llmDisplay'
@@ -65,7 +65,7 @@ export default function LLMConfigurationSummary({
               className="p-2 text-muted-foreground hover:text-foreground transition-colors"
               title="LLM Configuration"
             >
-              <Settings className="w-5 h-5" />
+              <BrainCircuit className="w-5 h-5" />
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -82,7 +82,7 @@ export default function LLMConfigurationSummary({
         {/* Header */}
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Settings className="w-4 h-4" />
+            <BrainCircuit className="w-4 h-4 text-muted-foreground" />
             LLM Configuration
             <span className={`text-xs px-1.5 py-0.5 rounded-full ${
               currentMode === 'workflow'
@@ -165,7 +165,7 @@ export default function LLMConfigurationSummary({
                   {modelDisplayName}
                 </div>
               </div>
-              <Settings className="w-4 h-4 text-muted-foreground" />
+              <BrainCircuit className="w-4 h-4 text-muted-foreground" />
             </div>
           </div>
         )}

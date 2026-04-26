@@ -47,7 +47,13 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
 
     if (activeTabId) {
       const activeTab = chatTabs[activeTabId]
-      if (activeTab && !isHiddenOrganizationTab(activeTab)) return
+      if (
+        activeTab &&
+        activeTab.metadata?.mode === selectedModeCategory &&
+        !isHiddenOrganizationTab(activeTab)
+      ) {
+        return
+      }
     }
 
     if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return

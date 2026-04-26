@@ -1045,6 +1045,10 @@ export interface ExecutionAttemptLog {
   iteration: number;
   file_path: string;
   conversation_path: string;
+  timing_path?: string;
+  // Optional parsed execution-attempt timing sidecar, or null when unavailable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  timing?: any;
   // True when this entry came from a learn-code fast-path run (saved main.py
   // executed directly, no LLM involved). attempt=0 + fast_path=true signal this.
   // Content shape then follows LearnCodeFastPathLog (success/exit_code/output/...).

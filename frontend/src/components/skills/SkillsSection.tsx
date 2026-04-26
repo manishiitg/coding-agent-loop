@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Sparkles, Loader2, AlertCircle, Plus, RefreshCw, Lightbulb } from 'lucide-react'
+import { WandSparkles, Loader2, AlertCircle, Plus, RefreshCw, Lightbulb } from 'lucide-react'
 import { skillsApi } from '../../api/skills'
 import type { Skill } from '../../types/skills'
 import SkillCard from './SkillCard'
@@ -80,7 +80,7 @@ export default function SkillsSection() {
     <div className="space-y-2">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+          <WandSparkles className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Skills</span>
         </div>
         <span className="px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded-full">
@@ -166,7 +166,7 @@ export default function SkillsSection() {
                 <div className="flex-1 overflow-y-auto">
                   {(skills?.length || 0) === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                      <Sparkles className="w-12 h-12 mb-4 opacity-50" />
+                      <WandSparkles className="w-12 h-12 mb-4 opacity-50" />
                       <p className="text-lg font-medium mb-2">No skills installed</p>
                       <p className="text-sm text-center mb-4">
                         Import skills to extend your agent's capabilities

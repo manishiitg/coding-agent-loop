@@ -715,10 +715,10 @@ export const WorkflowsOverviewPopup: React.FC<{ isOpen: boolean; onClose: () => 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4" onClick={onClose}>
         <div
           className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl overflow-hidden text-gray-900 dark:text-gray-100"
-          style={{ width: 'calc(100vw - 80px)', height: 'calc(100vh - 80px)', maxWidth: '1400px', maxHeight: '900px' }}
+          style={{ width: 'min(1400px, calc(100vw - 1rem))', height: 'min(900px, calc(100dvh - 1rem))' }}
           onClick={e => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">

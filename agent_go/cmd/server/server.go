@@ -2436,9 +2436,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Wire up live tool call query for workshop query_step_tools
 		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
 
-		// Create a cancellable context for workflow execution using background context
-		// This prevents the workflow from being canceled when the HTTP request ends
-		workflowCtx, workflowCancel := context.WithCancel(context.Background())
+		// Create a cancellable context for workflow execution using background context.
+		// This prevents normal HTTP workflow requests from being canceled when the
+		// request returns. Workflow runs launched internally from Multi Agent Chat use
+		// a synthetic wfrun_* request whose context is owned by the background run
+		// wrapper, so deriving from r.Context() lets stop_workflow_run/terminate_agent
+		// cancel the actual orchestrator context instead of only the wrapper waiter.
+		workflowBaseCtx := context.Background()
+		if req.TriggeredBy == "chat_tool" && strings.HasPrefix(sessionID, "wfrun_") {
+			workflowBaseCtx = r.Context()
+		}
+		workflowCtx, workflowCancel := context.WithCancel(workflowBaseCtx)
 
 		// Inject user ID into the workflow context
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
@@ -3707,7 +3715,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					logfWithContext(queryLogCtx, "[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
 
-					// Register workflow run tools (run_workflow, run_step)
+					// Register workflow run tools (run_workflow, run_step, stop_workflow_run)
 					wfRunTools := createWorkflowRunTools()
 					wfRunExecutors := createWorkflowRunExecutors(api)
 					for _, tool := range wfRunTools {
@@ -5500,6 +5508,10 @@ func createLLMLogger() loggerv2.Logger {
 
 // trackActiveSession tracks a new active session
 func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID string) {
+	if api.eventStore != nil {
+		api.eventStore.SetSessionOwner(sessionID, userID)
+	}
+
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -6702,6 +6714,13 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType string, data map[string]interface{}) {
 	now := time.Now()
 	data["timestamp"] = now.Format(time.RFC3339)
+	if _, exists := data["parent_execution_id"]; !exists && api != nil && api.bgAgentRegistry != nil && agentID != "" {
+		if agent := api.bgAgentRegistry.Get(sessionID, agentID); agent != nil {
+			if parentID := strings.TrimSpace(agent.GetSnapshot().ParentExecutionID); parentID != "" {
+				data["parent_execution_id"] = parentID
+			}
+		}
+	}
 
 	eventID := fmt.Sprintf("%s_%s_%s", sessionID, eventType, agentID)
 	if agentID == "" {

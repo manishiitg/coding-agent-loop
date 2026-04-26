@@ -18,6 +18,7 @@ The main agent in Multi Agent Chat is wired with these tools (defined in `agent_
 | `query_agent` | Check status / recent conversation history of a running background agent. |
 | `terminate_agent` | Cancel a running background agent. |
 | `list_agents` | List all background agents in the current session with status and elapsed time. |
+| `run_workflow` / `run_step` / `stop_workflow_run` | Start and stop existing workflow executions from Multi Agent Chat. |
 
 ### `delegate` — Execute a Task
 
@@ -55,6 +56,10 @@ Spawns a background sub-agent and returns immediately. The sub-agent runs async 
 ### `query_agent`, `terminate_agent`, `list_agents`
 
 Managed by a `BGAgentRegistry` in the server. `query_agent(agent_id, last, offset)` supports pagination over a background agent's conversation history so the manager can inspect in-progress work without blocking.
+
+### `run_workflow`, `run_step`, `stop_workflow_run`
+
+`run_workflow` and `run_step` start existing workflows in the background and return an `agent_id`. `stop_workflow_run(agent_id)` is the workflow-specific cancellation path; it cancels both the background-agent wrapper and the child workflow session/orchestrator context. Use `terminate_agent` for delegated sub-agents, not workflow runs.
 
 ---
 

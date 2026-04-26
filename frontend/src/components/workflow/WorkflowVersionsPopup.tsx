@@ -132,10 +132,10 @@ const WorkflowVersionsPopup: React.FC<WorkflowVersionsPopupProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-        <div className="bg-background rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col border border-border relative">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+        <div className="bg-background rounded-lg shadow-xl w-full max-w-lg max-h-[calc(100dvh-1rem)] sm:max-h-[80vh] flex flex-col border border-border relative">
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
+          <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-5 sm:py-3.5">
             <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
               <Package className="w-4.5 h-4.5 text-primary" />
               Workflow Versions

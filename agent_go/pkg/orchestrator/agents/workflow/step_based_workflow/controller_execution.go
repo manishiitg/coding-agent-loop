@@ -1207,7 +1207,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		narrowAgentCfg := getAgentConfigs(step)
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
 		narrowKBWriteMethod := resolveKnowledgebaseWriteMethod(narrowAgentCfg)
-		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowKBWriteMethod)
+		narrowLearningsAccess := resolveLearningsAccess(narrowAgentCfg)
+		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), narrowKBAccess, narrowLearningsAccess, narrowKBWriteMethod)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
 			prevRead = prevCfg.ReadPaths
@@ -1327,7 +1328,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, kbWriteMethod)
+		learningsAccess := resolveLearningsAccess(agentConfigs)
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, kbWriteMethod)
 
 		// Evaluation steps: db/ read is always allowed, but db/ write is opt-in via DBWrite flag.
 		// Strip db/ from writePaths when the step is an eval step with DBWrite == false.

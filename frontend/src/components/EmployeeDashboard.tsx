@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   X, UserCircle2,
-  PlayCircle, Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight
+  PlayCircle, Clock, DollarSign, Loader2, Calendar, FileText, BarChart3, ChevronDown, ChevronRight,
+  UserCog, UserPlus
 } from 'lucide-react'
 import {
   Bar,
@@ -707,7 +708,7 @@ export const EmployeeDashboard: React.FC = () => {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-5 xl:grid-cols-[minmax(320px,4fr)_minmax(0,6fr)]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(320px,4fr)_minmax(0,6fr)]">
           <div className="space-y-4">
             {employeeWorkflows.length === 0 && (
               <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center">
@@ -808,9 +809,15 @@ export const EmployeeDashboard: React.FC = () => {
                                 <div className="relative">
                                   <button
                                     onClick={() => setAssigningWorkflow(assigningWorkflow === wf.workspacePath ? null : wf.workspacePath)}
-                                    className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                    aria-label={employee.id === '__unassigned__' ? 'Assign workflow' : 'Reassign workflow'}
+                                    title={employee.id === '__unassigned__' ? 'Assign workflow' : 'Reassign workflow'}
                                   >
-                                    {employee.id === '__unassigned__' ? 'Assign' : 'Reassign'}
+                                    {employee.id === '__unassigned__' ? (
+                                      <UserPlus className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <UserCog className="h-3.5 w-3.5" />
+                                    )}
                                   </button>
                                   {assigningWorkflow === wf.workspacePath && (
                                     <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-xl border border-border bg-popover py-1 shadow-lg">
@@ -853,7 +860,7 @@ export const EmployeeDashboard: React.FC = () => {
             })}
           </div>
 
-          <div className="xl:sticky xl:top-6 self-start">
+          <div className="lg:sticky lg:top-6 self-start">
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
               <div className="border-b border-border bg-muted/30 px-5 py-4">
                 {selectedWorkflow && selectedEmployee ? (

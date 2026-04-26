@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
+import { AgentForgeMark } from './branding/AgentForgeLogo'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
@@ -10,7 +11,7 @@ import DelegationTierConfigModal from './DelegationTierConfigModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { LogOut, User, Bell, BellOff, Play, Download } from 'lucide-react'
+import { Bot, Download, KeyRound, LogOut, PanelLeftClose, ServerCog, User, Bell, BellOff, WandSparkles } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
@@ -135,16 +136,18 @@ export default function WorkspaceSidebar({
             <TooltipTrigger asChild>
               <button
                 onClick={onToggleMinimize}
-                className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
+                className={`transition-colors relative group ${
+                  minimized
+                    ? 'flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950/90 shadow-sm ring-1 ring-slate-700/40 hover:ring-slate-500/60'
+                    : 'p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+                aria-label={minimized ? 'Expand sidebar' : 'Minimize sidebar'}
+                title={minimized ? 'Expand sidebar' : 'Minimize sidebar'}
               >
           {minimized ? (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
+            <AgentForgeMark className="h-7 w-7" title="AgentForge" />
           ) : (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+            <PanelLeftClose className="w-5 h-5" />
           )}
               </button>
             </TooltipTrigger>
@@ -279,27 +282,6 @@ export default function WorkspaceSidebar({
           className="flex-1 flex flex-col items-center py-4 space-y-4 cursor-pointer"
           title="Click to expand sidebar"
         >
-          {/* Expand Sidebar Button */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleMinimize()
-                }}
-                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                title="Expand sidebar"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Expand sidebar (Ctrl+5)</p>
-            </TooltipContent>
-          </Tooltip>
-
           {/* LLM Configuration Icon */}
           <LLMConfigurationSummary
             minimized={true}
@@ -307,18 +289,23 @@ export default function WorkspaceSidebar({
 
 
           {/* MCP Servers Icon */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setShowMCPDetails(!showMCPDetails)
-            }}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="MCP Servers"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-            </svg>
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowMCPDetails(!showMCPDetails)
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="MCP Servers"
+              >
+                <ServerCog className="w-5 h-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>MCP Servers</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Skills Icon */}
           <Tooltip>
@@ -331,13 +318,49 @@ export default function WorkspaceSidebar({
                 className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
                 title="Skills"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                </svg>
+                <WandSparkles className="w-5 h-5" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="right">
               <p>Skills</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Secrets Icon */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMinimize()
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="Secrets"
+              >
+                <KeyRound className="w-5 h-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>Secrets</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Sub-Agent Templates Icon */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMinimize()
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="Sub-Agent Templates"
+              >
+                <Bot className="w-5 h-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>Sub-Agent Templates</p>
             </TooltipContent>
           </Tooltip>
 

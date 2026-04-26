@@ -39,6 +39,25 @@ import {
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+
+function getReadableActiveAgentName(name: string): string {
+  const firstLine = name
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean)
+
+  if (!firstLine) return 'Execution'
+
+  let title = firstLine
+    .replace(/^#+\s*/, '')
+    .replace(/^\*\*(.*)\*\*$/, '$1')
+    .replace(/^(your\s+task|task|objective)\s*:\s*/i, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .trim()
+
+  if (!title) title = 'Execution'
+  return title
+}
 const AUTO_NOTIFICATION_MAX_AGE_MS = 5 * 60 * 1000
 
 function getEventTimestampMs(event: PollingEvent): number | null {
@@ -520,7 +539,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (isVisible) {
           result.push({
             id: child.execution_id,
-            name: child.name || child.kind || 'Execution',
+            name: getReadableActiveAgentName(child.name || child.kind || 'Execution'),
             type: child.kind === 'delegation' ? 'delegation' : 'agent',
             children: descendants,
           })
@@ -2728,7 +2747,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -2746,7 +2765,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>
         )}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   X,
   Loader2,
@@ -40,6 +40,19 @@ interface ExecutionLogsPopupProps {
   workspacePath: string | null
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
+}
+
+const ITERATION_ZERO_DEFAULT_FOLDER = 'iteration-0/default'
+
+const isIterationZeroRunFolder = (folder: string) => (
+  folder === 'iteration-0' || folder.startsWith('iteration-0/')
+)
+
+const getDefaultRunFolder = (initialRunFolder: string | null | undefined, runFolders: string[]) => {
+  if (initialRunFolder && initialRunFolder !== 'new') return initialRunFolder
+  const iterationZeroFolder = runFolders.find(isIterationZeroRunFolder)
+  if (iterationZeroFolder) return iterationZeroFolder
+  return ITERATION_ZERO_DEFAULT_FOLDER
 }
 
 const StepMetadata = ({ description, successCriteria }: { description?: string, successCriteria?: string }) => {
@@ -199,6 +212,140 @@ const getStepNestingClass = (stepId: string): string => {
   }
 }
 
+type LogRecord = Record<string, unknown>
+
+type StepMetrics = {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheTokens: number
+  reasoningTokens: number
+  durationMs: number
+  llmCalls: number
+}
+
+const asRecord = (value: unknown): LogRecord | null => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as LogRecord : null
+)
+
+const asNumber = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+const durationFromTimestamps = (start: unknown, end: unknown): number => {
+  if (typeof start !== 'string' || typeof end !== 'string') return 0
+  const startMs = Date.parse(start)
+  const endMs = Date.parse(end)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0
+  return endMs - startMs
+}
+
+const formatTokenCount = (tokens: number): string => {
+  if (!tokens) return '0'
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens >= 10_000_000 ? 1 : 2)}M`
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 100_000 ? 0 : 1)}k`
+  return `${tokens}`
+}
+
+const formatDuration = (durationMs: number): string => {
+  if (!durationMs) return '0s'
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+const addCallTokens = (metrics: StepMetrics, call: LogRecord) => {
+  metrics.inputTokens += asNumber(call.prompt_tokens)
+  metrics.outputTokens += asNumber(call.completion_tokens)
+  metrics.cacheTokens += asNumber(call.cache_tokens)
+  metrics.reasoningTokens += asNumber(call.reasoning_tokens)
+
+  const totalTokens = asNumber(call.total_tokens)
+  if (totalTokens > 0) {
+    metrics.totalTokens += totalTokens
+  } else {
+    metrics.totalTokens += asNumber(call.prompt_tokens) + asNumber(call.completion_tokens) + asNumber(call.reasoning_tokens)
+  }
+}
+
+const getExecutionMetrics = (exec: unknown): StepMetrics => {
+  const metrics: StepMetrics = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheTokens: 0,
+    reasoningTokens: 0,
+    durationMs: 0,
+    llmCalls: 0,
+  }
+
+  const execRecord = asRecord(exec)
+  const content = asRecord(execRecord?.content)
+  const timing = asRecord(execRecord?.timing) || asRecord(content?.timing) || content
+  const agent = asRecord(timing?.agent) || content
+  const llm = asRecord(timing?.llm)
+
+  metrics.durationMs = asNumber(agent?.duration_ms) ||
+    durationFromTimestamps(agent?.started_at, agent?.completed_at) ||
+    asNumber(content?.duration_ms)
+  metrics.llmCalls = asNumber(agent?.llm_call_count) || asNumber(llm?.count)
+
+  const calls = Array.isArray(llm?.calls) ? llm.calls : []
+  calls.forEach(call => {
+    const callRecord = asRecord(call)
+    if (callRecord) addCallTokens(metrics, callRecord)
+  })
+
+  if (calls.length === 0 && content) {
+    addCallTokens(metrics, content)
+  }
+
+  return metrics
+}
+
+const getStepMetrics = (executions: unknown[]): StepMetrics => executions.reduce<StepMetrics>((acc, exec) => {
+  const metrics = getExecutionMetrics(exec)
+  acc.inputTokens += metrics.inputTokens
+  acc.outputTokens += metrics.outputTokens
+  acc.totalTokens += metrics.totalTokens
+  acc.cacheTokens += metrics.cacheTokens
+  acc.reasoningTokens += metrics.reasoningTokens
+  acc.durationMs += metrics.durationMs
+  acc.llmCalls += metrics.llmCalls
+  return acc
+}, {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cacheTokens: 0,
+  reasoningTokens: 0,
+  durationMs: 0,
+  llmCalls: 0,
+})
+
+const hasStepMetrics = (metrics: StepMetrics) => (
+  metrics.durationMs > 0 || metrics.totalTokens > 0 || metrics.inputTokens > 0 || metrics.outputTokens > 0 || metrics.llmCalls > 0
+)
+
+const StepMetricChip = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <span
+    title={title}
+    className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+  >
+    {children}
+  </span>
+)
+
 const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   isOpen,
   onClose,
@@ -206,6 +353,12 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   runFolder: initialRunFolder,
   runFolders
 }) => {
+  const runFolderOptions = useMemo(() => {
+    const defaultRunFolder = getDefaultRunFolder(initialRunFolder, runFolders)
+    if (!defaultRunFolder || runFolders.includes(defaultRunFolder)) return runFolders
+    return [defaultRunFolder, ...runFolders]
+  }, [initialRunFolder, runFolders])
+
   const [loading, setLoading] = useState(false)
   const [logs, setLogs] = useState<ExecutionLogsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -213,7 +366,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedValidations, setExpandedValidations] = useState<Set<string>>(new Set())
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
-  const [selectedRunFolder, setSelectedRunFolder] = useState<string>(initialRunFolder || '')
+  const [selectedRunFolder, setSelectedRunFolder] = useState<string>(() => getDefaultRunFolder(initialRunFolder, runFolders))
   const [stepSearchQueries, setStepSearchQueries] = useState<Record<string, string>>({})
   
   // State for inline file viewing
@@ -223,9 +376,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
 
   // Update selected run folder when prop changes
   useEffect(() => {
-    setSelectedRunFolder(initialRunFolder || '')
+    setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, runFolders))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialRunFolder])
+  }, [initialRunFolder, runFolders])
 
   useEffect(() => {
     if (isOpen && workspacePath && selectedRunFolder) {
@@ -239,10 +392,21 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, workspacePath, selectedRunFolder])
 
-  const loadLogs = async () => {
+  useEffect(() => {
+    if (!isOpen || !workspacePath || !selectedRunFolder) return
+
+    const intervalId = window.setInterval(() => {
+      loadLogs({ silent: true })
+    }, 2500)
+
+    return () => window.clearInterval(intervalId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, workspacePath, selectedRunFolder])
+
+  const loadLogs = async (options?: { silent?: boolean }) => {
     if (!workspacePath || !selectedRunFolder) return
     
-    setLoading(true)
+    if (!options?.silent) setLoading(true)
     setError(null)
     try {
       // Use selected run folder
@@ -263,7 +427,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       console.error('Failed to load execution logs:', err)
       setError('Failed to load execution logs')
     } finally {
-      setLoading(false)
+      if (!options?.silent) setLoading(false)
     }
   }
 
@@ -401,6 +565,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const execId = `${stepId}-exec-${exec.attempt}-${exec.iteration}`
                   const isExecExpanded = expandedExecutions.has(execId)
                   const isFastPath = exec.fast_path === true
+                  const execMetrics = getExecutionMetrics(exec)
                   // Fast-path entries carry LearnCodeFastPathLog shape: success/exit_code/output/error.
                   // LLM-attempt entries carry ExecutionResult shape with execution_result/model.
                   const result = isFastPath
@@ -437,6 +602,16 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                               {model && (
                                 <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
                                   {model}
+                                </span>
+                              )}
+                              {execMetrics.totalTokens > 0 && (
+                                <span className="text-[10px] font-medium bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
+                                  {formatTokenCount(execMetrics.totalTokens)} tok
+                                </span>
+                              )}
+                              {execMetrics.durationMs > 0 && (
+                                <span className="text-[10px] font-medium bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
+                                  {formatDuration(execMetrics.durationMs)}
                                 </span>
                               )}
                             </div>
@@ -1570,34 +1745,34 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-background rounded-lg shadow-xl w-full max-w-[90vw] h-[95vh] flex flex-col border border-border relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-[90vw] h-[calc(100dvh-1rem)] sm:h-[95vh] flex flex-col border border-border relative">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <Terminal className="w-5 h-5 text-primary" />
               Execution Logs
             </h2>
-            <div className="flex items-center gap-4 mt-1">
+            <div className="flex flex-wrap items-center gap-2 mt-1 sm:gap-4">
               {/* Run Folder Selector */}
-              {runFolders.length > 0 && (
-                <div className="flex items-center gap-2">
+              {runFolderOptions.length > 0 && (
+                <div className="flex min-w-0 items-center gap-2">
                   <Filter className="w-4 h-4 text-muted-foreground" />
                   <select
                     value={selectedRunFolder}
                     onChange={(e) => setSelectedRunFolder(e.target.value)}
-                    className="text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground min-w-[200px]"
+                    className="min-w-0 max-w-full text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground sm:min-w-[200px]"
                   >
                     <option value="">Select iteration/group...</option>
-                    {runFolders.map(folder => (
+                    {runFolderOptions.map(folder => (
                       <option key={folder} value={folder}>{folder}</option>
                     ))}
                   </select>
                 </div>
               )}
               {selectedRunFolder && (
-                <p className="text-sm text-muted-foreground whitespace-nowrap">
+                <p className="min-w-0 text-sm text-muted-foreground">
                   Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{selectedRunFolder}</span>
                 </p>
               )}
@@ -1642,8 +1817,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               <FileText className="w-12 h-12 mb-3 opacity-50" />
               <p className="text-sm font-medium">Select an iteration or group to view logs</p>
               <p className="text-xs mt-2 opacity-70">
-                {runFolders.length > 0 
-                  ? `Choose from ${runFolders.length} available ${runFolders.length === 1 ? 'run' : 'runs'} above.`
+                {runFolderOptions.length > 0 
+                  ? `Choose from ${runFolderOptions.length} available ${runFolderOptions.length === 1 ? 'run' : 'runs'} above.`
                   : 'No run folders available. Execute a workflow to generate logs.'}
               </p>
             </div>
@@ -1672,17 +1847,19 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                   const nestingLevel = getStepNestingLevel(stepId)
                   const indentStyle = getStepIndentStyle(nestingLevel)
                   const nestingClass = getStepNestingClass(stepId)
+                  const stepMetrics = getStepMetrics(stepLogs.executions || [])
+                  const showMetrics = hasStepMetrics(stepMetrics)
 
                   return (
                     <div key={stepId} className={`border border-border rounded-lg overflow-hidden bg-card ${nestingClass}`} style={indentStyle}>
                       <button
                         onClick={() => toggleStep(stepId)}
                         className={`
-                          w-full flex items-center justify-between px-4 py-3 text-left transition-colors
+                          w-full flex flex-col gap-2 px-4 py-3 text-left transition-colors
                           ${isExpanded ? 'bg-accent/50' : 'hover:bg-accent/50'}
                         `}
                       >
-                        <div className="flex items-center gap-3 overflow-hidden">
+                        <div className="flex min-w-0 items-center gap-3 overflow-hidden">
                           {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
                           
                           <div className="flex flex-col items-start text-left min-w-0">
@@ -1697,11 +1874,26 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           </div>
                         </div>
                         
-                        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
-                            <div className="text-xs text-muted-foreground hidden sm:block">
-                                {stepLogs.executions.length} exec • {stepLogs.validations.length} val
-                                {stepLogs.todo_task && stepLogs.todo_task.length > 0 && ` • ${stepLogs.todo_task.length} todo`}
-                            </div>
+                        <div className="flex w-full flex-wrap items-center gap-1.5 pl-7 text-xs text-muted-foreground">
+                          {showMetrics && (
+                            <>
+                              {stepMetrics.totalTokens > 0 && (
+                                <StepMetricChip title={`Tokens used: ${stepMetrics.totalTokens.toLocaleString()} total (${stepMetrics.inputTokens.toLocaleString()} input, ${stepMetrics.outputTokens.toLocaleString()} output${stepMetrics.reasoningTokens > 0 ? `, ${stepMetrics.reasoningTokens.toLocaleString()} reasoning` : ''}${stepMetrics.cacheTokens > 0 ? `, ${stepMetrics.cacheTokens.toLocaleString()} cache` : ''})`}>
+                                  {formatTokenCount(stepMetrics.totalTokens)} tok
+                                </StepMetricChip>
+                              )}
+                              {stepMetrics.durationMs > 0 && (
+                                <StepMetricChip title={`Time taken: ${formatDuration(stepMetrics.durationMs)}${stepMetrics.llmCalls > 0 ? ` across ${stepMetrics.llmCalls} LLM call${stepMetrics.llmCalls !== 1 ? 's' : ''}` : ''}`}>
+                                  <Clock className="h-3 w-3" />
+                                  {formatDuration(stepMetrics.durationMs)}
+                                </StepMetricChip>
+                              )}
+                            </>
+                          )}
+                          <span className="whitespace-nowrap">
+                            {stepLogs.executions.length} exec • {stepLogs.validations.length} val
+                            {stepLogs.todo_task && stepLogs.todo_task.length > 0 && ` • ${stepLogs.todo_task.length} todo`}
+                          </span>
                         </div>
                       </button>
 

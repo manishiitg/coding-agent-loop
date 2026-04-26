@@ -291,11 +291,14 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			GetBaseEventData() *events.BaseEventData
 		}); ok {
 			if bd := baseData.GetBaseEventData(); bd != nil {
-				newMeta := make(map[string]any, len(bd.Metadata)+1)
+				newMeta := make(map[string]any, len(bd.Metadata)+2)
 				for k, v := range bd.Metadata {
 					newMeta[k] = v
 				}
 				newMeta["workshop_step_id"] = forcedID
+				if parentExecutionID, ok := ctx.Value(orchevents.ParentExecutionIDKey).(string); ok && strings.TrimSpace(parentExecutionID) != "" {
+					newMeta["parent_execution_id"] = strings.TrimSpace(parentExecutionID)
+				}
 				bd.Metadata = newMeta
 			}
 		}

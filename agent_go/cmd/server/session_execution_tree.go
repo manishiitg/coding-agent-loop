@@ -142,6 +142,8 @@ func eventDerivedExecutionName(event internalevents.Event, payload map[string]in
 		return stepID
 	}
 	switch event.ExecutionKind {
+	case "main_agent":
+		return "Main Agent"
 	case "delegation":
 		return "Delegation"
 	case "agent":
@@ -202,6 +204,16 @@ func firstSessionExecutionString(values ...string) string {
 
 func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]interface{}) (status string, completed bool, failed bool) {
 	switch event.Type {
+	case "agent_end", "conversation_end", "unified_completion", "workflow_end", "batch_execution_end", "batch_group_end", "todo_task_step_completed":
+		if stringValue(payload["error"]) != "" || event.Error != "" {
+			return trackedExecutionStatusFailed, true, true
+		}
+		if success, ok := payload["success"].(bool); ok && !success {
+			return trackedExecutionStatusFailed, true, true
+		}
+		return trackedExecutionStatusCompleted, true, false
+	case "agent_error", "conversation_error", "workflow_error":
+		return trackedExecutionStatusFailed, true, true
 	case "delegation_end", "orchestrator_agent_end", "background_agent_completed":
 		if stringValue(payload["error"]) != "" || event.Error != "" {
 			return trackedExecutionStatusFailed, true, true
@@ -212,20 +224,95 @@ func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]
 		return trackedExecutionStatusCompleted, true, false
 	case "orchestrator_agent_error", "background_agent_failed":
 		return trackedExecutionStatusFailed, true, true
-	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled":
+	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled", "context_cancelled":
 		return trackedExecutionStatusCanceled, true, false
 	default:
 		return trackedExecutionStatusRunning, false, false
 	}
 }
 
-func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID string, nodes map[string]*SessionExecutionTreeNode) {
+func eventDerivedMainFallbackStatus(sessionStatus string) (string, bool) {
+	switch strings.TrimSpace(sessionStatus) {
+	case "completed":
+		return trackedExecutionStatusCompleted, true
+	case "error":
+		return trackedExecutionStatusFailed, true
+	case "stopped", "inactive", "dismissed":
+		return trackedExecutionStatusCanceled, true
+	default:
+		return "", false
+	}
+}
+
+func finalizeEventDerivedRunningNodes(sessionStatus string, completedAt time.Time, nodes map[string]*SessionExecutionTreeNode) {
+	status, terminal := eventDerivedMainFallbackStatus(sessionStatus)
+	if !terminal {
+		return
+	}
+	for _, node := range nodes {
+		if node == nil || node.Source != "event_stream" || node.Status != trackedExecutionStatusRunning {
+			continue
+		}
+		node.Status = status
+		if node.CompletedAt == nil {
+			finishedAt := completedAt
+			if finishedAt.IsZero() || finishedAt.Before(node.StartedAt) {
+				finishedAt = node.StartedAt
+			}
+			node.CompletedAt = &finishedAt
+		}
+	}
+}
+
+func synthesizeSessionInfoFromEvents(sessionID string, rawEvents []internalevents.Event) *ActiveSessionInfo {
+	if strings.TrimSpace(sessionID) == "" || len(rawEvents) == 0 {
+		return nil
+	}
+
+	createdAt := rawEvents[0].Timestamp
+	lastActivity := rawEvents[0].Timestamp
+	status := trackedExecutionStatusRunning
+	query := ""
+
+	for _, event := range rawEvents {
+		if event.Timestamp.Before(createdAt) {
+			createdAt = event.Timestamp
+		}
+		if event.Timestamp.After(lastActivity) {
+			lastActivity = event.Timestamp
+		}
+		if query == "" && event.Type == "user_message" {
+			payload := eventPayloadMap(event)
+			query = firstSessionExecutionString(stringValue(payload["content"]), stringValue(payload["message"]))
+		}
+		payload := eventPayloadMap(event)
+		eventStatus, completed, failed := eventDerivedExecutionStatus(event, payload)
+		if completed {
+			status = eventStatus
+			if failed {
+				break
+			}
+		}
+	}
+
+	return &ActiveSessionInfo{
+		SessionID:    sessionID,
+		AgentMode:    "restored",
+		Status:       status,
+		CreatedAt:    createdAt,
+		LastActivity: lastActivity,
+		Query:        query,
+	}
+}
+
+func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID, sessionStatus string, nodes map[string]*SessionExecutionTreeNode) {
 	if api == nil || api.eventStore == nil {
 		return
 	}
+	var lastMainEventAt *time.Time
 	for _, event := range api.eventStore.GetAllEventsRaw(sessionID) {
 		executionID := strings.TrimSpace(event.ExecutionID)
-		if executionID == "" || executionID == rootID || executionID == "main:"+sessionID {
+		if executionID == "" || executionID == rootID {
 			continue
 		}
 		payload := eventPayloadMap(event)
@@ -267,6 +354,10 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID string,
 		if event.Timestamp.Before(node.StartedAt) {
 			node.StartedAt = event.Timestamp
 		}
+		if executionID == "main:"+sessionID {
+			timestamp := event.Timestamp
+			lastMainEventAt = &timestamp
+		}
 
 		status, completed, failed := eventDerivedExecutionStatus(event, payload)
 		if completed {
@@ -277,6 +368,16 @@ func (api *StreamingAPI) addEventDerivedExecutionNodes(sessionID, rootID string,
 				if errText := firstSessionExecutionString(stringValue(payload["error"]), event.Error); errText != "" {
 					node.Error = errText
 				}
+			}
+		}
+	}
+	mainNode := nodes["main:"+sessionID]
+	if mainNode != nil && mainNode.Source == "event_stream" && mainNode.Status == trackedExecutionStatusRunning {
+		if status, ok := eventDerivedMainFallbackStatus(sessionStatus); ok {
+			mainNode.Status = status
+			if lastMainEventAt != nil {
+				completedAt := *lastMainEventAt
+				mainNode.CompletedAt = &completedAt
 			}
 		}
 	}
@@ -395,7 +496,8 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 		}
 	}
 
-	api.addEventDerivedExecutionNodes(session.SessionID, rootID, nodes)
+	api.addEventDerivedExecutionNodes(session.SessionID, rootID, session.Status, nodes)
+	finalizeEventDerivedRunningNodes(session.Status, session.LastActivity, nodes)
 
 	summary := SessionExecutionTreeSummary{
 		SessionID:     session.SessionID,
@@ -470,16 +572,33 @@ func (api *StreamingAPI) handleGetSessionExecutionTree(w http.ResponseWriter, r 
 
 	currentUserID := GetUserIDFromContext(r.Context())
 	activeSession, exists := api.getActiveSession(sessionID)
-	if !exists {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	if activeSession.UserID != "" && activeSession.UserID != currentUserID {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
+	var sessionCopy ActiveSessionInfo
+	if exists {
+		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		sessionCopy = *activeSession
+	} else {
+		if api.eventStore == nil {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		if owner := api.eventStore.GetSessionOwner(sessionID); owner != "" && owner != currentUserID {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		} else if owner == "" && currentUserID != GetDefaultUserID() {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		sessionFromEvents := synthesizeSessionInfoFromEvents(sessionID, api.eventStore.GetAllEventsRaw(sessionID))
+		if sessionFromEvents == nil {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		sessionCopy = *sessionFromEvents
 	}
 
-	sessionCopy := *activeSession
 	tree := api.buildSessionExecutionTree(&sessionCopy)
 	if tree == nil {
 		http.Error(w, "Execution tree not available", http.StatusNotFound)

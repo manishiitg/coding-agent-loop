@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
+import { Workflow, Users, Settings, Copy, DollarSign, Keyboard, SlidersHorizontal, Bot, Building2, PanelRightOpen } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -679,7 +679,6 @@ export const ModePresetBar: React.FC = () => {
           {/* Right: icons */}
           <TooltipProvider delayDuration={400}>
             <div className="flex items-center gap-3">
-
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -791,6 +790,23 @@ export const ModePresetBar: React.FC = () => {
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">Scheduled multi-agent tasks</TooltipContent>
+                </Tooltip>
+              )}
+
+              {workspaceMinimized && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceMinimized(false)}
+                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      aria-label="Open workspace"
+                      title="Open workspace"
+                    >
+                      <PanelRightOpen className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Open workspace (Ctrl+6)</TooltipContent>
                 </Tooltip>
               )}
 

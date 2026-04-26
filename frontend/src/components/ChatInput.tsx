@@ -133,6 +133,12 @@ function isAutoNotificationMessage(msg: string): boolean {
   return msg.startsWith(AUTO_NOTIFICATION_PREFIX)
 }
 
+function compactActiveAgentName(name: string, maxLength = 96): string {
+  const normalized = name.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
 function summarizeAutoNotification(msg: string): {
   headline: string
   detail: string
@@ -3634,26 +3640,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               </button>
                             </div>
                             <div className="max-h-48 overflow-y-auto">
-                              {activeAgents.map((a) => (
-                                <div
-                                  key={a.id}
-                                  className="flex items-center gap-1.5 py-1.5 pr-3 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50"
-                                  style={{ paddingLeft: `${10 + a.depth * 18}px` }}
-                                >
-                                  {a.treePrefix && (
-                                    <span className="shrink-0 font-mono text-[10px] leading-none text-gray-400 dark:text-gray-500">
-                                      {a.treePrefix}
-                                    </span>
-                                  )}
-                                  <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
-                                  <div className="min-w-0 flex-1 flex items-center gap-2">
-                                    <span className="text-xs text-gray-700 dark:text-gray-300 truncate">{a.name}</span>
-                                    <span className="shrink-0 rounded-full border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] leading-none text-gray-500 dark:text-gray-400">
-                                      {a.type === 'delegation' ? 'sub-agent' : a.depth === 0 ? 'step' : 'agent'}
-                                    </span>
+                              {activeAgents.map((a) => {
+                                const displayName = compactActiveAgentName(a.name)
+                                return (
+                                  <div
+                                    key={a.id}
+                                    className="flex items-center gap-1.5 py-1.5 pr-3 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50"
+                                    style={{ paddingLeft: `${10 + a.depth * 18}px` }}
+                                    title={a.name}
+                                  >
+                                    {a.treePrefix && (
+                                      <span className="shrink-0 font-mono text-[10px] leading-none text-gray-400 dark:text-gray-500">
+                                        {a.treePrefix}
+                                      </span>
+                                    )}
+                                    <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
+                                    <div className="min-w-0 flex-1 flex items-center gap-2">
+                                      <span className="text-xs text-gray-700 dark:text-gray-300 truncate">{displayName}</span>
+                                      <span className="shrink-0 rounded-full border border-gray-200 dark:border-gray-600 px-1.5 py-0.5 text-[10px] leading-none text-gray-500 dark:text-gray-400">
+                                        {a.type === 'delegation' ? 'sub-agent' : a.depth === 0 ? 'step' : 'agent'}
+                                      </span>
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                )
+                              })}
                             </div>
                           </div>
                         </>

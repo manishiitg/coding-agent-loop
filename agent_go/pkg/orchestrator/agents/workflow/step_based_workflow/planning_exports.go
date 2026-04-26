@@ -965,6 +965,7 @@ func RegisterRunFullEvaluationTool(
 				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {
 				var result string
@@ -1302,6 +1303,7 @@ func RegisterRunFullWorkflowTool(
 				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {
 				// Tear down the parent-chat mapping when the background workflow

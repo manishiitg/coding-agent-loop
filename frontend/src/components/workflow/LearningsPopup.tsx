@@ -826,15 +826,15 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" style={{ zIndex: 50 }}>
-      <div className="bg-background text-foreground border border-border rounded-lg shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[92vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4" style={{ zIndex: 50 }}>
+      <div className="bg-background text-foreground border border-border rounded-lg shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[calc(100dvh-1rem)] sm:h-[92vh] flex flex-col">
         {/* Header — title + close only. Step search / filter / expand controls
             moved to sit above the step list so they're visually adjacent to what
             they operate on (the per-step section, not the global skill). */}
-        <div className="flex items-center justify-between border-b border-border flex-shrink-0 p-4">
-          <div className="flex items-center gap-2">
+        <div className="flex items-start justify-between gap-3 border-b border-border flex-shrink-0 p-3 sm:p-4">
+          <div className="flex min-w-0 items-center gap-2">
             <BookOpen className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Workflow Learnings</h2>
+            <h2 className="truncate text-lg font-semibold">Workflow Learnings</h2>
           </div>
           <button
             onClick={onClose}

@@ -26,6 +26,14 @@ type forceCorrelationIDKeyType struct{}
 
 var ForceCorrelationIDKey = forceCorrelationIDKeyType{}
 
+// ParentExecutionIDKey carries the backend execution node that should own
+// events emitted from this context. It is separate from correlation_id:
+// correlation groups a visible agent card, while parent_execution_id builds
+// the semantic execution tree (for example background step -> workflow step).
+type parentExecutionIDKeyType struct{}
+
+var ParentExecutionIDKey = parentExecutionIDKeyType{}
+
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (

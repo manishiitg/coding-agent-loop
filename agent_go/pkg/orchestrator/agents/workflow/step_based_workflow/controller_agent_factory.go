@@ -423,10 +423,11 @@ func isGenericAgentStep(stepID, stepPath string) bool {
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents.
 // kbAccess must be one of KBAccessRead / Write / ReadWrite / None — callers resolve it
-// via resolveKnowledgebaseAccess before invoking. kbWriteMethod must be one of
-// KBWriteMethodAgent / Direct and is only consulted when kbAccess permits writes;
-// callers resolve it via resolveKnowledgebaseWriteMethod. Returns readPaths and writePaths.
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, kbWriteMethod string) (readPaths, writePaths []string) {
+// via resolveKnowledgebaseAccess before invoking. learningsAccess must be resolved via
+// resolveLearningsAccess. kbWriteMethod must be one of KBWriteMethodAgent / Direct and
+// is only consulted when kbAccess permits writes; callers resolve it via
+// resolveKnowledgebaseWriteMethod. Returns readPaths and writePaths.
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, kbAccess string, learningsAccess string, kbWriteMethod string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -437,7 +438,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
-	// READ: execution folder (to read previous step results) + global learnings + knowledgebase folder (if mode grants read)
+	// READ: execution folder (to read previous step results) + global learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + execution/Downloads folder to prevent writing to other steps
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
 	// step can write per-topic markdown via shell + diff_patch_workspace_file. Under
@@ -447,10 +448,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	readPaths = []string{executionWorkspacePath}
-	// Always add global learnings folder to read paths — harmless if it doesn't exist,
-	// and required when global learning is enabled (checked at execution time via execution_defaults)
-	globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
-	readPaths = append(readPaths, globalLearningsPath)
+	if learningsAccess != LearningsAccessNone {
+		globalLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, GlobalLearningID)
+		readPaths = append(readPaths, globalLearningsPath)
+	}
 
 	// Generic agents (spawned via call_generic_agent) get write access to the entire
 	// execution/ folder. They run ad-hoc tasks that may span multiple step folders
@@ -1250,7 +1251,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 2. Setup folder guard (extracted method). Empty kbAccess defaults to orchestrator-level UseKnowledgebase.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbWriteMethod := resolveKnowledgebaseWriteMethod(stepConfig)
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess, kbWriteMethod)
+	learningsAccess := resolveLearningsAccess(stepConfig)
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, kbAccess, learningsAccess, kbWriteMethod)
 
 	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
@@ -1809,6 +1811,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 	hcpo.disableParentAgentTimeout(config, "todo task orchestrator agent")
 
+	// Give nested todo_task orchestrators their own session-level folder guard just like
+	// normal execution steps. Without this, shell calls fall back to the broader parent
+	// workflow/group MCP session and can see workflow-root files or sibling groups.
+	todoReadPaths, todoWritePaths := hcpo.GetFolderGuardPaths()
+	todoSessionID := hcpo.setupSubAgentSessionGuard("todo", stepID, todoReadPaths, todoWritePaths)
+	config.MCPSessionID = todoSessionID
+	sharedBrowserSessionID := hcpo.resolveWorkshopBrowserSessionID(hcpo.currentGroupName)
+	hcpo.bindWorkshopBrowserSession(todoSessionID, sharedBrowserSessionID)
+	config.FolderGuardReadPaths = todoReadPaths
+	config.FolderGuardWritePaths = todoWritePaths
+
 	workflowServersTodo := hcpo.GetSelectedServers()
 	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
@@ -1885,6 +1898,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		stepExecutionRelPath := hcpo.getTodoTaskStepExecutionPath(stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionRelPath)
 		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+		// The todo-task orchestrator now uses a dedicated MCP session for shell/file tools.
+		// Browser reuse is bound separately above, so this session override narrows
+		// filesystem scope without breaking shared browser behavior with the builder.
 		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, config.MCPSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for todo task %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
 	}

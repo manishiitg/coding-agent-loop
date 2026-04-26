@@ -1,1 +1,18 @@
-/* Remove all custom styling - using only shadcn defaults */
+/* Shared modal safety net. Individual popups can still choose their max width,
+   but fixed overlays should never exceed the current viewport. */
+[class~="fixed"][class~="inset-0"] {
+  box-sizing: border-box;
+}
+
+[class~="fixed"][class~="inset-0"] > * {
+  min-width: 0;
+  max-width: min(100%, calc(100vw - 1rem));
+  max-height: calc(100dvh - 1rem);
+}
+
+@media (min-width: 640px) {
+  [class~="fixed"][class~="inset-0"] > * {
+    max-width: min(100%, calc(100vw - 2rem));
+    max-height: calc(100dvh - 2rem);
+  }
+}

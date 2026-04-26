@@ -8,10 +8,11 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// createWorkflowRunTools returns the tool definitions for run_workflow and run_step.
+// createWorkflowRunTools returns the tool definitions for workflow run management.
 func createWorkflowRunTools() []llmtypes.Tool {
 	return []llmtypes.Tool{
 		{
@@ -68,10 +69,27 @@ func createWorkflowRunTools() []llmtypes.Tool {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "stop_workflow_run",
+				Description: "Stop a background workflow execution started by run_workflow or run_step. Use the agent_id returned by those tools.",
+				Parameters: &llmtypes.Parameters{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"agent_id": map[string]interface{}{
+							"type":        "string",
+							"description": "The agent_id returned by run_workflow or run_step.",
+						},
+					},
+					Required: []string{"agent_id"},
+				},
+			},
+		},
 	}
 }
 
-// createWorkflowRunExecutors returns the tool executors for run_workflow and run_step.
+// createWorkflowRunExecutors returns the tool executors for workflow run management.
 // api is needed to call startSessionInternal and access the background agent registry.
 func createWorkflowRunExecutors(api *StreamingAPI) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	return map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
@@ -80,6 +98,9 @@ func createWorkflowRunExecutors(api *StreamingAPI) map[string]func(ctx context.C
 		},
 		"run_step": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return handleRunStep(ctx, api, args)
+		},
+		"stop_workflow_run": func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return handleStopWorkflowRun(ctx, api, args)
 		},
 	}
 }
@@ -114,6 +135,132 @@ func handleRunStep(ctx context.Context, api *StreamingAPI, args map[string]inter
 	instructions, _ := args["instructions"].(string)
 
 	return runWorkflowInternal(ctx, api, workflowPath, groupName, stepID, instructions)
+}
+
+func handleStopWorkflowRun(ctx context.Context, api *StreamingAPI, args map[string]interface{}) (string, error) {
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		return "", fmt.Errorf("agent_id is required")
+	}
+
+	parentSessionID, _ := ctx.Value(virtualtools.BGAgentSessionIDKey).(string)
+	if parentSessionID == "" {
+		return "", fmt.Errorf("session ID not available")
+	}
+
+	registry := api.bgAgentRegistry
+	if registry == nil {
+		return "", fmt.Errorf("background agent registry not available")
+	}
+
+	agent := registry.Get(parentSessionID, agentID)
+	if agent == nil {
+		return "", fmt.Errorf("workflow run agent %s not found", agentID)
+	}
+	snap := agent.GetSnapshot()
+	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {
+		return "", fmt.Errorf("agent %s is not a workflow run", agentID)
+	}
+
+	wfSessionID := snap.Metadata["workflow_session_id"]
+	if wfSessionID == "" {
+		return "", fmt.Errorf("workflow session ID missing for agent %s; cannot stop workflow execution safely", agentID)
+	}
+
+	if snap.Status != BGAgentRunning {
+		result := map[string]interface{}{
+			"agent_id":            agentID,
+			"workflow_session_id": wfSessionID,
+			"status":              string(snap.Status),
+			"message":             fmt.Sprintf("Workflow run %s is already %s.", agentID, snap.Status),
+		}
+		resultJSON, _ := json.MarshalIndent(result, "", "  ")
+		return string(resultJSON), nil
+	}
+
+	if err := registry.CancelAgent(parentSessionID, agentID); err != nil {
+		return "", err
+	}
+
+	canceledExecutions := api.stopWorkflowRunSession(wfSessionID)
+
+	result := map[string]interface{}{
+		"agent_id":               agentID,
+		"workflow_session_id":    wfSessionID,
+		"status":                 "canceled",
+		"canceled_execution_ids": canceledExecutions,
+		"message":                fmt.Sprintf("Workflow run %s has been stopped.", agentID),
+	}
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return string(resultJSON), nil
+}
+
+func (api *StreamingAPI) stopWorkflowRunSession(sessionID string) []string {
+	if sessionID == "" {
+		return nil
+	}
+
+	api.markSessionStopped(sessionID)
+
+	api.agentCancelMux.Lock()
+	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {
+		cancelFunc()
+		delete(api.agentCancelFuncs, sessionID)
+	}
+	api.agentCancelMux.Unlock()
+
+	api.updateSessionStatus(sessionID, "stopped")
+	api.setSessionBusy(sessionID, false)
+	api.setSyntheticTurn(sessionID, false)
+
+	api.bgAgentRegistry.CancelAll(sessionID)
+
+	api.pendingMu.Lock()
+	delete(api.pendingCompletions, sessionID)
+	api.pendingMu.Unlock()
+
+	api.lastQueryMu.Lock()
+	delete(api.lastQueryRequests, sessionID)
+	api.lastQueryMu.Unlock()
+
+	api.sessionAgentsMux.Lock()
+	delete(api.sessionAgents, sessionID)
+	api.sessionAgentsMux.Unlock()
+
+	api.completionLoopStartedMu.Lock()
+	delete(api.completionLoopStarted, sessionID)
+	api.completionLoopStartedMu.Unlock()
+
+	api.workflowObjectiveMux.Lock()
+	delete(api.workflowObjectives, sessionID)
+	api.workflowObjectiveMux.Unlock()
+
+	api.sessionQueryIDMux.Lock()
+	queryIDs := append([]string(nil), api.sessionQueryIDs[sessionID]...)
+	delete(api.sessionQueryIDs, sessionID)
+	api.sessionQueryIDMux.Unlock()
+
+	if len(queryIDs) > 0 {
+		api.workflowOrchestratorContextMux.Lock()
+		for _, qid := range queryIDs {
+			if cancelFunc, exists := api.workflowOrchestratorContexts[qid]; exists {
+				cancelFunc()
+				delete(api.workflowOrchestratorContexts, qid)
+			}
+		}
+		api.workflowOrchestratorContextMux.Unlock()
+
+		api.activeWorkflowExecutionsMux.Lock()
+		for _, qid := range queryIDs {
+			delete(api.activeWorkflowExecutions, qid)
+		}
+		api.activeWorkflowExecutionsMux.Unlock()
+		api.cancelTrackedExecutionsForSession(sessionID)
+	}
+
+	mcpagent.CloseHTTPSession(sessionID)
+	api.cleanupBrowserSessions(sessionID)
+	return queryIDs
 }
 
 // runWorkflowInternal is the shared implementation for both run_workflow and run_step.
@@ -258,10 +405,11 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 		CreatedAt: time.Now(),
 		cancel:    cancel,
 		Metadata: map[string]string{
-			"type":          "workflow_run",
-			"workflow_path": workflowPath,
-			"group_name":    groupName,
-			"step_id":       stepID,
+			"type":                "workflow_run",
+			"workflow_path":       workflowPath,
+			"group_name":          groupName,
+			"step_id":             stepID,
+			"workflow_session_id": wfSessionID,
 		},
 	}
 	registry.Register(sessionID, bgAgent)
@@ -274,12 +422,15 @@ func runWorkflowInternal(ctx context.Context, api *StreamingAPI, workflowPath, g
 
 		now := time.Now()
 		bgAgent.mu.Lock()
-		bgAgent.CompletedAt = &now
-		if runErr != nil {
+		if bgAgent.Status == BGAgentCanceled {
+			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s canceled", agentName)
+		} else if runErr != nil {
+			bgAgent.CompletedAt = &now
 			bgAgent.Status = BGAgentFailed
 			bgAgent.Error = runErr.Error()
 			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s failed: %v", agentName, runErr)
 		} else {
+			bgAgent.CompletedAt = &now
 			bgAgent.Status = BGAgentCompleted
 			bgAgent.Result = fmt.Sprintf("Workflow completed. Check %s/runs/iteration-0/%s/ for results.", workflowPath, groupName)
 			logfWithContext(logCtx, "[WORKFLOW_RUN_TOOL] %s completed", agentName)

@@ -193,10 +193,10 @@ const MultiAgentSchedulesPopup: React.FC<MultiAgentSchedulesPopupProps> = ({ onC
 
   return ReactDOM.createPortal(
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="w-[520px] max-h-[80vh] bg-gray-900 rounded-xl shadow-2xl border border-gray-700 flex flex-col">
+      <div className="w-full max-w-[520px] max-h-[calc(100dvh-1rem)] sm:max-h-[80vh] bg-gray-900 rounded-xl shadow-2xl border border-gray-700 flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
           <div className="flex items-center gap-2">

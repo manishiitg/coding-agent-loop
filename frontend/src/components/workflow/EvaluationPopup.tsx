@@ -206,12 +206,12 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-background rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-border relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-5xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col border border-border relative">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-4 mb-2">
+            <div className="flex flex-wrap items-center gap-2 mb-2 sm:gap-4">
               <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-primary" />
                 Evaluation

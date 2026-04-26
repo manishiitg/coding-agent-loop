@@ -11,6 +11,7 @@ BACKGROUND_MODE=false
 WITH_WORKSPACE=false
 WITH_FRONTEND=false
 ONLY_FRONTEND=false
+UPDATE_MMX_CLI=false
 POSITIONAL_ARGS=()
 
 for arg in "$@"; do
@@ -29,6 +30,9 @@ for arg in "$@"; do
             ;;
         --only-frontend)
             ONLY_FRONTEND=true
+            ;;
+        --update)
+            UPDATE_MMX_CLI=true
             ;;
         *)
             POSITIONAL_ARGS+=("$arg")
@@ -869,6 +873,33 @@ if ! command -v go &> /dev/null; then
     echo "❌ Error: 'go' command not found. Please install Go."
     exit 1
 fi
+
+update_mmx_cli_if_requested() {
+    if [ "$UPDATE_MMX_CLI" != true ]; then
+        return 0
+    fi
+
+    if ! command -v npm &> /dev/null; then
+        echo "❌ Error: --update requested but 'npm' command not found. Please install Node.js/npm."
+        return 1
+    fi
+
+    echo "📦 Updating mmx-cli to latest because --update was provided..."
+    npm install -g mmx-cli@latest 2>&1 | tail -5
+    local npm_status=${PIPESTATUS[0]}
+    if [ "$npm_status" -ne 0 ]; then
+        echo "❌ Error: failed to update mmx-cli"
+        return "$npm_status"
+    fi
+
+    if command -v mmx &> /dev/null; then
+        echo "✅ mmx-cli updated: $(mmx --version 2>/dev/null || echo 'version unknown')"
+    else
+        echo "⚠️  mmx-cli update completed but 'mmx' was not found on PATH"
+    fi
+}
+
+update_mmx_cli_if_requested || exit 1
 
 # Pre-install camofox packages globally (skips if already installed — avoids slow npx -y each time)
 if ! command -v camofox-browser &> /dev/null; then

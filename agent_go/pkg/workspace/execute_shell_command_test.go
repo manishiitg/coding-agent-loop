@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -82,5 +83,47 @@ func TestRewriteGeminiRelativePaths_RewritesParentRelativePaths(t *testing.T) {
 	expected := "cat " + geminiProjectDirPath(projectDirID) + "/.gemini/policies/restrict-tools.toml"
 	if rewritten != expected {
 		t.Fatalf("expected parent-relative command %q, got %q", expected, rewritten)
+	}
+}
+
+func TestBlockAbsoluteHostPaths_DeniesAbsoluteWorkspacePathOutsideGuard(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+
+	guard := &FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  []string{"Workflow/testing/runs/iteration-0/test-group/execution"},
+		WritePaths: []string{"Workflow/testing/runs/iteration-0/test-group/execution/math-solver"},
+	}
+
+	err := blockAbsoluteHostPaths(
+		`cat '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/workflow.json'`,
+		guard,
+	)
+	if err == nil {
+		t.Fatal("expected forbidden absolute workflow-root path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "outside this step's allowed folders") {
+		t.Fatalf("expected folder guard error, got: %v", err)
+	}
+}
+
+func TestBlockAbsoluteHostPaths_AllowsAbsoluteWorkspacePathInsideGuardAndIgnoresHeredocData(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs")
+
+	guard := &FolderGuardConfig{
+		Enabled:    true,
+		ReadPaths:  []string{"Workflow/testing/runs/iteration-0/test-group/execution"},
+		WritePaths: []string{"Workflow/testing/runs/iteration-0/test-group/execution/math-solver"},
+	}
+
+	command := `cat '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/prepare-test-fixtures/test_fixtures.json'
+cat > '/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/runs/iteration-0/test-group/execution/math-solver/math_probe.json' <<'EOF'
+{
+  "attempted_path": "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Workflow/testing/workflow.json"
+}
+EOF`
+
+	if err := blockAbsoluteHostPaths(command, guard); err != nil {
+		t.Fatalf("expected allowed absolute execution paths to pass, got: %v", err)
 	}
 }

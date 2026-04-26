@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import type { PollingEvent } from '../../services/api-types';
+import type { PollingEvent, SessionExecutionTreeResponse } from '../../services/api-types';
 import { EventDispatcher, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
@@ -24,6 +24,37 @@ const DELEGATION_BRIDGE_TYPES = new Set(['delegation_start', 'delegation_end']);
 const IN_PROGRESS_CHILD_TYPES = new Set([
   'tool_call_start', 'tool_call_end', 'tool_call_error',
   'token_usage', 'llm_generation_end', 'llm_generation_start',
+]);
+
+const EXECUTION_OWNER_EVENT_TYPES = new Set([
+  'delegation_start',
+  'background_agent_started',
+  'orchestrator_agent_start',
+]);
+
+// User-facing lifecycle/result events should stay visible inside the owning
+// workflow step/agent card. Tool/debug events remain behind the collapsed panel.
+const OWNER_SUMMARY_EVENT_TYPES = new Set([
+  'pre_validation_completed',
+  'batch_group_start',
+  'batch_group_end',
+  'batch_execution_start',
+  'batch_execution_end',
+  'batch_execution_canceled',
+  'todo_task_step_completed',
+  'todo_task_status_update',
+  'orchestrator_agent_end',
+  'orchestrator_agent_error',
+  'background_agent_completed',
+  'background_agent_failed',
+  'background_agent_terminated',
+  'delegation_end',
+  'unified_completion',
+  'conversation_end',
+  'conversation_error',
+  'context_cancelled',
+  'agent_end',
+  'agent_error',
 ]);
 
 const INITIAL_EXPANDED_TOOL_CALLS = 24;
@@ -56,48 +87,235 @@ function firstStringField(records: Array<Record<string, unknown> | undefined>, f
   return undefined;
 }
 
-function truncateToolSummary(value: string, maxLength = 120): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength - 1)}…`;
+function isExecutionOwnerEvent(event: PollingEvent): boolean {
+  return !!event.type && EXECUTION_OWNER_EVENT_TYPES.has(event.type);
+}
+
+function isOwnerSummaryEvent(event: PollingEvent): boolean {
+  return !!event.type && OWNER_SUMMARY_EVENT_TYPES.has(event.type);
+}
+
+function extractAutoNotificationExecutionId(event: PollingEvent): string | undefined {
+  if (event.type !== 'user_message') return undefined;
+
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  const content = firstStringField([payload, data], ['content', 'message']);
+  if (!content?.startsWith('[AUTO-NOTIFICATION]')) return undefined;
+
+  const match = content.match(/\(ID:\s*([^)]+)\)/);
+  const executionId = match?.[1]?.trim();
+  return executionId || undefined;
+}
+
+function getEventParentExecutionId(event: PollingEvent): string | undefined {
+  const eventRecord = event as unknown as Record<string, unknown>;
+  const directParent = eventRecord.parent_execution_id;
+  if (typeof directParent === 'string' && directParent.trim() !== '') {
+    return directParent.trim();
+  }
+
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  const metadata = asRecord(payload?.metadata);
+  const metadataParent = metadata?.parent_execution_id;
+  if (typeof metadataParent === 'string' && metadataParent.trim() !== '') {
+    return metadataParent.trim();
+  }
+
+  const payloadParent = payload?.parent_execution_id;
+  if (typeof payloadParent === 'string' && payloadParent.trim() !== '') {
+    return payloadParent.trim();
+  }
+
+  return undefined;
+}
+
+function shouldMaterializeExecutionNode(node: SessionExecutionTreeResponse['root']): boolean {
+  return node.kind !== 'session' && node.kind !== 'main_agent';
+}
+
+function getBackgroundAgentName(event: PollingEvent): string {
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  const fields = asRecord(payload?.fields) || payload;
+  return firstStringField([fields, payload, data], ['name']) || '';
+}
+
+function isNoisyWorkshopWrapperEvent(event: PollingEvent): boolean {
+  if (event.type !== 'background_agent_started') return false;
+  return /^step-/i.test(getBackgroundAgentName(event).trim());
+}
+
+function isSyntheticExecutionOwnerEvent(event: PollingEvent): boolean {
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  return payload?.synthetic === true || data?.synthetic === true || event.id.startsWith('synthetic-execution-owner:');
+}
+
+function isRootLikeExecutionId(executionId: string): boolean {
+  return executionId.startsWith('main:') || executionId.startsWith('session:');
+}
+
+function prettyExecutionName(executionId: string): string {
+  const tail = executionId.split(':').pop() || executionId;
+  return tail.replace(/^workflow-full-\d+-?/, 'Workflow ').replace(/-/g, ' ').trim() || executionId;
+}
+
+function eventDerivedOwnerName(event: PollingEvent, executionId: string): string {
+  const data = asRecord(event.data);
+  const payload = asRecord(data?.data) || data;
+  const metadata = asRecord(payload?.metadata);
+  return firstStringField(
+    [payload, metadata, data],
+    ['agent_name', 'name', 'current_step_id', 'orchestrator_step_id', 'step_id', 'workflow_step_id', 'route_id'],
+  ) || prettyExecutionName(executionId);
+}
+
+interface InferredExecutionState {
+  status: string;
+  completedAt?: string;
+  error?: string;
+}
+
+function createSyntheticExecutionOwnerEventFromEvent(
+  executionId: string,
+  parentExecutionId: string | undefined,
+  event: PollingEvent,
+  state?: InferredExecutionState,
+): PollingEvent {
+  const name = eventDerivedOwnerName(event, executionId);
+  const kind = event.execution_kind || (executionId.startsWith('workflow-step:') ? 'workflow_step' : 'execution');
+  const status = state?.status || 'running';
+  return {
+    id: `synthetic-execution-owner:${executionId}`,
+    type: 'background_agent_started',
+    timestamp: event.timestamp,
+    session_id: event.session_id,
+    execution_id: executionId,
+    parent_execution_id: parentExecutionId,
+    execution_kind: kind,
+    data: {
+      type: 'background_agent_started',
+      timestamp: event.timestamp,
+      synthetic: true,
+      data: {
+        agent_id: executionId,
+        name,
+        status,
+        kind,
+        source: 'event_stream_fallback',
+        completed_at: state?.completedAt,
+        error: state?.error,
+        fields: {
+          agent_id: executionId,
+          name,
+          status,
+          kind,
+          source: 'event_stream_fallback',
+          completed_at: state?.completedAt,
+          error: state?.error,
+        },
+      },
+    },
+  } as PollingEvent;
+}
+
+function createSyntheticParentExecutionOwnerEvent(
+  executionId: string,
+  event: PollingEvent,
+  state?: InferredExecutionState,
+): PollingEvent {
+  const name = prettyExecutionName(executionId);
+  const kind = executionId.startsWith('workflow-step:') ? 'workflow_step' : 'execution';
+  const status = state?.status || 'running';
+  return {
+    id: `synthetic-execution-owner:${executionId}`,
+    type: 'background_agent_started',
+    timestamp: event.timestamp,
+    session_id: event.session_id,
+    execution_id: executionId,
+    execution_kind: kind,
+    data: {
+      type: 'background_agent_started',
+      timestamp: event.timestamp,
+      synthetic: true,
+      data: {
+        agent_id: executionId,
+        name,
+        status,
+        kind,
+        source: 'event_stream_parent_fallback',
+        completed_at: state?.completedAt,
+        error: state?.error,
+        fields: {
+          agent_id: executionId,
+          name,
+          status,
+          kind,
+          source: 'event_stream_parent_fallback',
+          completed_at: state?.completedAt,
+          error: state?.error,
+        },
+      },
+    },
+  } as PollingEvent;
+}
+
+function createSyntheticExecutionOwnerEvent(
+  node: SessionExecutionTreeResponse['root'],
+  state?: InferredExecutionState,
+): PollingEvent {
+  const status = state?.status || node.status;
+  const completedAt = state?.completedAt || node.completed_at;
+  const error = state?.error || node.error;
+  return {
+    id: `synthetic-execution-owner:${node.execution_id}`,
+    type: 'background_agent_started',
+    timestamp: node.started_at,
+    session_id: node.session_id,
+    execution_id: node.execution_id,
+    parent_execution_id: node.parent_execution_id,
+    execution_kind: node.kind,
+    data: {
+      type: 'background_agent_started',
+      timestamp: node.started_at,
+      synthetic: true,
+      data: {
+        agent_id: node.execution_id,
+        name: node.name || node.kind,
+        status,
+        kind: node.kind,
+        source: node.source,
+        completed_at: completedAt,
+        error,
+        fields: {
+          agent_id: node.execution_id,
+          name: node.name || node.kind,
+          status,
+          kind: node.kind,
+          source: node.source,
+          completed_at: completedAt,
+          error,
+        },
+      },
+    },
+  } as PollingEvent;
 }
 
 function buildToolSummary(payload?: Record<string, unknown>): { toolName?: string; toolLabel?: string } {
   const toolName = (payload?.tool_name as string) || undefined;
   if (!toolName) return {};
 
-  const rawArgs = payload?.tool_params as Record<string, unknown> | undefined;
-  const argsStr = rawArgs?.arguments as string | undefined;
-  if (!argsStr) return { toolName, toolLabel: toolName };
-
-  try {
-    const parsed = JSON.parse(argsStr);
-    if (parsed && typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      const previewCandidate =
-        obj.command ||
-        obj.cmd ||
-        obj.query ||
-        obj.path ||
-        obj.url ||
-        obj.pattern;
-
-      if (typeof previewCandidate === 'string' && previewCandidate.trim() !== '') {
-        return {
-          toolName,
-          toolLabel: truncateToolSummary(`${toolName}: ${previewCandidate}`),
-        };
-      }
-    }
-  } catch {
-    // Fall back to tool name only if args are not JSON.
-  }
-
-  return { toolName, toolLabel: toolName };
+  // Collapsed summaries should not leak long command/query/path parameters.
+  // The expanded tool row still contains the full details when the user opens it.
+  const compactToolName = toolName.split('__').filter(Boolean).pop() || toolName;
+  return { toolName, toolLabel: compactToolName };
 }
 
 interface EventHierarchyProps {
   events: PollingEvent[];
+  executionTree?: SessionExecutionTreeResponse;
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
@@ -111,6 +329,7 @@ interface EventHierarchyProps {
 interface FlattenedItem {
   node?: EventNode;
   uniqueKey: string;
+  levelOffset?: number;
   isToolCallToggle?: boolean;
   toolCallToggleMode?: 'expand' | 'collapse' | 'show_more';
   hiddenCount?: number;   // Per-group count for the "+" label
@@ -122,6 +341,7 @@ interface FlattenedItem {
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   events,
+  executionTree,
   onApproveWorkflow,
   onSubmitFeedback,
   onFeedbackSubmitted,
@@ -411,6 +631,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   }, []);
 
   const getExecutionId = useCallback((event: PollingEvent): string | undefined => {
+    const autoNotificationExecutionId = extractAutoNotificationExecutionId(event);
+    if (autoNotificationExecutionId) return autoNotificationExecutionId;
+
     const direct = event.execution_id?.trim();
     if (direct) return direct;
     const data = asRecord(event.data);
@@ -666,7 +889,122 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     });
 
-    const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
+    const realFilteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
+
+    const inferredStateByExecutionId = new Map<string, InferredExecutionState>();
+    const markExecutionState = (executionId: string | undefined, state: InferredExecutionState) => {
+      if (!executionId || isRootLikeExecutionId(executionId)) return;
+      const existing = inferredStateByExecutionId.get(executionId);
+      if (existing?.status === 'failed' || existing?.status === 'canceled') return;
+      if (existing?.status === 'completed' && state.status === 'running') return;
+      inferredStateByExecutionId.set(executionId, state);
+    };
+
+    for (const event of realFilteredEvents) {
+      const executionId = getExecutionId(event);
+      const payload = asRecord(asRecord(event.data)?.data) || asRecord(event.data);
+      const error = firstStringField([payload, asRecord(payload?.fields)], ['error', 'message']);
+      switch (event.type) {
+        case 'orchestrator_agent_error':
+        case 'background_agent_failed':
+        case 'conversation_error':
+        case 'workflow_error':
+        case 'agent_error':
+          markExecutionState(executionId, { status: 'failed', completedAt: event.timestamp, error });
+          break;
+        case 'context_cancelled':
+        case 'batch_execution_canceled':
+          markExecutionState(executionId, { status: 'canceled', completedAt: event.timestamp, error });
+          break;
+        case 'orchestrator_agent_end':
+        case 'background_agent_completed':
+        case 'background_agent_terminated':
+        case 'delegation_end':
+        case 'todo_task_step_completed':
+        case 'batch_group_end':
+        case 'batch_execution_end':
+        case 'workflow_end':
+        case 'unified_completion':
+        case 'conversation_end':
+        case 'agent_end':
+          markExecutionState(executionId, { status: 'completed', completedAt: event.timestamp });
+          break;
+        default:
+          break;
+      }
+    }
+
+    const executionNodeById = new Map<string, SessionExecutionTreeResponse['root']>();
+    const executionParentById = new Map<string, string>();
+    const collectExecutionParents = (node?: SessionExecutionTreeResponse['root']) => {
+      if (!node) return;
+      if (node.execution_id) {
+        executionNodeById.set(node.execution_id, node);
+      }
+      for (const child of node.children || []) {
+        if (child.execution_id && child.parent_execution_id) {
+          executionParentById.set(child.execution_id, child.parent_execution_id);
+        }
+        collectExecutionParents(child);
+      }
+    };
+    collectExecutionParents(executionTree?.root);
+
+    const executionOwnerEventById = new Map<string, PollingEvent>();
+    for (const event of realFilteredEvents) {
+      if (!isExecutionOwnerEvent(event)) continue;
+      const executionId = getExecutionId(event);
+      if (executionId && !executionOwnerEventById.has(executionId)) {
+        executionOwnerEventById.set(executionId, event);
+      }
+    }
+
+    const syntheticOwnerEvents: PollingEvent[] = [];
+    executionNodeById.forEach((node, executionId) => {
+      if (!shouldMaterializeExecutionNode(node)) return;
+      if (executionOwnerEventById.has(executionId)) return;
+
+      const syntheticEvent = createSyntheticExecutionOwnerEvent(node, inferredStateByExecutionId.get(executionId));
+      syntheticOwnerEvents.push(syntheticEvent);
+      executionOwnerEventById.set(executionId, syntheticEvent);
+    });
+
+    for (const event of realFilteredEvents) {
+      const executionId = getExecutionId(event);
+      if (!executionId || isRootLikeExecutionId(executionId) || executionOwnerEventById.has(executionId)) {
+        continue;
+      }
+
+      const parentExecutionId = (executionParentById.get(executionId) || getEventParentExecutionId(event))?.trim();
+      const syntheticEvent = createSyntheticExecutionOwnerEventFromEvent(
+        executionId,
+        parentExecutionId,
+        event,
+        inferredStateByExecutionId.get(executionId),
+      );
+      syntheticOwnerEvents.push(syntheticEvent);
+      executionOwnerEventById.set(executionId, syntheticEvent);
+    }
+
+    for (const event of realFilteredEvents) {
+      const parentExecutionId = getEventParentExecutionId(event)?.trim();
+      if (!parentExecutionId || isRootLikeExecutionId(parentExecutionId) || executionOwnerEventById.has(parentExecutionId)) {
+        continue;
+      }
+
+      const syntheticParent = createSyntheticParentExecutionOwnerEvent(
+        parentExecutionId,
+        event,
+        inferredStateByExecutionId.get(parentExecutionId),
+      );
+      syntheticOwnerEvents.push(syntheticParent);
+      executionOwnerEventById.set(parentExecutionId, syntheticParent);
+    }
+
+    const sourceOrder = new Map<string, number>();
+    realFilteredEvents.forEach((event, index) => sourceOrder.set(event.id, index));
+    const filteredEvents = [...realFilteredEvents, ...syntheticOwnerEvents]
+      .sort((a, b) => compareEventsChronologically(a, b, sourceOrder));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
 
     // Build delegation_id -> delegation_start event ID map for re-parenting orphans.
@@ -716,6 +1054,32 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     };
 
     const childrenMap = new Map<string, PollingEvent[]>();
+    const childEventIds = new Set<string>();
+
+    const getExecutionParentEventId = (event: PollingEvent): string | undefined => {
+      const executionId = getExecutionId(event);
+      if (!executionId) return undefined;
+
+      const canonicalOwner = executionOwnerEventById.get(executionId);
+      if (canonicalOwner && canonicalOwner.id !== event.id) return canonicalOwner.id;
+
+      if (isExecutionOwnerEvent(event)) {
+        const parentExecutionId = (executionParentById.get(executionId) || getEventParentExecutionId(event))?.trim();
+        if (parentExecutionId) {
+          const parentOwner = executionOwnerEventById.get(parentExecutionId);
+          if (parentOwner && parentOwner.id !== event.id) return parentOwner.id;
+        }
+        return undefined;
+      }
+
+      const parentExecutionId = (executionParentById.get(executionId) || getEventParentExecutionId(event))?.trim();
+      if (parentExecutionId) {
+        const parentOwner = executionOwnerEventById.get(parentExecutionId);
+        if (parentOwner && parentOwner.id !== event.id) return parentOwner.id;
+      }
+
+      return undefined;
+    };
 
     filteredEvents.forEach(event => {
       let parentId = getParentId(event);
@@ -747,9 +1111,17 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         }
       }
 
+      if (!parentId || !filteredEventIds.has(parentId)) {
+        const executionParentId = getExecutionParentEventId(event);
+        if (executionParentId) {
+          parentId = executionParentId;
+        }
+      }
+
       if (parentId && filteredEventIds.has(parentId)) {
         if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
         childrenMap.get(parentId)!.push(event);
+        childEventIds.add(event.id);
       }
     });
 
@@ -765,6 +1137,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     };
 
     const rootEvents = filteredEvents.filter(event => {
+      if (childEventIds.has(event.id)) return false;
+
       // Check if this event was parented under an agent session or delegation via childrenMap
       const cid = getCorrelationId(event);
 
@@ -792,7 +1166,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getAgentSessionKey, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;
@@ -898,19 +1272,56 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
 
-    const flatten = (node: EventNode, key: string) => {
-      list.push({ node, uniqueKey: key });
+    const flatten = (node: EventNode, key: string, levelOffset = 0) => {
+      if (isSyntheticExecutionOwnerEvent(node.event)) {
+        const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
+        const nonOwnerChildren = node.children.filter(child => !isExecutionOwnerEvent(child.event));
+        if (
+          ownerChildren.length === 1 &&
+          getBackgroundAgentName(node.event).trim().toLowerCase() === getBackgroundAgentName(ownerChildren[0].event).trim().toLowerCase()
+        ) {
+          const mergedChild: EventNode = {
+            ...ownerChildren[0],
+            level: node.level,
+            children: [...nonOwnerChildren, ...ownerChildren[0].children],
+          };
+          flatten(mergedChild, `${key}-dedup-child`, levelOffset);
+          return;
+        }
+      }
 
-      // If this is a delegation_start, we STOP flattening its children into the main list.
-      // They will be rendered internally by the sub-agent card's scrollable logs area.
-      if (node.event.type === 'delegation_start') {
+      if (isNoisyWorkshopWrapperEvent(node.event)) {
+        const ownerChildren = node.children.filter(child => isExecutionOwnerEvent(child.event));
+        const nonOwnerChildren = node.children.filter(child => !isExecutionOwnerEvent(child.event));
+
+        if (ownerChildren.length === 1) {
+          const mergedChild: EventNode = {
+            ...ownerChildren[0],
+            level: node.level,
+            children: [...nonOwnerChildren, ...ownerChildren[0].children],
+          };
+          flatten(mergedChild, `${key}-wrapper-child-0`, levelOffset - 1);
+        } else {
+          ownerChildren.forEach((child, index) => {
+            flatten(child, `${key}-wrapper-child-${index}`, levelOffset - 1);
+          });
+          nonOwnerChildren.forEach((child, index) => {
+            flatten(child, `${key}-wrapper-extra-${index}`, levelOffset - 1);
+          });
+        }
         return;
       }
 
-      // Keep agent-internal logs inside the agent card in every mode so tool-call
-      // summaries stay attached to the owning agent instead of drifting into the
-      // global tail of the event stream.
-      if (node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
+      list.push({ node, uniqueKey: key, levelOffset });
+
+      if (isExecutionOwnerEvent(node.event)) {
+        // Show nested execution owners as tree rows, but keep raw logs/tool events
+        // inside the owner's expandable log panel.
+        node.children
+          .filter(child => isExecutionOwnerEvent(child.event))
+          .forEach((child, index) => {
+            flatten(child, `${key}-owner-child-${index}`, levelOffset);
+          });
         return;
       }
 
@@ -918,7 +1329,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       const shouldExpand = node.isExpanded;
       if (shouldExpand && node.children.length > 0) {
         node.children.forEach((child, index) => {
-          flatten(child, `${key}-child-${index}`);
+          flatten(child, `${key}-child-${index}`, levelOffset);
         });
       }
     };
@@ -1055,10 +1466,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           togglesMatch = false
           break
         }
-        // Check delegation_start expansion state — children render inside the card,
-        // not in the flat list, so expansion changes are invisible to length/key checks.
+        // Owner-card children render inside the card, not as flat rows. Changes to
+        // these child arrays must still re-render the owning card so summary events
+        // and collapsed log counts stay live.
         const node = list[i].node
         const prevNode = prev[i]?.node
+        if (node && prevNode && isExecutionOwnerEvent(node.event) && node.children.length !== prevNode.children.length) {
+          togglesMatch = false
+          break
+        }
         if (node && prevNode && node.event.type === 'delegation_start' && node.isExpanded !== prevNode.isExpanded) {
           togglesMatch = false
           break
@@ -1145,14 +1561,24 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const { node, uniqueKey } = item;
     if (!node) return null;
-    const { event, children, level, isExpanded } = node;
+    const { event, children, isExpanded } = node;
+    const level = Math.max(0, node.level + (item.levelOffset ?? 0));
     const hasChildren = children.length > 0;
-    const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start';
+    const ownsInternalLogPanel = event.type === 'delegation_start' || event.type === 'orchestrator_agent_start' || event.type === 'background_agent_started';
     const isOwnedLogPanelOpen = ownsInternalLogPanel && expandedOwnedLogPanels.has(event.id);
+    const ownerNonExecutionChildren = ownsInternalLogPanel
+      ? children.filter(child => !isExecutionOwnerEvent(child.event))
+      : [];
+    const ownedSummaryChildren = ownsInternalLogPanel
+      ? ownerNonExecutionChildren.filter(child => isOwnerSummaryEvent(child.event))
+      : [];
+    const ownedLogChildren = ownsInternalLogPanel
+      ? ownerNonExecutionChildren.filter(child => !isOwnerSummaryEvent(child.event))
+      : children;
     
-    // Base indentation - use level + 1 to ensure at least one level of indent (20px) for visibility
-    const indentLevel = level + 1;
-    const indentSize = flatHierarchy ? 0 : 20;
+    // Only nested rows get tree indentation. Root rows should align with the feed.
+    const indentLevel = level;
+    const indentSize = flatHierarchy ? 0 : 18;
     const indent = indentLevel * indentSize;
     
     const sessionKey = getAgentSessionKey(event);
@@ -1163,14 +1589,23 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     
     return (
       <div key={uniqueKey} className="event-tree-node relative" data-event-type={event.type}>
-        {/* Hierarchy Guide Lines */}
-        {!flatHierarchy && level >= 0 && Array.from({ length: level + 1 }).map((_, i) => (
-          <div 
-            key={i} 
-            className="absolute top-0 bottom-0 border-l-2 border-gray-200 dark:border-gray-800"
-            style={{ left: `${(i + 1) * indentSize - 10}px` }}
+        {/* Subtle hierarchy connectors. Root rows should not get a dominant rail. */}
+        {!flatHierarchy && level > 0 && Array.from({ length: level }).map((_, i) => (
+          <div
+            key={i}
+            className="absolute top-0 bottom-0 border-l border-gray-200/40 dark:border-gray-700/35"
+            style={{ left: `${(i + 1) * indentSize - 9}px` }}
           />
         ))}
+        {!flatHierarchy && level > 0 && (
+          <div
+            className="absolute top-5 h-px border-t border-gray-200/50 dark:border-gray-700/45"
+            style={{
+              left: `${level * indentSize - 9}px`,
+              width: `${indentSize - 5}px`,
+            }}
+          />
+        )}
 
         <div 
           className="event-tree-item relative z-10"
@@ -1181,7 +1616,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
               onClick={() => toggleNode(event.id)}
               className="expand-button"
               aria-label={isExpanded ? 'Collapse' : 'Expand'}
-              style={{ position: 'absolute', left: `${indent - 25}px`, top: '10px' }}
+              style={{ position: 'absolute', left: `${Math.max(indent - 22, 4)}px`, top: '10px' }}
             >
               <span className={`expand-icon ${isExpanded ? 'expanded' : ''}`}>
                 {isExpanded ? '▼' : '▶'}
@@ -1204,8 +1639,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 compact={compact}
                 delegationStats={delegationStats}
                 backgroundAgentStats={backgroundAgentStats}
-                childrenNodes={ownsInternalLogPanel ? (isOwnedLogPanelOpen ? children : undefined) : (isExpanded ? children : undefined)}
-                childrenCount={children.length}
+                summaryNodes={ownsInternalLogPanel ? ownedSummaryChildren : undefined}
+                summaryCount={ownsInternalLogPanel ? ownedSummaryChildren.length : undefined}
+                childrenNodes={ownsInternalLogPanel ? (isOwnedLogPanelOpen ? ownedLogChildren : undefined) : (isExpanded ? children : undefined)}
+                childrenCount={ownsInternalLogPanel ? ownedLogChildren.length : children.length}
                 onToggleNode={toggleNode}
                 ownedLogPanelOpen={isOwnedLogPanelOpen}
                 onToggleOwnedLogPanel={ownsInternalLogPanel ? (open) => toggleOwnedLogPanel(event.id, open) : undefined}

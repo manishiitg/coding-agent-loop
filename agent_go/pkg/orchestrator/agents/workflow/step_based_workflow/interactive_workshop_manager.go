@@ -2993,6 +2993,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 				execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+				execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 				// Variables captured after execution for metadata
 				var isOptimized bool
@@ -3209,6 +3210,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				})
 			}
 			execCtx = context.WithValue(execCtx, virtualtools.BackgroundAgentIDKey, execID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
 			go func() {
 				var result string

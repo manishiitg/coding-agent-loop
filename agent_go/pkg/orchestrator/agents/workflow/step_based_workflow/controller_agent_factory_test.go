@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -62,6 +63,115 @@ func TestInjectStepEnvIntoShellExecutor_OverridesStaleMCPSessionEnv(t *testing.T
 	}
 	if got := rawExtraEnv["MCP_API_URL"]; got != "http://example.test/s/step-session-123" {
 		t.Fatalf("expected step-scoped MCP_API_URL, got %#v", got)
+	}
+}
+
+func TestSetupExecutionFolderGuardHonorsLearningsAndKBNone(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/testing")
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		selectedRunFolder: "iteration-0/test-group",
+	}
+
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(
+		"step-1",
+		"forbidden-probe",
+		KBAccessNone,
+		LearningsAccessNone,
+		KBWriteMethodAgent,
+	)
+
+	forbiddenReads := []string{
+		"Workflow/testing/learnings/_global",
+		"Workflow/testing/knowledgebase",
+		"Workflow/testing",
+	}
+	for _, forbidden := range forbiddenReads {
+		if slices.Contains(readPaths, forbidden) {
+			t.Fatalf("expected read paths not to include %q, got %v", forbidden, readPaths)
+		}
+	}
+	forbiddenWrites := []string{
+		"Workflow/testing/learnings/_global",
+		"Workflow/testing/learnings/forbidden-probe",
+		"Workflow/testing/knowledgebase",
+		"Workflow/testing/knowledgebase/notes",
+	}
+	for _, forbidden := range forbiddenWrites {
+		if slices.Contains(writePaths, forbidden) {
+			t.Fatalf("expected write paths not to include %q, got %v", forbidden, writePaths)
+		}
+	}
+}
+
+func TestSetupExecutionFolderGuardAddsOnlyConfiguredStores(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(),
+		nil,
+		orchestrator.OrchestratorTypeWorkflow,
+		"",
+		0,
+		"",
+		nil,
+		nil,
+		false,
+		&orchestrator.LLMConfig{},
+		1,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	base.SetWorkspacePath("Workflow/testing")
+
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator: base,
+		selectedRunFolder: "iteration-0/test-group",
+	}
+
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(
+		"step-1",
+		"kb-direct",
+		KBAccessReadWrite,
+		LearningsAccessRead,
+		KBWriteMethodDirect,
+	)
+
+	for _, expected := range []string{
+		"Workflow/testing/learnings/_global",
+		"Workflow/testing/knowledgebase",
+	} {
+		if !slices.Contains(readPaths, expected) {
+			t.Fatalf("expected read paths to include %q, got %v", expected, readPaths)
+		}
+	}
+	if !slices.Contains(writePaths, "Workflow/testing/knowledgebase/notes") {
+		t.Fatalf("expected write paths to include KB notes for direct writes, got %v", writePaths)
+	}
+	if slices.Contains(writePaths, "Workflow/testing/learnings/_global") {
+		t.Fatalf("main execution should not write global learnings, got %v", writePaths)
 	}
 }
 

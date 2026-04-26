@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Server, Loader2, AlertCircle, Settings } from 'lucide-react'
+import { ServerCog, Loader2, AlertCircle, Settings } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import MCPConfigPopup from '../MCPConfigPopup'
 import MCPToolApiTester from '../MCPToolApiTester'
@@ -95,7 +95,7 @@ export default function MCPServersSection() {
     <div className="space-y-2">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+          <ServerCog className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">MCP Servers</span>
         </div>
         <span className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">

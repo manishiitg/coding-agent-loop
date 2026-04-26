@@ -50,7 +50,6 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 
 | Path | Location | Access |
 |------|----------|--------|
-| Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` | READ |
 | Execution folder | `+"`"+`{{.ExecutionFolderPath}}/`+"`"+` | READ |
 | Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` | READ/WRITE |
 | Downloads (user files) | `+"`"+`{{.DownloadsPath}}/`+"`"+` | READ/WRITE |
@@ -60,6 +59,11 @@ All paths are absolute. Quote paths with single quotes in shell commands (folder
 - Step folder is **volatile** — deleted on re-execution. Write all output files here.
 - **Output validation**: Your step's output files are validated after execution. If validation fails, you'll receive feedback and must fix the issues.
 - Do NOT copy dependency files into the Step folder just to satisfy a sub-agent. Pass the original producer file path in instructions and let the sub-agent read that file directly.
+- Only access knowledgebase or learnings when those paths appear in the folder guard or a dedicated prompt section grants access.
+
+**Folder Guard (enforced)**:
+- Allowed READ: {{.FolderGuardReadPaths}}
+- Allowed WRITE: {{.FolderGuardWritePaths}}
 
 {{if .ValidationSchema}}
 ### Required Output Files (Pre-Validation Schema)
@@ -75,8 +79,8 @@ When delegating to a sub-agent, pass the exact output file paths and required st
 
 **Three persistent stores — keep them separate when instructing sub-agents:**
 - **db/** — workflow state and results (JSON produced/consumed by steps). Step-owned, upsert-by-key, never overwrite wholesale.
-- **knowledgebase/notes/** — per-topic narrative markdown the workflow accumulates about its subject matter (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*.md`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. {{if eq .KbWriteMethod "direct"}}This step (and its sub-agents) write KB directly — see the **Knowledgebase contribution** block below. The post-step KB update agent does NOT run. Writes use shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`; keep `+"`"+`_index.json`+"`"+` in sync.{{else}}Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`notes/`+"`"+` directly.{{end}}
-- **learnings/** — HOW to run the task. Read-only at execution time; the learning agent maintains it.
+- **knowledgebase/notes/** — per-topic narrative markdown the workflow accumulates about its subject matter (entity-scoped like `+"`"+`company-acme.md`+"`"+` or cross-cutting like `+"`"+`pattern-*.md`+"`"+`), plus `+"`"+`notes/_index.json`+"`"+` as the registry. Use it only when `+"`"+`knowledgebase_access`+"`"+` grants read/write. {{if eq .KbWriteMethod "direct"}}This step (and its sub-agents) write KB directly — see the **Knowledgebase contribution** block below. The post-step KB update agent does NOT run. Writes use shell heredoc or `+"`"+`diff_patch_workspace_file`+"`"+`; keep `+"`"+`_index.json`+"`"+` in sync.{{else}}Written **only by the post-step KB update agent**. Sub-agents may read via shell if `+"`"+`knowledgebase_access`+"`"+` grants read; they must NOT edit `+"`"+`notes/`+"`"+` directly.{{end}}
+- **learnings/** — HOW to run the task. Use it only when relevant learnings are injected or the folder is listed in Allowed READ.
 
 {{if ne .KbAccess "none"}}Knowledgebase access for this step: **{{.KbAccessLabel}}**.{{if eq .KbAccess "read"}} Sub-agents may `+"`"+`cat`+"`"+` / `+"`"+`jq`+"`"+` KB files; writes are blocked.{{else if eq .KbWriteMethod "direct"}} Direct write: this orchestrator (and every sub-agent it delegates to) contributes KB inline — see the **Knowledgebase contribution** block below. No post-step KB update agent runs.{{else}} Write-scoped (agent method): emit observations in step output and let the post-step KB update agent append to the right topic files — do not patch `+"`"+`notes/`+"`"+` directly.{{end}}
 {{end}}

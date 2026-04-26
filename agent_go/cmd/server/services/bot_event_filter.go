@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // BlockingEventCallback is called when a blocking event is received.
@@ -299,8 +300,8 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			f.checkSessionDone(event.Type)
 		}
 
-	case "agent_error", "conversation_error":
-		f.sendMessage(ctx, "An error occurred during processing.")
+	case "agent_error", "conversation_error", "orchestrator_agent_error":
+		f.sendMessage(ctx, f.formatErrorEvent(event))
 		return true
 	}
 	return false
@@ -514,6 +515,39 @@ func (f *BotEventFilter) getDelegationName(event BotEventData) string {
 		name = name[:50] + "…"
 	}
 	return name
+}
+
+// formatErrorEvent renders an error event for display in the bot thread.
+// Pulls the actual error message from AgentErrorEvent / ConversationErrorEvent /
+// OrchestratorAgentErrorEvent so users see what failed instead of a generic line.
+// Falls back to the generic message if the typed payload is unavailable.
+func (f *BotEventFilter) formatErrorEvent(event BotEventData) string {
+	const fallback = "An error occurred during processing."
+	if event.Data == nil || event.Data.Data == nil {
+		return fallback
+	}
+	var errMsg, agent string
+	switch d := event.Data.Data.(type) {
+	case *events.AgentErrorEvent:
+		errMsg = d.Error
+	case *events.ConversationErrorEvent:
+		errMsg = d.Error
+	case *orchestrator_events.OrchestratorAgentErrorEvent:
+		errMsg = d.Error
+		agent = d.AgentName
+	}
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		return fallback
+	}
+	const maxLen = 1500
+	if len(errMsg) > maxLen {
+		errMsg = errMsg[:maxLen] + "…"
+	}
+	if agent != "" {
+		return fmt.Sprintf("Error in `%s`: %s", agent, errMsg)
+	}
+	return "Error: " + errMsg
 }
 
 // describeToolCall translates a tool_call_start event into a user-friendly activity description.

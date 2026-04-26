@@ -12,6 +12,7 @@ These docs cover workflow design, execution, and workflow-scoped runtime behavio
 
 ## Files
 
+- `auto_improvement_framework.md` — type-aware improvement framework: workflow types, metrics, decisions, experiment loop, user oversight
 - `cost_and_log_measurement.md`
 - `evaluation_system.md`
 - `how_workflows_work.md`

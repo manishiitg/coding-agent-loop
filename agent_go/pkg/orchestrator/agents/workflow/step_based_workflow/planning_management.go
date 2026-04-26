@@ -55,10 +55,6 @@ func validateRoutingStepTyped(step PlanStepInterface, stepIndex int) error {
 		if routingStep.DefaultRouteID != "" && !routeIDs[routingStep.DefaultRouteID] {
 			return fmt.Errorf("routing step at index %d (title: %q) has default_route_id %q that doesn't match any route_id", stepIndex, step.GetTitle(), routingStep.DefaultRouteID)
 		}
-		// If description is set, success_criteria must also be set (execute-then-route mode)
-		if routingStep.Description != "" && routingStep.SuccessCriteria == "" {
-			return fmt.Errorf("routing step at index %d (title: %q) has description but is missing required success_criteria (execute-then-route mode requires both)", stepIndex, step.GetTitle())
-		}
 	}
 	return nil
 }

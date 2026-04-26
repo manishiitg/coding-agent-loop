@@ -256,7 +256,6 @@ type CommonStepFields struct {
 	ID                  string                `json:"id"` // Stable step ID (generated from title) - required
 	Title               string                `json:"title"`
 	Description         string                `json:"description"`
-	SuccessCriteria     string                `json:"success_criteria"`
 	ContextDependencies []string              `json:"context_dependencies"`
 	ContextOutput       FlexibleContextOutput `json:"context_output"`              // Use flexible type to handle string or array
 	ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
@@ -274,7 +273,6 @@ type PlanStepInterface interface {
 	GetID() string
 	GetTitle() string
 	GetDescription() string
-	GetSuccessCriteria() string
 	GetContextDependencies() []string
 	GetContextOutput() FlexibleContextOutput
 	GetValidationSchema() *ValidationSchema
@@ -298,7 +296,6 @@ type RegularPlanStep struct {
 func (r *RegularPlanStep) GetID() string                           { return r.ID }
 func (r *RegularPlanStep) GetTitle() string                        { return r.Title }
 func (r *RegularPlanStep) GetDescription() string                  { return r.Description }
-func (r *RegularPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RegularPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RegularPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
 func (r *RegularPlanStep) GetValidationSchema() *ValidationSchema  { return r.ValidationSchema }
@@ -335,7 +332,6 @@ type ConditionalPlanStep struct {
 func (c *ConditionalPlanStep) GetID() string                           { return c.ID }
 func (c *ConditionalPlanStep) GetTitle() string                        { return c.Title }
 func (c *ConditionalPlanStep) GetDescription() string                  { return c.Description }
-func (c *ConditionalPlanStep) GetSuccessCriteria() string              { return c.SuccessCriteria }
 func (c *ConditionalPlanStep) GetContextDependencies() []string        { return c.ContextDependencies }
 func (c *ConditionalPlanStep) GetContextOutput() FlexibleContextOutput { return c.ContextOutput }
 func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema  { return c.ValidationSchema }
@@ -345,7 +341,6 @@ func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 		ID:                  c.ID,
 		Title:               c.Title,
 		Description:         c.Description,
-		SuccessCriteria:     c.SuccessCriteria,
 		ContextDependencies: c.ContextDependencies,
 		ContextOutput:       c.ContextOutput,
 		ValidationSchema:    c.ValidationSchema,
@@ -491,7 +486,6 @@ type RoutingPlanStep struct {
 func (r *RoutingPlanStep) GetID() string                           { return r.ID }
 func (r *RoutingPlanStep) GetTitle() string                        { return r.Title }
 func (r *RoutingPlanStep) GetDescription() string                  { return r.Description }
-func (r *RoutingPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RoutingPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RoutingPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
 func (r *RoutingPlanStep) GetValidationSchema() *ValidationSchema  { return r.ValidationSchema }
@@ -501,7 +495,6 @@ func (r *RoutingPlanStep) GetCommonFields() CommonStepFields {
 		ID:                  r.ID,
 		Title:               r.Title,
 		Description:         r.Description,
-		SuccessCriteria:     r.SuccessCriteria,
 		ContextDependencies: r.ContextDependencies,
 		ContextOutput:       r.ContextOutput,
 		ValidationSchema:    r.ValidationSchema,
@@ -548,7 +541,6 @@ type HumanInputPlanStep struct {
 func (h *HumanInputPlanStep) GetID() string                           { return h.ID }
 func (h *HumanInputPlanStep) GetTitle() string                        { return h.Title }
 func (h *HumanInputPlanStep) GetDescription() string                  { return h.Description }
-func (h *HumanInputPlanStep) GetSuccessCriteria() string              { return h.SuccessCriteria }
 func (h *HumanInputPlanStep) GetContextDependencies() []string        { return h.ContextDependencies }
 func (h *HumanInputPlanStep) GetContextOutput() FlexibleContextOutput { return h.ContextOutput }
 func (h *HumanInputPlanStep) GetValidationSchema() *ValidationSchema  { return h.ValidationSchema }
@@ -605,7 +597,6 @@ type TodoTaskResponse struct {
 func (t *TodoTaskPlanStep) GetID() string                           { return t.ID }
 func (t *TodoTaskPlanStep) GetTitle() string                        { return t.Title }
 func (t *TodoTaskPlanStep) GetDescription() string                  { return t.Description }
-func (t *TodoTaskPlanStep) GetSuccessCriteria() string              { return t.SuccessCriteria }
 func (t *TodoTaskPlanStep) GetContextDependencies() []string        { return t.ContextDependencies }
 func (t *TodoTaskPlanStep) GetContextOutput() FlexibleContextOutput { return t.ContextOutput }
 func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema  { return t.ValidationSchema }
@@ -633,7 +624,6 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 		Title string   `json:"title"`
 		// Flat format fields (new)
 		Description         string                `json:"description"`
-		SuccessCriteria     string                `json:"success_criteria"`
 		ContextDependencies []string              `json:"context_dependencies"`
 		ContextOutput       FlexibleContextOutput `json:"context_output"`
 		ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"`
@@ -662,7 +652,6 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 
 	// Copy flat format fields
 	t.Description = temp.Description
-	t.SuccessCriteria = temp.SuccessCriteria
 	t.ContextDependencies = temp.ContextDependencies
 	t.ContextOutput = temp.ContextOutput
 	t.ValidationSchema = temp.ValidationSchema
@@ -676,9 +665,6 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 		}
 		if t.Description == "" {
 			t.Description = innerStep.GetDescription()
-		}
-		if t.SuccessCriteria == "" {
-			t.SuccessCriteria = innerStep.GetSuccessCriteria()
 		}
 		if t.ContextDependencies == nil {
 			t.ContextDependencies = innerStep.GetContextDependencies()
@@ -869,7 +855,6 @@ type PartialPlanStep struct {
 	ExistingStepID      string                `json:"existing_step_id"`               // Required: ID of existing step to update
 	Title               string                `json:"title,omitempty"`                // Optional: New title (if renaming)
 	Description         string                `json:"description,omitempty"`          // Optional: Updated description
-	SuccessCriteria     string                `json:"success_criteria,omitempty"`     // Optional: Updated success criteria
 	ContextDependencies []string              `json:"context_dependencies,omitempty"` // Optional: Updated context dependencies
 	ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`       // Optional: Updated context output
 	HasLoop             *bool                 `json:"has_loop,omitempty"`             // DEPRECATED: loop feature removed, kept for JSON backward compatibility
@@ -932,10 +917,6 @@ func getUpdateRegularStepSchema() string {
 							"type": "string",
 				"description": "OPTIONAL: Updated description. Only include if you want to change the description. If omitted, the existing description is preserved."
 						},
-						"success_criteria": {
-							"type": "string",
-							"description": "OPTIONAL: Updated success criteria. Only include if you want to change it. If omitted, the existing success criteria is preserved."
-						},
 						"context_dependencies": {
 							"type": "array",
 							"items": { "type": "string" },
@@ -992,10 +973,6 @@ func getAddRegularStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: COMPREHENSIVE, DETAILED description of what this step accomplishes. Be thorough and complete - include specific details about what needs to be done, what tools or approaches might be needed, what outcomes are expected, key considerations, and any important context."
 			},
-			"success_criteria": {
-				"type": "string",
-				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully. Focus on EXECUTION-BASED validation - what work was actually done, not just file structure. Pre-validation handles file/field existence checks automatically. Your criteria should describe: (1) What evidence proves the execution agent actually performed the work (e.g., 'Agent read source files and processed data', 'Agent made API calls and received responses', 'Agent transformed data according to business rules'). (2) What outcomes demonstrate successful execution (e.g., 'Data was correctly transformed', 'All required operations completed', 'External system was updated'). (3) Evidence that can be verified against execution history (tool calls, file reads, data transformations). GOOD EXAMPLES: 'Execution history shows agent read source_data.json, processed all entries, and created transformed_data.json with correct structure', 'Agent successfully authenticated with API (tool calls show auth requests), retrieved data, and wrote results.json', 'Agent verified data integrity by reading source files, computing checksums, and comparing values'. BAD EXAMPLES (avoid): 'File contains status: success' (too vague, can be faked), 'File exists' (pre-validation handles this), 'All fields present' (pre-validation handles this)."
-			},
 			"context_dependencies": {
 				"type": "array",
 				"items": { "type": "string" },
@@ -1011,7 +988,7 @@ func getAddRegularStepSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the step description and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If the step description requires 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -1050,7 +1027,7 @@ func getAddRegularStepSchema() string {
 				}
 			}
 		},
-		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "has_loop", "insert_after_step_id", "validation_schema"]
+		"required": ["id", "title", "description", "context_dependencies", "context_output", "insert_after_step_id", "validation_schema"]
 	}`
 }
 
@@ -1070,10 +1047,6 @@ func getAddRoutingStepSchema() string {
 			"description": {
 				"type": "string",
 				"description": "OPTIONAL: Description of what the routing step does during execution phase. If provided, the step executes first (execute-then-route mode). If omitted, routing evaluates prior context only (pure routing mode)."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: How to verify execution completed. REQUIRED if description is provided (execute-then-route mode)."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1144,10 +1117,6 @@ func getUpdateRoutingStepSchema() string {
 			"description": {
 				"type": "string",
 				"description": "OPTIONAL: Updated description. Provide to enable execute-then-route mode."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: Updated success criteria. Required if description is provided."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1264,10 +1233,6 @@ func getAddTodoTaskStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: Description of the overall objective - the orchestrator will break this into tasks"
 			},
-			"success_criteria": {
-				"type": "string",
-				"description": "REQUIRED: How to verify the overall objective is complete (all todos done)"
-			},
 			"context_dependencies": {
 				"type": "array",
 				"items": {"type": "string"},
@@ -1319,10 +1284,8 @@ func getAddTodoTaskStepSchema() string {
 								"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 								"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
-								"success_criteria": {"type": "string", "description": "REQUIRED: How to verify sub-agent completed successfully"},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
-								"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {
@@ -1380,10 +1343,6 @@ func getUpdateTodoTaskStepSchema() string {
 				"type": "string",
 				"description": "OPTIONAL: Updated description of the overall objective"
 			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: Updated success criteria"
-			},
 			"context_dependencies": {
 				"type": "array",
 				"items": {"type": "string"},
@@ -1422,10 +1381,8 @@ func getUpdateTodoTaskStepSchema() string {
 								"id": {"type": "string"},
 								"title": {"type": "string"},
 								"description": {"type": "string"},
-								"success_criteria": {"type": "string"},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string"},
-								"has_loop": {"type": "boolean"},
 								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
 								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {"type": "object"}
@@ -1481,10 +1438,8 @@ func getAddTodoTaskRouteSchema() string {
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 							"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
-							"success_criteria": {"type": "string", "description": "REQUIRED: How to verify sub-agent completed successfully"},
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
 							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
-							"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
 							"todo_task_step": {"type": "object", "description": "When type='todo_task': the nested orchestrator's inner regular step metadata."},
 							"predefined_routes": {"type": "array", "description": "When type='todo_task': predefined routes for the nested orchestrator. Each route's sub_agent_step must be type='regular'."},
 							"validation_schema": {
@@ -1539,10 +1494,8 @@ func getUpdateTodoTaskRouteSchema() string {
 					"id": {"type": "string"},
 					"title": {"type": "string"},
 					"description": {"type": "string"},
-					"success_criteria": {"type": "string"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
 					"context_output": {"type": "string"},
-					"has_loop": {"type": "boolean"},
 					"todo_task_step": {"type": "object", "description": "When type='todo_task': nested orchestrator inner step metadata."},
 					"predefined_routes": {"type": "array", "description": "When type='todo_task': nested routes — each must be type='regular'."},
 						"validation_schema": {"type": "object"}
@@ -1644,7 +1597,7 @@ func getUpdateValidationSchemaSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the step description and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If the step description requires 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -2143,15 +2096,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 			NewValue: newStep.GetDescription(),
 		})
 	}
-	if oldStep.GetSuccessCriteria() != newStep.GetSuccessCriteria() {
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    prefix + ".success_criteria",
-			OldValue: oldStep.GetSuccessCriteria(),
-			NewValue: newStep.GetSuccessCriteria(),
-		})
-	}
-
 	// Compare context dependencies
 	oldDeps := oldStep.GetContextDependencies()
 	newDeps := newStep.GetContextDependencies()
@@ -2326,9 +2270,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.Description != "" {
 			updated.Description = partialUpdate.Description
 		}
-		if partialUpdate.SuccessCriteria != "" {
-			updated.SuccessCriteria = partialUpdate.SuccessCriteria
-		}
 		if partialUpdate.ContextDependencies != nil {
 			updated.ContextDependencies = partialUpdate.ContextDependencies
 		}
@@ -2394,9 +2335,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.Description != "" {
 			updated.Description = partialUpdate.Description
 		}
-		if partialUpdate.SuccessCriteria != "" {
-			updated.SuccessCriteria = partialUpdate.SuccessCriteria
-		}
 		if partialUpdate.ContextDependencies != nil {
 			updated.ContextDependencies = partialUpdate.ContextDependencies
 		}
@@ -2440,9 +2378,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.Description != "" {
 			updated.Description = partialUpdate.Description
 		}
-		if partialUpdate.SuccessCriteria != "" {
-			updated.SuccessCriteria = partialUpdate.SuccessCriteria
-		}
 		if partialUpdate.ContextDependencies != nil {
 			updated.ContextDependencies = partialUpdate.ContextDependencies
 		}
@@ -2456,9 +2391,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 			}
 			if title, ok := partialUpdate.TodoTaskStep["title"].(string); ok && title != "" {
 				updated.Title = title
-			}
-			if successCriteria, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok && successCriteria != "" {
-				updated.SuccessCriteria = successCriteria
 			}
 			if contextDeps, ok := partialUpdate.TodoTaskStep["context_dependencies"].([]interface{}); ok {
 				updated.ContextDependencies = make([]string, 0, len(contextDeps))
@@ -2507,9 +2439,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.Description != "" {
 			updated.Description = partialUpdate.Description
-		}
-		if partialUpdate.SuccessCriteria != "" {
-			updated.SuccessCriteria = partialUpdate.SuccessCriteria
 		}
 		if partialUpdate.ContextDependencies != nil {
 			updated.ContextDependencies = partialUpdate.ContextDependencies
@@ -2641,15 +2570,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "description",
 			OldValue: existingStep.GetDescription(),
 			NewValue: partialUpdate.Description,
-		})
-	}
-	if partialUpdate.SuccessCriteria != "" {
-		changedFields = append(changedFields, "success_criteria")
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "success_criteria",
-			OldValue: existingStep.GetSuccessCriteria(),
-			NewValue: partialUpdate.SuccessCriteria,
 		})
 	}
 	if partialUpdate.ContextDependencies != nil {
@@ -2835,17 +2755,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 					Field:    "description",
 					OldValue: todoTaskStep.Description,
 					NewValue: desc,
-				})
-			}
-		}
-		if sc, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok && sc != "" {
-			changedFields = append(changedFields, "success_criteria (via todo_task_step)")
-			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "success_criteria",
-					OldValue: todoTaskStep.SuccessCriteria,
-					NewValue: sc,
 				})
 			}
 		}
@@ -3438,10 +3347,6 @@ func validateRoutingStepFieldsTyped(step *RoutingPlanStep) error {
 		}
 		routeIDs[route.RouteID] = true
 	}
-	// If description is set, success_criteria must also be set (execute-then-route mode)
-	if step.Description != "" && step.SuccessCriteria == "" {
-		return fmt.Errorf("routing step (title: %q, ID: %s) has description but is missing required success_criteria (execute-then-route mode requires both)", step.Title, step.ID)
-	}
 	// Validate default_route_id if set
 	if step.DefaultRouteID != "" {
 		if !routeIDs[step.DefaultRouteID] {
@@ -4000,7 +3905,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"create_plan",
-		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: objective and success_criteria live in soul/soul.md — edit that file separately; plan.json no longer stores them.",
+		"Initialize an empty planning/plan.json for a new workflow. Call this FIRST when the workflow has no plan.json yet, before using add_regular_step / add_human_input_step / add_todo_task_step / add_routing_step to populate it. Refuses to overwrite an existing plan.json. Takes no arguments. Note: workflow objective lives in soul/soul.md — edit that file separately; plan.json no longer stores it.",
 		createPlanParams,
 		createCreatePlanExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -4017,7 +3922,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_regular_step",
-		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, success_criteria, context fields, loop fields). The plan.json file is updated immediately when this tool is called.",
+		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, context fields, loop fields). The plan.json file is updated immediately when this tool is called.",
 		regularUpdateParams,
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4067,7 +3972,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_regular_step",
-		"Add a regular execution step to the plan. Use this for standard steps that execute once and produce output. Provide all required fields: id, title, description, success_criteria, context_output, has_loop, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add a regular execution step to the plan. Use this for standard steps that execute once and produce output. Provide all required fields: id, title, description, context_output, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
 		regularParams,
 		createAddRegularStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -4121,7 +4026,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_routing_step",
-		"Add a routing step to the plan. Use this for N-way LLM-based routing where you need to evaluate a question and route to one of multiple possible next steps. Two modes: (1) Execute-then-route: provide description/success_criteria to execute a step first, then route based on output; (2) Pure routing: omit description to evaluate prior context only. Provide: id, title, routing_question, routes (min 2 with route_id/route_name/condition/next_step_id), context_dependencies, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add a routing step to the plan. Use this for N-way LLM-based routing where you need to evaluate a question and route to one of multiple possible next steps. Two modes: (1) Execute-then-route: provide a description to execute a step first, then route based on output; (2) Pure routing: omit description to evaluate prior context only. Provide: id, title, routing_question, routes (min 2 with route_id/route_name/condition/next_step_id), context_dependencies, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
 		routingParams,
 		createAddRoutingStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -4136,7 +4041,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_routing_step",
-		"Update a routing step in the plan. Provide existing_step_id (required) to identify which routing step to update, and only include the fields you want to change (title, description, success_criteria, routing_question, routes, default_route_id, context_dependencies, context_output). The plan.json file is updated immediately when this tool is called.",
+		"Update a routing step in the plan. Provide existing_step_id (required) to identify which routing step to update, and only include the fields you want to change (title, description, routing_question, routes, default_route_id, context_dependencies, context_output). The plan.json file is updated immediately when this tool is called.",
 		routingUpdateParams,
 		createUpdateRoutingStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",

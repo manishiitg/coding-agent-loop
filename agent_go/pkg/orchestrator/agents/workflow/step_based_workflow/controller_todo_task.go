@@ -754,11 +754,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	genericStep := &RegularPlanStep{
 		Type: StepTypeRegular,
 		CommonStepFields: CommonStepFields{
-			ID:              genericStepID,
-			Title:           taskTitle,
-			Description:     response.InstructionsToSubAgent,
-			SuccessCriteria: response.SuccessCriteriaForSubAgent,
-			ContextOutput:   FlexibleContextOutput(fmt.Sprintf("%s-result.json", response.TodoIDToExecute)),
+			ID:            genericStepID,
+			Title:         taskTitle,
+			Description:   response.InstructionsToSubAgent,
+			ContextOutput: FlexibleContextOutput(fmt.Sprintf("%s-result.json", response.TodoIDToExecute)),
 		},
 		HasLoop: false,
 		// Generic agents do not contribute learnings and skip pre-validation, but

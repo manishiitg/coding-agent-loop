@@ -10463,7 +10463,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 		"StepID":                  stepID,
 		"StepTitle":               targetStep.GetTitle(),
 		"StepDescription":         targetStep.GetDescription(),
-		"StepSuccessCriteria":     targetStep.GetSuccessCriteria(),
 		"StepContextOutput":       targetStep.GetContextOutput().String(),
 		"StepContextDependencies": contextDeps,
 		"WorkspacePath":           workspacePath,
@@ -11716,10 +11715,9 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 	todoStep := &TodoTaskPlanStep{
 		Type: StepTypeTodoTask,
 		CommonStepFields: CommonStepFields{
-			ID:              stepID,
-			Title:           name,
-			Description:     instruction,
-			SuccessCriteria: fmt.Sprintf("Complete all tasks described in the instruction for: %s", name),
+			ID:          stepID,
+			Title:       name,
+			Description: instruction,
 		},
 		PredefinedRoutes: nil, // generic agent only
 		NextStepID:       "end",

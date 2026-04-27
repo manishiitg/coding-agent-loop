@@ -387,30 +387,49 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [])
 
   const workspacePaneVisible = !showChatArea || showWorkspacePane
-  // Mobile preview drops the report into a narrow 480px side column when chat
-  // is also visible. Tablet and laptop modes leave the report in the normal
-  // wide canvas pane; the inner shell width inside ReportView constrains to
-  // its tier (880px / full). 'auto' falls through to whichever the wider
-  // layout default would pick.
-  const shouldUseMobileReportPane =
-    showChatArea &&
-    workspacePaneVisible &&
-    canvasViewMode === 'report' &&
-    reportPreviewPreference === 'mobile'
+  // Each preview tier controls the OUTER report pane width when both chat and
+  // canvas are visible — not just the inner shell. Otherwise switching to
+  // laptop mode would only change the inner max-width while the surrounding
+  // pane stayed pinned at 50% of the screen.
+  //
+  //   mobile  → report 480px column, chat takes the rest (review-style)
+  //   tablet  → report 880px column, chat takes the rest
+  //   laptop  → chat collapses to ~360px, report fills the remaining width
+  //   default → 50/50 split (no preview pref, or running in non-report views)
+  const isReportCanvas =
+    showChatArea && workspacePaneVisible && canvasViewMode === 'report'
+  const reportPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isReportCanvas
+    ? reportPreviewPreference === 'mobile'
+      ? 'mobile'
+      : reportPreviewPreference === 'tablet'
+        ? 'tablet'
+        : reportPreviewPreference === 'desktop'
+          ? 'laptop'
+          : null
+    : null
+  // Backward-compat alias kept for downstream readers — mobile pane behaviour
+  // is unchanged.
+  const shouldUseMobileReportPane = reportPaneTier === 'mobile'
   const splitLayoutClassName = !showChatArea
     ? 'flex-1 min-h-0 flex flex-col'
     : !workspacePaneVisible
       ? 'flex-1 min-h-0 flex flex-col'
-      : shouldUseMobileReportPane
-      ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:grid-rows-[auto_minmax(0,1fr)]'
-      : 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-2 lg:grid-rows-[auto_minmax(0,1fr)]'
+      : reportPaneTier === 'mobile'
+        ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:grid-rows-[auto_minmax(0,1fr)]'
+        : reportPaneTier === 'tablet'
+          ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_880px] lg:grid-rows-[auto_minmax(0,1fr)]'
+          : reportPaneTier === 'laptop'
+            ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[360px_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]'
+            : 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-2 lg:grid-rows-[auto_minmax(0,1fr)]'
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
       ? 'hidden'
-    : shouldUseMobileReportPane
-      ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[480px] lg:flex-none'
-      : 'min-h-0 min-w-0 transition-all duration-300 lg:col-start-2 lg:row-start-2'
+      : reportPaneTier === 'mobile'
+        ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[480px] lg:flex-none'
+        : reportPaneTier === 'tablet'
+          ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[880px] lg:flex-none'
+          : 'min-h-0 min-w-0 transition-all duration-300 lg:col-start-2 lg:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {

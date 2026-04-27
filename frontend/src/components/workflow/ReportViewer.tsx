@@ -695,6 +695,12 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     })
   }
 
+  // Collapsed-by-default preview controls — show only the active mode's icon
+  // until the user hovers/focuses the cluster. JS state instead of CSS
+  // group-hover so the expansion is predictable on touch devices and
+  // tolerates Tailwind purge edge cases.
+  const [previewControlsExpanded, setPreviewControlsExpanded] = useState(false)
+
   return (
     <div
       className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
@@ -765,14 +771,22 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
 
       <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
         {canUseSplitPreview && (
-          // Collapsed: shows just the active-mode icon. On hover (or focus-within
-          // for keyboard users), the wrapper expands to reveal all three. Pure
-          // CSS — width transitions on the inner row, individual buttons fade in
-          // via group-hover. No JS state needed.
+          // Three-state preview-width control. Collapsed by default to just the
+          // active-mode icon; expands on mouse-enter or focus to reveal the
+          // other two. The cluster's outer padding gives the hover affordance
+          // a comfortable target — pointer doesn't need to land on the icon.
           <div
             role="group"
             aria-label="Report preview width"
-            className="group inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
+            onMouseEnter={() => setPreviewControlsExpanded(true)}
+            onMouseLeave={() => setPreviewControlsExpanded(false)}
+            onFocus={() => setPreviewControlsExpanded(true)}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                setPreviewControlsExpanded(false)
+              }
+            }}
+            className="inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
           >
             {([
               { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
@@ -780,15 +794,21 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
               { mode: 'desktop', Icon: Monitor, label: 'Laptop preview (full width)' },
             ] as const).map(({ mode, Icon, label }) => {
               const active = previewMode === mode
+              const visible = active || previewControlsExpanded
               return (
                 <button
                   key={mode}
                   onClick={() => setPreviewMode(mode)}
-                  className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-all duration-150 ${
+                  className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-[width,opacity] duration-150 ease-out ${
                     active
-                      ? 'w-8 bg-primary text-primary-foreground shadow-sm'
-                      : 'w-0 text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:w-8 group-hover:opacity-100 group-focus-within:w-8 group-focus-within:opacity-100'
+                      ? 'bg-muted text-foreground'
+                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   }`}
+                  style={{
+                    width: visible ? 32 : 0,
+                    opacity: visible ? 1 : 0,
+                    pointerEvents: visible ? 'auto' : 'none',
+                  }}
                   title={label}
                   aria-label={label}
                   aria-pressed={active}

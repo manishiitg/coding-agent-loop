@@ -563,7 +563,8 @@ func parseReportPlanMarkdownRowDocument(body []string) *reportPlanDocumentRow {
 }
 
 func reportPlanDocumentWidgetKindAllowed(kind string) bool {
-	return kind == "text" || kind == "table" || kind == "chart" ||
+	return kind == "text" || kind == "markdown" ||
+		kind == "table" || kind == "cards" || kind == "chart" ||
 		kind == "stat" || kind == "alert" || kind == "pivot" ||
 		kind == "costs" || kind == "evals" || kind == "runs"
 }
@@ -2815,6 +2816,12 @@ func registerReportPlanManagementTools(
 				"additionalProperties": false
 			},
 			"hideColumns": { "type": "array", "items": { "type": "string" } },
+			"fields": { "type": "array", "items": { "type": "string" } },
+			"cardTitleField": { "type": "string" },
+			"cardSubtitleField": { "type": "string" },
+			"cardDescriptionField": { "type": "string" },
+			"cardLinkField": { "type": "string" },
+			"cardImageField": { "type": "string" },
 			"chartType": { "type": "string", "enum": ["bar", "line", "area", "pie"] },
 			"xAxis": { "type": "string" },
 			"yAxis": { "type": "string" },
@@ -2851,7 +2858,15 @@ func registerReportPlanManagementTools(
 			"evalsMetric": { "type": "string", "enum": ["score_percentage", "total_score"] },
 			"runsView": { "type": "string", "enum": ["summary", "duration-chart", "status-chart", "table"] },
 			"runFolder": { "type": "string" },
-			"group": { "type": "string" }
+			"group": { "type": "string" },
+			"layout": {
+				"type": "object",
+				"properties": {
+					"span": { "type": "integer", "minimum": 1, "maximum": 24 },
+					"minWidth": { "type": "integer", "minimum": 1 }
+				},
+				"additionalProperties": false
+			}
 		},
 		"additionalProperties": false
 	}`
@@ -2863,7 +2878,7 @@ func registerReportPlanManagementTools(
 			"section_heading": { "type": "string" },
 			"row_id": { "type": "string" },
 			"widget_id": { "type": "string" },
-			"kind": { "type": "string", "enum": ["text", "table", "chart", "stat", "alert", "pivot", "costs", "evals", "runs"] },
+			"kind": { "type": "string", "enum": ["text", "markdown", "table", "cards", "chart", "stat", "alert", "pivot", "costs", "evals", "runs"] },
 			"index": { "type": "integer" },
 			"config": %s
 		},
@@ -2874,7 +2889,9 @@ func registerReportPlanManagementTools(
 
 	mcpAgent.RegisterCustomTool(
 		"upsert_report_widget",
-		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.",
+		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
+			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate), costs / evals / runs (workflow-API-driven; source/path are ignored).\n\n"+
+			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. Use set_section_layout to enable grid mode on a section, and set_report_theme to swap the chart palette report-wide.",
 		upsertParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
@@ -3102,6 +3119,98 @@ func registerReportPlanManagementTools(
 				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
 			}
 			return fmt.Sprintf("report widget toggled: %s hidden=%v\n", widgetID, hidden) + string(out), nil
+		},
+		"workflow",
+	)
+
+	themeSchema := `{
+		"type": "object",
+		"properties": {
+			"theme": { "type": ["string", "null"] }
+		},
+		"additionalProperties": false
+	}`
+	themeParams, _ := parseSchemaForToolParameters(themeSchema)
+	mcpAgent.RegisterCustomTool(
+		"set_report_theme",
+		"Set the plan-level theme on reports/report_plan.json. The theme value lands on the report root as data-report-theme=<theme> and overrides the chart palette (--chart-1..5) and accent color across the report. Pass theme: \"brand\" / \"warm\" / \"cool\" for the bundled themes, or null/empty to clear the override and fall back to the workspace defaults. Themes scope to the report subtree only; surrounding app chrome is unaffected.",
+		themeParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			theme := ""
+			if raw, ok := args["theme"].(string); ok {
+				theme = strings.TrimSpace(raw)
+			}
+			doc.Theme = theme
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+			out, err := json.MarshalIndent(map[string]interface{}{"theme": doc.Theme, "plan": doc}, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("report theme set: %q\n", doc.Theme) + string(out), nil
+		},
+		"workflow",
+	)
+
+	sectionLayoutSchema := `{
+		"type": "object",
+		"properties": {
+			"section_id": { "type": "string" },
+			"section_heading": { "type": "string" },
+			"columns": { "type": ["integer", "null"], "minimum": 1, "maximum": 24 },
+			"gap": { "type": ["integer", "null"], "minimum": 0, "maximum": 64 }
+		},
+		"additionalProperties": false
+	}`
+	sectionLayoutParams, _ := parseSchemaForToolParameters(sectionLayoutSchema)
+	mcpAgent.RegisterCustomTool(
+		"set_section_layout",
+		"Set or clear a section's grid layout. When columns is set (1–24), the section's entries flow into a CSS Grid of that width and individual widgets honor their layout.span field. Pass columns: null (or omit) to drop the layout and fall back to the default flex layout. Identify the section via section_id (preferred — call get_report_plan first) or section_heading.",
+		sectionLayoutParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", err
+			}
+			doc := cleanupReportPlanDocument(planRead.Document)
+			sectionID, _ := args["section_id"].(string)
+			sectionHeading, _ := args["section_heading"].(string)
+			idx := reportPlanFindSection(doc, sectionID, sectionHeading)
+			if idx < 0 {
+				return "", fmt.Errorf("section not found (section_id=%q, section_heading=%q) — call get_report_plan first", sectionID, sectionHeading)
+			}
+			columns := 0
+			if raw, ok := args["columns"].(float64); ok {
+				columns = int(raw)
+			}
+			gap := 0
+			if raw, ok := args["gap"].(float64); ok {
+				gap = int(raw)
+			}
+			if columns <= 0 {
+				doc.Sections[idx].Layout = nil
+			} else {
+				doc.Sections[idx].Layout = &reportPlanDocumentSectionLayout{
+					Columns: columns,
+					Gap:     gap,
+				}
+			}
+			doc = cleanupReportPlanDocument(doc)
+			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
+				return "", err
+			}
+			out, err := json.MarshalIndent(map[string]interface{}{"section_id": doc.Sections[idx].ID, "layout": doc.Sections[idx].Layout, "plan": doc}, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
+			}
+			return fmt.Sprintf("section layout set: %s\n", doc.Sections[idx].ID) + string(out), nil
 		},
 		"workflow",
 	)

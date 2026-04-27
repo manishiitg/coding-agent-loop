@@ -46,6 +46,7 @@ import type {
   PhaseTokenUsageFile,
   PlannerFile,
   ReportEntry,
+  ReportSection,
   ReportWidget,
   ReportWidgetKind,
   RunFoldersResponse,
@@ -729,72 +730,26 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
 
             {!loading && !error && hasAnyContent && (
               <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-                {visibleSections.map(({ section, sectionIndex, entries }) => {
-                  const gridColumns = section.layout?.columns
-                  const gridGap = section.layout?.gap ?? 12
-                  const containerClassName = gridColumns
-                    ? 'grid'
-                    : 'flex flex-col gap-3'
-                  const containerStyle = gridColumns
-                    ? {
-                        gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))`,
-                        gap: `${gridGap}px`,
-                      }
-                    : undefined
-                  return (
-                    <section key={sectionIndex} className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
-                      <SectionHeader
-                        heading={section.heading}
-                      />
-                      <div className={containerClassName} style={containerStyle}>
-                        {entries.map(({ entry, entryIndex }) => {
-                          const span = entry.kind === 'single'
-                            ? entry.widget.layout?.span
-                            : undefined
-                          // Row entries always span the full grid; widgets within reflow via the row's own flex.
-                          const cellSpan = gridColumns
-                            ? entry.kind === 'row'
-                              ? gridColumns
-                              : Math.min(span ?? gridColumns, gridColumns)
-                            : undefined
-                          const cellMinWidth = entry.kind === 'single'
-                            ? entry.widget.layout?.minWidth
-                            : undefined
-                          const cellStyle = gridColumns
-                            ? {
-                                gridColumn: `span ${cellSpan} / span ${cellSpan}`,
-                                ...(cellMinWidth ? { minWidth: `${cellMinWidth}px` } : {}),
-                              }
-                            : undefined
-                          const renderer = (
-                            <EntryRenderer
-                              entry={entry}
-                              entryIndex={entryIndex}
-                              sectionIndex={sectionIndex}
-                              sources={sources}
-                              costsData={costsData}
-                              costsLoading={costsLoading}
-                              costsError={costsError}
-                              evalsData={evalsData}
-                              evalsLoading={evalsLoading}
-                              evalsError={evalsError}
-                              runsData={runsData}
-                              runsLoading={runsLoading}
-                              runsError={runsError}
-                              hiddenWidgetKeys={hiddenWidgetKeys}
-                              onToggleWidgetHidden={handleToggleWidgetHidden}
-                            />
-                          )
-                          return gridColumns ? (
-                            <div key={entryIndex} style={cellStyle}>{renderer}</div>
-                          ) : (
-                            <div key={entryIndex}>{renderer}</div>
-                          )
-                        })}
-                      </div>
-                    </section>
-                  )
-                })}
+                {visibleSections.map(({ section, sectionIndex, entries }) => (
+                  <SectionContainer
+                    key={sectionIndex}
+                    section={section}
+                    sectionIndex={sectionIndex}
+                    entries={entries}
+                    sources={sources}
+                    costsData={costsData}
+                    costsLoading={costsLoading}
+                    costsError={costsError}
+                    evalsData={evalsData}
+                    evalsLoading={evalsLoading}
+                    evalsError={evalsError}
+                    runsData={runsData}
+                    runsLoading={runsLoading}
+                    runsError={runsError}
+                    hiddenWidgetKeys={hiddenWidgetKeys}
+                    handleToggleWidgetHidden={handleToggleWidgetHidden}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -866,6 +821,118 @@ function SectionHeader({
         </div>
       </div>
     </div>
+  )
+}
+
+// Renders one section's heading + entries. Lives in its own component so the
+// section container can call useCompactWidgetLayout to detect narrow viewports
+// and collapse a grid layout to a single column on phones — without it, a
+// section with `columns: 12` would render as twelve 30-px columns on a 360-px
+// screen. Widget spans clamp to 1 in compact mode for the same reason.
+function SectionContainer({
+  section,
+  sectionIndex,
+  entries,
+  sources,
+  costsData,
+  costsLoading,
+  costsError,
+  evalsData,
+  evalsLoading,
+  evalsError,
+  runsData,
+  runsLoading,
+  runsError,
+  hiddenWidgetKeys,
+  handleToggleWidgetHidden,
+}: {
+  section: ReportSection
+  sectionIndex: number
+  entries: Array<{ entry: ReportEntry; entryIndex: number }>
+  sources: SourceCache
+  costsData: WorkflowCostsResponse | null
+  costsLoading: boolean
+  costsError: string | null
+  evalsData: EvaluationReportsResponse | null
+  evalsLoading: boolean
+  evalsError: string | null
+  runsData: RunFoldersResponse | null
+  runsLoading: boolean
+  runsError: string | null
+  hiddenWidgetKeys: Set<string>
+  handleToggleWidgetHidden: (widgetKey: string) => void
+}) {
+  // Container width gate — same threshold widgets use internally so the
+  // section's grid collapses at the same breakpoint a TableWidget would
+  // switch to its stacked card layout.
+  const [gridRef, isCompact] = useCompactWidgetLayout()
+  const requestedColumns = section.layout?.columns
+  const gridGap = section.layout?.gap ?? 12
+  // When the container is narrow, fall back to a single-column grid.
+  // Widget spans likewise clamp so a 6-column widget doesn't try to span 6 of
+  // the 1 effective column.
+  const effectiveColumns = requestedColumns
+    ? isCompact ? 1 : requestedColumns
+    : undefined
+  const containerClassName = effectiveColumns
+    ? 'grid'
+    : 'flex flex-col gap-3'
+  const containerStyle = effectiveColumns
+    ? {
+        gridTemplateColumns: `repeat(${effectiveColumns}, minmax(0, 1fr))`,
+        gap: `${gridGap}px`,
+      }
+    : undefined
+  return (
+    <section className="flex flex-col gap-2.5 p-0 sm:gap-3 sm:rounded-2xl sm:border sm:border-border/50 sm:bg-card/55 sm:p-3.5 sm:shadow-sm">
+      <SectionHeader heading={section.heading} />
+      <div ref={gridRef} className={containerClassName} style={containerStyle}>
+        {entries.map(({ entry, entryIndex }) => {
+          const span = entry.kind === 'single'
+            ? entry.widget.layout?.span
+            : undefined
+          // Row entries always span the full grid; widgets within reflow via the row's own flex.
+          const cellSpan = effectiveColumns
+            ? entry.kind === 'row'
+              ? effectiveColumns
+              : Math.min(span ?? effectiveColumns, effectiveColumns)
+            : undefined
+          const cellMinWidth = entry.kind === 'single'
+            ? entry.widget.layout?.minWidth
+            : undefined
+          const cellStyle = effectiveColumns
+            ? {
+                gridColumn: `span ${cellSpan} / span ${cellSpan}`,
+                ...(cellMinWidth ? { minWidth: `${cellMinWidth}px` } : {}),
+              }
+            : undefined
+          const renderer = (
+            <EntryRenderer
+              entry={entry}
+              entryIndex={entryIndex}
+              sectionIndex={sectionIndex}
+              sources={sources}
+              costsData={costsData}
+              costsLoading={costsLoading}
+              costsError={costsError}
+              evalsData={evalsData}
+              evalsLoading={evalsLoading}
+              evalsError={evalsError}
+              runsData={runsData}
+              runsLoading={runsLoading}
+              runsError={runsError}
+              hiddenWidgetKeys={hiddenWidgetKeys}
+              onToggleWidgetHidden={handleToggleWidgetHidden}
+            />
+          )
+          return effectiveColumns ? (
+            <div key={entryIndex} style={cellStyle}>{renderer}</div>
+          ) : (
+            <div key={entryIndex}>{renderer}</div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 

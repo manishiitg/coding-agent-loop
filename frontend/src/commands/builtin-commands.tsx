@@ -401,7 +401,26 @@ When you finish, update builder/improve.md with:
       const runText = runFolder
         ? `Use the selected run folder "${runFolder}" as the primary evidence set when judging whether eval measures the real objective and success criteria well.`
         : 'If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.'
-      ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in three passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+      ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in four passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+
+PASS 0 — FRAMEWORK BOOTSTRAP (auto-improvement)
+**0a — workflow type.** Read workflow.json. If \`workflow_type\` is unset (or still the default \`exploratory\` and the workflow is clearly past the exploration phase), classify it first — type drives which metrics make sense and how this command should behave.
+   - **deterministic** — same steps every run (QA suites, ETL pipelines, scheduled scrapes). Eval is mechanical; metrics are SLOs.
+   - **exploratory** — plan structure still in flux; you don't know what to measure yet. Often defer metrics.
+   - **contextual** — stable plan with growing user-supplied business rules (audits, lead-gen, trading, AWS-cost-sec). Metrics are required and load-bearing.
+   Show the user your inference + reasoning, ask to confirm, and update workflow.json to set \`workflow_type\` (and \`oversight_mode\` if unset; default \`supervised\`).
+
+**0b — metrics.json.** Read <workflow>/metrics.json. If absent or empty, eval improvement is much weaker without metrics. Bootstrap based on the type from 0a:
+   - Type 1 (deterministic): SLO-mode metrics — success-rate (floor), cost-per-run (ceiling), latency (ceiling), data freshness.
+   - Type 2 (exploratory): you can defer; just track eval-step trajectories. Skip the bootstrap unless the user explicitly asks for metrics.
+   - Type 3 (contextual): REQUIRED. Outcome metrics + rule-conformance + cost/latency SLO. Do not skip.
+
+   For Type 1 and Type 3:
+   a. Read soul/soul.md, planning/plan.json, evaluation/evaluation_plan.json.
+   b. Propose 3–5 starter metrics with unit, direction, mode, and source (\`eval_step\` for existing eval steps, \`telemetry\` for cost/latency).
+   c. Show the user with one-line rationales. Ask which to keep / drop / amend.
+   d. For each accepted metric, call propose_metric.
+3. If both \`workflow_type\` and metrics.json (where required) are already populated, skip the bootstrap and continue.
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
@@ -460,6 +479,15 @@ DISCOVERY
 2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand the objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
+
+5. **Framework bootstrap** — workflow_type FIRST, then metrics. A continuous-improvement schedule with no type and no metrics will optimize nothing concrete:
+   a. Read workflow.json. If \`workflow_type\` is unset, classify and confirm with the user (deterministic / exploratory / contextual). Update workflow.json with the chosen type and \`oversight_mode\` (default \`supervised\`).
+   b. Read <workflow>/metrics.json. Bootstrap based on type:
+      - Type 1 → SLO metrics (success-rate, cost, latency, freshness)
+      - Type 2 → optional; the optimizer can run without metrics on Type 2 by tracking eval-step trajectories
+      - Type 3 → REQUIRED. Outcome + rule-conformance + cost SLO
+      For Type 1 / Type 3, propose 3–5 starter metrics, confirm with the user, call propose_metric for each.
+   The optimizer schedule's message below will reference \`workflow_type\` and the metrics; do not skip this step.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -547,7 +575,20 @@ SETUP
 1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
-4. ${iterationHint} Treat that iteration as the default evidence set for this command run.
+
+4. **Framework bootstrap** — workflow_type FIRST, then metrics:
+   a. Read workflow.json. If \`workflow_type\` is unset (or still default \`exploratory\` and the workflow is clearly past exploration), classify and confirm with the user:
+      - **deterministic** — same steps every run; eval is mechanical; metrics are SLOs
+      - **exploratory** — plan structure still in flux; defer metrics
+      - **contextual** — stable plan with growing user-supplied rules; metrics required
+      Update workflow.json to set \`workflow_type\` and \`oversight_mode\` (default \`supervised\`) once confirmed.
+   b. Read <workflow>/metrics.json. Bootstrap based on the type from 4a:
+      - Type 1 → SLO metrics (success-rate floor, cost ceiling, latency ceiling, freshness)
+      - Type 2 → can defer; just track eval-step trajectories
+      - Type 3 → REQUIRED. Outcome metrics + cost/latency SLO
+      For Type 1 / Type 3: propose 3–5 starter metrics derived from success_criteria + existing eval steps. Show with rationales, ask user which to keep, then call propose_metric for each. Without metrics, harden_workflow and replan_workflow_from_results have no concrete target — the hardening loop devolves into vibes.
+
+5. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
 1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
@@ -862,27 +903,14 @@ After the tool returns, tell me:
       const focus = ctx.beforeSlash.trim()
       ctx.onSubmit(`Capture a new business rule into context/rules.md and link it to the metric(s) it should move.${focus ? `\n\nUser-supplied rule text or note: ${focus}` : ''}
 
-THIS WORKFLOW MUST BE TYPE 3 (workflow_type=contextual). If it is Type 1 or Type 2, stop and tell the user that /capture-context is for Type 3 workflows only.
-
-DISCOVERY
-1. Read <workflow>/metrics.json. If the file does not exist, stop and tell the user to define metrics first via propose_metric — Type 3 workflows MUST have metrics.
-2. Read context/rules.md if it exists, so you can pick the right section heading for the new rule (or propose a new section).
-3. Confirm with the user (a) the exact rule text to add, (b) the section heading, (c) one or more existing target_metrics this rule is meant to move.
+PRECONDITIONS (do NOT bootstrap them here — redirect instead)
+1. Read workflow.json. \`workflow_type\` must be \`contextual\`. If it isn't, stop and tell the user: "Rule capture is for Type 3 (contextual) workflows. Run /improve-workflow first to set the workflow type and bootstrap metrics." Do not flip the type or set up metrics inside this command.
+2. Read <workflow>/metrics.json. It must have at least one metric. If empty, stop and tell the user: "No metrics defined yet. Run /improve-eval or /improve-workflow first — those commands bootstrap metrics. Then come back and run /capture-context."
 
 ACTION
-Call POST /api/workflow/capture-context with:
-  {
-    workspace_path: <current workflow path>,
-    section: "<section heading>",
-    rule_text: "<rule text>",
-    target_metrics: ["<metric_id>", ...],
-    example_note: "<optional note>"
-  }
-
-The handler will:
-- Append the bullet to context/rules.md under the requested section.
-- Write a clarifications.jsonl entry (source=user, target_metrics required).
-- Write a builder/decisions.jsonl audit entry cross-referencing the rule + the targeted metric(s).
+1. Read context/rules.md if it exists, so you can pick the right section heading for the new rule (or propose a new section).
+2. Confirm with the user (a) the exact rule text, (b) the section heading, (c) which existing metric(s) this rule is meant to move.
+3. Call the \`capture_context\` tool with: { section, rule_text, target_metrics, example_note }. The tool atomically appends the bullet, writes a clarifications.jsonl entry (source=user, target_metrics required), and writes a builder/decisions.jsonl audit entry.
 
 REPORT
 - Confirm the rule landed: paste the new line and section.

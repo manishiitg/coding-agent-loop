@@ -332,12 +332,79 @@ func RegisterQueryExperimentHistoryTool(agent *mcpagent.Agent, workspacePath str
 	}
 }
 
+// RegisterCaptureContextTool exposes capture_context to the proposer LLM. Used
+// by the /capture-context slash command on Type 3 workflows to add a business
+// rule to context/rules.md anchored to one or more metrics. Atomically writes
+// the rule, the clarifications.jsonl entry, and the audit decision-log entry.
+func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
+	desc := "Capture a user-supplied business rule into context/rules.md, anchored to one or more metrics it is meant to move. " +
+		"Atomically appends the bullet under the requested section heading, writes a context/clarifications.jsonl entry " +
+		"(source=user, target_metrics required and non-empty), and writes a builder/decisions.jsonl audit entry cross-linking " +
+		"the rule to the targeted metric(s). Use ONLY for Type 3 (contextual) workflows. If metrics.json has no metrics, " +
+		"propose them first via propose_metric — this tool refuses if target_metrics references unknown ids. " +
+		"Returns { clarification_id, decision_id }."
+	params := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"section": map[string]interface{}{
+				"type":        "string",
+				"description": "Markdown section heading the rule belongs under (e.g. \"Risk Controls\", \"Eligibility\"). Created if it does not exist. Optional — defaults to \"General\".",
+			},
+			"rule_text": map[string]interface{}{
+				"type":        "string",
+				"description": "The rule itself, in user-readable language. Lands as a bullet under the section heading.",
+			},
+			"target_metrics": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Metric ids this rule is meant to move. REQUIRED, non-empty. Each must already exist in <workflow>/metrics.json.",
+			},
+			"example_note": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional free-form clarification beyond the bullet text — context, the case that motivated the rule, etc.",
+			},
+		},
+		"required": []string{"rule_text", "target_metrics"},
+	}
+
+	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		section, _ := args["section"].(string)
+		ruleText, _ := args["rule_text"].(string)
+		exampleNote, _ := args["example_note"].(string)
+		var targetMetrics []string
+		if raw, ok := args["target_metrics"].([]interface{}); ok {
+			for _, x := range raw {
+				if s, ok := x.(string); ok && strings.TrimSpace(s) != "" {
+					targetMetrics = append(targetMetrics, s)
+				}
+			}
+		}
+		clar, dec, err := CaptureContext(ctx, workspacePath, section, ruleText, targetMetrics, exampleNote)
+		if err != nil {
+			return fmt.Sprintf("capture_context failed: %v", err), nil
+		}
+		out := map[string]string{
+			"clarification_id": clar.ID,
+			"decision_id":      dec.ID,
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		return string(body), nil
+	}
+
+	if err := agent.RegisterCustomTool("capture_context", desc, params, handler); err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("Failed to register capture_context: %v", err))
+		}
+	}
+}
+
 // RegisterAutoImprovementProposerTools registers the proposer-side tools
-// (propose_experiment + propose_metric + query_experiment_history). Call this
-// alongside the existing builder tools when the workshop session enters
-// optimizer mode.
+// (propose_experiment + propose_metric + query_experiment_history +
+// capture_context). Call this alongside the existing builder tools when the
+// workshop session enters optimizer mode.
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	RegisterProposeExperimentTool(agent, workspacePath, triggerSource, logger)
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
 	RegisterQueryExperimentHistoryTool(agent, workspacePath, logger)
+	RegisterCaptureContextTool(agent, workspacePath, logger)
 }

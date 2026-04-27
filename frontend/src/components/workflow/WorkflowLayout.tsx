@@ -358,10 +358,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activeWorkflowPreset])
 
-  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
     } catch {
       return 'auto'
     }
@@ -371,7 +371,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const syncReportPreviewPreference = () => {
       try {
         const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-        setReportPreviewPreference(saved === 'desktop' || saved === 'mobile' ? saved : 'auto')
+        setReportPreviewPreference(saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto')
       } catch {
         setReportPreviewPreference('auto')
       }
@@ -387,11 +387,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [])
 
   const workspacePaneVisible = !showChatArea || showWorkspacePane
+  // Mobile preview drops the report into a narrow 480px side column when chat
+  // is also visible. Tablet and laptop modes leave the report in the normal
+  // wide canvas pane; the inner shell width inside ReportView constrains to
+  // its tier (880px / full). 'auto' falls through to whichever the wider
+  // layout default would pick.
   const shouldUseMobileReportPane =
     showChatArea &&
     workspacePaneVisible &&
     canvasViewMode === 'report' &&
-    reportPreviewPreference !== 'desktop'
+    reportPreviewPreference === 'mobile'
   const splitLayoutClassName = !showChatArea
     ? 'flex-1 min-h-0 flex flex-col'
     : !workspacePaneVisible

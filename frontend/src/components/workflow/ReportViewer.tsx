@@ -30,7 +30,7 @@ import {
   type RunCostSummary,
   summariseRunCosts,
 } from './reportWidgets/costSummaries'
-import { BarChart3, ChevronDown, Monitor, RefreshCw, Smartphone } from 'lucide-react'
+import { BarChart3, ChevronDown, Monitor, RefreshCw, Smartphone, Tablet } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import {
   applyWidgetFilter,
@@ -329,10 +329,14 @@ export function ReportViewer({ workspacePath, isOpen, onClose }: ReportViewerPro
 // Inline content — renders the report plan directly without modal chrome. Used by the
 // workflow canvas when canvasViewMode === 'report'.
 export function ReportView({ workspacePath, onClose, mobilePreview = false }: ReportViewProps) {
-  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'mobile'>(() => {
+  // Three explicit preview widths plus 'auto'. The internal name 'desktop' is
+  // surfaced as "Laptop" in the UI to match the user's mental model — laptop
+  // viewports are what fill the full max-width shell. 'auto' falls back to the
+  // mobilePreview prop, used when nothing has been selected yet.
+  const [previewPreference, setPreviewPreference] = useState<'auto' | 'desktop' | 'tablet' | 'mobile'>(() => {
     try {
       const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
-      return saved === 'desktop' || saved === 'mobile' ? saved : 'auto'
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
     } catch {
       return 'auto'
     }
@@ -654,37 +658,40 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     return false
   }, [planExists, plan, sources, hiddenWidgetKeys])
   const canUseSplitPreview = mobilePreview
-  const isMobilePreview = canUseSplitPreview && (
-    previewPreference === 'mobile'
-      ? true
-      : previewPreference === 'desktop'
-        ? false
-        : mobilePreview
-  )
+  // Resolve 'auto' down to the concrete tier the layout would otherwise apply.
+  // 'auto' picks 'mobile' when the layout is in mobile-preview mode, otherwise
+  // 'desktop' (the laptop-class shell).
+  const previewMode: 'desktop' | 'tablet' | 'mobile' = canUseSplitPreview
+    ? previewPreference === 'auto'
+      ? mobilePreview ? 'mobile' : 'desktop'
+      : previewPreference
+    : 'desktop'
   const isRefreshing = loading || costsLoading || evalsLoading || runsLoading
-  const previewShellClassName = isMobilePreview
-    ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
-    : 'mx-auto w-full max-w-full transition-all duration-200'
-  const previewContentClassName = isMobilePreview
-    ? 'w-full max-w-full'
-    : 'mx-auto w-full max-w-5xl'
+  // Per-mode shell width. Mobile mimics a phone (~480px), tablet mimics an
+  // iPad-class device (~880px), laptop fills available space. Content width
+  // mirrors the shell so widget reflow tests against the right container size.
+  const previewShellClassName =
+    previewMode === 'mobile'
+      ? 'mx-auto w-full max-w-[480px] p-1.5 transition-all duration-200'
+      : previewMode === 'tablet'
+        ? 'mx-auto w-full max-w-[880px] p-1.5 transition-all duration-200'
+        : 'mx-auto w-full max-w-full transition-all duration-200'
+  const previewContentClassName =
+    previewMode === 'mobile' || previewMode === 'tablet'
+      ? 'w-full max-w-full'
+      : 'mx-auto w-full max-w-5xl'
 
-  const handleTogglePreviewMode = () => {
-    setPreviewPreference(prev => {
-      const currentIsMobile =
-        prev === 'mobile'
-          ? true
-          : prev === 'desktop'
-            ? false
-            : mobilePreview
-      const next = currentIsMobile ? 'desktop' : 'mobile'
+  // Three-state segmented control selects a preview mode directly. Falls back
+  // to 'desktop' as the safe default when toggling out of any state.
+  const setPreviewMode = (mode: 'desktop' | 'tablet' | 'mobile') => {
+    setPreviewPreference(() => {
       try {
-        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, next)
-        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: next } }))
+        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, mode)
+        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode } }))
       } catch {
         // ignore
       }
-      return next
+      return mode
     })
   }
 
@@ -756,16 +763,41 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
         </div>
       </div>
 
-      <div className="absolute bottom-4 right-4 z-20 flex flex-col gap-2 sm:bottom-5 sm:right-5">
+      <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
         {canUseSplitPreview && (
-          <button
-            onClick={handleTogglePreviewMode}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
-            title={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
-            aria-label={isMobilePreview ? 'Switch to full-width preview' : 'Switch to mobile preview'}
+          // Collapsed: shows just the active-mode icon. On hover (or focus-within
+          // for keyboard users), the wrapper expands to reveal all three. Pure
+          // CSS — width transitions on the inner row, individual buttons fade in
+          // via group-hover. No JS state needed.
+          <div
+            role="group"
+            aria-label="Report preview width"
+            className="group inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
           >
-            {isMobilePreview ? <Monitor className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
-          </button>
+            {([
+              { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
+              { mode: 'tablet', Icon: Tablet, label: 'Tablet preview (≈880px)' },
+              { mode: 'desktop', Icon: Monitor, label: 'Laptop preview (full width)' },
+            ] as const).map(({ mode, Icon, label }) => {
+              const active = previewMode === mode
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setPreviewMode(mode)}
+                  className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-all duration-150 ${
+                    active
+                      ? 'w-8 bg-primary text-primary-foreground shadow-sm'
+                      : 'w-0 text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:w-8 group-hover:opacity-100 group-focus-within:w-8 group-focus-within:opacity-100'
+                  }`}
+                  title={label}
+                  aria-label={label}
+                  aria-pressed={active}
+                >
+                  <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                </button>
+              )
+            })}
+          </div>
         )}
         <button
           onClick={handleRefresh}

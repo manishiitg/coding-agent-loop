@@ -250,6 +250,13 @@ type StreamingAPI struct {
 	// Gemini CLI project directory IDs for per-invocation isolation (our sessionID -> dir ID)
 	geminiProjectDirIDs map[string]string
 
+	// Last-seen WorkshopMode per session — used to detect mode toggles between
+	// turns. When the mode changes, the saved CLI session IDs above are dropped
+	// (so the new system prompt + tool list actually take effect on the next
+	// CLI invocation) and the conversation history is replaced with a
+	// synthetic recap so the new agent sees just enough context to continue.
+	lastWorkshopModeBySession map[string]string
+
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
 	workshopChatSessions sync.Map
@@ -722,10 +729,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionAgents:           make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:           make(map[string]*mcpagent.Agent),
 		completionLoopStarted:   make(map[string]bool),
-		claudeCodeSessionIDs:    make(map[string]string),
-		geminiSessionIDs:        make(map[string]string),
-		geminiProjectDirIDs:     make(map[string]string),
-		stoppedSessions:         make(map[string]bool),
+		claudeCodeSessionIDs:      make(map[string]string),
+		geminiSessionIDs:          make(map[string]string),
+		geminiProjectDirIDs:       make(map[string]string),
+		lastWorkshopModeBySession: make(map[string]string),
+		stoppedSessions:           make(map[string]bool),
 	}
 
 	// Kill any orphaned browser processes from a previous run.
@@ -1339,6 +1347,72 @@ func (api *StreamingAPI) GetCodeExecAPIURL() string {
 }
 
 // mergeGlobalSecrets prepends global secrets to user-supplied secrets.
+// buildModeChangeRecap walks the prior conversation history and returns a
+// single synthetic user-message string the new mode's agent can read as
+// "this is what just happened in the previous mode." Sliced to roughly the
+// last `maxChars` characters so the recap doesn't blow up the new context.
+//
+// Used when the user toggles workshop mode mid-session: we drop the CLI
+// session IDs (so the fresh prompt + tool allow-list take effect) and
+// replace the agent-replay history with this recap. Plain prose, no tool
+// calls — the new agent shouldn't be tempted to mimic tool calls that may
+// not be in its allow-list.
+func buildModeChangeRecap(history []llmtypes.MessageContent, prevMode, newMode string, maxChars int) string {
+	if maxChars <= 0 {
+		maxChars = 16000 // ~4000 tokens at 4 chars/token, conservative
+	}
+	// Walk in reverse so we keep the most-recent turns when slicing. Skip
+	// system messages (the prior system prompt no longer applies) and
+	// keep tool/AI/user text content.
+	var lines []string
+	totalChars := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		role := "User"
+		switch msg.Role {
+		case llmtypes.ChatMessageTypeAI:
+			role = "Agent"
+		case llmtypes.ChatMessageTypeSystem:
+			continue // stale prompt; not worth replaying
+		case llmtypes.ChatMessageTypeTool:
+			role = "Tool"
+		}
+		var textParts []string
+		for _, part := range msg.Parts {
+			if t, ok := part.(llmtypes.TextContent); ok && t.Text != "" {
+				textParts = append(textParts, t.Text)
+			}
+		}
+		if len(textParts) == 0 {
+			continue
+		}
+		body := strings.Join(textParts, " ")
+		// Trim per-message body so a single huge AI turn doesn't eat the budget.
+		if len(body) > 2000 {
+			body = body[:2000] + "…"
+		}
+		line := role + ": " + body
+		if totalChars+len(line) > maxChars && len(lines) > 0 {
+			break
+		}
+		lines = append(lines, line)
+		totalChars += len(line)
+	}
+	// Reverse back to chronological order.
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+	if len(lines) == 0 {
+		return fmt.Sprintf("[CONTEXT] You are continuing a chat session that just switched workshop mode from %q to %q. There's no prior conversation context. Proceed with the user's next message in the new mode.", prevMode, newMode)
+	}
+	return fmt.Sprintf(
+		"[CONTEXT FROM PREVIOUS MODE]\nThe user was working in %q mode and has now switched to %q mode. The current system prompt and your tool allow-list reflect %q mode — the previous mode's tools are no longer available, so don't try to call them. The recent conversation summary follows; treat it as background, not as instructions.\n\n%s\n[/CONTEXT]\n\nNow respond to the user's next message in %q mode.",
+		prevMode, newMode, newMode,
+		strings.Join(lines, "\n\n"),
+		newMode,
+	)
+}
+
 // User secrets take priority on name collision.
 // If selectedGlobalNames is non-nil, only global secrets whose name is in the list are included.
 func mergeGlobalSecrets(userSecrets []struct {
@@ -4890,9 +4964,58 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[AGENT] ERROR: underlying MCP agent is nil for session %s", sessionID)
 		}
 
+		// Detect workshop-mode toggle since the previous turn. If the mode
+		// changed, the saved CLI session IDs (gemini, claudeCode) are now
+		// stale — they'd resume into a session whose system prompt and
+		// allow-list reflect the previous mode. Drop them, then replace the
+		// agent-replay history with a single synthetic recap so the new
+		// agent sees just enough context to continue.
+		//
+		// Source: req.ExecutionOptions.WorkshopMode is the frontend-supplied
+		// mode override; phaseTemplateVars (where the workflow branch above
+		// stores the resolved mode) is out of scope here. Apply the same
+		// legacy-value migration as that branch so old values from saved
+		// sessions / stale schedule entries don't trigger spurious changes.
+		newWorkshopMode := ""
+		if req.ExecutionOptions != nil {
+			newWorkshopMode = req.ExecutionOptions.WorkshopMode
+			switch newWorkshopMode {
+			case "ask", "debugger", "runner":
+				newWorkshopMode = "run"
+			case "eval", "output":
+				newWorkshopMode = "builder"
+			}
+		}
+		modeChangedThisTurn := false
+		if newWorkshopMode != "" {
+			api.conversationMux.Lock()
+			prevMode, hadPrev := api.lastWorkshopModeBySession[sessionID]
+			if hadPrev && prevMode != "" && prevMode != newWorkshopMode {
+				modeChangedThisTurn = true
+				log.Printf("[WORKSHOP_MODE] Mode changed %q -> %q for session %s; dropping CLI session and rebuilding history as recap", prevMode, newWorkshopMode, sessionID)
+				// Drop CLI session IDs so the next call starts fresh with the new prompt.
+				delete(api.claudeCodeSessionIDs, sessionID)
+				delete(api.geminiSessionIDs, sessionID)
+				delete(api.geminiProjectDirIDs, sessionID)
+				// Replace history with a single synthetic user message containing
+				// the recap. ~16000 chars ≈ 4000 tokens worth of recent context.
+				if existing, ok := api.conversationHistory[sessionID]; ok && len(existing) > 0 {
+					recap := buildModeChangeRecap(existing, prevMode, newWorkshopMode, 16000)
+					api.conversationHistory[sessionID] = []llmtypes.MessageContent{{
+						Role:  llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: recap}},
+					}}
+				}
+			}
+			api.lastWorkshopModeBySession[sessionID] = newWorkshopMode
+			api.conversationMux.Unlock()
+		}
+		_ = modeChangedThisTurn // reserved for future use (e.g. event emission)
+
 		// Load conversation history for this session from the in-memory
 		// cache. When the server restarts the cache is empty and the agent
-		// starts a fresh conversation.
+		// starts a fresh conversation. After a mode-change above, this
+		// replays just the synthetic recap message.
 		api.conversationMux.RLock()
 		if history, ok := api.conversationHistory[sessionID]; ok && len(history) > 0 {
 			log.Printf("[CONVERSATION] Replaying %d in-memory messages for session %s", len(history), sessionID)
@@ -5495,6 +5618,9 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	// Clear Gemini CLI session ID and project dir ID
 	delete(api.geminiSessionIDs, sessionID)
 	delete(api.geminiProjectDirIDs, sessionID)
+
+	// Clear last-seen workshop mode (used to detect mode toggles for recap injection)
+	delete(api.lastWorkshopModeBySession, sessionID)
 
 	// Kill headless browser processes for this session
 	api.cleanupBrowserSessions(sessionID)

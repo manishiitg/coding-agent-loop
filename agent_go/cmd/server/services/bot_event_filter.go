@@ -567,47 +567,79 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 		return ""
 	}
 
+	// Strip MCP routing prefixes so heartbeat shows the underlying tool's
+	// friendly name instead of leaking the bridge wiring. Supported shapes:
+	//   mcp_<server>_<tool>     (single underscore — e.g. mcp_api-bridge_execute_shell_command)
+	//   mcp__<server>__<tool>   (double underscore — used by some clients)
+	name := parsed.ToolName
+	switch {
+	case strings.HasPrefix(name, "mcp__"):
+		if idx := strings.Index(name[5:], "__"); idx > 0 {
+			name = name[5+idx+2:]
+		}
+	case strings.HasPrefix(name, "mcp_"):
+		if idx := strings.Index(name[4:], "_"); idx > 0 {
+			name = name[4+idx+1:]
+		}
+	}
+
 	// Map tool names to user-friendly descriptions
 	switch {
-	case parsed.ToolName == "execute_shell_command":
-		return "Running commands"
-	case parsed.ToolName == "delegate":
-		return "Delegating to sub-agent"
-	case strings.HasPrefix(parsed.ToolName, "read_") || parsed.ToolName == "resources_list":
-		return "Reading files"
-	case strings.HasPrefix(parsed.ToolName, "write_") || strings.HasPrefix(parsed.ToolName, "create_"):
-		return "Writing files"
-	case strings.HasPrefix(parsed.ToolName, "edit_"):
-		return "Editing files"
-	case strings.HasPrefix(parsed.ToolName, "search_") || strings.HasPrefix(parsed.ToolName, "find_"):
-		return "Searching"
-	case strings.HasPrefix(parsed.ToolName, "browser_") || parsed.ToolName == "web_search":
+	case name == "execute_shell_command":
+		return "Running shell commands"
+	case name == "delegate" || name == "call_sub_agent" || name == "call_generic_agent":
+		return "Delegating to a sub-agent"
+	case name == "agent_browser" || strings.HasPrefix(name, "browser_") || name == "web_search":
 		return "Browsing the web"
-	case strings.HasPrefix(parsed.ToolName, "git_"):
+	case strings.HasPrefix(name, "read_") || name == "resources_list":
+		return "Reading files"
+	case strings.HasPrefix(name, "write_") || strings.HasPrefix(name, "create_"):
+		return "Writing files"
+	case strings.HasPrefix(name, "edit_") || strings.HasPrefix(name, "diff_patch_"):
+		return "Editing files"
+	case strings.HasPrefix(name, "search_") || strings.HasPrefix(name, "find_") || name == "search_web_llm":
+		return "Searching"
+	case strings.HasPrefix(name, "git_"):
 		return "Working with git"
+	case strings.HasPrefix(name, "image_") || strings.HasPrefix(name, "generate_") || strings.HasPrefix(name, "video_") || name == "read_image" || name == "read_pdf":
+		return "Working with media"
+	case name == "execute_step" || name == "create_plan" ||
+		strings.HasPrefix(name, "add_") || strings.HasPrefix(name, "update_") || strings.HasPrefix(name, "delete_") ||
+		name == "optimize_step" || name == "debug_step" || name == "query_step" || name == "analyze_step" ||
+		name == "cleanup_orphan_step_configs":
+		return "Updating the workflow"
+	case name == "save_memory" || name == "recall_memory" || name == "enrich_memory":
+		return "Working with memory"
+	case name == "human_feedback":
+		return "Asking the user"
+	case name == "generate_text_llm":
+		return "Thinking"
 	default:
-		// For MCP/unknown tools, humanize the name
-		return "Using " + strings.ReplaceAll(parsed.ToolName, "_", " ")
+		// Generic fallback — never leak a raw tool name into the chat thread.
+		return "Working on the next step"
 	}
 }
 
 // buildHeartbeatMessage constructs a context-aware heartbeat message.
+//
+// Goal: a single short status line in the user's chat thread, not a metrics
+// dashboard. We surface what's happening (current activity) and whether
+// sub-tasks are in flight, but skip the raw tool-call count — it reads as
+// noise once it's high ("16 steps completed" doesn't tell the user anything
+// actionable in a chat context).
 func (f *BotEventFilter) buildHeartbeatMessage(activity string, toolCount int, pendingDelegations int, beatIndex int) string {
 	var parts []string
 
-	// Progress indicator
 	if pendingDelegations > 0 {
-		parts = append(parts, fmt.Sprintf("_%d sub-task(s) running_", pendingDelegations))
+		noun := "sub-task"
+		if pendingDelegations > 1 {
+			noun = "sub-tasks"
+		}
+		parts = append(parts, fmt.Sprintf("_%d %s in progress_", pendingDelegations, noun))
 	}
 
-	// Current activity
 	if activity != "" {
-		parts = append(parts, fmt.Sprintf("_%s_", activity))
-	}
-
-	// Steps completed gives a sense of progress
-	if toolCount > 0 {
-		parts = append(parts, fmt.Sprintf("_%d steps completed_", toolCount))
+		parts = append(parts, fmt.Sprintf("_%s…_", activity))
 	}
 
 	if len(parts) == 0 {

@@ -672,7 +672,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 				// bug. Best-effort: log and move on if the platform doesn't
 				// support reactions or the call fails.
 				if connector := m.GetConnector(active.Platform); connector != nil && msg.ChannelID != "" && msg.MessageTS != "" {
-					if err := connector.AddReaction(context.Background(), msg.ChannelID, msg.MessageTS, "see_no_evil"); err != nil {
+					if err := connector.AddReaction(context.Background(), msg.ChannelID, msg.MessageTS, "zipper_mouth_face"); err != nil {
 						log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
 					}
 				}

@@ -378,6 +378,34 @@ Refuse ` + "`/capture-context`" + ` on Type 1 or Type 2 workflows; tell the user
 - Always declare ` + "`target_metrics`" + ` when proposing an experiment or capturing context. The framework refuses Type 3 changes without them.
 - Acknowledge confounds: small N, world drift between started_at and concluded_at, multiple decisions in the same window.
 
+### Proactive business-context capture (Type 3 only)
+
+Do not wait for the user to invoke ` + "`/capture-context`" + `. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`context/rules.md`" + ` rather than dying in chat history.
+
+**Recognition signals (capture-worthy):**
+- Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.
+- Conditional rules: *"when X, do Y"*, *"for {customer/persona/jurisdiction}, do X"*.
+- Domain facts that change agent behavior: regulatory clauses, exception cases, blessed exceptions, ICP definitions, risk thresholds, brand-voice constraints.
+- Memorize-worthy nuance: *"remember that X"*, *"note that X"*, *"the way we do this here is X"*.
+
+**Do NOT capture:**
+- Conversational context (the user's mood, working preferences, casual asides).
+- One-off task instructions ("run X right now") — those are decisions, not durable rules.
+- Material that belongs elsewhere: objective/success_criteria → ` + "`soul.md`" + `; technical patterns and tool quirks → ` + "`learnings/_global/SKILL.md`" + `; KB facts about specific entities → ` + "`knowledgebase/`" + `.
+
+**Capture flow:**
+1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured.
+2. **Anchor.** Read ` + "`metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`metrics.json`" + ` is empty, redirect to ` + "`/improve-workflow`" + ` (which bootstraps both ` + "`workflow_type`" + ` and metrics) — do NOT call ` + "`propose_metric`" + ` here just to satisfy the rule capture.
+3. **Section.** Read ` + "`context/rules.md`" + ` to pick the right section heading (or propose a new one).
+4. **Capture.** Call ` + "`capture_context`" + ` with section, rule_text, target_metrics, optional example_note.
+5. **Confirm.** Tell the user where it landed and the clarification id.
+
+**On Type 1 / Type 2 workflows**: do NOT call ` + "`capture_context`" + ` (the ` + "`context/`" + ` store is Type-3-only). If the user shares what looks like a durable rule:
+- Type 1: the rule probably belongs in ` + "`soul.md`" + ` or as a hardened eval check; offer that path.
+- Type 2: tell the user that if rule accumulation is becoming the pattern, the workflow may be Type 3 and offer to flip ` + "`workflow_type`" + ` (after which ` + "`/improve-workflow`" + ` will bootstrap metrics and ` + "`capture_context`" + ` becomes available).
+
+**Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
+
 ## Creating New Workflows
 
 When asked to create a new workflow (e.g. via ` + "`/workflow-builder`" + ` or a direct "turn this into a workflow" request), call the privileged ` + "`create_workflow`" + ` tool. **Do NOT try to ` + "`mkdir`" + ` or ` + "`cat > workflow.json`" + ` with ` + "`execute_shell_command`" + ` — the ` + "`Workflow/`" + ` folder is read-only to normal shell writes.** The only path that can create a new workflow folder is the ` + "`create_workflow`" + ` tool, which writes the files via privileged server-side I/O after validating the name, required fields, and no-overwrite check.

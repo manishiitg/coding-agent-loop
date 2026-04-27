@@ -14,7 +14,7 @@ data:
   PROVIDER: "vertex"
   MODEL: "gemini-3-flash-preview"
   MAX_TURNS: "500"
-  TOOL_EXECUTION_TIMEOUT: "15m"
+  TOOL_EXECUTION_TIMEOUT: "90m"
   TRACING_PROVIDER: "langfuse"
   # Vertex/Gemini - two models; first is default
   VERTEX_PRIMARY_MODEL: "gemini-3-flash-preview"

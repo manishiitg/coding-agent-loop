@@ -88,7 +88,7 @@ services:
       # Absolute path to workspace-docs inside the container (mounted volume)
       - WORKSPACE_DOCS_PATH=/app/workspace-docs
       - LOCAL_MODE=true
-      - TOOL_EXECUTION_TIMEOUT=15m
+      - TOOL_EXECUTION_TIMEOUT=90m
       - MCP_CACHE_TTL_MINUTES=10080
       - ENABLE_CONTEXT_SUMMARIZATION=true
       - TOKEN_THRESHOLD_PERCENT=0.7

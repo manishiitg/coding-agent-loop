@@ -443,10 +443,11 @@ export LOG_AGENT_PROMPTS="true"
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 
-# Set tool execution timeout to 15 minutes for normal tools.
-# Long-running workflow delegation tools (for example call_sub_agent) should
-# use their own per-tool timeout instead of stretching this global default.
-export TOOL_EXECUTION_TIMEOUT="15m"
+# Set tool execution timeout to 90 minutes to match call_sub_agent's per-tool
+# budget. In code-exec-only mode, orchestrator Python scripts call sub-agents
+# over HTTP via execute_shell_command, so the script must be allowed to wait
+# as long as the sub-agent itself is allowed to run.
+export TOOL_EXECUTION_TIMEOUT="90m"
 
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"

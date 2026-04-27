@@ -848,6 +848,122 @@ After the tool returns, tell me:
       ctx.onSubmit(message)
     }
   },
+  // ===== Auto-improvement framework =====
+  // See docs/workflow/auto_improvement_framework.md.
+  {
+    command: 'capture-context',
+    description: 'Add a Type-3 business rule to context/rules.md, anchored to a metric',
+    icon: <Database className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Capture a new business rule into context/rules.md and link it to the metric(s) it should move.${focus ? `\n\nUser-supplied rule text or note: ${focus}` : ''}
+
+THIS WORKFLOW MUST BE TYPE 3 (workflow_type=contextual). If it is Type 1 or Type 2, stop and tell the user that /capture-context is for Type 3 workflows only.
+
+DISCOVERY
+1. Read <workflow>/metrics.json. If the file does not exist, stop and tell the user to define metrics first via propose_metric — Type 3 workflows MUST have metrics.
+2. Read context/rules.md if it exists, so you can pick the right section heading for the new rule (or propose a new section).
+3. Confirm with the user (a) the exact rule text to add, (b) the section heading, (c) one or more existing target_metrics this rule is meant to move.
+
+ACTION
+Call POST /api/workflow/capture-context with:
+  {
+    workspace_path: <current workflow path>,
+    section: "<section heading>",
+    rule_text: "<rule text>",
+    target_metrics: ["<metric_id>", ...],
+    example_note: "<optional note>"
+  }
+
+The handler will:
+- Append the bullet to context/rules.md under the requested section.
+- Write a clarifications.jsonl entry (source=user, target_metrics required).
+- Write a builder/decisions.jsonl audit entry cross-referencing the rule + the targeted metric(s).
+
+REPORT
+- Confirm the rule landed: paste the new line and section.
+- Cite the clarification id and decision id from the response.
+- Suggest opening an experiment via propose_experiment to validate that the rule actually moves the declared metric.`)
+    }
+  },
+  {
+    command: 'exp-abort',
+    description: 'Revert and abort the active experiment',
+    icon: <AlertTriangle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Abort the active experiment and revert its intervention.${focus ? `\n\nReason: ${focus}` : ''}
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> and find the active experiment.
+2. If multiple are active, ask the user which one.
+3. Confirm the user wants to abort (this rolls back the intervention via the captured revertable_diff).
+
+ACTION
+POST /api/workflow/experiments/abort with { workspace_path, experiment_id, reason: "<why>", actor_user: "<user>" }.
+
+REPORT
+- Confirm the experiment is gone from active.json and is now in history.jsonl with status=aborted.
+- List the files restored.`)
+    }
+  },
+  {
+    command: 'exp-extend',
+    description: 'Add more measurement runs to the active experiment',
+    icon: <RefreshCw className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Extend the active experiment's measurement window.${focus ? `\n\nFocus / why: ${focus}` : ''}
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> to find the active experiment.
+2. Ask the user how many additional runs are needed (default = workflow's default_measurement_runs).
+
+ACTION
+POST /api/workflow/experiments/extend with { workspace_path, experiment_id, additional_runs, reason }.
+
+REPORT
+- New target_runs.
+- Status (back to "measuring" if it was "evaluating").`)
+    }
+  },
+  {
+    command: 'exp-conclude',
+    description: 'Manually render a verdict for the active experiment (overrides evaluator)',
+    icon: <CheckCircle className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Manually conclude the active experiment.${focus ? `\n\nFocus / reason: ${focus}` : ''}
+
+This is the OVERRIDE path. Prefer letting the evaluator agent narrate the system-computed verdict. Use this only when you genuinely believe the heuristic is wrong (large world drift, broken eval, mistaken metric).
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> and confirm the experiment id.
+2. Decide the verdict: kept | reverted | inconclusive | extend.
+3. Write the rationale (≤500 chars) and the override reason.
+
+ACTION
+POST /api/workflow/experiments/manual-conclude with { workspace_path, experiment_id, verdict, reason, rationale, actor_user }.
+
+REPORT
+- final_verdict.
+- Whether it was archived to history.jsonl.
+- If verdict=reverted, list the files restored.`)
+    }
+  },
   {
     command: 'enrich-memory',
     description: 'Distil recent chats into memory and consolidate (deletes chats older than 7 days)',

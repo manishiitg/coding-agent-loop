@@ -75,6 +75,10 @@ loadAndRegisterUserCommands(): Promise<void>
 | `/resume` | Resume a previous conversation | All | No |
 | `/workflow-builder` | Build a workflow from existing plans | Multi-Agent | No |
 | `/enrich-memory` | Distil recent chats into memory, consolidate, and delete chats older than 7 days | Multi-Agent | No |
+| `/capture-context` | Add a Type-3 business rule to `context/rules.md` anchored to a metric (auto-improvement framework) | Workflow (plan + optimizer) | No |
+| `/exp-abort` | Revert and abort the active experiment | Workflow (optimizer) | No |
+| `/exp-extend` | Add more measurement runs to the active experiment | Workflow (optimizer) | No |
+| `/exp-conclude` | Manually render a verdict on the active experiment (overrides the evaluator) | Workflow (optimizer) | No |
 
 ## Adding a New Built-in Command
 

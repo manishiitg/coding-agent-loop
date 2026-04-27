@@ -101,17 +101,24 @@ type ServerConfig struct {
 
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
-	SessionID       string    `json:"session_id"`
-	AgentMode       string    `json:"agent_mode"`
-	Status          string    `json:"status"` // "running", "paused", "completed"
-	LastActivity    time.Time `json:"last_activity"`
-	CreatedAt       time.Time `json:"created_at"`
-	Query           string    `json:"query,omitempty"`
-	LLMGuidance     string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
-	MemoryFolder    string    `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
-	ChatsFolder     string    `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
-	UserID          string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
-	IsSyntheticTurn bool      `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
+	SessionID                   string     `json:"session_id"`
+	AgentMode                   string     `json:"agent_mode"`
+	Status                      string     `json:"status"` // "running", "paused", "completed"
+	LastActivity                time.Time  `json:"last_activity"`
+	CreatedAt                   time.Time  `json:"created_at"`
+	Query                       string     `json:"query,omitempty"`
+	LLMGuidance                 string     `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
+	MemoryFolder                string     `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
+	ChatsFolder                 string     `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
+	UserID                      string     `json:"-"`                       // User ID for session isolation (not exposed in JSON)
+	IsSyntheticTurn             bool       `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
+	HasRunningBackgroundAgents  bool       `json:"has_running_background_agents,omitempty"`
+	RunningBackgroundAgentCount int        `json:"running_background_agent_count,omitempty"`
+	CurrentExecutionName        string     `json:"current_execution_name,omitempty"`
+	NeedsUserInput              bool       `json:"needs_user_input,omitempty"`
+	WaitingEventType            string     `json:"waiting_event_type,omitempty"`
+	WaitingMessage              string     `json:"waiting_message,omitempty"`
+	WaitingSince                *time.Time `json:"waiting_since,omitempty"`
 }
 
 // StreamingAPI represents the streaming API server
@@ -1163,6 +1170,18 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/review-data", api.handleGetWorkflowReviewData).Methods("GET", "OPTIONS")
+
+	// Auto-improvement framework — see docs/workflow/auto_improvement_framework.md
+	apiRouter.HandleFunc("/workflow/eval-trajectory", api.handleGetEvalTrajectory).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/decisions", api.handleGetDecisionsFeed).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/metrics", api.handleGetMetrics).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments", api.handleGetExperiments).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments/abort", api.handleAbortExperiment).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments/extend", api.handleExtendExperiment).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments/manual-conclude", api.handleManualConcludeExperiment).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments/approve", api.handleApproveExperiment).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/capture-context", api.handleCaptureContext).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/experiments/record-measurement", api.handleRecordMeasurement).Methods("POST", "OPTIONS")
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
@@ -4810,6 +4829,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 						todo_creation_human.RegisterConsolidateKnowledgebaseTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
+						// Auto-improvement framework — proposer-side tools (optimizer mode).
+						RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools

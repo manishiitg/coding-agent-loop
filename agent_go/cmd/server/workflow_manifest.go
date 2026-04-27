@@ -32,6 +32,12 @@ type WorkflowManifest struct {
 	Schedules       []WorkflowSchedule        `json:"schedules"`
 	CreatedAt       string                    `json:"created_at,omitempty"`
 	UpdatedAt       string                    `json:"updated_at,omitempty"`
+
+	// Auto-improvement framework fields. See docs/workflow/auto_improvement_framework.md.
+	WorkflowType          WorkflowType          `json:"workflow_type,omitempty"`
+	OversightMode         OversightMode         `json:"oversight_mode,omitempty"`
+	PlanStability         PlanStability         `json:"plan_stability,omitempty"`
+	DecisionLogMutability DecisionLogMutability `json:"decision_log_mutability,omitempty"`
 }
 
 // WorkflowCapabilities stores workflow-wide agent and tool configuration.
@@ -121,6 +127,36 @@ func ValidateManifest(m *WorkflowManifest) error {
 		// group_names required for workflow/workshop modes, not for multi-agent
 		if sched.Mode != "multi-agent" && len(normalizeScheduleGroupNames(sched.GroupNames)) == 0 {
 			return fmt.Errorf("schedules[%d].group_names is required", i)
+		}
+	}
+
+	// Validate auto-improvement framework enum fields if set.
+	if m.WorkflowType != "" {
+		switch m.WorkflowType {
+		case WorkflowTypeDeterministic, WorkflowTypeExploratory, WorkflowTypeContextual:
+		default:
+			return fmt.Errorf("invalid workflow_type: %s", m.WorkflowType)
+		}
+	}
+	if m.OversightMode != "" {
+		switch m.OversightMode {
+		case OversightManual, OversightSupervised, OversightAutonomous:
+		default:
+			return fmt.Errorf("invalid oversight_mode: %s", m.OversightMode)
+		}
+	}
+	if m.PlanStability != "" {
+		switch m.PlanStability {
+		case PlanStabilityMutable, PlanStabilityRatchet, PlanStabilityFrozen:
+		default:
+			return fmt.Errorf("invalid plan_stability: %s", m.PlanStability)
+		}
+	}
+	if m.DecisionLogMutability != "" {
+		switch m.DecisionLogMutability {
+		case DecisionLogAppendOnly, DecisionLogAppendOnlyStrict:
+		default:
+			return fmt.Errorf("invalid decision_log_mutability: %s", m.DecisionLogMutability)
 		}
 	}
 
@@ -313,6 +349,22 @@ func applyManifestDefaults(m *WorkflowManifest) {
 		if m.Schedules[i].ID == "" {
 			m.Schedules[i].ID = uuid.New().String()
 		}
+	}
+
+	// Auto-improvement framework defaults. Pre-existing workflows default to
+	// "exploratory" + "supervised" so the framework is opt-in for behavior changes
+	// but readable for the UI immediately.
+	if m.WorkflowType == "" {
+		m.WorkflowType = WorkflowTypeExploratory
+	}
+	if m.OversightMode == "" {
+		m.OversightMode = OversightSupervised
+	}
+	if m.PlanStability == "" {
+		m.PlanStability = PlanStabilityMutable
+	}
+	if m.DecisionLogMutability == "" {
+		m.DecisionLogMutability = DecisionLogAppendOnly
 	}
 }
 

@@ -56,6 +56,12 @@ These are the current workflow slash commands.
 | `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, and missing validation | `builder`, `optimizer`, `run` | read-only shell/file tools |
 | `/review-code` | Review saved `main.py` scripts against step descriptions | `optimizer` | `review_step_code` |
 | `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes | `builder`, `optimizer`, `run` | read-only shell/file tools |
+| `/capture-context` | Add a Type-3 business rule to `context/rules.md`, anchored to a metric — auto-improvement framework | `optimizer` (Type 3 only) | `POST /api/workflow/capture-context` |
+| `/exp-abort` | Revert and abort the active experiment via the captured revertable diff | `optimizer` | `POST /api/workflow/experiments/abort` |
+| `/exp-extend` | Add more measurement runs to the active experiment | `optimizer` | `POST /api/workflow/experiments/extend` |
+| `/exp-conclude` | Manually render a verdict (overrides the evaluator) — use only when the heuristic verdict is clearly wrong | `optimizer` | `POST /api/workflow/experiments/manual-conclude` |
+
+The `/capture-context` and `/exp-*` commands belong to the auto-improvement framework. See `auto_improvement_framework.md` for the design and the experiment lifecycle these commands operate on.
 
 ## Backend Tools
 

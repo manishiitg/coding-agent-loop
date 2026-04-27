@@ -85,7 +85,11 @@ The backend struct lives in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent
     }
   ],
   "created_at": "2026-04-09T10:00:00Z",
-  "updated_at": "2026-04-09T10:00:00Z"
+  "updated_at": "2026-04-09T10:00:00Z",
+  "workflow_type": "exploratory",
+  "oversight_mode": "supervised",
+  "plan_stability": "mutable",
+  "decision_log_mutability": "append_only"
 }
 ```
 
@@ -151,6 +155,19 @@ Current schedule fields include:
 
 For current runtime behavior, APIs, run history, and workshop-vs-workflow execution paths, see [workflow_scheduling.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/workflow_scheduling.md).
 
+### Auto-improvement framework fields
+
+Four optional top-level fields configure how the workflow participates in the auto-improvement framework. All default to backward-compatible values; existing workflows can omit them.
+
+| Field | Values | Default | Purpose |
+|---|---|---|---|
+| `workflow_type` | `deterministic` \| `exploratory` \| `contextual` | `exploratory` | Drives metric requirements, eval shape, decision-log behavior, and which `/improve-*` commands are surfaced. |
+| `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for hypothesis acceptance and verdict commitment. |
+| `plan_stability` | `mutable` \| `ratchet` \| `frozen` | `mutable` | `ratchet` allows additions but blocks silent removals; `frozen` blocks any plan-shape change. Used by adversarial / regulated workflows. |
+| `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids any edit to a decision-log entry, even corrective. Used by compliance workflows. |
+
+For the design rationale and worked examples, see [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
+
 ## What Does Not Belong In The Manifest
 
 Do not store live runtime/session state in `workflow.json`:
@@ -179,6 +196,10 @@ These still live alongside it:
 - `planning/output_plan.json`
 - `variables/variables.json`
 - `evaluation/evaluation_plan.json`
+- `metrics.json` — defines the workflow's quantified goals and how each value is sourced per run. Lives at the workflow root because metrics are referenced by eval, decisions, the experiment loop, SLO monitors, and the report plan. See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
+- `builder/decisions.jsonl` — append-only structured audit log of every change to the workflow (sidecar to the existing `builder/improve.md` prose log). Auto-improvement framework.
+- `context/rules.md`, `context/clarifications.jsonl`, `context/examples/` — Type 3 context store. Holds business rules accumulated from human users.
+- `experiments/active.json`, `experiments/history.jsonl`, `experiments/config.json`, `experiments/diffs/<id>.patch` — experiment loop persistence (Types 2 and 3).
 
 `workflow.json` is the workflow-level definition file.
 The planning files are still the step graph and execution-plan files.

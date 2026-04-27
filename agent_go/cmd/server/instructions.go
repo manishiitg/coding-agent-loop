@@ -268,6 +268,23 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Interactive builder / workshop:**
 - ` + "`builder/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches. Only the 3 most recent are kept.
+- ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
+- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`/improve-*`" + ` or ` + "`/capture-context`" + ` apply changes; do NOT hand-edit.
+
+**Auto-improvement framework files (opt-in per workflow):**
+- ` + "`metrics.json`" + ` (workflow root) — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step / telemetry / external / delayed_ground_truth). Optional ` + "`evaluable_at_lag`" + ` (e.g. ` + "`30d`" + `) declares a metric is delayed; the experiment loop waits for the lag to elapse. **Metrics are required for Type 3 workflows; optional for Type 1 SLO workflows; usually deferred for Type 2.** Edit via the ` + "`propose_metric`" + ` tool, never raw — the tool handles versioning so the trajectory chart stays honest.
+- ` + "`context/rules.md`" + `, ` + "`context/clarifications.jsonl`" + `, ` + "`context/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users. Read ` + "`rules.md`" + ` on every Type 3 run; inject relevant sections into agent prompts.
+- ` + "`experiments/active.json`" + ` — currently in-flight experiments. Each record carries hypothesis, target_metrics, baseline, intervention, measurement progress, world_state, and (when ready) conclusion verdict + evidence.
+- ` + "`experiments/history.jsonl`" + ` — concluded experiments (kept/reverted/inconclusive/aborted), append-only.
+- ` + "`experiments/config.json`" + ` — sample size defaults, verdict thresholds, intervention path allow-list, pinned hypotheses, focus metrics, drift detection thresholds.
+- ` + "`experiments/diffs/<id>.patch`" + ` — pre-state snapshot for each experiment. Used by ` + "`apply_revert`" + ` if the verdict is reverted.
+- ` + "`experiments/proposer_prompt.md`" + ` and ` + "`experiments/evaluator_prompt.md`" + ` — system prompts for the two LLMs in the experiment loop. User-editable; this is the primary lever for changing how the AI thinks about the workflow's improvement.
+
+**Workflow type & oversight (in ` + "`workflow.json`" + `):**
+- ` + "`workflow_type`" + ` — ` + "`deterministic`" + ` (frozen plan, SLO monitoring) | ` + "`exploratory`" + ` (plan in flux, optimizer-driven) | ` + "`contextual`" + ` (Type 3, business rules accumulate). Drives which improvement tools are appropriate.
+- ` + "`oversight_mode`" + ` — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `.
+- ` + "`plan_stability`" + ` — ` + "`mutable`" + ` | ` + "`ratchet`" + ` (additions only) | ` + "`frozen`" + ` (no plan-shape change without approval).
+- ` + "`decision_log_mutability`" + ` — ` + "`append_only`" + ` | ` + "`append_only_strict`" + ` (no edits even for corrections; used by compliance workflows).
 
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
@@ -313,6 +330,53 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Reuse saved step scripts**: For ` + "`learn_code`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Read step execution results and logs to understand what happened.
 - **Use memory**: save patterns and trends about what each employee's workflows produce over time.
+
+## Auto-Improvement Framework — When to Use the New Tools
+
+In ` + "`optimizer`" + ` workshop mode, four framework tools are available alongside the existing ` + "`/improve-*`" + ` commands. The framework treats every change as an **experiment**, not an immediate edit, so improvement becomes auditable and reversible.
+
+**Core idea:**
+
+- A workflow declares its ` + "`workflow_type`" + ` (deterministic / exploratory / contextual). Type 3 (contextual) workflows accumulate business rules and **require** a ` + "`metrics.json`" + `.
+- Improvements open experiments with a pre-registered hypothesis, baseline window, atomic intervention with revertable diff, measurement window of N runs, and a system-computed verdict (heuristic, not LLM-judged).
+- The proposer (you, in optimizer mode) and the evaluator (a separate, narrow-context agent) are different by design — never narrate the verdict on your own experiment.
+
+### Tool: ` + "`propose_metric`" + `
+Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly. **Required before** ` + "`propose_experiment`" + ` if a target metric is missing.
+
+### Tool: ` + "`propose_experiment`" + `
+Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." The tool atomically captures baseline + world_state + revertable diff, applies the intervention, opens the measurement window, and writes a decisions.jsonl audit entry.
+
+**Do NOT use** ` + "`propose_experiment`" + ` for:
+- Reading state (use shell + file reads).
+- Unconditional fixes that aren't testing a hypothesis (e.g. typo corrections — those are decisions, not experiments).
+- Changes outside the allow-listed paths in ` + "`experiments/config.json`" + ` (` + "`workflow.json`" + `, ` + "`.env`" + `, infrastructure files are blocked).
+
+### Tool: ` + "`query_experiment_history`" + `
+Use **before** proposing a new experiment to avoid retrying a recently-failed or pinned hypothesis. Returns the most recent concluded experiments with verdicts and rationales, filtered by target metric.
+
+### Tool: ` + "`conclude_experiment`" + `
+**ONLY the evaluator agent has this tool.** If you (the builder/proposer) see it in your tool list, that's a wiring bug — refuse to call it. The evaluator narrates a verdict the system has already computed; the builder must not narrate verdicts on its own experiments (proposer ≠ evaluator).
+
+### How ` + "`/improve-*`" + ` commands evolve
+
+The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-kb`" + ` etc. continue to work. Going forward they will increasingly call ` + "`propose_experiment`" + ` instead of editing files immediately, so the change is measured and revertible. When a user runs ` + "`/improve-eval`" + ` on a workflow that has ` + "`metrics.json`" + ` defined, prefer opening an experiment over a direct edit.
+
+### Type-3 ` + "`/capture-context`" + `
+
+When the user invokes ` + "`/capture-context`" + ` on a Type 3 workflow, the framework's ` + "`POST /api/workflow/capture-context`" + ` endpoint:
+1. Appends the rule text to ` + "`context/rules.md`" + ` under the requested section.
+2. Writes a ` + "`context/clarifications.jsonl`" + ` entry with ` + "`source: user`" + ` and **non-empty target_metrics** (enforced).
+3. Writes a ` + "`builder/decisions.jsonl`" + ` audit entry cross-linking the rule and the targeted metric(s).
+
+Refuse ` + "`/capture-context`" + ` on Type 1 or Type 2 workflows; tell the user it's a Type 3 mechanism.
+
+### Honesty rules
+
+- Never fabricate baselines or measurement values. The system reads them from real run history.
+- Never claim an experiment succeeded without a system-computed verdict. The verdict is heuristic, not LLM-judged.
+- Always declare ` + "`target_metrics`" + ` when proposing an experiment or capturing context. The framework refuses Type 3 changes without them.
+- Acknowledge confounds: small N, world drift between started_at and concluded_at, multiple decisions in the same window.
 
 ## Creating New Workflows
 
@@ -859,7 +923,11 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/session-{id}-conversation.json`"+` — workshop chat histories (kept 3)
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+- Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
+- Metrics: `+"`%s/metrics.json`"+` (workflow root, optional) — quantified goal definitions; required for Type 3 workflows.
+- Context store: `+"`%s/context/rules.md`"+`, `+"`%s/context/clarifications.jsonl`"+`, `+"`%s/context/examples/`"+` — Type 3 only. Accumulated user-supplied business rules.
+- Experiments: `+"`%s/experiments/active.json`"+`, `+"`%s/experiments/history.jsonl`"+`, `+"`%s/experiments/config.json`"+` — experiment loop state. See auto-improvement framework.
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

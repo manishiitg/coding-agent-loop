@@ -1,0 +1,714 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcp-agent-builder.local/schemas/auto-improvement.schema.json",
+  "title": "Auto-Improvement Framework Schemas",
+  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, metrics.json, decisions.jsonl entries, clarifications.jsonl entries, experiment records (active.json + history.jsonl), experiments/config.json, and the four LLM-callable tool inputs.",
+  "$defs": {
+
+    "WorkflowType": {
+      "type": "string",
+      "enum": ["deterministic", "exploratory", "contextual"],
+      "description": "Workflow type. Drives metric requirements, eval shape, decision-log behavior, and which /improve-* commands are surfaced."
+    },
+
+    "OversightMode": {
+      "type": "string",
+      "enum": ["manual", "supervised", "autonomous"],
+      "description": "Per-workflow oversight mode. manual = every change requires approval; supervised = low-risk auto, high-risk gated; autonomous = LLM applies and concludes without gates."
+    },
+
+    "PlanStability": {
+      "type": "string",
+      "enum": ["mutable", "ratchet", "frozen"],
+      "default": "mutable",
+      "description": "mutable = plan can be replanned freely; ratchet = additions allowed, silent removals blocked; frozen = no plan-shape change without explicit human approval."
+    },
+
+    "DecisionLogMutability": {
+      "type": "string",
+      "enum": ["append_only", "append_only_strict"],
+      "default": "append_only",
+      "description": "append_only allows superseding edits via append; append_only_strict forbids any edit, even corrective. Used by compliance workflows."
+    },
+
+    "MetricDirection": {
+      "type": "string",
+      "enum": ["higher_better", "lower_better"]
+    },
+
+    "MetricMode": {
+      "type": "string",
+      "enum": ["target", "slo"],
+      "description": "target = drive toward a number; slo = stay above floor / below ceiling."
+    },
+
+    "MetricSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["eval_step", "telemetry", "external", "delayed_ground_truth", "lineage", "schema_check"]
+        },
+        "id": {
+          "type": "string",
+          "description": "For type=eval_step, the eval step's id (must exist in evaluation/evaluation_plan.json)."
+        },
+        "field": {
+          "type": "string",
+          "description": "For type=telemetry or external, the dotted path to the value within the run's telemetry payload or external feed."
+        },
+        "joined_via": {
+          "type": "string",
+          "description": "For type=delayed_ground_truth, the join key linking predictions to their later ground truth (e.g., prediction_id)."
+        }
+      }
+    },
+
+    "Metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "unit", "direction", "mode", "source"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+          "description": "Unique within metrics.json. kebab.dot pattern (e.g., audit.accuracy)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable name."
+        },
+        "unit": {
+          "type": "string",
+          "description": "percent | usd | seconds | count | days | ratio | bps | etc."
+        },
+        "direction": { "$ref": "#/$defs/MetricDirection" },
+        "mode": { "$ref": "#/$defs/MetricMode" },
+        "target": {
+          "type": "number",
+          "description": "Required when mode=target."
+        },
+        "floor": {
+          "type": "number",
+          "description": "Required when mode=slo and direction=higher_better."
+        },
+        "ceiling": {
+          "type": "number",
+          "description": "Required when mode=slo and direction=lower_better."
+        },
+        "source": { "$ref": "#/$defs/MetricSource" },
+        "evaluable_at_lag": {
+          "type": "string",
+          "pattern": "^\\d+[smhdw]$",
+          "description": "Duration before the metric value is available (e.g., 30d, 12h). Forces the experiment loop to use the pending-evaluation queue for this metric."
+        },
+        "parent": {
+          "type": "string",
+          "description": "Optional id of a parent metric for grouping in UI. NO weighted rollup."
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Incremented on amend. Series prior to this version are archived; chart renderers should break the line at the version transition."
+        }
+      }
+    },
+
+    "MetricsFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics"],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Metric" }
+        },
+        "archive": {
+          "type": "array",
+          "description": "Prior versions of amended metrics. Append-only.",
+          "items": {
+            "type": "object",
+            "required": ["id", "version", "archived_at", "archived_reason", "definition"],
+            "properties": {
+              "id": { "type": "string" },
+              "version": { "type": "integer" },
+              "archived_at": { "type": "string", "format": "date-time" },
+              "archived_reason": { "type": "string" },
+              "definition": { "$ref": "#/$defs/Metric" }
+            }
+          }
+        }
+      }
+    },
+
+    "WorkflowExtensions": {
+      "type": "object",
+      "description": "Additions to workflow.json that the auto-improvement framework reads.",
+      "properties": {
+        "workflow_type": { "$ref": "#/$defs/WorkflowType" },
+        "oversight_mode": { "$ref": "#/$defs/OversightMode" },
+        "plan_stability": { "$ref": "#/$defs/PlanStability" },
+        "decision_log_mutability": { "$ref": "#/$defs/DecisionLogMutability" }
+      }
+    },
+
+    "DecisionSource": {
+      "type": "string",
+      "enum": ["agent", "user", "system"],
+      "description": "Who made this decision. agent = builder/optimizer/evaluator LLM; user = human override or capture-context; system = automated action like apply_revert or archive_experiment."
+    },
+
+    "DecisionEntry": {
+      "type": "object",
+      "description": "One line of builder/decisions.jsonl. Append-only.",
+      "additionalProperties": false,
+      "required": ["ts", "id", "source", "trigger", "applied_changes"],
+      "properties": {
+        "ts": { "type": "string", "format": "date-time" },
+        "id": {
+          "type": "string",
+          "description": "Globally unique. Format: dec-<workflow_id>-<YYYYMMDD>-<sequence>."
+        },
+        "source": { "$ref": "#/$defs/DecisionSource" },
+        "trigger": {
+          "type": "string",
+          "description": "Origin of the decision. Slash command name (e.g., improve-eval, capture-context), system action name (e.g., apply_revert), or override action."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Optional short prose."
+        },
+        "applied_changes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Workflow-relative file paths that were modified."
+        },
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Metric ids this decision is meant to move. REQUIRED for Type 3 workflows."
+        },
+        "linked_experiment_id": {
+          "type": "string",
+          "description": "If this decision opened or was caused by an experiment."
+        },
+        "regulation_ref": {
+          "type": "string",
+          "description": "For compliance workflows: reference to the regulation/clause this decision relates to."
+        },
+        "evidence_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "For compliance: pointers to forensic evidence supporting the decision."
+        },
+        "supersedes": {
+          "type": "string",
+          "description": "Decision id this entry supersedes (used for corrections in append_only mode)."
+        },
+        "edited_at": { "type": "string", "format": "date-time" },
+        "edited_by": { "type": "string" }
+      }
+    },
+
+    "ClarificationEntry": {
+      "type": "object",
+      "description": "One line of context/clarifications.jsonl. Type 3 only. Always source: user.",
+      "additionalProperties": false,
+      "required": ["ts", "id", "source", "trigger", "applied_changes", "target_metrics"],
+      "properties": {
+        "ts": { "type": "string", "format": "date-time" },
+        "id": {
+          "type": "string",
+          "description": "Format: clar-<workflow_id>-<YYYYMMDD>-<sequence>."
+        },
+        "source": {
+          "type": "string",
+          "const": "user"
+        },
+        "trigger": {
+          "type": "string",
+          "description": "Typically capture-context."
+        },
+        "rule_added": {
+          "type": "string",
+          "description": "The rule text added to context/rules.md."
+        },
+        "rule_section": {
+          "type": "string",
+          "description": "The section of rules.md the rule was added to."
+        },
+        "clarification": {
+          "type": "string",
+          "description": "Free-form clarification text if not a discrete rule."
+        },
+        "example_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Paths under context/examples/ added with this clarification."
+        },
+        "applied_changes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "REQUIRED. Each clarification must declare which metric(s) it is meant to move."
+        },
+        "linked_experiment_id": {
+          "type": "string",
+          "description": "Experiment opened to validate this clarification's effect."
+        }
+      }
+    },
+
+    "ExperimentStatus": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "awaiting-approval",
+        "measuring",
+        "evaluating",
+        "awaiting-conclusion-approval",
+        "concluded",
+        "aborted"
+      ]
+    },
+
+    "Verdict": {
+      "type": "string",
+      "enum": ["kept", "reverted", "inconclusive", "extend"]
+    },
+
+    "InterventionOperation": {
+      "type": "string",
+      "enum": ["append", "replace", "patch", "create"]
+    },
+
+    "InterventionChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "operation", "content"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Workflow-relative path. Must be within experiments/config.json::allowed_intervention_paths."
+        },
+        "operation": { "$ref": "#/$defs/InterventionOperation" },
+        "content": {
+          "type": "string",
+          "description": "New content (operation=append/replace/create) or unified diff (operation=patch)."
+        }
+      }
+    },
+
+    "WorldState": {
+      "type": "object",
+      "description": "Snapshot of runtime state at a point in time. Used to detect drift between experiment start and end.",
+      "additionalProperties": false,
+      "required": ["captured_at"],
+      "properties": {
+        "captured_at": { "type": "string", "format": "date-time" },
+        "model_versions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "mcp_versions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "source_data_hashes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "ExperimentRecord": {
+      "type": "object",
+      "description": "Used in both experiments/active.json (status: pre-concluded) and experiments/history.jsonl (status: concluded or aborted).",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "hypothesis",
+        "target_metrics",
+        "expected_direction",
+        "expected_magnitude",
+        "baseline",
+        "intervention",
+        "measurement",
+        "world_state",
+        "started_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Format: exp-<workflow_id>-<YYYYMMDD>-<sequence>."
+        },
+        "status": { "$ref": "#/$defs/ExperimentStatus" },
+        "hypothesis": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "expected_direction": {
+          "type": "string",
+          "enum": ["increase", "decrease", "maintain"]
+        },
+        "expected_magnitude": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window", "values", "mean"],
+          "properties": {
+            "window": {
+              "type": "string",
+              "description": "Description of the baseline window (e.g., last_5_runs)."
+            },
+            "values": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "number" }
+              },
+              "description": "Per-metric array of baseline values."
+            },
+            "mean": {
+              "type": "object",
+              "additionalProperties": { "type": "number" }
+            },
+            "std": {
+              "type": "object",
+              "additionalProperties": { "type": "number" }
+            },
+            "insufficient": {
+              "type": "boolean",
+              "description": "True if there was not enough history to form a confident baseline."
+            }
+          }
+        },
+        "intervention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trigger", "applied_changes", "revertable_diff_path"],
+          "properties": {
+            "trigger": { "type": "string" },
+            "applied_changes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "revertable_diff_path": {
+              "type": "string",
+              "description": "Path to experiments/diffs/<id>.patch"
+            }
+          }
+        },
+        "measurement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target_runs", "completed_runs", "values"],
+          "properties": {
+            "target_runs": { "type": "integer", "minimum": 1 },
+            "completed_runs": { "type": "integer", "minimum": 0 },
+            "values": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "number" }
+              }
+            }
+          }
+        },
+        "world_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["started_at"],
+          "properties": {
+            "started_at": { "$ref": "#/$defs/WorldState" },
+            "concluded_at": { "$ref": "#/$defs/WorldState" }
+          }
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "concluded_at": { "type": "string", "format": "date-time" },
+        "conclusion": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "verdict": { "$ref": "#/$defs/Verdict" },
+            "rationale": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "post_mean": {
+                  "type": "object",
+                  "additionalProperties": { "type": "number" }
+                },
+                "magnitude_observed": {
+                  "type": "object",
+                  "additionalProperties": { "type": "number" }
+                },
+                "per_run_beat_pct": {
+                  "type": "object",
+                  "additionalProperties": { "type": "number" }
+                },
+                "drift_flagged": { "type": "boolean" }
+              }
+            },
+            "verdict_overridden": { "type": "boolean" },
+            "override_reason": { "type": "string" }
+          }
+        },
+        "approvals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hypothesis_approved_by": { "type": ["string", "null"] },
+            "hypothesis_approved_at": { "type": ["string", "null"], "format": "date-time" },
+            "conclusion_approved_by": { "type": ["string", "null"] },
+            "conclusion_approved_at": { "type": ["string", "null"], "format": "date-time" }
+          }
+        },
+        "linked_decisions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "ExperimentsConfig": {
+      "type": "object",
+      "description": "experiments/config.json — defaults for the experiment loop.",
+      "additionalProperties": false,
+      "required": ["default_measurement_runs", "baseline_window", "allowed_intervention_paths"],
+      "properties": {
+        "default_measurement_runs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default sample size when propose_experiment doesn't override."
+        },
+        "min_runs": { "type": "integer", "minimum": 1 },
+        "max_runs": { "type": "integer", "minimum": 1 },
+        "baseline_window": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of prior runs used to compute baseline."
+        },
+        "allowed_intervention_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Path globs that propose_experiment may write to."
+        },
+        "forbidden_intervention_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Always-rejected path globs (e.g., .env, .git/, workflow.json)."
+        },
+        "verdict_thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kept_magnitude_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
+            "kept_per_run_beat_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+            "reverted_per_run_beat_pct": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
+            "noise_band_std_multiplier": { "type": "number", "minimum": 0, "default": 1.0 }
+          }
+        },
+        "cooldown_hours": {
+          "type": "number",
+          "description": "Minimum hours before retrying a similar hypothesis."
+        },
+        "blackout_windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cron", "reason"],
+            "properties": {
+              "cron": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "max_concurrent_experiments": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "cost_budget": {
+          "type": "object",
+          "properties": {
+            "currency": { "type": "string", "default": "usd" },
+            "per_experiment": { "type": "number" },
+            "per_period": { "type": "number" },
+            "period": { "type": "string", "description": "ISO-8601 duration, e.g. P7D" }
+          }
+        },
+        "high_risk_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Path globs that, when touched by an intervention, force the experiment into high-risk approval flow regardless of oversight mode default."
+        },
+        "pinned_hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "reason", "pinned_at"],
+            "properties": {
+              "text": { "type": "string" },
+              "reason": { "type": "string" },
+              "pinned_at": { "type": "string", "format": "date-time" },
+              "pinned_by": { "type": "string" }
+            }
+          },
+          "description": "Hypotheses the optimizer must not retry."
+        },
+        "focus_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Metric ids the optimizer should prioritize for next-experiment selection."
+        },
+        "drift_threshold": {
+          "type": "object",
+          "description": "Below these thresholds the conclusion is downgraded.",
+          "properties": {
+            "model_version_change": { "type": "boolean", "default": true },
+            "mcp_version_change": { "type": "boolean", "default": true },
+            "source_data_hash_change_max": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "ToolInput_propose_experiment": {
+      "type": "object",
+      "description": "Input schema for the propose_experiment tool. Used by the proposer (builder in optimizer mode).",
+      "additionalProperties": false,
+      "required": [
+        "hypothesis",
+        "target_metrics",
+        "expected_direction",
+        "expected_magnitude",
+        "intervention_changes"
+      ],
+      "properties": {
+        "hypothesis": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "expected_direction": {
+          "type": "string",
+          "enum": ["increase", "decrease", "maintain"]
+        },
+        "expected_magnitude": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "intervention_changes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/InterventionChange" },
+          "minItems": 1
+        },
+        "measurement_runs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Override default_measurement_runs from experiments/config.json."
+        }
+      }
+    },
+
+    "ToolInput_propose_metric": {
+      "type": "object",
+      "description": "Input schema for the propose_metric tool. Used by the proposer.",
+      "additionalProperties": false,
+      "required": ["id", "unit", "direction", "mode", "source"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "label": { "type": "string" },
+        "unit": { "type": "string" },
+        "direction": { "$ref": "#/$defs/MetricDirection" },
+        "mode": { "$ref": "#/$defs/MetricMode" },
+        "target": { "type": "number" },
+        "floor": { "type": "number" },
+        "ceiling": { "type": "number" },
+        "source": { "$ref": "#/$defs/MetricSource" },
+        "evaluable_at_lag": {
+          "type": "string",
+          "pattern": "^\\d+[smhdw]$"
+        },
+        "parent": { "type": "string" },
+        "amend_existing": {
+          "type": "object",
+          "required": ["id", "reason"],
+          "properties": {
+            "id": { "type": "string" },
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "ToolInput_conclude_experiment": {
+      "type": "object",
+      "description": "Input schema for the conclude_experiment tool. The ONLY tool the evaluator agent has.",
+      "additionalProperties": false,
+      "required": ["experiment_id", "rationale"],
+      "properties": {
+        "experiment_id": { "type": "string" },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "override_verdict": {
+          "type": ["object", "null"],
+          "required": ["to", "reason"],
+          "properties": {
+            "to": { "$ref": "#/$defs/Verdict" },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+
+    "ToolInput_query_experiment_history": {
+      "type": "object",
+      "description": "Input schema for the optional query_experiment_history tool.",
+      "additionalProperties": false,
+      "properties": {
+        "target_metrics": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "since": { "type": "string", "format": "date-time" },
+        "exclude_pinned": { "type": "boolean", "default": true },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 }
+      }
+    }
+  }
+}

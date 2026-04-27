@@ -93,6 +93,33 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "reportPlanDocumentThemeColors": {
+      "properties": {
+        "primary": {
+          "type": "string"
+        },
+        "accent": {
+          "type": "string"
+        },
+        "card": {
+          "type": "string"
+        },
+        "muted": {
+          "type": "string"
+        },
+        "border": {
+          "type": "string"
+        },
+        "chart": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "reportPlanDocumentWidget": {
       "properties": {
         "id": {
@@ -424,6 +451,9 @@
     },
     "theme": {
       "type": "string"
+    },
+    "themeColors": {
+      "$ref": "#/$defs/reportPlanDocumentThemeColors"
     },
     "sections": {
       "items": {

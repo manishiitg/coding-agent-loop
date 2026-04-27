@@ -57,6 +57,78 @@ import type {
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
 
+// Convert "#rgb" / "#rrggbb" / "rgb(r,g,b)" / "hsl(h,s%,l%)" to a Tailwind-style
+// "H S% L%" triplet. Tailwind's CSS variables expect that triplet so they can
+// be wrapped in `hsl(var(--name))` — passing a full `hsl(...)` or hex string
+// breaks every consumer. Returns null for unrecognized inputs so the caller
+// can fall back to the named theme.
+function hexToHslTriplet(input: string): string | null {
+  const value = input.trim()
+  if (!value) return null
+
+  // Pass through if the author already wrote "H S% L%" (e.g. "200 70% 45%").
+  if (/^\s*\d+(\.\d+)?\s+\d+(\.\d+)?%\s+\d+(\.\d+)?%\s*$/.test(value)) {
+    return value.replace(/\s+/g, ' ').trim()
+  }
+
+  // Hex (#rgb or #rrggbb).
+  let hex = value
+  if (hex.startsWith('#')) hex = hex.slice(1)
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    hex = hex.split('').map(c => c + c).join('')
+  }
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null
+
+  const r = parseInt(hex.slice(0, 2), 16) / 255
+  const g = parseInt(hex.slice(2, 4), 16) / 255
+  const b = parseInt(hex.slice(4, 6), 16) / 255
+
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break
+      case g: h = (b - r) / d + 2; break
+      case b: h = (r - g) / d + 4; break
+    }
+    h /= 6
+  }
+  return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`
+}
+
+// Build the inline style object that injects custom theme colors as CSS
+// variables. Each entry maps a themeColors field to the matching Tailwind
+// variable name. The variables cascade to every descendant, so charts, cards,
+// stats, and primary buttons all pick them up automatically. Returns undefined
+// when there's nothing to inject so React doesn't churn on an empty object.
+function buildThemeStyle(themeColors: ParsedReportPlan['themeColors']): React.CSSProperties | undefined {
+  if (!themeColors) return undefined
+  const entries: Array<[string, string]> = []
+  const set = (name: string, value: string | undefined) => {
+    if (!value) return
+    const triplet = hexToHslTriplet(value)
+    if (triplet) entries.push([name, triplet])
+  }
+  set('--primary', themeColors.primary)
+  set('--accent', themeColors.accent)
+  set('--card', themeColors.card)
+  set('--muted', themeColors.muted)
+  set('--border', themeColors.border)
+  set('--ring', themeColors.primary) // Focus ring tracks primary by convention.
+  if (themeColors.chart) {
+    themeColors.chart.slice(0, 5).forEach((color, idx) => {
+      set(`--chart-${idx + 1}`, color)
+    })
+  }
+  if (entries.length === 0) return undefined
+  return Object.fromEntries(entries) as React.CSSProperties
+}
+
 async function readWorkspaceText(filepath: string): Promise<string | null> {
   try {
     const resp = await agentApi.getPlannerFileContent(filepath)
@@ -701,10 +773,17 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   // tolerates Tailwind purge edge cases.
   const [previewControlsExpanded, setPreviewControlsExpanded] = useState(false)
 
+  // Inline custom palette → CSS variables on the report root. Hex values get
+  // converted to "H S% L%" triplets because Tailwind variables are HSL-shaped
+  // (`hsl(var(--primary))`). Anything we don't override falls through to the
+  // named theme block and ultimately the workspace defaults.
+  const themeStyle = useMemo(() => buildThemeStyle(plan.themeColors), [plan.themeColors])
+
   return (
     <div
       className="relative h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-background via-background to-muted/20 text-foreground"
       data-report-theme={plan.theme || undefined}
+      style={themeStyle}
     >
       {onClose && (
         <div className="flex flex-shrink-0 items-center justify-end border-b border-border/50 bg-background/80 px-3 py-2.5 backdrop-blur-sm sm:px-5">

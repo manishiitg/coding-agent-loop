@@ -73,9 +73,24 @@ type reportPlanSection struct {
 }
 
 type reportPlanDocument struct {
-	Version  int                         `json:"version,omitempty"`
-	Theme    string                      `json:"theme,omitempty"`
-	Sections []reportPlanDocumentSection `json:"sections"`
+	Version      int                            `json:"version,omitempty"`
+	Theme        string                         `json:"theme,omitempty"`
+	ThemeColors  *reportPlanDocumentThemeColors `json:"themeColors,omitempty"`
+	Sections     []reportPlanDocumentSection    `json:"sections"`
+}
+
+// Inline custom palette. When set, the renderer converts each hex value to an
+// HSL triplet ("H S% L%") and injects them as CSS variables on the report
+// root, overriding the named theme. Anything missing falls through to the
+// named theme (or the workspace default if no theme is set). Hex strings only
+// — the renderer does the HSL conversion so authors think in colors, not HSL.
+type reportPlanDocumentThemeColors struct {
+	Primary string   `json:"primary,omitempty"`
+	Accent  string   `json:"accent,omitempty"`
+	Card    string   `json:"card,omitempty"`
+	Muted   string   `json:"muted,omitempty"`
+	Border  string   `json:"border,omitempty"`
+	Chart   []string `json:"chart,omitempty"` // Up to 5 colors, mapped to --chart-1..--chart-5
 }
 
 type reportPlanDocumentSection struct {
@@ -190,6 +205,7 @@ type (
 	ReportPlanDocumentWidget        = reportPlanDocumentWidget
 	ReportPlanDocumentWidgetLayout  = reportPlanDocumentWidgetLayout
 	ReportPlanDocumentDefaultSort   = reportPlanDocumentDefaultSort
+	ReportPlanDocumentThemeColors   = reportPlanDocumentThemeColors
 )
 
 type reportPlanReadResult struct {
@@ -729,7 +745,7 @@ func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
 	if doc.Version == 0 {
 		doc.Version = 1
 	}
-	normalized := &reportPlanDocument{Version: doc.Version, Theme: doc.Theme}
+	normalized := &reportPlanDocument{Version: doc.Version, Theme: doc.Theme, ThemeColors: doc.ThemeColors}
 	sectionCounter := 0
 	for _, section := range doc.Sections {
 		if strings.TrimSpace(section.Heading) == "" {
@@ -3128,14 +3144,29 @@ func registerReportPlanManagementTools(
 	themeSchema := `{
 		"type": "object",
 		"properties": {
-			"theme": { "type": ["string", "null"] }
+			"theme": { "type": ["string", "null"] },
+			"colors": {
+				"type": ["object", "null"],
+				"properties": {
+					"primary":  { "type": "string" },
+					"accent":   { "type": "string" },
+					"card":     { "type": "string" },
+					"muted":    { "type": "string" },
+					"border":   { "type": "string" },
+					"chart":    { "type": "array", "items": { "type": "string" }, "maxItems": 5 }
+				},
+				"additionalProperties": false
+			}
 		},
 		"additionalProperties": false
 	}`
 	themeParams, _ := parseSchemaForToolParameters(themeSchema)
 	mcpAgent.RegisterCustomTool(
 		"set_report_theme",
-		"Set the plan-level theme on reports/report_plan.json. The theme value lands on the report root as data-report-theme=<theme> and overrides the chart palette (--chart-1..5) and accent color across the report. Pass theme: \"brand\" / \"warm\" / \"cool\" for the bundled themes, or null/empty to clear the override and fall back to the workspace defaults. Themes scope to the report subtree only; surrounding app chrome is unaffected.",
+		"Set the plan-level theme on reports/report_plan.json. Two ways to use this:\n\n"+
+			"1. **Named theme** — pass theme: \"brand\" / \"warm\" / \"cool\". The bundled CSS blocks override --chart-1..5, --primary, --accent, and surface tints across the report. Quickest path; no color authoring needed.\n\n"+
+			"2. **Inline custom palette** — pass colors: { primary, accent, card, muted, border, chart: [c1,c2,c3,c4,c5] } with hex strings (e.g. \"#cc0000\"). The renderer converts each hex to HSL and injects them as CSS variables on the report root, overriding any named theme. Use this for brand-specific palettes (e.g. \"HDFC red\", \"Citi blue\") that no bundled theme matches. All fields are optional — anything you omit falls through to the named theme (if set) or the workspace default.\n\n"+
+			"You can pass both — theme provides the baseline, colors fine-tune individual variables on top. Pass theme: null and colors: null to clear everything and revert to workspace defaults. Themes scope to the report subtree only; surrounding app chrome is unaffected.",
 		themeParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			planRead, err := readReportPlanDocument(ctx, workspacePath, readFile)
@@ -3143,20 +3174,69 @@ func registerReportPlanManagementTools(
 				return "", err
 			}
 			doc := cleanupReportPlanDocument(planRead.Document)
-			theme := ""
-			if raw, ok := args["theme"].(string); ok {
-				theme = strings.TrimSpace(raw)
+			// Theme name — accept the field even if not provided so the agent can
+			// clear it explicitly with theme: null.
+			if raw, ok := args["theme"]; ok {
+				if str, isStr := raw.(string); isStr {
+					doc.Theme = strings.TrimSpace(str)
+				} else if raw == nil {
+					doc.Theme = ""
+				}
 			}
-			doc.Theme = theme
+			// Inline colors — same semantics: explicit null clears, missing key
+			// leaves whatever the plan already had untouched (set_report_theme
+			// shouldn't be a footgun that wipes a colors block when the agent
+			// only meant to change the theme name).
+			if raw, ok := args["colors"]; ok {
+				if raw == nil {
+					doc.ThemeColors = nil
+				} else if obj, isObj := raw.(map[string]interface{}); isObj {
+					colors := &reportPlanDocumentThemeColors{}
+					if v, ok := obj["primary"].(string); ok {
+						colors.Primary = strings.TrimSpace(v)
+					}
+					if v, ok := obj["accent"].(string); ok {
+						colors.Accent = strings.TrimSpace(v)
+					}
+					if v, ok := obj["card"].(string); ok {
+						colors.Card = strings.TrimSpace(v)
+					}
+					if v, ok := obj["muted"].(string); ok {
+						colors.Muted = strings.TrimSpace(v)
+					}
+					if v, ok := obj["border"].(string); ok {
+						colors.Border = strings.TrimSpace(v)
+					}
+					if arr, ok := obj["chart"].([]interface{}); ok {
+						for _, item := range arr {
+							if s, isStr := item.(string); isStr {
+								colors.Chart = append(colors.Chart, strings.TrimSpace(s))
+							}
+						}
+					}
+					// Don't store an empty palette — it's noise on disk.
+					empty := colors.Primary == "" && colors.Accent == "" && colors.Card == "" &&
+						colors.Muted == "" && colors.Border == "" && len(colors.Chart) == 0
+					if empty {
+						doc.ThemeColors = nil
+					} else {
+						doc.ThemeColors = colors
+					}
+				}
+			}
 			doc = cleanupReportPlanDocument(doc)
 			if err := writeReportPlanDocument(ctx, workspacePath, writeFile, doc); err != nil {
 				return "", err
 			}
-			out, err := json.MarshalIndent(map[string]interface{}{"theme": doc.Theme, "plan": doc}, "", "  ")
+			out, err := json.MarshalIndent(map[string]interface{}{
+				"theme":       doc.Theme,
+				"themeColors": doc.ThemeColors,
+				"plan":        doc,
+			}, "", "  ")
 			if err != nil {
 				return "", fmt.Errorf("failed to marshal updated report plan: %w", err)
 			}
-			return fmt.Sprintf("report theme set: %q\n", doc.Theme) + string(out), nil
+			return fmt.Sprintf("report theme set: theme=%q, colors=%v\n", doc.Theme, doc.ThemeColors != nil) + string(out), nil
 		},
 		"workflow",
 	)

@@ -8,7 +8,16 @@
 export interface ReportPlan {
   version?: number;
   theme?: string;
+  themeColors?: ReportPlanDocumentThemeColors;
   sections?: ReportPlanDocumentSection[];
+}
+export interface ReportPlanDocumentThemeColors {
+  primary?: string;
+  accent?: string;
+  card?: string;
+  muted?: string;
+  border?: string;
+  chart?: string[];
 }
 export interface ReportPlanDocumentSection {
   id?: string;

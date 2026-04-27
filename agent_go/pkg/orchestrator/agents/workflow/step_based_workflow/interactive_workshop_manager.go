@@ -1509,7 +1509,7 @@ The workflow's live report is defined by `+"`reports/report_plan.json`"+`. The f
 - Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
 - Use `+"`upsert_report_widget`"+` for create/update, `+"`move_report_widget`"+` to reposition, `+"`toggle_report_widget`"+` to hide/show, and `+"`remove_report_widget`"+` to delete.
 - For dashboard-style layouts: call `+"`set_section_layout`"+` to put a section into CSS Grid mode (columns 1–24), then pass `+"`layout: { span }`"+` in the widget config so widgets span N columns. Without it, sections use the default flex layout.
-- For per-report color palettes: call `+"`set_report_theme`"+` with `+"`brand`"+` / `+"`warm`"+` / `+"`cool`"+`, or null/empty to clear.
+- For per-report color palettes: call `+"`set_report_theme`"+` with `+"`brand`"+` / `+"`warm`"+` / `+"`cool`"+` for bundled themes, or pass `+"`colors: { primary, accent, card, muted, border, chart: [...] }`"+` (hex strings) for an inline custom palette — useful for brand-specific colors (HDFC red, Citi blue, etc.) that no bundled theme matches. Omit fields you don't want to override; pass null/empty to clear.
 - After every edit to `+"`reports/report_plan.json`"+`, call `+"`validate_report_plan`"+`.
 - When you need to inspect what the final report will actually show with current data, call `+"`preview_report_render`"+`.
 

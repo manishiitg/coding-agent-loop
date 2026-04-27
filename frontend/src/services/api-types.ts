@@ -1430,12 +1430,27 @@ export interface ReportSection extends Omit<ReportPlanDocumentSection, 'entries'
   entries: ReportEntry[];
 }
 
+// Inline custom palette. Hex strings; the renderer converts them to HSL and
+// injects them as CSS variables on the report root, overriding the named
+// theme. Authors think in colors; the conversion stays inside the renderer.
+export interface ParsedReportThemeColors {
+  primary?: string;
+  accent?: string;
+  card?: string;
+  muted?: string;
+  border?: string;
+  chart?: string[]; // Up to 5; mapped to --chart-1 .. --chart-5.
+}
+
 export interface ParsedReportPlan {
   sections: ReportSection[];
   // Optional theme name applied to the report root via data-report-theme.
   // Maps to a CSS block in index.css that overrides --chart-* / --primary
   // and friends. Unknown / unset themes fall back to the workspace defaults.
   theme?: string;
+  // Optional inline custom palette. Layers on top of the named theme — any
+  // field set here wins over the named theme's value for that variable.
+  themeColors?: ParsedReportThemeColors;
 }
 
 // Consolidated workspace state (NEW - single API call for all workspace data)

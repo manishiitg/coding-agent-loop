@@ -202,6 +202,7 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
   try {
     const parsed = JSON.parse(raw) as {
       theme?: unknown
+      themeColors?: unknown
       sections?: Array<{
         heading?: unknown
         entries?: Array<{
@@ -241,10 +242,32 @@ function parseReportPlanJSON(raw: string): ParsedReportPlan | null {
     const theme = typeof parsed.theme === 'string' && parsed.theme.trim() !== ''
       ? parsed.theme.trim()
       : undefined
-    return theme ? { sections, theme } : { sections }
+    const themeColors = parseThemeColors(parsed.themeColors)
+    const out: ParsedReportPlan = { sections }
+    if (theme) out.theme = theme
+    if (themeColors) out.themeColors = themeColors
+    return out
   } catch {
     return null
   }
+}
+
+function parseThemeColors(raw: unknown): ParsedReportPlan['themeColors'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const obj = raw as Record<string, unknown>
+  const out: NonNullable<ParsedReportPlan['themeColors']> = {}
+  const stringFields = ['primary', 'accent', 'card', 'muted', 'border'] as const
+  for (const k of stringFields) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim() !== '') out[k] = v.trim()
+  }
+  if (Array.isArray(obj.chart)) {
+    const chart = obj.chart
+      .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+      .map(v => v.trim())
+    if (chart.length > 0) out.chart = chart
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function parseReportPlanJSONWidget(raw: unknown): ReportWidget | null {

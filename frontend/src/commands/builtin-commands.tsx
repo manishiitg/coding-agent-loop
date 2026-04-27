@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Database, Network } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Network } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -891,33 +891,10 @@ After the tool returns, tell me:
   },
   // ===== Auto-improvement framework =====
   // See docs/workflow/auto_improvement_framework.md.
-  {
-    command: 'capture-context',
-    description: 'Add a Type-3 business rule to context/rules.md, anchored to a metric',
-    icon: <Database className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Capture a new business rule into context/rules.md and link it to the metric(s) it should move.${focus ? `\n\nUser-supplied rule text or note: ${focus}` : ''}
-
-PRECONDITIONS (do NOT bootstrap them here — redirect instead)
-1. Read workflow.json. \`workflow_type\` must be \`contextual\`. If it isn't, stop and tell the user: "Rule capture is for Type 3 (contextual) workflows. Run /improve-workflow first to set the workflow type and bootstrap metrics." Do not flip the type or set up metrics inside this command.
-2. Read <workflow>/metrics.json. It must have at least one metric. If empty, stop and tell the user: "No metrics defined yet. Run /improve-eval or /improve-workflow first — those commands bootstrap metrics. Then come back and run /capture-context."
-
-ACTION
-1. Read context/rules.md if it exists, so you can pick the right section heading for the new rule (or propose a new section).
-2. Confirm with the user (a) the exact rule text, (b) the section heading, (c) which existing metric(s) this rule is meant to move.
-3. Call the \`capture_context\` tool with: { section, rule_text, target_metrics, example_note }. The tool atomically appends the bullet, writes a clarifications.jsonl entry (source=user, target_metrics required), and writes a builder/decisions.jsonl audit entry.
-
-REPORT
-- Confirm the rule landed: paste the new line and section.
-- Cite the clarification id and decision id from the response.
-- Suggest opening an experiment via propose_experiment to validate that the rule actually moves the declared metric.`)
-    }
-  },
+  // Note: business-context capture is intentionally NOT a slash command.
+  // The builder agent's system prompt teaches it to recognize business
+  // rules in conversation and offer to persist them via the
+  // capture_context tool. A separate slash command would be redundant.
   {
     command: 'exp-abort',
     description: 'Revert and abort the active experiment',

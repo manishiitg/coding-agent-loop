@@ -200,14 +200,15 @@ A workflow opts into the capabilities it needs. Most don't need any.
 
 ## What it looks like for the user
 
-A workflow author working in optimizer mode sees four new tools available to the AI and four new slash commands they can invoke directly:
+A workflow author working in optimizer mode sees four new tools available to the AI and three new slash commands they can invoke directly:
 
-- `/capture-context` — add a business rule to the workflow's accumulated context, anchored to a metric.
 - `/exp-abort` — revert and stop the active experiment.
 - `/exp-extend` — give the experiment more runs before concluding.
 - `/exp-conclude` — manually render a verdict (the override path).
 
-The existing `/improve-*` commands continue to operate; they will gradually evolve to open experiments instead of applying changes immediately, but no existing usage breaks.
+**Business-context capture has no slash command** — instead, the builder agent's system prompt teaches it to recognize when the user shares a business rule in conversation ("always X", "never X", regulatory clauses, ICP rules) and offer to persist it via the `capture_context` tool. This is the proactive path; rule capture is something the agent notices, not a ritual the user has to invoke.
+
+The existing `/improve-*` commands continue to operate; the four most relevant (`/improve-eval`, `/improve-workflow`, `/improve-continuously`, plus the others) gain a framework-bootstrap pre-step that classifies `workflow_type` first, then proposes type-appropriate metrics if `metrics.json` is empty.
 
 In the workflow folder, the framework adds:
 
@@ -225,7 +226,7 @@ The framework ships in five phases. Each phase delivers value independently — 
 1. **Charts + decisions feed.** No schema changes; charts existing eval scores over runs and surfaces a structured decision log alongside the prose log.
 2. **Workflow type + oversight mode.** Authors declare what their workflow is and how much oversight they want. UI starts surfacing the type-aware behavior.
 3. **Metrics + sources.** `metrics.json` becomes definable, with eval-step and telemetry sources. Charts now show metrics, not raw eval scores.
-4. **Type 3 context capture.** `/capture-context` and the rules store land. Business rule accumulation becomes auditable.
+4. **Type 3 context capture.** The rules store and the `capture_context` tool land. The builder agent recognizes business rules in conversation and offers to persist them — no separate slash command is needed; rule accumulation becomes auditable.
 5. **Experiment loop.** Every `/improve-*` command opens an experiment instead of applying immediately. Verdicts are system-computed; conclusions are evaluator-narrated; reverts are atomic.
 
 Most teams will see immediate value at phase 1 (just the charts) and phase 4 (rule capture). The full experiment loop at phase 5 is where the framework's central promise — improvement you can trust — is fully realized.
@@ -246,7 +247,7 @@ A team can adopt one capability at a time. Charts on day one. A single metric on
 A finance audit team adopts the framework:
 
 - **Week 1.** They declare the workflow as Type 3 with manual oversight. They define three metrics: `audit.accuracy`, `audit.coverage`, and `audit.cycle_time`. The chart starts showing values from last quarter's runs.
-- **Week 3.** The workflow encounters a new GST clause. An auditor uses `/capture-context` to add the rule, anchoring it to `audit.accuracy`. The framework opens an experiment and waits five runs.
+- **Week 3.** The workflow encounters a new GST clause. An auditor mentions the rule in chat ("for FY 2026, exclude reverse-charge entries from Section 17(5)"). The builder agent recognizes it as a durable rule, asks which metric it should move (the auditor picks `audit.accuracy`), and persists it via `capture_context`. The framework opens a follow-up experiment to validate the impact and waits five runs.
 - **Week 5.** The experiment concludes: `audit.accuracy` rose from 87% to 94%; the rule is kept. The decision log records the rule, the auditor who added it, the regulation it references, and the experiment that validated it.
 - **Week 7.** A second rule is added but the experiment concludes inconclusive — accuracy didn't move. The team decides to keep the rule anyway (compliance reasons) and the inconclusive verdict is logged honestly.
 - **Quarter end.** Stakeholders see a chart: accuracy improved 7pp, coverage held its floor, cycle time stayed within budget. They see exactly which rules drove the gains and which didn't. The audit-trail is fully traceable.

@@ -13,7 +13,6 @@ import (
 
 	llm "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/fsutil"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
@@ -29,43 +28,16 @@ var videoProviderModels = map[string][]string{
 }
 
 type videoPricing struct {
-	VideoOnly720  float64
-	VideoOnly1080 float64
-	Audio720      float64
-	Audio1080     float64
+	Rate720  float64
+	Rate1080 float64
 }
 
 var videoModelPricing = map[string]videoPricing{
-	"veo-3.1-generate-001": {
-		VideoOnly720:  0.20,
-		VideoOnly1080: 0.20,
-		Audio720:      0.40,
-		Audio1080:     0.40,
-	},
-	"veo-3.1-generate-preview": {
-		VideoOnly720:  0.20,
-		VideoOnly1080: 0.20,
-		Audio720:      0.40,
-		Audio1080:     0.40,
-	},
-	"veo-3.1-lite-generate-001": {
-		VideoOnly720:  0.03,
-		VideoOnly1080: 0.05,
-		Audio720:      0.05,
-		Audio1080:     0.08,
-	},
-	"veo-3.1-fast-generate-001": {
-		VideoOnly720:  0.08,
-		VideoOnly1080: 0.10,
-		Audio720:      0.10,
-		Audio1080:     0.12,
-	},
-	"veo-3.1-fast-generate-preview": {
-		VideoOnly720:  0.08,
-		VideoOnly1080: 0.10,
-		Audio720:      0.10,
-		Audio1080:     0.12,
-	},
+	"veo-3.1-generate-001":          {Rate720: 0.40, Rate1080: 0.40},
+	"veo-3.1-generate-preview":      {Rate720: 0.40, Rate1080: 0.40},
+	"veo-3.1-lite-generate-001":     {Rate720: 0.05, Rate1080: 0.08},
+	"veo-3.1-fast-generate-001":     {Rate720: 0.10, Rate1080: 0.12},
+	"veo-3.1-fast-generate-preview": {Rate720: 0.10, Rate1080: 0.12},
 }
 
 type VideoGenExecutorConfig struct {
@@ -88,31 +60,11 @@ type videoGenResult struct {
 	FilterReasons         []string `json:"filter_reasons,omitempty"`
 	DurationSeconds       int      `json:"duration_seconds,omitempty"`
 	Resolution            string   `json:"resolution,omitempty"`
-	GenerateAudio         bool     `json:"generate_audio,omitempty"`
 	EstimatedCostPerVideo float64  `json:"estimated_cost_per_video,omitempty"`
 	EstimatedCostTotal    float64  `json:"estimated_cost_total,omitempty"`
 }
 
-const (
-	defaultVideoGenProvider = "vertex"
-	defaultVideoGenModelID  = "veo-3.1-generate-preview"
-	defaultVertexVeoModelID = "veo-3.1-generate-001"
-)
-
-func defaultVideoModelForProvider(provider string, apiKeys *llm.ProviderAPIKeys, explicitAPIKey string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "vertex":
-		if hasGeminiStyleVideoAuth(apiKeys, explicitAPIKey) {
-			return defaultVideoGenModelID
-		}
-		if hasAmbientVertexVideoAuth() {
-			return defaultVertexVeoModelID
-		}
-		return defaultVideoGenModelID
-	default:
-		return defaultVideoGenModelID
-	}
-}
+const defaultVideoGenProvider = "vertex"
 
 func inferVideoProviderFromModel(modelID string) string {
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
@@ -128,7 +80,10 @@ func normalizeVideoProviderAndModel(provider, modelID string) (string, string, e
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	modelID = strings.TrimSpace(modelID)
 
-	if provider == "" && modelID != "" {
+	if modelID == "" {
+		return "", "", fmt.Errorf("model_id is required. %s", supportedVideoProviderSummary())
+	}
+	if provider == "" {
 		provider = inferVideoProviderFromModel(modelID)
 	}
 	if provider == "" {
@@ -140,15 +95,6 @@ func normalizeVideoProviderAndModel(provider, modelID string) (string, string, e
 		return provider, modelID, nil
 	default:
 		return "", "", fmt.Errorf("unsupported video generation provider %q. %s", provider, supportedVideoProviderSummary())
-	}
-}
-
-func hasVideoProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "vertex":
-		return hasGeminiStyleVideoAuth(apiKeys, "") || hasAmbientVertexVideoAuth()
-	default:
-		return false
 	}
 }
 
@@ -183,30 +129,6 @@ func wrapVideoGenerationInitializationError(provider, modelID string, err error)
 		"video generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") for preview models, or configure Vertex AI project auth for GA Veo models. %s",
 		provider, modelID, err, videoModelsSummaryForProvider(provider),
 	)
-}
-
-func hasGeminiStyleVideoAuth(apiKeys *llm.ProviderAPIKeys, explicitAPIKey string) bool {
-	if strings.TrimSpace(explicitAPIKey) != "" {
-		return true
-	}
-	if apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != "" {
-		return true
-	}
-	for _, envKey := range []string{"GEMINI_API_KEY", "VERTEX_API_KEY", "GOOGLE_API_KEY"} {
-		if strings.TrimSpace(os.Getenv(envKey)) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasAmbientVertexVideoAuth() bool {
-	for _, envKey := range []string{"GOOGLE_CLOUD_PROJECT", "VERTEX_PROJECT_ID"} {
-		if strings.TrimSpace(os.Getenv(envKey)) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func videoExtensionForMIME(mimeType string) string {
@@ -330,59 +252,21 @@ func applyVideoGenToolArgs(cfg VideoGenExecutorConfig, args map[string]any) Vide
 
 func resolveVideoGenerationTarget(ctx context.Context, cfg VideoGenExecutorConfig) (string, string, *llm.ProviderAPIKeys, error) {
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, cfg.WorkspaceAPIURL)
-
-	explicitProvider := strings.TrimSpace(cfg.Provider)
-	explicitModelID := strings.TrimSpace(cfg.ModelID)
-	if explicitProvider != "" || explicitModelID != "" {
-		provider, modelID, err := normalizeVideoProviderAndModel(explicitProvider, explicitModelID)
-		return provider, modelID, apiKeys, err
-	}
-
-	if cfg.WorkspaceAPIURL != "" {
-		videoCfg, exists, err := services.LoadVideoGenerationConfig(ctx, cfg.WorkspaceAPIURL)
-		if err != nil {
-			log.Printf("[VIDEO_GEN] Failed to load video generation config: %v", err)
-		} else if exists && videoCfg != nil {
-			var candidates []services.ImageGenerationModelConfig
-			if videoCfg.Primary != nil {
-				candidates = append(candidates, *videoCfg.Primary)
-			}
-			candidates = append(candidates, videoCfg.Fallbacks...)
-
-			var sawCandidate bool
-			for _, candidate := range candidates {
-				provider, modelID, err := normalizeVideoProviderAndModel(candidate.Provider, candidate.ModelID)
-				if err != nil {
-					continue
-				}
-				sawCandidate = true
-				if strings.TrimSpace(cfg.APIKey) != "" || hasVideoProviderAuth(provider, apiKeys) {
-					if strings.TrimSpace(modelID) == "" {
-						modelID = defaultVideoModelForProvider(provider, apiKeys, cfg.APIKey)
-					}
-					return provider, modelID, apiKeys, nil
-				}
-			}
-			if sawCandidate {
-				return "", "", apiKeys, fmt.Errorf("video generation config requires matching provider auth in config/provider-api-keys.json or an explicit api_key override")
-			}
-		}
-	}
-
-	return defaultVideoGenProvider, defaultVideoModelForProvider(defaultVideoGenProvider, apiKeys, cfg.APIKey), apiKeys, nil
+	provider, modelID, err := normalizeVideoProviderAndModel(cfg.Provider, cfg.ModelID)
+	return provider, modelID, apiKeys, err
 }
 
 func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        toolName,
-			Description: "Generate videos using AI from a text prompt. Requires an output_path inside the workspace so the caller decides exactly where the generated video files should be stored. Supports optional provider override, image-to-video generation, aspect ratio, resolution, duration, number of videos, negative prompt, and audio options.",
+			Description: "Generate videos using AI from a text prompt. Requires an output_path inside the workspace and a model_id (the model determines the Google backend). Veo 3 models include native audio in the output by default. Supports image-to-video generation, aspect ratio, resolution, duration, number of videos, and negative prompt.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"prompt": map[string]interface{}{
 						"type":        "string",
-						"description": "Text prompt describing the video to generate.",
+						"description": "Text prompt describing the video to generate. Veo 3 also generates audio from this same prompt — there is no separate audio parameter. Use these conventions to direct the soundstage: (1) Dialogue: put speech in double quotes, e.g. A woman says, \"We have to leave now.\" Parentheticals before the quote shape delivery, e.g. (whispering), (voice tight with fear); they are not spoken. (2) Sound effects: prefix with 'SFX:', e.g. SFX: thunder cracks in the distance. (3) Ambient noise: prefix with 'Ambient noise:', e.g. Ambient noise: the quiet hum of a starship bridge. Place audio cues next to the visual beat they sync with rather than only at the top. For multi-shot prompts, bracket each beat with timestamps like [00:02-00:04] and place SFX/dialogue inside that beat. To minimize unwanted audio, put words like 'silence', 'no music', or 'no dialogue' in negative_prompt — there is no off switch on the Gemini API path.",
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
@@ -394,7 +278,8 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 					},
 					"model_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional Veo model override. Examples: veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001, veo-3.1-generate-preview.",
+						"description": "Required Veo model id. The model determines the Google backend. Gemini API backend (requires GEMINI_API_KEY/VERTEX_API_KEY): veo-3.1-generate-preview, veo-3.1-fast-generate-preview. Vertex AI backend (requires GOOGLE_CLOUD_PROJECT + ADC): veo-3.1-generate-001, veo-3.1-lite-generate-001, veo-3.1-fast-generate-001. All Veo 3 models include native audio in the output by default.",
+						"enum":        []interface{}{"veo-3.1-generate-001", "veo-3.1-lite-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"},
 					},
 					"input_image": map[string]interface{}{
 						"type":        "string",
@@ -434,10 +319,6 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 						"type":        "string",
 						"description": "Optional description of what to exclude from the generated videos.",
 					},
-					"generate_audio": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Optional. Request native audio generation when supported by the selected Veo model.",
-					},
 					"person_generation": map[string]interface{}{
 						"type":        "string",
 						"description": "Optional people-generation safety policy.",
@@ -449,7 +330,7 @@ func getVideoGenToolDefinition(toolName string) llmtypes.Tool {
 						"minimum":     0,
 					},
 				},
-				"required": []interface{}{"prompt", "output_path"},
+				"required": []interface{}{"prompt", "output_path", "model_id"},
 			}),
 		},
 	}
@@ -471,6 +352,9 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 		outputPath = normalizeWorkspaceDocumentPath(outputPath)
 		if strings.TrimSpace(outputPath) == "" {
 			return "", fmt.Errorf("output_path is required")
+		}
+		if rawModelID, _ := args["model_id"].(string); strings.TrimSpace(rawModelID) == "" {
+			return "", fmt.Errorf("model_id is required. %s", supportedVideoProviderSummary())
 		}
 		if err := validateGuardedVideoOutputPath(ctx, cfg, outputPath); err != nil {
 			return "", err
@@ -514,7 +398,6 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 		var opts []llmtypes.VideoGenerationOption
 		durationSeconds := 0
 		resolution := ""
-		generateAudio := false
 		normalizedInputImagePath := ""
 		if ar, ok := args["aspect_ratio"].(string); ok && ar != "" {
 			opts = append(opts, llmtypes.WithVideoAspectRatio(ar))
@@ -532,10 +415,6 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 		if d, ok := args["duration_seconds"].(float64); ok && d >= 1 {
 			durationSeconds = int(d)
 			opts = append(opts, llmtypes.WithVideoDurationSeconds(durationSeconds))
-		}
-		if audio, ok := args["generate_audio"].(bool); ok {
-			generateAudio = audio
-			opts = append(opts, llmtypes.WithVideoGenerateAudio(audio))
 		}
 		if policy, ok := args["person_generation"].(string); ok && policy != "" {
 			opts = append(opts, llmtypes.WithVideoPersonGeneration(policy))
@@ -641,7 +520,7 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 			absolutePaths = append(absolutePaths, workspaceAbsolutePath(savedPath))
 		}
 
-		estimatedCostPerVideo, estimatedCostTotal := estimateVideoGenerationCost(modelID, resolution, durationSeconds, generateAudio, len(resp.Videos))
+		estimatedCostPerVideo, estimatedCostTotal := estimateVideoGenerationCost(modelID, resolution, durationSeconds, len(resp.Videos))
 
 		result := videoGenResult{
 			Model:                 modelID,
@@ -653,7 +532,6 @@ func CreateVideoGenExecutor(cfg VideoGenExecutorConfig) func(ctx context.Context
 			FilterReasons:         resp.FilterReasons,
 			DurationSeconds:       durationSeconds,
 			Resolution:            resolution,
-			GenerateAudio:         generateAudio,
 			EstimatedCostPerVideo: estimatedCostPerVideo,
 			EstimatedCostTotal:    estimatedCostTotal,
 		}
@@ -700,7 +578,7 @@ func MergeVideoToolExecutorsUntyped(cfg VideoGenExecutorConfig, executors map[st
 	}
 }
 
-func estimateVideoGenerationCost(modelID, resolution string, durationSeconds int, generateAudio bool, count int) (float64, float64) {
+func estimateVideoGenerationCost(modelID, resolution string, durationSeconds int, count int) (float64, float64) {
 	pricing, ok := videoModelPricing[modelID]
 	if !ok || durationSeconds <= 0 || count <= 0 {
 		return 0, 0
@@ -714,17 +592,9 @@ func estimateVideoGenerationCost(modelID, resolution string, durationSeconds int
 	var rate float64
 	switch resolution {
 	case "1080p":
-		if generateAudio {
-			rate = pricing.Audio1080
-		} else {
-			rate = pricing.VideoOnly1080
-		}
+		rate = pricing.Rate1080
 	default:
-		if generateAudio {
-			rate = pricing.Audio720
-		} else {
-			rate = pricing.VideoOnly720
-		}
+		rate = pricing.Rate720
 	}
 
 	perVideo := rate * float64(durationSeconds)

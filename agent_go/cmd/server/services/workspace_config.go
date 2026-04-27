@@ -51,11 +51,6 @@ type ImageAnalysisConfig struct {
 	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
 }
 
-type VideoGenerationConfig struct {
-	Primary   *ImageGenerationModelConfig  `json:"primary,omitempty"`
-	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
-}
-
 // readWorkspaceFile reads a file from the workspace API using the given workspaceURL.
 // Returns (content, true, nil) if found, ("", false, nil) if not found, or ("", false, err) on error.
 func readWorkspaceFile(ctx context.Context, workspaceURL, filePath string) (string, bool, error) {
@@ -267,37 +262,6 @@ func LoadImageAnalysisConfig(ctx context.Context, workspaceURL string) (*ImageAn
 	return cfg, true, nil
 }
 
-// LoadVideoGenerationConfig reads video generation defaults (plain JSON) from the workspace.
-// Returns (nil, false, nil) if the file doesn't exist.
-func LoadVideoGenerationConfig(ctx context.Context, workspaceURL string) (*VideoGenerationConfig, bool, error) {
-	content, exists, err := readWorkspaceFile(ctx, workspaceURL, "config/video-generation-config.json")
-	if err != nil || !exists {
-		return nil, exists, err
-	}
-
-	var stored VideoGenerationConfig
-	if err := json.Unmarshal([]byte(content), &stored); err != nil {
-		return nil, false, fmt.Errorf("failed to parse video generation config: %w", err)
-	}
-
-	cfg := &VideoGenerationConfig{}
-	if stored.Primary != nil {
-		if primary := sanitizeImageGenerationModelConfig(stored.Primary); primary != nil {
-			cfg.Primary = primary
-		}
-	}
-	for _, fallback := range stored.Fallbacks {
-		fb := fallback
-		if sanitized := sanitizeImageGenerationModelConfig(&fb); sanitized != nil {
-			cfg.Fallbacks = append(cfg.Fallbacks, *sanitized)
-		}
-	}
-	if len(cfg.Fallbacks) == 0 {
-		cfg.Fallbacks = nil
-	}
-
-	return cfg, true, nil
-}
 
 func sanitizeImageGenerationModelConfig(cfg *ImageGenerationModelConfig) *ImageGenerationModelConfig {
 	if cfg == nil {

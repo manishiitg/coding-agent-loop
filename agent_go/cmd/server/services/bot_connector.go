@@ -665,6 +665,17 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		if !msg.IsMention {
 			if m.isMultiUserThread(active, msg) {
 				log.Printf("[BOT_MANAGER] Ignoring non-mention thread reply from %s in multi-user session %s", msg.UserID, active.SessionID)
+				// Reaction-only acknowledgement so the user can see the bot
+				// noticed the message but is intentionally staying out of the
+				// thread (no @mention in a multi-user channel). Without this
+				// the message just falls into a silent void and looks like a
+				// bug. Best-effort: log and move on if the platform doesn't
+				// support reactions or the call fails.
+				if connector := m.GetConnector(active.Platform); connector != nil && msg.ChannelID != "" && msg.MessageTS != "" {
+					if err := connector.AddReaction(context.Background(), msg.ChannelID, msg.MessageTS, "see_no_evil"); err != nil {
+						log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
+					}
+				}
 				return
 			}
 			log.Printf("[BOT_MANAGER] Accepting non-mention reply from %s (single-user thread) in session %s", msg.UserID, active.SessionID)

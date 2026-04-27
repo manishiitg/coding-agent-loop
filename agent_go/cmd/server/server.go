@@ -4987,6 +4987,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		modeChangedThisTurn := false
+		// Snapshot of the pre-mode-change history. When the user toggles mode
+		// mid-session we replace api.conversationHistory with just a recap (so
+		// the agent sees a tight context, not stale tool calls), but the on-
+		// disk record should keep the full conversation. This snapshot is
+		// merged with the new turn's exchange at save time below.
+		var preModeChangeSnapshot []llmtypes.MessageContent
 		if newWorkshopMode != "" {
 			api.conversationMux.Lock()
 			prevMode, hadPrev := api.lastWorkshopModeBySession[sessionID]
@@ -4997,9 +5003,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				delete(api.claudeCodeSessionIDs, sessionID)
 				delete(api.geminiSessionIDs, sessionID)
 				delete(api.geminiProjectDirIDs, sessionID)
-				// Replace history with a single synthetic user message containing
-				// the recap. ~16000 chars ≈ 4000 tokens worth of recent context.
+				// Snapshot existing history before replacing — the on-disk
+				// persisted record reuses this so the user sees a complete
+				// conversation log, not a recap-only file.
 				if existing, ok := api.conversationHistory[sessionID]; ok && len(existing) > 0 {
+					preModeChangeSnapshot = make([]llmtypes.MessageContent, len(existing))
+					copy(preModeChangeSnapshot, existing)
+					// Replace history with a single synthetic user message containing
+					// the recap. ~16000 chars ≈ 4000 tokens worth of recent context.
 					recap := buildModeChangeRecap(existing, prevMode, newWorkshopMode, 16000)
 					api.conversationHistory[sessionID] = []llmtypes.MessageContent{{
 						Role:  llmtypes.ChatMessageTypeHuman,
@@ -5010,7 +5021,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			api.lastWorkshopModeBySession[sessionID] = newWorkshopMode
 			api.conversationMux.Unlock()
 		}
-		_ = modeChangedThisTurn // reserved for future use (e.g. event emission)
 
 		// Load conversation history for this session from the in-memory
 		// cache. When the server restarts the cache is empty and the agent
@@ -5177,15 +5187,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.runningAgentsMux.Unlock()
 
 		// Final save of conversation history (in case streaming was stopped mid-way)
-		// This ensures we capture the final state even if streaming was interrupted
+		// This ensures we capture the final state even if streaming was interrupted.
+		// finalHistory is what the agent saw — after a mode change that's
+		// [recap_msg, new_user_msg, ai_response, …]. We keep that truncated
+		// view in memory so the next turn's recap-replay stays tight, but the
+		// on-disk record needs the full conversation; persistedHistory below
+		// merges the pre-change snapshot with the new exchange.
 		finalHistory := llmAgent.GetHistory()
 		api.conversationMux.Lock()
 		api.conversationHistory[sessionID] = finalHistory
 		api.conversationMux.Unlock()
 		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(finalHistory), sessionID)
 
+		// What we write to disk. Defaults to finalHistory; if mode changed
+		// this turn, drop the synthetic recap message (index 0) and append
+		// the rest to the pre-change snapshot so the persisted file stays
+		// the canonical record of the conversation.
+		persistedHistory := finalHistory
+		if modeChangedThisTurn && len(preModeChangeSnapshot) > 0 && len(finalHistory) >= 1 {
+			merged := make([]llmtypes.MessageContent, 0, len(preModeChangeSnapshot)+len(finalHistory))
+			merged = append(merged, preModeChangeSnapshot...)
+			merged = append(merged, finalHistory[1:]...) // skip the recap-as-user-message
+			persistedHistory = merged
+			log.Printf("[CONVERSATION DEBUG] Mode-change merge: persisting %d msgs (snapshot %d + new %d)", len(persistedHistory), len(preModeChangeSnapshot), len(finalHistory)-1)
+		}
+
 		// Persist conversation to user's chat_history/ folder (same format as builder/)
-		api.persistChatConversation(sessionID, req.AgentMode, currentUserID, finalHistory)
+		api.persistChatConversation(sessionID, req.AgentMode, currentUserID, persistedHistory)
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
 		if isWorkflowPhase && workflowPhaseFolder != "" {
@@ -5197,12 +5225,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Save builder conversation log + token_usage.json for workflow phase sessions.
 		// One file per session — overwrites on each follow-up with the full cumulative history.
 		// Resolve workspace-docs root so files are visible in the UI.
-		if isWorkflowPhase && workflowPhaseFolder != "" && len(finalHistory) > 0 {
+		if isWorkflowPhase && workflowPhaseFolder != "" && len(persistedHistory) > 0 {
 			builderDir := filepath.Join(workflowPhaseFolder, "builder")
 			convData := map[string]interface{}{
 				"session_id":           sessionID,
 				"phase_id":             workflowPhaseID,
-				"conversation_history": finalHistory,
+				"conversation_history": persistedHistory,
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {

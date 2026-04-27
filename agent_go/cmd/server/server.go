@@ -7038,14 +7038,16 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s%s\nResult:\n%s%s",
 		snap.Name, snap.ID, snap.Status, contextInfo, resultText, actionHint)
 
-	// Slack thread sessions: the builder's reply is forwarded verbatim to a Slack
-	// channel, so a faithful echo of the full sub-agent result blows up the thread.
-	// Append a brevity directive so the builder still ingests the full result above
-	// (full context for its own reasoning) but replies to the user with a single
-	// short status line. Web / desktop sessions intentionally keep the verbose
-	// progressive update.
-	if strings.HasPrefix(sessionID, "bot-slack--") {
-		syntheticMsg += "\n\n---\nYou are operating inside a Slack thread — your reply will be posted directly to the user's channel. Reply with ONE short status line (target ≤150 characters): name the step that just completed and a one-clause headline of what it found or what's next. Do NOT restate, quote, or summarize the full Result block above — the user can fetch detailed sub-agent output from the workflow run folder if they ask. Examples: \"Step 3 (query-github) done — 9 PRs identified, correlating with logs now.\" / \"route-query-logs failed (rate limit) — retrying with backoff.\""
+	// Bot connector sessions (slack / whatsapp / discord / telegram / etc.): the
+	// builder's reply is forwarded verbatim to a chat thread, so a faithful echo
+	// of the full sub-agent result blows up the conversation. Append a brevity
+	// directive so the builder still ingests the full result above (full context
+	// for its own reasoning) but replies to the user with a single short status
+	// line. Web / desktop sessions intentionally keep the verbose progressive
+	// update — that long reply renders fine in a side panel, not in chat.
+	// Session ID format is `bot-<platform>--<uuid>` (see newBotSessionID).
+	if strings.HasPrefix(sessionID, "bot-") {
+		syntheticMsg += "\n\n---\nYou are operating inside a chat thread on a bot connector — your reply will be posted directly into the user's conversation (Slack channel, WhatsApp chat, etc.). Reply with ONE short status line (target ≤150 characters): name the step that just completed and a one-clause headline of what it found or what's next. Do NOT restate, quote, or summarize the full Result block above — the user can fetch detailed sub-agent output from the workflow run folder if they ask. Examples: \"Step 3 (query-github) done — 9 PRs identified, correlating with logs now.\" / \"route-query-logs failed (rate limit) — retrying with backoff.\""
 	}
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.

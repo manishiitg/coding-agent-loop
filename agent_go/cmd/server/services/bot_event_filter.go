@@ -243,12 +243,13 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			log.Printf("[BOT_FILTER] unified_completion: isMain=%v level=%d result_len=%d", isMain, event.Data.HierarchyLevel, len(uc.FinalResult))
 		}
 		if !isMain {
-			// Sub-agent completions — always show their result summary
-			msg := f.formatUnifiedCompletion(event)
-			if msg != "" {
-				f.sendMessage(ctx, msg)
-				sent = true
-			}
+			// Sub-agent completions are intentionally NOT forwarded to the thread —
+			// they were spamming Slack with per-step technical dumps (PR lists, log
+			// excerpts, etc.) when each nested sub-agent reported back. The user
+			// only cares about the main agent's synthesized reply, which arrives
+			// via llm_generation_end / main-level unified_completion. Sub-agent
+			// detail still lives in workflow logs and the run folder.
+			log.Printf("[BOT_FILTER] unified_completion: skipping sub-agent completion (level=%d)", event.Data.HierarchyLevel)
 		} else {
 			// Main-level completion — only send if no text was already sent via llm_generation_end
 			// (avoids duplicates when the agent sends text + completion with same content)

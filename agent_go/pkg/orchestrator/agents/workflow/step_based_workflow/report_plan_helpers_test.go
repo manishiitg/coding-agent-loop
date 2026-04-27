@@ -98,6 +98,63 @@ func TestValidateReportPlanStatUnknownFormatWarns(t *testing.T) {
 	}
 }
 
+// Regression: theme and section.Layout were silently stripped on every plan
+// mutation because normalizeReportPlanDocument reconstructed sections from a
+// hand-written field list. set_report_theme and set_section_layout would
+// successfully save, then any later upsert/move/toggle/remove would wipe them.
+func TestNormalizeReportPlanPreservesThemeAndLayout(t *testing.T) {
+	t.Parallel()
+
+	doc := &reportPlanDocument{
+		Version: 1,
+		Theme:   "brand",
+		Sections: []reportPlanDocumentSection{{
+			ID:      "section-01-overview",
+			Heading: "Overview",
+			Layout: &reportPlanDocumentSectionLayout{
+				Columns: 12,
+				Gap:     16,
+			},
+			Entries: []reportPlanDocumentEntry{{
+				ID:   "section-01-overview-entry-01",
+				Kind: "single",
+				Widget: &reportPlanDocumentWidget{
+					Kind:   "stat",
+					Source: "db/strategies.json",
+					Path:   "active_strategies",
+					Layout: &reportPlanDocumentWidgetLayout{Span: 6},
+				},
+			}},
+		}},
+	}
+
+	out := normalizeReportPlanDocument(doc)
+
+	if out.Theme != "brand" {
+		t.Fatalf("theme stripped: got %q, want %q", out.Theme, "brand")
+	}
+	if len(out.Sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(out.Sections))
+	}
+	section := out.Sections[0]
+	if section.Layout == nil {
+		t.Fatalf("section.Layout stripped")
+	}
+	if section.Layout.Columns != 12 || section.Layout.Gap != 16 {
+		t.Fatalf("section.Layout corrupted: got %+v, want columns=12 gap=16", section.Layout)
+	}
+	if len(section.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(section.Entries))
+	}
+	widget := section.Entries[0].Widget
+	if widget == nil {
+		t.Fatalf("widget dropped")
+	}
+	if widget.Layout == nil || widget.Layout.Span != 6 {
+		t.Fatalf("widget.Layout stripped: got %+v", widget.Layout)
+	}
+}
+
 func fakeReportPlanReadFile(files map[string]string) func(context.Context, string) (string, error) {
 	return func(_ context.Context, path string) (string, error) {
 		content, ok := files[path]

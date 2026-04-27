@@ -729,7 +729,7 @@ func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
 	if doc.Version == 0 {
 		doc.Version = 1
 	}
-	normalized := &reportPlanDocument{Version: doc.Version}
+	normalized := &reportPlanDocument{Version: doc.Version, Theme: doc.Theme}
 	sectionCounter := 0
 	for _, section := range doc.Sections {
 		if strings.TrimSpace(section.Heading) == "" {
@@ -744,6 +744,7 @@ func normalizeReportPlanDocument(doc *reportPlanDocument) *reportPlanDocument {
 			ID:      section.ID,
 			Heading: strings.TrimSpace(section.Heading),
 			Entries: make([]reportPlanDocumentEntry, 0, len(section.Entries)),
+			Layout:  section.Layout,
 		}
 		for _, entry := range section.Entries {
 			entryCounter++

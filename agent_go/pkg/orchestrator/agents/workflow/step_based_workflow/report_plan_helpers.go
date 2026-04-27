@@ -2892,6 +2892,7 @@ func registerReportPlanManagementTools(
 		"upsert_report_widget",
 		"Create or update one report widget in reports/report_plan.json. If widget_id exists, this merges the provided config into the existing widget. If widget_id is omitted, it creates a new widget in the target section; pass row_id to insert into an existing row entry.\n\n"+
 			"Supported widget kinds: text, markdown (formatted text/markdown body), table, cards (record tiles with title/subtitle/description/image fields — set cardTitleField etc.), chart (bar/line/area/pie), stat (KPI tile + delta + sparkline), alert (severity callout), pivot (rows × cols × aggregate), costs / evals / runs (workflow-API-driven; source/path are ignored).\n\n"+
+			"Chart configuration: single-series uses xAxis + yAxis (or relies on canonical {label,value} keys). For multi-series — overlaying multiple lines/bars on the same axes — set `series: [\"field_a\", \"field_b\", ...]` and `xAxis` (each row in the source contributes one x-tick; each series field becomes one plotted line/bar). Optional: `seriesColors` (hex parallel to series), `stacked: true` for bar/area to stack instead of group. Tooltip and legend render automatically.\n\n"+
 			"Per-widget grid layout: when the parent section has section.layout.columns set, pass `layout: { span: N, minWidth: 320 }` in config to span N grid columns. Use set_section_layout to enable grid mode on a section, and set_report_theme to swap the chart palette report-wide.",
 		upsertParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {

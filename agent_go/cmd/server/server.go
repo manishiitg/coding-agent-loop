@@ -4242,9 +4242,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below).
-				// Migrate legacy values to the 3-mode scheme (builder/optimizer/run). 'ask' was merged
-				// into 'run'; legacy 'debugger'→'run', 'runner'→'run', 'eval'/'output'→'builder'.
-				// Keeps old saved sessions and stale schedule entries working without ambient breakage.
+				// Migrate legacy values to the current 4-mode scheme
+				// (builder/optimizer/run/reporting). 'ask'/'debugger'/'runner' fold
+				// into 'run'; 'eval'/'output' fold into 'builder'. Reporting was
+				// split out of builder/optimizer in a later release. Anything else
+				// passes through so unknown future modes don't break old sessions.
 				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
 					mode := req.ExecutionOptions.WorkshopMode
 					switch mode {

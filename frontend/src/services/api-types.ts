@@ -306,7 +306,7 @@ export interface ChannelRoute {
   workflow_id: string
   workspace_path: string
   // Override the manifest's workshop_mode for this channel. Empty = use manifest.
-  workshop_mode?: 'builder' | 'optimizer' | 'run'
+  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting'
 }
 
 export interface SlackConfig {
@@ -976,8 +976,8 @@ export interface ExecutionOptions {
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
-  // Workshop mode override — three consolidated modes (ask merged into run).
-  workshop_mode?: 'builder' | 'optimizer' | 'run';
+  // Workshop mode override — four modes after the reporting split.
+  workshop_mode?: 'builder' | 'optimizer' | 'run' | 'reporting';
 }
 
 // Execution strategy constants (matching backend)

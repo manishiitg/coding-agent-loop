@@ -1032,8 +1032,10 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	switch mode {
 	case "builder":
-		// BUILDER: design everything — workflow plan, step config, evaluation plan, report widgets.
-		// Absorbs the legacy 'eval' and 'output' modes' tool sets.
+		// BUILDER: design everything — workflow plan, step config, evaluation plan.
+		// Report widgets moved out into the dedicated 'reporting' mode so the
+		// builder agent can focus on the workflow's structure without getting
+		// distracted by chart/widget tweaks.
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
@@ -1048,18 +1050,15 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
-		tools = append(tools, report...)
 		tools = append(tools, kb...)
 		tools = append(tools, "optimize_step")
 		tools = append(tools, "optimize_workflow")
-		// From legacy 'eval' mode — same tools already present above (eval + update_step_config + optimize_step).
-		// From legacy 'output' mode — report widgets now live in reports/report_plan.json
-		// and are mutated through dedicated tools instead of raw shell writes.
 
 	case "optimizer":
 		// OPTIMIZE: run, eval, harden, repeat — make existing steps reliable.
-		// Report widgets often need touching up during hardening (schema drifts in
-		// db/, new KB entity types surface) so validate_report_plan rides along.
+		// Report tools live in the dedicated 'reporting' mode; if a hardening
+		// pass changes a db/ schema that breaks a widget, switch to reporting
+		// to fix the widget there.
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
@@ -1074,7 +1073,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
-		tools = append(tools, report...)
 		tools = append(tools, kb...)
 		tools = append(tools, "optimize_step")
 		tools = append(tools, "optimize_workflow")
@@ -1091,6 +1089,22 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_results")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
+
+	case "reporting":
+		// REPORTING: focused surface for the live report — design widgets, set
+		// themes/layouts, and (when the underlying db/ data is missing) run
+		// individual steps to populate it. No plan/config mutations, no
+		// optimizer-level hardening: that work belongs in Builder/Optimizer.
+		// Read-only review tools stay available so the agent can diagnose
+		// "why is this widget empty" without leaving the mode.
+		tools = append(tools, execution...) // execute_step + supporting execution helpers
+		tools = append(tools, "run_full_workflow")
+		tools = append(tools, "debug_step")
+		tools = append(tools, "review_plan")
+		tools = append(tools, "review_workflow_results")
+		tools = append(tools, "review_workflow_timing")
+		tools = append(tools, "review_workflow_costs")
+		tools = append(tools, report...)
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1138,9 +1152,11 @@ func filterWorkspaceToolsByName(allTools []llmtypes.Tool, allExecutors map[strin
 }
 
 // detectWorkshopMode determines the current workshop mode based on step optimization state.
-// Returns the mode ("builder", "optimizer", "run") and a comma-separated list of
-// unoptimized step IDs. After the 6→3 mode consolidation only those three values are valid
-// ('ask' was merged into 'run'; legacy 'debugger'/'runner'/'eval'/'output' are migrated elsewhere).
+// Returns the auto-detect mode ("builder" or "run") and a comma-separated
+// list of unoptimized step IDs. Auto-detect never returns "optimizer" or
+// "reporting" — those are explicit user choices applied via the frontend
+// override (workshopModeOverride at the call site). 'ask' was merged into
+// 'run'; legacy 'debugger'/'runner'/'eval'/'output' are migrated elsewhere.
 func detectWorkshopMode(plan *PlanningResponse, stepConfigs []StepConfig) (string, string) {
 	if plan == nil || len(plan.Steps) == 0 {
 		return "builder", ""
@@ -1453,7 +1469,7 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
-## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILDER{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else}}RUN{{end}}
+## CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILDER{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "reporting"}}REPORTING{{else}}RUN{{end}}
 {{.SpecialWorkspaceToolsInstructions}}
 
 ## Execution policy — run ONE group at a time by default
@@ -1500,12 +1516,12 @@ The workflow has a **live frontend report viewer** at the top toolbar's "Report"
 
 **Report viewer auto-updates** when the user opens or switches to the Report tab — no rebuild step needed. After the agent updates `+"`report_plan.json`"+`, the user just clicks Report (or refreshes if they're already on it) to see the new widgets.
 
-{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
+{{if eq .WorkshopMode "reporting"}}
 ### Report plan — reports/report_plan.json
 
-The workflow's live report is defined by `+"`reports/report_plan.json`"+`. The frontend renders it on demand — there is no "report" phase that runs after execution. You write and maintain this file through dedicated tools.
+You are in REPORTING mode. Your scope is the live frontend report defined by `+"`reports/report_plan.json`"+` — designing widgets, picking themes/layouts, and (when needed) running individual workflow steps to populate the underlying `+"`db/`"+` data the widgets bind to. You do NOT change the workflow plan, step config, evaluations, or KB write rules — those belong in Builder/Optimizer.
 
-**Use the reporting toolchain, not the system prompt, for details:**
+**The reporting toolchain:**
 - Before move/remove/toggle operations, call `+"`get_report_plan`"+` so you have stable section, entry, row, and widget IDs.
 - Use `+"`upsert_report_widget`"+` for create/update, `+"`move_report_widget`"+` to reposition, `+"`toggle_report_widget`"+` to hide/show, and `+"`remove_report_widget`"+` to delete.
 - For dashboard-style layouts: call `+"`set_section_layout`"+` to put a section into CSS Grid mode (columns 1–24), then pass `+"`layout: { span }`"+` in the widget config so widgets span N columns. Without it, sections use the default flex layout.
@@ -1513,20 +1529,23 @@ The workflow's live report is defined by `+"`reports/report_plan.json`"+`. The f
 - After every edit to `+"`reports/report_plan.json`"+`, call `+"`validate_report_plan`"+`.
 - When you need to inspect what the final report will actually show with current data, call `+"`preview_report_render`"+`.
 
-**When to write/update `+"`report_plan.json`"+`:**
-- After the user confirms what they want to see in the report
-- When you add a step that writes a new `+"`db/`"+` file the user wants surfaced
-- When the KB starts accumulating a new entity type the user wants listed
-- When the user says "add X to the report" or similar
-- In optimizer mode: when a hardening pass changes a db/ schema that existing widgets reference
+**When data is missing — running steps from this mode:**
+If a widget renders empty because the underlying `+"`db/`"+` file hasn't been populated yet, you have `+"`execute_step`"+` and `+"`run_full_workflow`"+` available. Use them to make the data exist:
+- For a single missing source, run only the step(s) that write it: `+"`execute_step(step_id, group_name)`"+`.
+- For a fresh workflow with no runs yet, `+"`run_full_workflow`"+` is the right fallback.
+- Diagnose first with `+"`review_workflow_results`"+` and `+"`get_report_plan`"+` — don't run steps blindly. The widget might be pointing at the wrong path or filter, in which case the fix is in the plan, not in the data.
+
+**What you do NOT do here:**
+- No `+"`update_step_config`"+`, no `+"`optimize_step`"+`, no `+"`harden_workflow`"+`, no plan or eval mutations. If the user asks to fix a step's behavior or change what a step writes to `+"`db/`"+`, tell them to switch to Builder or Optimizer.
+- No KB writes, no schedule changes, no skill imports.
 
 **Reporting workflow:**
-1. Clarify what the user wants to see if needed.
-2. Call `+"`get_report_plan`"+` if you need IDs or current structure.
-3. Use the report-plan mutation tools to update `+"`reports/report_plan.json`"+`.
-4. Call `+"`validate_report_plan`"+`.
-5. If the user asked how it will render, call `+"`preview_report_render`"+`.
-6. Fix validation errors, then validate again until clean.
+1. Clarify what the user wants to see.
+2. Call `+"`get_report_plan`"+` for IDs / current structure.
+3. If the data isn't there yet, run the right step(s) (or full workflow) to populate `+"`db/`"+`.
+4. Use the report-plan mutation tools to update `+"`reports/report_plan.json`"+`.
+5. Call `+"`validate_report_plan`"+`. Fix errors, validate again.
+6. Optionally call `+"`preview_report_render`"+` to show the user what it will look like.
 
 **Empty states:** if no widget resolves to non-empty data, the viewer hides the report entirely — no placeholder needed.
 

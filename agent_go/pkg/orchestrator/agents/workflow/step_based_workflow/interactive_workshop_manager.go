@@ -1465,7 +1465,7 @@ When you call `+"`"+`run_full_workflow`+"`"+` for a multi-group workflow, **defa
 - **Fixes propagate forward.** If you run → eval → harden per group, group A's harden fixes apply BEFORE group B runs — group B benefits from the improvements without re-running A.
 - **Avoids resource contention.** Browsers, MCP server connections, API rate limits, file-system contention all behave better with serialized groups than with N parallel workers fighting over them.
 - **Earlier abort.** If group A reveals a structural problem (wrong selectors, missing variable, broken auth), you can stop the loop before wasting compute on B and C.
-- **Iteration rotation still works correctly.** The first group's run triggers the paired iteration-0 → iteration-N rotation; subsequent partial-group runs in the same session reuse iteration-0 (controller.go isPartialGroupRun check), so all groups end up in the same iteration-0 by the end of the loop.
+- **Iteration rotation still works correctly.** The first group's run triggers the paired iteration-0 → iteration-N rotation; subsequent partial-group runs in the same session reuse iteration-0, so all groups end up in the same iteration-0 by the end of the loop.
 
 **The pattern:**
 `+"```"+`

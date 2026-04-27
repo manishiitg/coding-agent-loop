@@ -45,7 +45,8 @@ func AppendContextRule(ctx context.Context, workspacePath, section, ruleText str
 	}
 	if !exists {
 		existing = "# Workflow Rules\n\n" +
-			"This file accumulates business rules supplied by the user via /capture-context. " +
+			"This file accumulates business rules supplied by the user. " +
+			"Rules are persisted via the `capture_context` tool (the builder agent recognizes them in conversation and offers to capture). " +
 			"Each rule lands as a bullet under a section heading. The agent reads this on every run.\n\n"
 	}
 
@@ -152,20 +153,21 @@ func ReadClarificationEntries(ctx context.Context, workspacePath string) ([]Clar
 	return readJSONLRecords[ClarificationEntry](ctx, contextClarificationsPath(workspacePath))
 }
 
-// CaptureContext is the high-level helper used by the /capture-context flow.
-// It (a) appends the rule text to context/rules.md, (b) writes the
-// clarifications.jsonl entry, (c) writes a builder/decisions.jsonl audit
-// record cross-linking everything. Returns the persisted clarification.
+// CaptureContext is the high-level helper used by the capture_context tool
+// and the /api/workflow/capture-context endpoint. It (a) appends the rule
+// text to context/rules.md, (b) writes the clarifications.jsonl entry,
+// (c) writes a builder/decisions.jsonl audit record cross-linking
+// everything. Returns the persisted clarification.
 //
-// EnforceTargetMetrics is the only mandatory validation gate from the
+// Non-empty target_metrics is the only mandatory validation gate from the
 // framework's "Type 3 must declare target metric" rule. Caller is responsible
 // for verifying the workflow is actually Type 3.
 func CaptureContext(ctx context.Context, workspacePath, section, ruleText string, targetMetrics []string, exampleNote string) (ClarificationEntry, DecisionEntry, error) {
 	if len(targetMetrics) == 0 {
-		return ClarificationEntry{}, DecisionEntry{}, fmt.Errorf("/capture-context requires non-empty target_metrics")
+		return ClarificationEntry{}, DecisionEntry{}, fmt.Errorf("capture_context requires non-empty target_metrics")
 	}
 	if strings.TrimSpace(ruleText) == "" {
-		return ClarificationEntry{}, DecisionEntry{}, fmt.Errorf("/capture-context requires rule text")
+		return ClarificationEntry{}, DecisionEntry{}, fmt.Errorf("capture_context requires rule text")
 	}
 
 	if err := AppendContextRule(ctx, workspacePath, section, ruleText); err != nil {

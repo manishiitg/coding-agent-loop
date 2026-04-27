@@ -332,10 +332,11 @@ func RegisterQueryExperimentHistoryTool(agent *mcpagent.Agent, workspacePath str
 	}
 }
 
-// RegisterCaptureContextTool exposes capture_context to the proposer LLM. Used
-// by the /capture-context slash command on Type 3 workflows to add a business
-// rule to context/rules.md anchored to one or more metrics. Atomically writes
-// the rule, the clarifications.jsonl entry, and the audit decision-log entry.
+// RegisterCaptureContextTool exposes capture_context to the proposer LLM.
+// The builder agent calls this proactively when a user shares a business
+// rule in conversation about a Type 3 workflow. Atomically writes the rule
+// to context/rules.md, the clarifications.jsonl entry, and the audit
+// decision-log entry.
 func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
 	desc := "Capture a user-supplied business rule into context/rules.md, anchored to one or more metrics it is meant to move. " +
 		"Atomically appends the bullet under the requested section heading, writes a context/clarifications.jsonl entry " +

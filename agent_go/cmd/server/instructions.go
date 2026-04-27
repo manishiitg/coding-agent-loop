@@ -269,7 +269,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Interactive builder / workshop:**
 - ` + "`builder/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches. Only the 3 most recent are kept.
 - ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
-- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`/improve-*`" + ` or ` + "`/capture-context`" + ` apply changes; do NOT hand-edit.
+- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`/improve-*`" + ` commands or the ` + "`capture_context`" + ` tool apply changes; do NOT hand-edit.
 
 **Auto-improvement framework files (opt-in per workflow):**
 - ` + "`metrics.json`" + ` (workflow root) — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step / telemetry / external / delayed_ground_truth). Optional ` + "`evaluable_at_lag`" + ` (e.g. ` + "`30d`" + `) declares a metric is delayed; the experiment loop waits for the lag to elapse. **Metrics are required for Type 3 workflows; optional for Type 1 SLO workflows; usually deferred for Type 2.** Edit via the ` + "`propose_metric`" + ` tool, never raw — the tool handles versioning so the trajectory chart stays honest.
@@ -362,15 +362,6 @@ Use **before** proposing a new experiment to avoid retrying a recently-failed or
 
 The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-kb`" + ` etc. continue to work. Going forward they will increasingly call ` + "`propose_experiment`" + ` instead of editing files immediately, so the change is measured and revertible. When a user runs ` + "`/improve-eval`" + ` on a workflow that has ` + "`metrics.json`" + ` defined, prefer opening an experiment over a direct edit.
 
-### Type-3 ` + "`/capture-context`" + `
-
-When the user invokes ` + "`/capture-context`" + ` on a Type 3 workflow, the framework's ` + "`POST /api/workflow/capture-context`" + ` endpoint:
-1. Appends the rule text to ` + "`context/rules.md`" + ` under the requested section.
-2. Writes a ` + "`context/clarifications.jsonl`" + ` entry with ` + "`source: user`" + ` and **non-empty target_metrics** (enforced).
-3. Writes a ` + "`builder/decisions.jsonl`" + ` audit entry cross-linking the rule and the targeted metric(s).
-
-Refuse ` + "`/capture-context`" + ` on Type 1 or Type 2 workflows; tell the user it's a Type 3 mechanism.
-
 ### Honesty rules
 
 - Never fabricate baselines or measurement values. The system reads them from real run history.
@@ -380,7 +371,7 @@ Refuse ` + "`/capture-context`" + ` on Type 1 or Type 2 workflows; tell the user
 
 ### Proactive business-context capture (Type 3 only)
 
-Do not wait for the user to invoke ` + "`/capture-context`" + `. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`context/rules.md`" + ` rather than dying in chat history.
+There is no slash command for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`context/rules.md`" + ` rather than dying in chat history.
 
 **Recognition signals (capture-worthy):**
 - Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.

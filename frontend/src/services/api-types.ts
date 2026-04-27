@@ -406,6 +406,11 @@ export interface ActiveSessionInfo {
   created_at: string
   query?: string
   title?: string
+  workflow_name?: string
+  workflow_label?: string
+  workspace_path?: string
+  preset_name?: string
+  preset_query_id?: string
   has_running_background_agents?: boolean
   running_background_agent_count?: number
   current_execution_name?: string

@@ -107,6 +107,12 @@ type ActiveSessionInfo struct {
 	LastActivity                time.Time  `json:"last_activity"`
 	CreatedAt                   time.Time  `json:"created_at"`
 	Query                       string     `json:"query,omitempty"`
+	Title                       string     `json:"title,omitempty"`
+	WorkflowName                string     `json:"workflow_name,omitempty"`
+	WorkflowLabel               string     `json:"workflow_label,omitempty"`
+	WorkspacePath               string     `json:"workspace_path,omitempty"`
+	PresetName                  string     `json:"preset_name,omitempty"`
+	PresetQueryID               string     `json:"preset_query_id,omitempty"`
 	LLMGuidance                 string     `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
 	MemoryFolder                string     `json:"memory_folder,omitempty"` // Per-user memory folder (default: _users/<userID>/memories)
 	ChatsFolder                 string     `json:"chats_folder,omitempty"`  // Per-user Chats folder (default: _users/<userID>/Chats)
@@ -721,14 +727,14 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize workflow step ID storage
 		workflowStepIDs: make(map[string]string),
 		// Initialize background agent infrastructure
-		bgAgentRegistry:         NewBackgroundAgentRegistry(),
-		sessionBusy:             make(map[string]bool),
-		pendingCompletions:      make(map[string][]string),
-		lastQueryRequests:       make(map[string]QueryRequest),
-		sessionWorkspaceFolders: make(map[string]string),
-		sessionAgents:           make(map[string]*agent.LLMAgentWrapper),
-		runningAgents:           make(map[string]*mcpagent.Agent),
-		completionLoopStarted:   make(map[string]bool),
+		bgAgentRegistry:           NewBackgroundAgentRegistry(),
+		sessionBusy:               make(map[string]bool),
+		pendingCompletions:        make(map[string][]string),
+		lastQueryRequests:         make(map[string]QueryRequest),
+		sessionWorkspaceFolders:   make(map[string]string),
+		sessionAgents:             make(map[string]*agent.LLMAgentWrapper),
+		runningAgents:             make(map[string]*mcpagent.Agent),
+		completionLoopStarted:     make(map[string]bool),
 		claudeCodeSessionIDs:      make(map[string]string),
 		geminiSessionIDs:          make(map[string]string),
 		geminiProjectDirIDs:       make(map[string]string),

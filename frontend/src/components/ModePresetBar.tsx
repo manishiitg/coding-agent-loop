@@ -20,6 +20,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -679,6 +680,8 @@ export const ModePresetBar: React.FC = () => {
           {/* Right: icons */}
           <TooltipProvider delayDuration={400}>
             <div className="flex items-center gap-3">
+              <GlobalActivityMonitor />
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

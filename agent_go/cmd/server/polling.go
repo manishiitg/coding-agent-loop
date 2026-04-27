@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 
@@ -244,7 +246,7 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	for _, session := range allActiveSessions {
 		// Include session if it belongs to this user (or if UserID is empty for backwards compat)
 		if session.UserID == "" || session.UserID == currentUserID {
-			activeSessions = append(activeSessions, session)
+			activeSessions = append(activeSessions, api.buildActiveSessionInfoSummary(session))
 		}
 	}
 
@@ -261,6 +263,114 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
+}
+
+func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInfo) *ActiveSessionInfo {
+	if session == nil {
+		return nil
+	}
+
+	enriched := *session
+
+	if api.bgAgentRegistry != nil {
+		var newestRunning time.Time
+		for _, agent := range api.bgAgentRegistry.GetAll(session.SessionID) {
+			snap := agent.GetSnapshot()
+			if snap.Status != BGAgentRunning {
+				continue
+			}
+			enriched.RunningBackgroundAgentCount++
+			enriched.HasRunningBackgroundAgents = true
+			if snap.CreatedAt.After(newestRunning) {
+				newestRunning = snap.CreatedAt
+				enriched.CurrentExecutionName = snap.Name
+			}
+		}
+	}
+
+	api.trackedWorkflowExecutionsMux.RLock()
+	if exec := api.runningWorkflowExecutionBySessionLocked(session.SessionID); exec != nil {
+		active := trackedExecutionToActive(exec)
+		enriched.PresetQueryID = active.PresetQueryID
+		enriched.PresetName = active.PresetName
+		enriched.WorkspacePath = active.WorkspacePath
+		if active.PresetName != "" {
+			enriched.WorkflowName = active.PresetName
+			enriched.WorkflowLabel = active.PresetName
+		} else if active.WorkspacePath != "" {
+			workspaceName := workflowNameFromWorkspacePath(active.WorkspacePath)
+			enriched.WorkflowName = workspaceName
+			enriched.WorkflowLabel = workspaceName
+		}
+		switch {
+		case active.CurrentStepTitle != "":
+			enriched.CurrentExecutionName = active.CurrentStepTitle
+		case active.PhaseName != "":
+			enriched.CurrentExecutionName = active.PhaseName
+		case active.PresetName != "":
+			enriched.CurrentExecutionName = active.PresetName
+		case active.Title != "":
+			enriched.CurrentExecutionName = active.Title
+		}
+		if active.Status != "" {
+			enriched.Status = active.Status
+		}
+	}
+	api.trackedWorkflowExecutionsMux.RUnlock()
+
+	enriched.NeedsUserInput, enriched.WaitingEventType, enriched.WaitingSince, enriched.WaitingMessage =
+		api.deriveSessionUserInputState(session.SessionID)
+
+	return &enriched
+}
+
+func workflowNameFromWorkspacePath(workspacePath string) string {
+	trimmed := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.Split(trimmed, "/")
+	return parts[len(parts)-1]
+}
+
+func (api *StreamingAPI) deriveSessionUserInputState(sessionID string) (bool, string, *time.Time, string) {
+	if api == nil || api.eventStore == nil || sessionID == "" {
+		return false, "", nil, ""
+	}
+
+	events := api.eventStore.GetAllEventsRaw(sessionID)
+	for i, scanned := len(events)-1, 0; i >= 0 && scanned < 300; i, scanned = i-1, scanned+1 {
+		event := events[i]
+		switch event.Type {
+		case "human_verification_response", "workflow_end", "workflow_error", "conversation_end", "context_cancelled":
+			return false, "", nil, ""
+		case "request_human_feedback", "blocking_human_feedback", "plan_approval":
+			waitingSince := event.Timestamp
+			return true, event.Type, &waitingSince, summarizeWaitingEvent(event)
+		}
+	}
+
+	return false, "", nil, ""
+}
+
+func summarizeWaitingEvent(event events.Event) string {
+	data := map[string]interface{}{}
+	if event.Data != nil && event.Data.Data != nil {
+		if raw, err := json.Marshal(event.Data.Data); err == nil {
+			_ = json.Unmarshal(raw, &data)
+		}
+	}
+
+	for _, key := range []string{"question", "message", "prompt", "title", "objective", "action_description", "context", "reason"} {
+		if value, ok := data[key].(string); ok && value != "" {
+			if len(value) > 160 {
+				return value[:157] + "..."
+			}
+			return value
+		}
+	}
+
+	return ""
 }
 
 // handleReconnectSession handles requests to reconnect to an active session

@@ -170,7 +170,7 @@ export function EvalsWidget({
       <WidgetHeader widget={widget} />
       {view === 'summary' && (
         <>
-          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-2 xl:grid-cols-4'}`}>
+          <div className={`grid gap-2.5 ${isCompact ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4'}`}>
             {summaryCards.map(card => (
               <div key={card.label} className={isCompact ? 'rounded-xl bg-card/70 px-3 py-2.5' : 'rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/20 px-3 py-2.5 shadow-sm'}>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
@@ -311,7 +311,7 @@ function EvalRunCards({
         </div>
       </div>
 
-      <div className={`grid gap-2.5 ${compact ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2'}`}>
+      <div className={`grid gap-2.5 ${compact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
         {pageRows.map((row, index) => {
           const tone = evalScoreTone(row.score_percentage)
           const generatedAt = formatNamed(row.generated_at, 'datetime').text

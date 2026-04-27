@@ -64,6 +64,48 @@ export function useCompactWidgetLayout(maxWidth = 520) {
   return [ref, isCompact] as const
 }
 
+// Three-tier sibling of useCompactWidgetLayout. Used by the section grid
+// container so a user-declared `columns: 12` collapses to ~half on tablets
+// (640–960px) and 1 column on phones (<640px), matching the project's
+// Tailwind sm/md breakpoints. Container-width based, not viewport-based, so
+// it works inside split-pane / preview-mode layouts where the report tab
+// is narrower than the viewport.
+export type ContainerSizeTier = 'phone' | 'tablet' | 'desktop'
+
+export function useContainerSizeTier(phoneMax = 640, tabletMax = 960) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [tier, setTier] = useState<ContainerSizeTier>('desktop')
+
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+
+    const update = (width: number) => {
+      if (width <= phoneMax) setTier('phone')
+      else if (width <= tabletMax) setTier('tablet')
+      else setTier('desktop')
+    }
+
+    const measure = () => update(node.getBoundingClientRect().width)
+    measure()
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(entries => {
+        const entry = entries[0]
+        if (!entry) return
+        update(entry.contentRect.width)
+      })
+      observer.observe(node)
+      return () => observer.disconnect()
+    }
+
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [phoneMax, tabletMax])
+
+  return [ref, tier] as const
+}
+
 const COMPACT_PRIMARY_COLUMN_CANDIDATES = [
   'title',
   'name',

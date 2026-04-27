@@ -24,7 +24,7 @@ import {
   resolveSingularWidgetSource,
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
-import { useCompactWidgetLayout } from './reportWidgets/tableHelpers'
+import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
 import {
   parseTimestamp,
   type RunCostSummary,
@@ -825,10 +825,12 @@ function SectionHeader({
 }
 
 // Renders one section's heading + entries. Lives in its own component so the
-// section container can call useCompactWidgetLayout to detect narrow viewports
-// and collapse a grid layout to a single column on phones — without it, a
-// section with `columns: 12` would render as twelve 30-px columns on a 360-px
-// screen. Widget spans clamp to 1 in compact mode for the same reason.
+// section container can call useContainerSizeTier and collapse the grid into
+// a tier-appropriate column count: 1 on phones (<640px), ~half on tablets
+// (640–960px), full on desktop. A user-declared `columns: 12` therefore
+// renders as 12 on desktop, 6 on tablet, 1 on mobile — and per-widget spans
+// scale proportionally so a widget with span: 4 keeps roughly its share of
+// the row at every tier.
 function SectionContainer({
   section,
   sectionIndex,
@@ -862,18 +864,34 @@ function SectionContainer({
   hiddenWidgetKeys: Set<string>
   handleToggleWidgetHidden: (widgetKey: string) => void
 }) {
-  // Container width gate — same threshold widgets use internally so the
-  // section's grid collapses at the same breakpoint a TableWidget would
-  // switch to its stacked card layout.
-  const [gridRef, isCompact] = useCompactWidgetLayout()
+  // Container size tier — phone / tablet / desktop, matching the project's
+  // sm/md Tailwind breakpoints. Container-width based, so it works in
+  // split-pane / mobile-preview modes where the report tab is narrower than
+  // the actual viewport.
+  const [gridRef, sizeTier] = useContainerSizeTier()
   const requestedColumns = section.layout?.columns
   const gridGap = section.layout?.gap ?? 12
-  // When the container is narrow, fall back to a single-column grid.
-  // Widget spans likewise clamp so a 6-column widget doesn't try to span 6 of
-  // the 1 effective column.
+  // Scale the user-requested column count to the active tier:
+  //   phone   → 1 (always stack)
+  //   tablet  → roughly half, rounded down, capped at 6 to keep cells legible
+  //   desktop → as requested
+  // Widget spans then scale by the same ratio so a widget keeps roughly its
+  // declared share of a row at every tier (e.g. span: 4 of 12 cols stays at
+  // span: 2 of 6 cols on tablet).
   const effectiveColumns = requestedColumns
-    ? isCompact ? 1 : requestedColumns
+    ? sizeTier === 'phone'
+      ? 1
+      : sizeTier === 'tablet'
+        ? Math.min(6, Math.max(1, Math.floor(requestedColumns / 2)))
+        : requestedColumns
     : undefined
+  const tierSpan = (declared: number | undefined): number | undefined => {
+    if (declared == null || !requestedColumns || !effectiveColumns) return undefined
+    if (sizeTier === 'desktop') return Math.min(declared, effectiveColumns)
+    // Scale by the same ratio columns were scaled, with a minimum of 1.
+    const ratio = effectiveColumns / requestedColumns
+    return Math.min(effectiveColumns, Math.max(1, Math.round(declared * ratio)))
+  }
   const containerClassName = effectiveColumns
     ? 'grid'
     : 'flex flex-col gap-3'
@@ -895,7 +913,7 @@ function SectionContainer({
           const cellSpan = effectiveColumns
             ? entry.kind === 'row'
               ? effectiveColumns
-              : Math.min(span ?? effectiveColumns, effectiveColumns)
+              : tierSpan(span) ?? effectiveColumns
             : undefined
           const cellMinWidth = entry.kind === 'single'
             ? entry.widget.layout?.minWidth
@@ -998,9 +1016,9 @@ function EntryRenderer({
   })
   if (visibleWidgets.length === 0) return null
   return (
-    <div ref={rowRef} className={`flex gap-2.5 ${isCompact ? 'flex-col' : 'flex-col xl:flex-row xl:flex-wrap'}`}>
+    <div ref={rowRef} className={`flex gap-2.5 ${isCompact ? 'flex-col' : 'flex-col md:flex-row md:flex-wrap'}`}>
       {visibleWidgets.map(({ widget, widgetKey, hidden }) => (
-        <div key={widgetKey} className={`w-full ${isCompact ? '' : 'xl:min-w-[260px] xl:flex-1'}`}>
+        <div key={widgetKey} className={`w-full ${isCompact ? '' : 'md:min-w-[260px] md:flex-1'}`}>
           <WidgetCard
             widget={widget}
             sources={sources}

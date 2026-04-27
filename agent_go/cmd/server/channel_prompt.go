@@ -1,5 +1,25 @@
 package server
 
+// botFileAccessGuidance is appended to every per-platform formatting fragment
+// so the agent treats file references like a chat assistant, not a CLI. The
+// chat user cannot open workspace files (rca.md, plan.json, run-folder
+// artifacts) themselves — they're inside the agent's sandbox, not on the
+// user's device — so any "see file X" reply is a dead end.
+const botFileAccessGuidance = `
+
+# File references in chat threads
+
+The user is reading your reply in a chat thread (Slack / WhatsApp / Discord / etc.) and **cannot open workspace files directly** — they have no browser, no shell, no access to ` + "`/data/docs/...`" + `, the run folder, the plan, or anything under the workflow workspace. Every file you mention exists only on your side.
+
+Therefore:
+
+- Never say "see ` + "`rca.md`" + `", "check the run folder", or "look at ` + "`plan.json`" + `" and stop there.
+- When a file is the answer, **read it yourself first** (via ` + "`execute_shell_command`" + ` / workspace tools) and inline the relevant content in your reply — quote the headline finding, paste the small snippet, paraphrase the section the user asked about. The chat thread is the user's only window.
+- For long files, lift the most useful 5–20 lines (e.g. summary, conclusion, a key code block) — don't dump the whole file. If the user asks for "the full report", paste it in a code block, ideally split across messages if it's huge.
+- File paths can still appear as references for orientation (e.g. "RCA written to ` + "`runs/iteration-0/prod/execution/step-write-rca/rca.md`" + `") — but they must accompany the actual content, not replace it.
+
+Workflow run-folder artifacts, plan/step config, knowledgebase notes, learnings — same rule. Read, then quote.`
+
 // buildChannelFormattingInstructions returns a system-prompt fragment telling
 // the agent how to format its replies for a specific chat channel. Both Slack
 // and WhatsApp share a minimal "mrkdwn-like" subset — single-asterisk bold,
@@ -8,6 +28,9 @@ package server
 // syntax. Injecting this at session start gets the LLM to emit channel-
 // native text directly, so the outbound formatter has less normalisation to
 // do and less formatting is lost in translation.
+//
+// All platforms also receive botFileAccessGuidance so the agent inlines file
+// content rather than pointing at workspace paths the user can't open.
 //
 // Empty string when the platform is unknown / empty — caller can branch on
 // that to skip AppendSystemPrompt.
@@ -36,7 +59,7 @@ Do NOT use:
 - Tables — Slack has no table rendering. Use a bulleted list or paste as a code block with column alignment instead.
 - HTML.
 
-Keep individual messages under 3000 characters where possible — Slack caps at ~40k, but long single messages are harder to read on mobile.`
+Keep individual messages under 3000 characters where possible — Slack caps at ~40k, but long single messages are harder to read on mobile.` + botFileAccessGuidance
 
 	case "whatsapp":
 		return `# Output formatting — WhatsApp
@@ -58,7 +81,7 @@ Do NOT use:
 - Nested markup (e.g. bold inside italic) — unreliable.
 - HTML.
 
-Keep replies concise — WhatsApp caps individual messages at ~4000 characters, and small phone screens make long walls of text hard to read.`
+Keep replies concise — WhatsApp caps individual messages at ~4000 characters, and small phone screens make long walls of text hard to read.` + botFileAccessGuidance
 	}
 	return ""
 }

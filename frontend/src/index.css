@@ -145,20 +145,52 @@
     --primary: 250 70% 55%;
   }
 
+  /* Warm — sunset reds/oranges. Tints primary, accent, and the card/muted
+     surfaces so the theme is visible even in chart-light reports (a report
+     with only stat + table widgets still picks up the warm accents). */
   [data-report-theme="warm"] {
     --chart-1: 0 70% 55%;
     --chart-2: 20 75% 55%;
     --chart-3: 35 80% 55%;
     --chart-4: 50 75% 55%;
     --chart-5: 280 50% 60%;
+    --primary: 16 75% 50%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 16 75% 50%;
+    --accent-foreground: 0 0% 100%;
+    --ring: 16 75% 50%;
+    --card: 25 50% 97%;
+    --muted: 25 40% 94%;
+    --border: 25 35% 86%;
+  }
+  .dark [data-report-theme="warm"],
+  [data-report-theme="warm"].dark {
+    --card: 20 25% 17%;
+    --muted: 20 20% 22%;
+    --border: 20 15% 28%;
   }
 
+  /* Cool — blues / teals. Same shape as warm. */
   [data-report-theme="cool"] {
     --chart-1: 200 70% 45%;
     --chart-2: 180 60% 45%;
     --chart-3: 220 65% 50%;
     --chart-4: 240 60% 55%;
     --chart-5: 160 60% 45%;
+    --primary: 200 70% 45%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 200 70% 45%;
+    --accent-foreground: 0 0% 100%;
+    --ring: 200 70% 45%;
+    --card: 200 40% 97%;
+    --muted: 200 30% 94%;
+    --border: 200 25% 86%;
+  }
+  .dark [data-report-theme="cool"],
+  [data-report-theme="cool"].dark {
+    --card: 210 25% 17%;
+    --muted: 210 20% 22%;
+    --border: 210 15% 28%;
   }
 }
 

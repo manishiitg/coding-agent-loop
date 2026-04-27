@@ -30,7 +30,7 @@ import {
   type RunCostSummary,
   summariseRunCosts,
 } from './reportWidgets/costSummaries'
-import { BarChart3, ChevronDown, Monitor, RefreshCw, Smartphone, Tablet } from 'lucide-react'
+import { BarChart3, ChevronDown, Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import {
   applyWidgetFilter,
@@ -790,8 +790,8 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
           >
             {([
               { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
-              { mode: 'tablet', Icon: Tablet, label: 'Tablet preview (≈880px)' },
-              { mode: 'desktop', Icon: Monitor, label: 'Laptop preview (full width)' },
+              { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (≈880px)' },
+              { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
             ] as const).map(({ mode, Icon, label }) => {
               const active = previewMode === mode
               const visible = active || previewControlsExpanded

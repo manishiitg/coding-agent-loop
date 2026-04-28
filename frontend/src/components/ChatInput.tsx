@@ -2074,6 +2074,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }, 0)
     }
 
+    // Queue-aware onSubmit. When the builder is currently streaming a previous
+    // message, slash-command prompts must respect the same queue that regular
+    // text submissions use (lines ~2198 and ~2254). Without this wrap, slash
+    // commands raced the in-flight conversation and submitted immediately —
+    // inconsistent with how Enter-on-text behaves.
+    const queueAwareOnSubmit = (query: string) => {
+      const trimmed = query?.trim()
+      if (!trimmed) return
+      if (isStreaming) {
+        const currentQueued = tabConfig?.queuedMessages || []
+        setTabConfig(activeTabId, {
+          inputText: '',
+          queuedMessages: [...currentQueued, trimmed]
+        })
+        addToast('Builder is busy — slash command queued', 'info')
+        return
+      }
+      onSubmit(trimmed)
+    }
+
     return {
       beforeSlash,
       activeTabId,
@@ -2081,7 +2101,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       tabConfig,
       isSummarizing,
       isStreaming,
-      onSubmit,
+      onSubmit: queueAwareOnSubmit,
       setInputText,
       openDialog,
       setTabConfig,

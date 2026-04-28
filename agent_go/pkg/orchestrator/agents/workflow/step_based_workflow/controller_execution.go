@@ -1436,6 +1436,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                            // Evaluation mode flag for eval-specific prompt guidance
 			"WorkflowRoot":              toAbsPath(workflowRoot),                                                             // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
 			"IsLearnCodeMode":           fmt.Sprintf("%v", isLearnCodeMode),
+			"IsLearnCodeLocked":         fmt.Sprintf("%v", isLearnCodeMode && getAgentConfigs(step) != nil && getAgentConfigs(step).LockCode != nil && *getAgentConfigs(step).LockCode),
 			"IsRelearnMode":             fmt.Sprintf("%v", isLearnCodeMode && learnCodePriorScript != ""),
 			"LearnCodePriorScript":      learnCodePriorScript,
 			"LearnCodePriorError":       learnCodePriorError,
@@ -2081,7 +2082,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 						if mainPyErr != nil {
 							// main.py not written yet
-							if priorCtx := BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataPath"]); priorCtx != "" {
+							if priorCtx := BuildLearnCodePriorContext(templateVars["LearnCodePriorScript"], templateVars["LearnCodePriorError"], templateVars["LearnCodeMetadataPath"], templateVars["IsLearnCodeLocked"] == "true"); priorCtx != "" {
 								sb.WriteString(priorCtx)
 								sb.WriteString("\n")
 							}

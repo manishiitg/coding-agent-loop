@@ -7139,11 +7139,23 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		}
 		workshopMode := ""
 		isStepOptimized := false
+		isLockCode := false
+		isLockLearnings := false
+		lockCodeConsecutiveFailures := 0
+		lockCodeNeedsReview := false
 		if snap.Metadata != nil {
 			workshopMode = snap.Metadata["workshop_mode"]
 			isStepOptimized = snap.Metadata["step_optimized"] == "true"
+			isLockCode = snap.Metadata["lock_code"] == "true"
+			isLockLearnings = snap.Metadata["lock_learnings"] == "true"
+			if v := snap.Metadata["lock_code_consecutive_failures"]; v != "" {
+				if n, perr := strconv.Atoi(v); perr == nil {
+					lockCodeConsecutiveFailures = n
+				}
+			}
+			lockCodeNeedsReview = snap.Metadata["lock_code_needs_review"] == "true"
 		}
-		actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, snap.Status == BGAgentFailed)
+		actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
 		batchContext := ""
 		if snap.Metadata != nil {
 			if iter, ok := snap.Metadata["iteration"]; ok && iter != "" {
@@ -7177,9 +7189,52 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 }
 
 // buildWorkshopActionHint returns a mode-specific instruction appended to AUTO-NOTIFICATION messages
-// so the agent knows what to do next. Currently returns empty — the system prompt
-// already has detailed instructions for handling success/failure notifications.
-func buildWorkshopActionHint(workshopMode string, isOptimized bool, failed bool) string {
+// so the agent knows what to do next. Most success/failure cases are handled by the system prompt;
+// this function only adds extra guidance for cases where the engine has silently degraded behavior
+// the orchestrator wouldn't otherwise know about — most notably fast-path failures on locked steps,
+// where the fix loop is disabled and the step gets exactly one shot at running the saved main.py.
+func buildWorkshopActionHint(workshopMode string, isOptimized, isLockCode, isLockLearnings bool, lockCodeConsecutiveFailures int, lockCodeNeedsReview, failed bool) string {
+	if !failed {
+		return ""
+	}
+	// Pattern hint shared by both locked-step branches: a streak of locked failures is
+	// strong evidence the lock itself is wrong (script no longer matches the site/API),
+	// not that each individual run is independently environmental.
+	streakHint := ""
+	if lockCodeNeedsReview || lockCodeConsecutiveFailures >= 3 {
+		streakHint = fmt.Sprintf(
+			"\n\n**Pattern signal:** the locked main.py has now failed %d times in a row "+
+				"(`script_metadata.json.lock_code_stats.consecutive_failures=%d`, `needs_review=%v`). "+
+				"At this point the lock is likely wrong — a single environmental failure is plausible, "+
+				"three in a row usually means the saved script no longer matches the site/API. "+
+				"Strongly consider clearing `lock_code` and patching the script rather than treating "+
+				"this as one more transient failure.",
+			lockCodeConsecutiveFailures, lockCodeConsecutiveFailures, lockCodeNeedsReview)
+	}
+	if isLockCode && isLockLearnings && isOptimized {
+		return "\n\n[LOCKED OPTIMIZED STEP FAILED] This step is locked " +
+			"(`lock_code=true`, `lock_learnings=true`, `optimized=true`) and ran on the fast path, " +
+			"so only the saved main.py executed — no fix loop, no LLM repair attempt. " +
+			"Investigate the failure: read the run folder " +
+			"(`step_*_status.json`, `learn_code_fast_path.json`, screenshots, downloaded files) " +
+			"and decide between two recovery paths:\n" +
+			"  1. **Fix main.py** — if there's a real bug in the script (these accumulate over time as " +
+			"sites and APIs change), clear `lock_code` via `update_step_config` and update the script. " +
+			"Use `review_step_code` or rewrite directly based on what you find.\n" +
+			"  2. **Re-run with `fast_path_only=false`** — calls `execute_step` again with the fast path " +
+			"disabled so the full code_exec path engages. The LLM will drive tools directly, can repair " +
+			"the run live, and (if `lock_code` is cleared) save an updated main.py back to learnings. " +
+			"Good first move when you're not sure whether it's a script bug or environmental.\n" +
+			"If after inspection it's clearly environmental (bad creds, MFA prompt, captcha) and the " +
+			"script is fine, surface that to the user instead of touching the code." +
+			streakHint
+	}
+	if isLockCode {
+		return "\n\n[CODE-LOCKED FAILURE] `lock_code=true` so the fix loop is disabled and the saved " +
+			"main.py is frozen. Inspect the run folder, then either clear `lock_code` and fix the " +
+			"script, or re-run with `fast_path_only=false` to engage code_exec for this run." +
+			streakHint
+	}
 	return ""
 }
 
@@ -7222,12 +7277,24 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	// Append mode-specific action hint so the agent knows what to do next.
 	workshopMode := ""
 	isStepOptimized := false
+	isLockCode := false
+	isLockLearnings := false
+	lockCodeConsecutiveFailures := 0
+	lockCodeNeedsReview := false
 	if snap.Metadata != nil {
 		workshopMode = snap.Metadata["workshop_mode"]
 		isStepOptimized = snap.Metadata["step_optimized"] == "true"
+		isLockCode = snap.Metadata["lock_code"] == "true"
+		isLockLearnings = snap.Metadata["lock_learnings"] == "true"
+		if v := snap.Metadata["lock_code_consecutive_failures"]; v != "" {
+			if n, perr := strconv.Atoi(v); perr == nil {
+				lockCodeConsecutiveFailures = n
+			}
+		}
+		lockCodeNeedsReview = snap.Metadata["lock_code_needs_review"] == "true"
 	}
 	isFailed := snap.Status == BGAgentFailed
-	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isFailed)
+	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isLockCode, isLockLearnings, lockCodeConsecutiveFailures, lockCodeNeedsReview, isFailed)
 
 	// Include iteration and group_name if available in metadata
 	contextInfo := ""

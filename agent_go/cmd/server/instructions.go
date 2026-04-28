@@ -77,7 +77,7 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 | ` + "`" + p.Config + "/`" + ` | read/write | Session config (tier config, provider auth, image config) |
 | ` + "`" + p.ChatHistory + "/`" + ` | read/write | Past conversation histories |
 | ` + "`" + p.Skills + "/`" + ` | read-only | Skill definitions (SKILL.md + supporting files) |
-| ` + "`" + p.Workflow + "/`" + ` | read-only | Workflow definitions (use create_workflow tool to create) |
+| ` + "`" + p.Workflow + "/`" + ` | read-only via shell | Workflow definitions — create with ` + "`create_workflow`" + `; edit cron schedules with the workflow_schedule tools (see "Modifying Existing Workflows") |
 | ` + "`" + p.Downloads + "/`" + ` | read-only | Downloaded files and browser content |
 | ` + "`" + p.Subagents + "/`" + ` | read-only | Sub-agent templates |
 
@@ -407,6 +407,20 @@ There is no slash command for rule capture. When the user shares a business rule
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
+## Modifying Existing Workflows
+
+The ` + "`Workflow/`" + ` folder is read-only via raw shell writes — but several aspects can be modified through dedicated chat tools that go through privileged server-side I/O. **Do not refuse modification requests on the basis of "Workflow/ is read-only" without first checking whether a tool exists for what's being asked.**
+
+**Cron schedules** — fully managed from chat. Tools:
+- ` + "`list_all_schedules`" + ` / ` + "`list_workflow_schedules(workflow_path)`" + ` — view existing schedules. Run ` + "`list_all_schedules`" + ` *before* creating a new one to avoid cron-time overlap with other workflows.
+- ` + "`create_workflow_schedule(workflow_path, name, cron_expression, ...)`" + ` — add a new schedule to a workflow.json. Supports ` + "`mode`" + `: ` + "`workflow`" + ` (default), ` + "`workshop`" + ` (LLM-driven via workshop builder), or ` + "`multi-agent`" + `.
+- ` + "`update_workflow_schedule(job_id, ...)`" + ` — change cron/timezone/enabled/groups.
+- ` + "`delete_workflow_schedule(job_id)`" + ` — remove.
+- ` + "`trigger_workflow_schedule(job_id)`" + ` — manual run-now.
+- ` + "`get_workflow_schedule_runs(job_id)`" + ` — execution history.
+
+**Other config (LLM tiers, MCP servers, skills, secrets, variables, plan steps)** — *not* editable from multi-agent chat. These live in the workshop builder. If the user asks to change LLM config, MCP servers, selected skills, or plan steps, tell them to open the workflow in the canvas / workflow builder. (You can still *read* these fields from ` + "`workflow.json`" + ` to answer questions about them.)
+
 ## Creating New Workflows
 
 When asked to create a new workflow (e.g. via ` + "`/workflow-builder`" + ` or a direct "turn this into a workflow" request), call the privileged ` + "`create_workflow`" + ` tool. **Do NOT try to ` + "`mkdir`" + ` or ` + "`cat > workflow.json`" + ` with ` + "`execute_shell_command`" + ` — the ` + "`Workflow/`" + ` folder is read-only to normal shell writes.** The only path that can create a new workflow folder is the ` + "`create_workflow`" + ` tool, which writes the files via privileged server-side I/O after validating the name, required fields, and no-overwrite check.
@@ -525,7 +539,7 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 - **Use ` + "`create_workflow`" + `, not shell commands.** Sub-agents cannot write under ` + "`Workflow/`" + ` via ` + "`execute_shell_command`" + ` — they'll hit a folder-guard error. Build the two JSON objects in your reasoning, then call the tool directly from your own turn. No delegation needed for this step.
 - **Both JSON objects must be well-formed** — the tool will re-marshal them on write. If you produce invalid structures (missing required fields, wrong types, duplicate step ids, non-kebab-case step ids) the tool returns an error describing the problem and nothing gets written.
 - **Pick capabilities smartly** from the current chat's context: include only the servers, skills, and LLM tiers actually needed for the workflow's steps. Don't blindly copy every currently-enabled server.
-- **Don't overwrite existing workflows.** If the user wants to modify an existing workflow, tell them to use the workflow canvas — ` + "`create_workflow`" + ` will refuse if the target folder already exists.
+- **Don't overwrite existing workflows.** ` + "`create_workflow`" + ` is for *new* workflows only — it refuses if the target folder already exists. To modify an existing workflow's **cron schedules**, use the workflow_schedule tools (see "Modifying Existing Workflows" above). For LLM config, MCP servers, skills, or plan steps, direct the user to the workflow builder / canvas.
 - After creation, report the folder path (returned by the tool) to the user and tell them they can activate it from the workflow picker.
 
 `

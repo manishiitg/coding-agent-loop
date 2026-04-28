@@ -3086,6 +3086,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Variables captured after execution for metadata
 				var isOptimized bool
+				var isLockCode bool
+				var isLockLearnings bool
+				var lockCodeConsecutiveFailures int
+				var lockCodeNeedsReview bool
 				var workshopModeForMeta string
 
 				eventBridge := iwm.controller.GetContextAwareBridge()
@@ -3105,6 +3109,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 						if isOptimized {
 							endEvent.InputData["step_optimized"] = "true"
+						}
+						if isLockCode {
+							endEvent.InputData["lock_code"] = "true"
+						}
+						if isLockLearnings {
+							endEvent.InputData["lock_learnings"] = "true"
+						}
+						if lockCodeConsecutiveFailures > 0 {
+							endEvent.InputData["lock_code_consecutive_failures"] = fmt.Sprintf("%d", lockCodeConsecutiveFailures)
+						}
+						if lockCodeNeedsReview {
+							endEvent.InputData["lock_code_needs_review"] = "true"
 						}
 						// Include workshop mode so frontend can tailor notification messages
 						if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
@@ -3138,6 +3154,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 						if isOptimized {
 							execMeta["step_optimized"] = "true"
+						}
+						if isLockCode {
+							execMeta["lock_code"] = "true"
+						}
+						if isLockLearnings {
+							execMeta["lock_learnings"] = "true"
+						}
+						if lockCodeConsecutiveFailures > 0 {
+							execMeta["lock_code_consecutive_failures"] = fmt.Sprintf("%d", lockCodeConsecutiveFailures)
+						}
+						if lockCodeNeedsReview {
+							execMeta["lock_code_needs_review"] = "true"
 						}
 						// Use frontend-selected mode if available, else fall back to auto-detection
 						if iwm.workshopModeOverride != "" {
@@ -3186,15 +3214,35 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				result, execErr = iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
 
-				// Check if step is marked as optimized in step config; also capture workshop mode.
+				// Capture step's lock/optimized flags so the auto-notification can tailor
+				// recovery guidance (e.g. fast-path failure on a locked step has only two
+				// recovery paths: fix main.py after unlocking, or rerun with fast_path_only=false).
 				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
 					for _, sc := range configs {
-						if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
-							isOptimized = true
+						if sc.ID == stepID && sc.AgentConfigs != nil {
+							if sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
+								isOptimized = true
+							}
+							if sc.AgentConfigs.LockCode != nil && *sc.AgentConfigs.LockCode {
+								isLockCode = true
+							}
+							if sc.AgentConfigs.LockLearnings != nil && *sc.AgentConfigs.LockLearnings {
+								isLockLearnings = true
+							}
 							break
 						}
 					}
 					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
+				}
+
+				// If the step is locked, surface its locked-script run history so the auto-
+				// notification can flag a "this frozen script keeps failing" pattern to the
+				// builder rather than letting it accumulate silently in script_metadata.json.
+				if isLockCode {
+					if meta := iwm.controller.readLearnCodeMetadataAPI(execCtx, stepID); meta != nil && meta.LockCodeStats != nil {
+						lockCodeConsecutiveFailures = meta.LockCodeStats.ConsecutiveFailures
+						lockCodeNeedsReview = meta.LockCodeStats.NeedsReview
+					}
 				}
 			}()
 

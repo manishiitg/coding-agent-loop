@@ -75,9 +75,25 @@ type LearnCodeMetadata struct {
 	DurationStats *DurationStats       `json:"duration_stats,omitempty"` // execution time statistics
 	LastFailure   *LastFailureInfo     `json:"last_failure,omitempty"`   // details of most recent failure
 	CurrentStreak *StreakInfo          `json:"current_streak,omitempty"` // consecutive success/failure streak
+	LockCodeStats *LockCodeStats       `json:"lock_code_stats,omitempty"` // failures while main.py is locked
 
 	// TODO: Auto lock_code tracking — auto-unlock when main.py changes (hash mismatch),
 	// auto-lock after N consecutive successes across M+ groups.
+}
+
+// LockCodeStats tracks how the locked main.py is performing since lock_code was set.
+// Distinct from FailedRuns/CurrentStreak (which span the script's whole lifetime): a
+// stable script that ran successfully for months before being locked, then started
+// failing after a site change, would show 0 ConsecutiveFailures at first — the counter
+// only ticks while lock_code=true, so the builder gets a clean signal of "is the frozen
+// script still working?" without having to diff against an unknown lock-time baseline.
+type LockCodeStats struct {
+	LockedSince         string `json:"locked_since,omitempty"`        // first observed run while lock_code=true
+	Failures            int    `json:"failures"`                      // runs failed while locked
+	Successes           int    `json:"successes"`                     // runs succeeded while locked
+	ConsecutiveFailures int    `json:"consecutive_failures"`          // current run of locked failures; resets on success or unlock
+	LastLockedFailure   string `json:"last_locked_failure,omitempty"` // timestamp of most recent locked failure
+	NeedsReview         bool   `json:"needs_review,omitempty"`        // derived: ConsecutiveFailures >= 3 → builder should consider unlocking + patching
 }
 
 // RunRecord captures details of a single script execution.
@@ -938,6 +954,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		}
 	}
 
+	// Whether main.py was locked at run time — drives LockCodeStats updates so the
+	// builder can spot a frozen-but-broken script via consecutive_failures / needs_review.
+	fastPathAgentCfgs := getAgentConfigs(step)
+	isLocked := fastPathAgentCfgs != nil && fastPathAgentCfgs.LockCode != nil && *fastPathAgentCfgs.LockCode
+
 	if execErr != nil || exitCode != 0 {
 		var execErrMsg string
 		if execErr != nil {
@@ -956,7 +977,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 		}
 		if preValResults != nil && preValResults.OverallPass {
 			hcpo.GetLogger().Info(fmt.Sprintf("🐍 [learn_code] Saved script exited %d but pre-validation passed — treating as success for step %d", exitCode, stepIndex+1))
-			hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""))
+			hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""), isLocked)
 			return &LearnCodeFastPathResult{RanScript: true, Success: true, ExitCode: exitCode, Output: output, ExistingScript: existingScript}
 		}
 		validationErrMsg := ""
@@ -970,7 +991,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 			errMsg = fmt.Sprintf("%s\n\n%s", execErrMsg, validationErrMsg)
 		}
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script failed for step %d: %s", stepIndex+1, errMsg))
-		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, failureReason, errMsg))
+		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, failureReason, errMsg), isLocked)
 		return &LearnCodeFastPathResult{
 			RanScript:       true,
 			Success:         false,
@@ -996,7 +1017,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	if preValResults != nil && !preValResults.OverallPass {
 		errMsg := formatWorkspaceResults(preValResults)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [learn_code] Script ran but output validation failed for step %d", stepIndex+1))
-		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, "validation_error", errMsg))
+		hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(false, "validation_error", errMsg), isLocked)
 		return &LearnCodeFastPathResult{
 			RanScript:       true,
 			Success:         false,
@@ -1010,7 +1031,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [learn_code] Script executed and validated for step %d (%s) — 0 LLM tokens used", stepIndex+1, stepID))
-	hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""))
+	hcpo.updateLearnCodeRunStats(ctx, stepID, buildRunRecord(true, "", ""), isLocked)
 	return &LearnCodeFastPathResult{RanScript: true, Success: true, Output: output}
 }
 
@@ -1213,7 +1234,9 @@ func generateSimpleDiff(fileName, oldContent, newContent string) string {
 }
 
 // updateLearnCodeRunStats increments run counters and appends rich run data to script_metadata.json.
-func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.Context, stepID string, record RunRecord) {
+// isLocked indicates whether the step's lock_code was true at run time — when true, the run is
+// also reflected in LockCodeStats so the builder can spot a frozen-but-broken script quickly.
+func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.Context, stepID string, record RunRecord, isLocked bool) {
 	meta := hcpo.readLearnCodeMetadataAPI(ctx, stepID)
 	if meta == nil {
 		return
@@ -1303,6 +1326,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearnCodeRunStats(ctx context.C
 		}
 	}
 
+	// Locked-script stats: only ticks while lock_code=true. Gives the builder a quick
+	// "is the frozen script still working?" read without diffing TotalRuns against an
+	// unknown lock-time baseline.
+	if isLocked {
+		if meta.LockCodeStats == nil {
+			meta.LockCodeStats = &LockCodeStats{LockedSince: record.Timestamp}
+		}
+		if record.Success {
+			meta.LockCodeStats.Successes++
+			meta.LockCodeStats.ConsecutiveFailures = 0
+			meta.LockCodeStats.NeedsReview = false
+		} else {
+			meta.LockCodeStats.Failures++
+			meta.LockCodeStats.ConsecutiveFailures++
+			meta.LockCodeStats.LastLockedFailure = record.Timestamp
+			if meta.LockCodeStats.ConsecutiveFailures >= 3 {
+				meta.LockCodeStats.NeedsReview = true
+			}
+		}
+	} else if meta.LockCodeStats != nil {
+		// Lock was cleared since last run — keep history but stop the consecutive counter
+		// so an old "needs_review" flag doesn't keep firing after the user already unlocked.
+		meta.LockCodeStats.ConsecutiveFailures = 0
+		meta.LockCodeStats.NeedsReview = false
+	}
+
 	_ = hcpo.writeLearnCodeMetadataAPI(ctx, stepID, *meta)
 }
 
@@ -1364,25 +1413,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveLearnCodeFastPathLog(
 // stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
 // inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
 // envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
-func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser bool) string {
+func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser, isCodeLocked bool) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Code Execution Mode\n\n")
-	sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
-	sb.WriteString("**Your working directory (write all code files here):**\n")
-	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
-	sb.WriteString("**This run's working-directory rules:**\n")
-	sb.WriteString(fmt.Sprintf("- Write `main.py` (the entry point) to `%s/main.py`\n", codeDirAbsPath))
-	sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
-	sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
-	sb.WriteString("- Before writing main.py, you may call tools via the API to inspect the current state (e.g. take a browser snapshot, check page content, read files) to understand the system before coding your solution\n")
-	sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
-	sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
-	sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n\n")
+	if isCodeLocked {
+		sb.WriteString(fmt.Sprintf("You are in **code execution mode**. A saved `main.py` exists for this step but is **locked** (`lock_code=true`) — it is the source of truth and the controller will not save any rewrite you produce. The previous run executed that locked script (`%s/main.py`) and it failed validation, so this turn is a recovery turn.\n\n", codeDirAbsPath))
+		sb.WriteString("**Do NOT rewrite or replace `main.py` this turn.** Instead, complete the task by calling MCP tools directly via the API step by step:\n")
+		sb.WriteString("1. Read the existing `main.py` and the run-folder failure artifacts (`step_*_status.json`, screenshots, downloaded files, `learn_code_fast_path.json`) to understand *why* the saved script failed.\n")
+		sb.WriteString("2. Decide whether the failure is environmental (bad creds, MFA, captcha, expired session, target-site change) or a real bug in the script.\n")
+		sb.WriteString(fmt.Sprintf("3. If environmental, drive the task to completion *interactively* — write outputs directly to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`) using snapshots and direct tool calls so this run produces valid outputs. Do not edit the script.\n", stepOutputAbsPath))
+		sb.WriteString("4. If you find a real script bug, surface it clearly in your reply so the orchestrator can clear `lock_code` and have you patch the script on a future run. Do not patch it now.\n\n")
+	} else {
+		sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
+		sb.WriteString("**Your working directory (write all code files here):**\n")
+		sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
+		sb.WriteString("**This run's working-directory rules:**\n")
+		sb.WriteString(fmt.Sprintf("- Write `main.py` (the entry point) to `%s/main.py`\n", codeDirAbsPath))
+		sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
+		sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
+		sb.WriteString("- Before writing main.py, you may call tools via the API to inspect the current state (e.g. take a browser snapshot, check page content, read files) to understand the system before coding your solution\n")
+		sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
+		sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
+		sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n\n")
+	}
 
 	// Shared authoring rules — single source of truth used by this prompt, the workshop
 	// builder prompt, harden_workflow, and review_step_code so all agents that write or
-	// review main.py agree on what "compliant" means.
-	sb.WriteString(BuildMainPyAuthoringRules())
+	// review main.py agree on what "compliant" means. Skipped when the script is locked:
+	// the LLM isn't authoring or patching main.py this turn, so authoring rules would
+	// only re-anchor it on writing code.
+	if !isCodeLocked {
+		sb.WriteString(BuildMainPyAuthoringRules())
+	}
 
 	// Browser authoring rules are no longer emitted here — the execution_only
 	// template now injects them directly via {{.BrowserAuthoringRules}} (populated
@@ -1473,25 +1535,33 @@ func GetLearnCodeModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRe
 // in the user message. Returns empty string if no prior context is needed.
 // scriptMetadataPath is optional — when non-empty and there's a failure, the LLM is
 // told to read it to see run history, failure streaks, and per-group stats.
-func BuildLearnCodePriorContext(priorScript, priorError, scriptMetadataPath string) string {
+func BuildLearnCodePriorContext(priorScript, priorError, scriptMetadataPath string, isCodeLocked bool) string {
 	if priorScript == "" {
 		return ""
 	}
 	var sb strings.Builder
 	if priorError != "" {
 		sb.WriteString("\n### Previous Script (Failed)\n\n")
-		sb.WriteString("The previously saved script failed. Read the current main.py in your working directory, fix the bug, and rewrite it.\n\n")
+		if isCodeLocked {
+			sb.WriteString("The saved script ran and its output failed validation. The script is locked (`lock_code=true`) — do NOT rewrite it. Read it to understand what it does, then drive the task to completion interactively (tool calls, browser snapshots) so this run produces valid outputs. If you find a real bug in the script, surface it in your reply for the orchestrator to clear the lock and patch on a future run.\n\n")
+		} else {
+			sb.WriteString("The previously saved script failed. Read the current main.py in your working directory, fix the bug, and rewrite it.\n\n")
+		}
 		sb.WriteString("**Error:**\n```\n")
 		sb.WriteString(priorError)
 		sb.WriteString("\n```\n")
 		if scriptMetadataPath != "" {
 			sb.WriteString("\n### Script Run History\n\n")
-			sb.WriteString(fmt.Sprintf("Read `%s` to understand failure patterns — check `recent_runs` for repeated errors, `group_stats` for which groups fail, `current_streak` for consecutive failures, and `last_failure` for the most recent error details.\n", scriptMetadataPath))
+			sb.WriteString(fmt.Sprintf("Read `%s` to understand failure patterns — check `recent_runs` for repeated errors, `group_stats` for which groups fail, `current_streak` for consecutive failures, `lock_code_stats` for how the locked script has been doing since `lock_code` was set (look at `consecutive_failures` and `needs_review` — if true, the lock is likely wrong and the script needs unlocking + patching), and `last_failure` for the most recent error details.\n", scriptMetadataPath))
 		}
 	} else {
 		sb.WriteString("\n### Existing Script (Update Required)\n\n")
-		sb.WriteString("A saved script already exists at your working directory's main.py. Read it, then adapt and improve it to match the current step description above. ")
-		sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change.\n")
+		if isCodeLocked {
+			sb.WriteString("A saved script exists at your working directory's main.py and is locked. Read it for context, but do NOT modify it. Use it as the reference for what this step should produce, and complete the task interactively for this run.\n")
+		} else {
+			sb.WriteString("A saved script already exists at your working directory's main.py. Read it, then adapt and improve it to match the current step description above. ")
+			sb.WriteString("Keep all working logic intact unless the current task explicitly requires a change.\n")
+		}
 	}
 	return sb.String()
 }

@@ -157,6 +157,7 @@ This test:
 					tool.Function.Description,
 					params,
 					executor,
+					"workspace",
 				)
 				logger.Info(fmt.Sprintf("✅ Registered workspace tool: %s", toolName))
 			}

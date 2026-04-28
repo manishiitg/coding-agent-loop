@@ -153,6 +153,7 @@ This test demonstrates:
 				// Call the actual weather tool
 				return weatherTool.Call(ctx, fmt.Sprintf(`{"location": "%s", "units": "%s"}`, location, units))
 			},
+			"test_tools",
 		)
 
 		logger.Info(fmt.Sprintf("✅ Registered weather tool with external agent"))

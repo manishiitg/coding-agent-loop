@@ -843,6 +843,7 @@ func RegisterReorganizeKnowledgebaseTool(
 			}
 			return summary, nil
 		},
+		"knowledgebase_tools",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register reorganize_knowledgebase tool: %v", err))
 	}
@@ -895,6 +896,7 @@ func RegisterConsolidateKnowledgebaseTool(
 			}
 			return summary, nil
 		},
+		"knowledgebase_tools",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("Failed to register consolidate_knowledgebase tool: %v", err))
 	}

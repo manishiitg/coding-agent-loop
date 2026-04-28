@@ -103,7 +103,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("propose_experiment", desc, params, handler); err != nil {
+	if err := agent.RegisterCustomTool("propose_experiment", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register propose_experiment: %v", err))
 		}
@@ -174,7 +174,7 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("propose_metric", desc, params, handler); err != nil {
+	if err := agent.RegisterCustomTool("propose_metric", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register propose_metric: %v", err))
 		}
@@ -224,7 +224,7 @@ func RegisterConcludeExperimentTool(agent *mcpagent.Agent, workspacePath string,
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("conclude_experiment", desc, params, handler); err != nil {
+	if err := agent.RegisterCustomTool("conclude_experiment", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register conclude_experiment: %v", err))
 		}
@@ -325,7 +325,7 @@ func RegisterQueryExperimentHistoryTool(agent *mcpagent.Agent, workspacePath str
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("query_experiment_history", desc, params, handler); err != nil {
+	if err := agent.RegisterCustomTool("query_experiment_history", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register query_experiment_history: %v", err))
 		}
@@ -392,7 +392,7 @@ func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, log
 		return string(body), nil
 	}
 
-	if err := agent.RegisterCustomTool("capture_context", desc, params, handler); err != nil {
+	if err := agent.RegisterCustomTool("capture_context", desc, params, handler, "auto_improvement"); err != nil {
 		if logger != nil {
 			logger.Warn(fmt.Sprintf("Failed to register capture_context: %v", err))
 		}

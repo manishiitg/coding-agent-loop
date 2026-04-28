@@ -131,28 +131,32 @@ func ValidateMetric(m *Metric) error {
 	return nil
 }
 
+// validSourceTypesHint is the canonical list returned in error messages so
+// agents don't have to brute-force the enum by trial-and-error.
+const validSourceTypesHint = `valid source.type values: "eval_step" (requires id), "telemetry" (requires field), "external" (requires field), "delayed_ground_truth" (requires joined_via), "lineage" (no required sub-fields), "schema_check" (no required sub-fields)`
+
 func validateMetricSource(s *MetricSource) error {
 	switch s.Type {
 	case MetricSourceEvalStep:
 		if strings.TrimSpace(s.ID) == "" {
-			return fmt.Errorf("eval_step source requires id")
+			return fmt.Errorf("source.type=eval_step requires id (the eval step id from evaluation/evaluation_plan.json). %s", validSourceTypesHint)
 		}
 	case MetricSourceTelemetry:
 		if strings.TrimSpace(s.Field) == "" {
-			return fmt.Errorf("telemetry source requires field")
+			return fmt.Errorf("source.type=telemetry requires field (dotted path, e.g. run.total_cost_usd). %s", validSourceTypesHint)
 		}
 	case MetricSourceExternal:
 		if strings.TrimSpace(s.Field) == "" {
-			return fmt.Errorf("external source requires field")
+			return fmt.Errorf("source.type=external requires field (dotted path into the external feed). %s", validSourceTypesHint)
 		}
 	case MetricSourceDelayedGroundTruth:
 		if strings.TrimSpace(s.JoinedVia) == "" {
-			return fmt.Errorf("delayed_ground_truth source requires joined_via")
+			return fmt.Errorf("source.type=delayed_ground_truth requires joined_via (join key linking predictions to ground truth). %s", validSourceTypesHint)
 		}
 	case MetricSourceLineage, MetricSourceSchemaCheck:
 		// no required fields beyond type
 	default:
-		return fmt.Errorf("invalid source.type %q", s.Type)
+		return fmt.Errorf("invalid source.type %q. %s", s.Type, validSourceTypesHint)
 	}
 	return nil
 }

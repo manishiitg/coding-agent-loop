@@ -131,12 +131,13 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 			"floor":     map[string]interface{}{"type": "number", "description": "Required when mode=slo + direction=higher_better."},
 			"ceiling":   map[string]interface{}{"type": "number", "description": "Required when mode=slo + direction=lower_better."},
 			"source": map[string]interface{}{
-				"type": "object",
+				"type":        "object",
+				"description": "Where each run's metric value comes from. Each type has different required sub-fields — see below. Pick exactly one type:\n  • eval_step — value is the score of a named eval step (must exist in evaluation/evaluation_plan.json). REQUIRES `id`. Example: { type: \"eval_step\", id: \"eval-data-accuracy\" }\n  • telemetry — value is read from run telemetry (cost, latency, etc.). REQUIRES `field`. Example: { type: \"telemetry\", field: \"run.total_cost_usd\" }\n  • external — value is supplied by an external feed (human approval, downstream signal). REQUIRES `field`. Example: { type: \"external\", field: \"feedback.approved_pct\" }\n  • delayed_ground_truth — predictions joined with later ground truth (forecast, lead conversion). REQUIRES `joined_via`. Pair with `evaluable_at_lag`.\n  • lineage — value derived from data lineage (data-pipeline workflows). No required sub-fields beyond type.\n  • schema_check — value derived from schema-validity checks. No required sub-fields beyond type.\nDo NOT invent other type values like \"db\" or \"manual\" or \"json_file\" — they will fail validation.",
 				"properties": map[string]interface{}{
-					"type":       map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry", "external", "delayed_ground_truth", "lineage", "schema_check"}},
-					"id":         map[string]interface{}{"type": "string", "description": "For type=eval_step, the eval step id."},
-					"field":      map[string]interface{}{"type": "string", "description": "For type=telemetry/external, the dotted path."},
-					"joined_via": map[string]interface{}{"type": "string", "description": "For type=delayed_ground_truth."},
+					"type":       map[string]interface{}{"type": "string", "enum": []string{"eval_step", "telemetry", "external", "delayed_ground_truth", "lineage", "schema_check"}, "description": "Source kind. Six valid values, listed in the parent description."},
+					"id":         map[string]interface{}{"type": "string", "description": "REQUIRED when type=eval_step. The eval step id from evaluation/evaluation_plan.json."},
+					"field":      map[string]interface{}{"type": "string", "description": "REQUIRED when type=telemetry or type=external. Dotted path into the telemetry payload or external feed (e.g. run.total_cost_usd)."},
+					"joined_via": map[string]interface{}{"type": "string", "description": "REQUIRED when type=delayed_ground_truth. The join key linking predictions to their later ground truth (e.g. prediction_id)."},
 				},
 				"required": []string{"type"},
 			},

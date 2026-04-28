@@ -135,6 +135,13 @@ type Metric struct {
 	EvaluableAtLag  string          `json:"evaluable_at_lag,omitempty"`
 	Parent          string          `json:"parent,omitempty"`
 	Version         int             `json:"version,omitempty"`
+	// LinkedSuccessCriteria traces this metric to one or more entries in the
+	// plan's success_criteria. Closes the Goodhart loop: an experiment moves a
+	// metric, the metric operationalizes a criterion, the criterion is the
+	// outcome the workflow is meant to achieve. Empty means the metric is
+	// auxiliary (telemetry like cost/duration), not tied to a user-facing
+	// outcome — surfaced as a warning in the UI but not blocked.
+	LinkedSuccessCriteria []string `json:"linked_success_criteria,omitempty"`
 }
 
 // MetricArchiveEntry preserves prior versions of amended metrics.

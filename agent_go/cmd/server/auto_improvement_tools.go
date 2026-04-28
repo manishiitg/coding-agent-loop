@@ -146,6 +146,11 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 				"description": "Optional. Duration like 30d / 12h / 90s. Forces the experiment loop to wait for this lag before resolving the value.",
 			},
 			"parent": map[string]interface{}{"type": "string"},
+			"linked_success_criteria": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "REQUIRED for outcome metrics; optional for telemetry. The success_criteria entries (or their indices/short labels) from planning/plan.json that this metric operationalizes. The framework cannot enforce alignment between metric movement and user-facing success on its own — this field is the trace. Example: [\"Email reply rate ≥ 30%\"] or [\"sc-0\", \"sc-2\"]. Leave empty only for purely auxiliary metrics like cost_per_run / run_duration_seconds (telemetry SLOs that don't operationalize a plan-level criterion). Empty for outcome metrics is allowed but flagged in the UI as an unanchored metric.",
+			},
 			"amend_existing": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -32,10 +32,19 @@ type ProposeExperimentInput struct {
 }
 
 // ProposeExperimentOutput is what the tool returns to the proposer LLM.
+//
+// LinkedSuccessCriteria is the union of all success-criteria entries traced
+// by the targeted metrics. UnanchoredMetrics is the subset of target_metrics
+// that have empty linked_success_criteria (telemetry-only / auxiliary). The
+// proposer is expected to surface both in the rationale so the operator can
+// see at a glance whether the experiment moves a user-facing outcome or just
+// a telemetry SLO.
 type ProposeExperimentOutput struct {
-	ExperimentID     string `json:"experiment_id"`
-	Status           string `json:"status"`
-	DecisionsEntryID string `json:"decisions_entry_id"`
+	ExperimentID          string   `json:"experiment_id"`
+	Status                string   `json:"status"`
+	DecisionsEntryID      string   `json:"decisions_entry_id"`
+	LinkedSuccessCriteria []string `json:"linked_success_criteria,omitempty"`
+	UnanchoredMetrics     []string `json:"unanchored_metrics,omitempty"`
 }
 
 // ProposeExperiment is the system entrypoint for opening a new experiment.
@@ -218,11 +227,44 @@ func ProposeExperiment(ctx context.Context, workspacePath, trigger string, input
 		return nil, err
 	}
 
+	linked, unanchored := summarizeMetricLinks(metricsFile, input.TargetMetrics)
+
 	return &ProposeExperimentOutput{
-		ExperimentID:     experimentID,
-		Status:           string(status),
-		DecisionsEntryID: persistedDec.ID,
+		ExperimentID:          experimentID,
+		Status:                string(status),
+		DecisionsEntryID:      persistedDec.ID,
+		LinkedSuccessCriteria: linked,
+		UnanchoredMetrics:     unanchored,
 	}, nil
+}
+
+// summarizeMetricLinks returns the union of linked_success_criteria across
+// the targeted metrics, plus the list of metric ids that have no link
+// (telemetry / auxiliary). Unanchored metrics are not blocked — surfaced for
+// the operator and the agent's rationale so the decision is explicit.
+func summarizeMetricLinks(metricsFile *MetricsFile, targetMetrics []string) (linked, unanchored []string) {
+	if metricsFile == nil {
+		return nil, nil
+	}
+	seen := map[string]struct{}{}
+	for _, mid := range targetMetrics {
+		m := FindMetric(metricsFile, mid)
+		if m == nil {
+			continue
+		}
+		if len(m.LinkedSuccessCriteria) == 0 {
+			unanchored = append(unanchored, mid)
+			continue
+		}
+		for _, sc := range m.LinkedSuccessCriteria {
+			if _, ok := seen[sc]; ok {
+				continue
+			}
+			seen[sc] = struct{}{}
+			linked = append(linked, sc)
+		}
+	}
+	return linked, unanchored
 }
 
 // ---- validation ------------------------------------------------------------

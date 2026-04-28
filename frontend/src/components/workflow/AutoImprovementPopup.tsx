@@ -55,6 +55,7 @@ interface Metric {
   evaluable_at_lag?: string
   parent?: string
   version?: number
+  linked_success_criteria?: string[]
 }
 
 interface Experiment {
@@ -796,6 +797,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                           <th className="text-left py-2 px-2">mode</th>
                           <th className="text-left py-2 px-2">target / floor / ceiling</th>
                           <th className="text-left py-2 px-2">source</th>
+                          <th className="text-left py-2 px-2">success criteria</th>
                           <th className="text-left py-2 px-2">lag</th>
                           <th className="text-left py-2 px-2">v</th>
                         </tr>
@@ -809,6 +811,21 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                             <td className="py-2 px-2 text-xs">{m.mode}</td>
                             <td className="py-2 px-2 text-xs">{m.target ?? m.floor ?? m.ceiling ?? '—'}</td>
                             <td className="py-2 px-2 text-xs">{m.source.type}{m.source.id && `:${m.source.id}`}{m.source.field && `:${m.source.field}`}</td>
+                            <td className="py-2 px-2 text-xs">
+                              {m.linked_success_criteria && m.linked_success_criteria.length > 0 ? (
+                                <span className="inline-flex flex-wrap gap-1">
+                                  {m.linked_success_criteria.map((sc, i) => (
+                                    <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300" title={sc}>
+                                      {sc.length > 32 ? sc.slice(0, 30) + '…' : sc}
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" title="No linked success criteria — telemetry / auxiliary metric. Verdicts on this metric do not directly reflect user-facing success.">
+                                  unanchored
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 px-2 text-xs">{m.evaluable_at_lag || '—'}</td>
                             <td className="py-2 px-2 text-xs">{m.version || 1}</td>
                           </tr>

@@ -953,7 +953,7 @@ Behavior depends on the profile from Step 1:
 - \`cost_per_run\` — unit \`usd\`, direction \`lower_better\`, mode \`slo\`, ceiling chosen based on the workflow's expected complexity (start at 0.50 USD for short workflows, 5.00 USD for long ones; user can adjust). Source: \`{ type: telemetry, field: "run.total_cost_usd" }\`.
 - \`run_duration_seconds\` — unit \`seconds\`, direction \`lower_better\`, mode \`slo\`, ceiling chosen based on the workflow (300s for short, 1800s for long). Source: \`{ type: telemetry, field: "run.duration_seconds" }\`.
 
-For each proposed metric, show: id, label, unit, direction, mode, target/floor/ceiling, source. Rationale per metric. Ask the user which to keep / drop / amend. For each accepted, call \`propose_metric\`.
+For each proposed metric, show: id, label, unit, direction, mode, target/floor/ceiling, source, AND \`linked_success_criteria\` — the entries (or short labels) from soul/soul.md's "## Success Criteria" section that this metric operationalizes. Outcome metrics MUST link to at least one success criterion; the two universal telemetry SLOs (\`cost_per_run\`, \`run_duration_seconds\`) leave \`linked_success_criteria\` empty (telemetry is auxiliary, the popup flags them as "unanchored" by design — that's correct, not a warning the user must resolve). The linkage is what closes the Goodhart loop: an experiment moves a metric, the metric is traced to a criterion, the criterion is the user-facing outcome. Read soul/soul.md once at the start of this step to enumerate the criteria; quote them verbatim in \`linked_success_criteria\` so the trace is auditable. Rationale per metric should explicitly say which criterion it serves and how. Ask the user which to keep / drop / amend. For each accepted, call \`propose_metric\` with \`linked_success_criteria\` populated.
 
 STEP 5 — Business-context only — scaffold the rules folder
 If business context = accumulating:
@@ -1000,12 +1000,15 @@ PRECHECKS
 3. Read experiments/active.json. If there are already 3+ active experiments, warn the user and ask whether to proceed (running too many concurrent experiments confounds attribution).
 
 PICK A TARGET
-1. List the metrics in metrics.json with their current trajectory (call /api/workflow/eval-trajectory if helpful, or just summarize from the file). For each, note whether it is on target / off target / no recent data.
-2. Pick exactly ONE metric to target. Prefer:
-   a) a metric the user named in their focus hint, otherwise
-   b) a metric whose recent trajectory is off target, otherwise
-   c) the most load-bearing metric per the Workflow Profile.
-3. If the change you want requires a metric that does not yet exist in metrics.json, call propose_metric first, then continue with the new metric as the target.
+1. Read soul/soul.md's "## Success Criteria" section — these are the north star. Every experiment exists to push one of these criteria forward (or, for telemetry experiments, to keep cost/runtime under their SLO ceiling without regressing the criteria).
+2. List the metrics in metrics.json with their current trajectory and \`linked_success_criteria\` (call /api/workflow/eval-trajectory if helpful, or just summarize from the file). For each, note: which success criterion it operationalizes, whether it is on target / off target / no recent data.
+3. Pick exactly ONE metric to target. Prefer in this order:
+   a) a metric the user named in their focus hint
+   b) an OUTCOME metric (non-empty linked_success_criteria) whose criterion is currently failing
+   c) an OUTCOME metric whose recent trajectory is drifting off target
+   d) a TELEMETRY metric (cost_per_run / run_duration_seconds) only if its SLO is being violated AND no outcome metric is failing — explicit cost/runtime experiments are valid but lower priority than experiments that move a success criterion.
+4. If the change you want requires a metric that does not yet exist in metrics.json, call propose_metric first (with linked_success_criteria populated from soul.md), then continue with the new metric as the target.
+5. State explicitly in your reasoning: "this experiment targets metric <id>, which operationalizes success criterion: <quoted criterion>." If you can't fill that sentence in honestly, the hypothesis isn't ready — go back and either pick a different metric or define one.
 
 FORMULATE THE HYPOTHESIS
 1. Read recent run evidence (latest iteration's logs, eval reports, KB, learnings) to ground the hypothesis in observed behavior, not theory.

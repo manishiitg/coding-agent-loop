@@ -25,18 +25,19 @@ type AmendRequest struct {
 
 // ProposeMetricInput is the LLM-supplied portion of a metric proposal.
 type ProposeMetricInput struct {
-	ID             string           `json:"id"`
-	Label          string           `json:"label,omitempty"`
-	Unit           string           `json:"unit"`
-	Direction      MetricDirection  `json:"direction"`
-	Mode           MetricMode       `json:"mode"`
-	Target         *float64         `json:"target,omitempty"`
-	Floor          *float64         `json:"floor,omitempty"`
-	Ceiling        *float64         `json:"ceiling,omitempty"`
-	Source         MetricSource     `json:"source"`
-	EvaluableAtLag string           `json:"evaluable_at_lag,omitempty"`
-	Parent         string           `json:"parent,omitempty"`
-	AmendExisting  *AmendRequest    `json:"amend_existing,omitempty"`
+	ID                    string          `json:"id"`
+	Label                 string          `json:"label,omitempty"`
+	Unit                  string          `json:"unit"`
+	Direction             MetricDirection `json:"direction"`
+	Mode                  MetricMode      `json:"mode"`
+	Target                *float64        `json:"target,omitempty"`
+	Floor                 *float64        `json:"floor,omitempty"`
+	Ceiling               *float64        `json:"ceiling,omitempty"`
+	Source                MetricSource    `json:"source"`
+	EvaluableAtLag        string          `json:"evaluable_at_lag,omitempty"`
+	Parent                string          `json:"parent,omitempty"`
+	LinkedSuccessCriteria []string        `json:"linked_success_criteria,omitempty"`
+	AmendExisting         *AmendRequest   `json:"amend_existing,omitempty"`
 }
 
 // ProposeMetricOutput is what the tool returns to the proposer LLM.
@@ -56,17 +57,18 @@ type ProposeMetricOutput struct {
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
 	// Build the candidate metric.
 	candidate := Metric{
-		ID:             strings.TrimSpace(input.ID),
-		Label:          input.Label,
-		Unit:           input.Unit,
-		Direction:      input.Direction,
-		Mode:           input.Mode,
-		Target:         input.Target,
-		Floor:          input.Floor,
-		Ceiling:        input.Ceiling,
-		Source:         input.Source,
-		EvaluableAtLag: input.EvaluableAtLag,
-		Parent:         input.Parent,
+		ID:                    strings.TrimSpace(input.ID),
+		Label:                 input.Label,
+		Unit:                  input.Unit,
+		Direction:             input.Direction,
+		Mode:                  input.Mode,
+		Target:                input.Target,
+		Floor:                 input.Floor,
+		Ceiling:               input.Ceiling,
+		Source:                input.Source,
+		EvaluableAtLag:        input.EvaluableAtLag,
+		Parent:                input.Parent,
+		LinkedSuccessCriteria: trimAndDedupe(input.LinkedSuccessCriteria),
 	}
 	if err := ValidateMetric(&candidate); err != nil {
 		return nil, fmt.Errorf("invalid metric: %w", err)
@@ -148,6 +150,32 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		Version:  candidate.Version,
 		Status:   status,
 	}, nil
+}
+
+// trimAndDedupe drops empty entries and duplicates while preserving order.
+// Used so linked_success_criteria stays clean even if the LLM passes
+// trailing whitespace or accidentally repeats an entry.
+func trimAndDedupe(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		t := strings.TrimSpace(s)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func max1(v int) int {

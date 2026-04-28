@@ -1188,6 +1188,55 @@ export const agentApi = {
     }
   },
 
+  // Auto-improvement framework API.
+  // See docs/workflow/auto_improvement_framework.md.
+  getAutoImprovementMetrics: async (workspacePath: string): Promise<{ success: boolean; file?: { metrics: any[]; archive?: any[]; active_mode?: string }; error?: string }> => {
+    const response = await api.get('/api/workflow/metrics', { params: { workspace_path: workspacePath } })
+    return response.data
+  },
+  getAutoImprovementDecisions: async (workspacePath: string): Promise<{ success: boolean; decisions: any[]; error?: string }> => {
+    const response = await api.get('/api/workflow/decisions', { params: { workspace_path: workspacePath } })
+    return { ...response.data, decisions: Array.isArray(response.data?.decisions) ? response.data.decisions : [] }
+  },
+  getAutoImprovementExperiments: async (workspacePath: string, includeHistory = true): Promise<{ success: boolean; active: any[]; history?: any[]; error?: string }> => {
+    const response = await api.get('/api/workflow/experiments', {
+      params: { workspace_path: workspacePath, include_history: includeHistory ? 'true' : 'false' }
+    })
+    return {
+      ...response.data,
+      active: Array.isArray(response.data?.active) ? response.data.active : [],
+      history: Array.isArray(response.data?.history) ? response.data.history : [],
+    }
+  },
+  getAutoImprovementEvalTrajectory: async (workspacePath: string): Promise<{ success: boolean; series: any[]; error?: string }> => {
+    const response = await api.get('/api/workflow/eval-trajectory', { params: { workspace_path: workspacePath } })
+    return { ...response.data, series: Array.isArray(response.data?.series) ? response.data.series : [] }
+  },
+  abortExperiment: async (workspacePath: string, experimentId: string, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/abort', {
+      workspace_path: workspacePath, experiment_id: experimentId, reason, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  extendExperiment: async (workspacePath: string, experimentId: string, additionalRuns: number, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/extend', {
+      workspace_path: workspacePath, experiment_id: experimentId, additional_runs: additionalRuns, reason, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  manualConcludeExperiment: async (workspacePath: string, experimentId: string, verdict: string, reason: string, rationale: string, actorUser?: string): Promise<{ success: boolean; final_verdict?: string; archived?: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/manual-conclude', {
+      workspace_path: workspacePath, experiment_id: experimentId, verdict, reason, rationale, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  approveExperiment: async (workspacePath: string, experimentId: string, gate: 'hypothesis' | 'conclusion', actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/approve', {
+      workspace_path: workspacePath, experiment_id: experimentId, gate, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state in a single API call (run folders, variables, phases, progress)
   // This replaces multiple individual API calls (getRunFolders, getVariableGroups, constants, progress)

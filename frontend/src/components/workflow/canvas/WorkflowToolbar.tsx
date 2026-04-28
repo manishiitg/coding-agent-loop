@@ -10,6 +10,7 @@ import {
   DollarSign,
   Package,
   Database,
+  Beaker,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -27,6 +28,7 @@ import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
+import AutoImprovementPopup from '../AutoImprovementPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import {
@@ -164,6 +166,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setSelectedGroupIds,
     restoreSelectionFromLocalStorage,
     showWorkspacePane,
+    workflowWorkspaceView,
     canvasViewMode,
     setCanvasViewMode,
     setWorkflowWorkspaceView,
@@ -176,6 +179,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setSelectedGroupIds: state.setSelectedGroupIds,
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
     showWorkspacePane: state.showWorkspacePane,
+    workflowWorkspaceView: state.workflowWorkspaceView,
     canvasViewMode: state.canvasViewMode,
     setCanvasViewMode: state.setCanvasViewMode,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
@@ -212,6 +216,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
+  const [showAutoImprovementPopup, setShowAutoImprovementPopup] = useState(false)
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
@@ -228,6 +233,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       setShowCostsPopup(false)
       setShowEvaluationPopup(false)
       setShowVersionsPopup(false)
+      setShowAutoImprovementPopup(false)
     }
     prevWorkspacePathRef.current = workspacePath
   }, [workspacePath]) // Only depend on workspacePath - popup states are only read, not dependencies
@@ -539,8 +545,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // View selection should follow the actual canvas/report renderer, not the
   // higher-level workspace mode.
-  const isBuilderPaneVisible = showChatArea === true
-  const isBuilderModeActive = isBuilderPaneVisible
+  const isBuilderPaneVisible = showChatArea === true && !showWorkspacePane
+  const isBuilderModeActive = workflowWorkspaceView === 'builder' || isBuilderPaneVisible
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
   const isPlanWorkspace = showWorkspacePane && canvasViewMode === 'plan'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
@@ -825,6 +831,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {/* Auto-improvement framework — experiments, metrics, decisions */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowAutoImprovementPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Beaker className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Auto-improvement (experiments, metrics, decisions)</p></TooltipContent>
+          </Tooltip>
+        )}
+
 
         {/* Show Versions - opens popup with version publish/revert */}
         {workspacePath && (
@@ -911,6 +932,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       selectedRunFolder={contextRunFolder}
       runFolders={runFoldersNames}
       onRunEvaluation={handleRunEvaluation}
+    />
+
+    {/* Auto-improvement framework popup */}
+    <AutoImprovementPopup
+      isOpen={showAutoImprovementPopup}
+      onClose={() => setShowAutoImprovementPopup(false)}
+      workspacePath={workspacePath || null}
     />
 
     {/* Workflow Versions Popup */}

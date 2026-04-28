@@ -45,7 +45,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 			"target_metrics": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "One or more metric ids from <workflow>/metrics.json. Each must exist; expected_direction must match each metric's declared direction.",
+				"description": "One or more metric ids from <workflow>/planning/metrics.json. Each must exist; expected_direction must match each metric's declared direction.",
 			},
 			"expected_direction": map[string]interface{}{
 				"type":        "string",
@@ -112,7 +112,7 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	desc := "Define a new metric or amend an existing one in <workflow>/metrics.json. " +
+	desc := "Define a new metric or amend an existing one in <workflow>/planning/metrics.json. " +
 		"On amend, the prior definition is archived (so the existing trajectory series is preserved and chart renderers break the line at the version transition). " +
 		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
 		"Returns { metric_id, version, status }."
@@ -365,7 +365,7 @@ func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, log
 			"target_metrics": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Metric ids this rule is meant to move. REQUIRED, non-empty. Each must already exist in <workflow>/metrics.json.",
+				"description": "Metric ids this rule is meant to move. REQUIRED, non-empty. Each must already exist in <workflow>/planning/metrics.json.",
 			},
 			"example_note": map[string]interface{}{
 				"type":        "string",

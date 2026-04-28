@@ -13,7 +13,7 @@ import (
 )
 
 // =====================================================================
-// metrics_runtime.go — read/validate/write <workflow>/metrics.json and
+// metrics_runtime.go — read/validate/write <workflow>/planning/metrics.json and
 // resolve metric values from their declared sources.
 //
 // Schemas: schemas/auto-improvement.schema.json#$defs/MetricsFile
@@ -34,7 +34,7 @@ func workflowMetricsPath(workspacePath string) string {
 	return path.Join(strings.Trim(workspacePath, "/"), "planning", "metrics.json")
 }
 
-// ReadMetricsFile loads <workflow>/metrics.json. Returns (file, true, nil) when
+// ReadMetricsFile loads <workflow>/planning/metrics.json. Returns (file, true, nil) when
 // present. (nil, false, nil) when the file does not exist (no metrics yet).
 func ReadMetricsFile(ctx context.Context, workspacePath string) (*MetricsFile, bool, error) {
 	content, exists, err := readFileFromWorkspace(ctx, workflowMetricsPath(workspacePath))
@@ -51,7 +51,7 @@ func ReadMetricsFile(ctx context.Context, workspacePath string) (*MetricsFile, b
 	return &file, true, nil
 }
 
-// WriteMetricsFile validates and persists <workflow>/metrics.json atomically.
+// WriteMetricsFile validates and persists <workflow>/planning/metrics.json atomically.
 func WriteMetricsFile(ctx context.Context, workspacePath string, file *MetricsFile) error {
 	if file == nil {
 		return fmt.Errorf("metrics file is nil")

@@ -153,7 +153,7 @@ type MetricArchiveEntry struct {
 	Definition     Metric    `json:"definition"`
 }
 
-// MetricsFile is the shape of <workflow>/metrics.json.
+// MetricsFile is the shape of <workflow>/planning/metrics.json.
 //
 // `ActiveMode` is the runtime state for dual-mode workflows (e.g. Twitter
 // explore/exploit cycles). When the workflow's improve.md declares dual mode,

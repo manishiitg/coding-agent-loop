@@ -419,7 +419,7 @@ When you finish, update builder/improve.md with:
 
 PASS 0 — FRAMEWORK PRECHECK
 1. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and tell the user: "Auto-improvement isn't set up yet. Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics."
-2. Read <workflow>/metrics.json. If absent or empty AND the Workflow Profile declares the workflow has business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Workflows declared as plain mutable+exploratory may proceed without metrics.
+2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares the workflow has business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Workflows declared as plain mutable+exploratory may proceed without metrics.
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
@@ -566,8 +566,8 @@ SETUP
 1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
-4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
-5. **Framework mode.** Read <workflow>/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, you will package the intended changes as an experiment via propose_experiment so the change is gated behind measurement and is auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report. The diagnostic phases below run the same way in both modes — only the application step changes.
+4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
+5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, you will package the intended changes as an experiment via propose_experiment so the change is gated behind measurement and is auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report. The diagnostic phases below run the same way in both modes — only the application step changes.
 6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
@@ -905,7 +905,7 @@ DISCOVERY (read-only)
 3. Read soul/soul.md to extract the workflow's objective and success_criteria.
 4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
 5. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
-6. Read <workflow>/metrics.json if present.
+6. Read <workflow>/planning/metrics.json if present.
 7. Read runs/ to see how mature the workflow is.
 
 STEP 1 — Classify the workflow profile
@@ -995,7 +995,7 @@ IMPROVE LOG: the Workflow Profile written in Step 2 IS the durable setup record.
       ctx.onSubmit(`Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. Skip the broader review-and-harden flow — this command is the focused entry point for "I have a specific change in mind, gate it behind measurement."${focusText}
 
 PRECHECKS
-1. Read <workflow>/metrics.json. If empty or missing, stop and redirect: "Run /improve-setup-framework first to bootstrap metrics — propose_experiment requires at least one declared metric to target."
+1. Read <workflow>/planning/metrics.json. If empty or missing, stop and redirect: "Run /improve-setup-framework first to bootstrap metrics — propose_experiment requires at least one declared metric to target."
 2. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
 3. Read experiments/active.json. If there are already 3+ active experiments, warn the user and ask whether to proceed (running too many concurrent experiments confounds attribution).
 

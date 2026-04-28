@@ -27,7 +27,9 @@ Check for:
 Show me:
 - A dependency graph: step-a (produces X) → step-b (consumes X, produces Y) → step-c (consumes Y)
 - Any issues found with severity (CRITICAL / WARNING / INFO)
-- Suggested fixes for each issue`)
+- Suggested fixes for each issue
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.`)
     }
   },
   {
@@ -54,7 +56,9 @@ Show me:
 Summary:
 - READY if 0 FAILs
 - NOT READY if any FAILs — list what needs to be done
-- If READY with WARNs — "Ready but recommended to fix these first"`)
+- If READY with WARNs — "Ready but recommended to fix these first"
+
+REVIEW LOG: append a dated entry to builder/review.md (create if absent) with the readiness verdict, the FAILs/WARNs list, and what needs to be done before optimizing.`)
     }
   },
   {
@@ -72,7 +76,9 @@ Summary:
 
 Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
 
-This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.`)
+This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.`)
     }
   },
   {
@@ -109,7 +115,9 @@ Then give:
 - an overall verdict on evaluation quality
 - the most important workflow gaps
 - the most important eval gaps
-- the top next actions, clearly separated into workflow fixes vs eval fixes.`)
+- the top next actions, clearly separated into workflow fixes vs eval fixes.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the goal/eval verdict, the main gaps ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.`)
     }
   },
   {
@@ -142,7 +150,9 @@ Then give:
 - the best description/prompt changes
 - the best plan changes to reduce handoffs or unnecessary steps
 - the best model/tool/config changes
-- the top next actions, with expected impact and risk to success criteria.`)
+- the top next actions, with expected impact and risk to success criteria.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the timing analysis, the top bottlenecks, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.`)
     }
   },
   {
@@ -175,7 +185,9 @@ Then give:
 - the best description/prompt changes
 - the best plan changes to reduce unnecessary steps or handoffs
 - the best model/tool/config changes
-- the top next actions, with expected savings and risk to success criteria.`)
+- the top next actions, with expected savings and risk to success criteria.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the cost analysis, the top cost drivers, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.`)
     }
   },
   {
@@ -241,7 +253,9 @@ Then summary sections:
 - **Stale locks (unlock + re-review)** — currently locked but description_hash drifted.
 
 END WITH READY-TO-PASTE COMMANDS
-List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.`)
+List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.`)
     }
   },
   {
@@ -656,7 +670,9 @@ For each step, report:
 - Status: CLEAN, CONFUSED (description/skill issues), HARDCODED (hardcoded values found), WEAK_ORCHESTRATOR (for todo_task steps with orchestrator issues), BROWSER_ANTIPATTERN (prescribes evaluate/selectors instead of ref-based interaction), or NO_VALIDATION (missing or weak validation_schema) — a step can have multiple
 - If issues found: which problems and a concrete fix suggestion
 
-End with a summary table of all steps and their status.${focusText}`)
+End with a summary table of all steps and their status.${focusText}
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which steps had issues, the categories of confusion / hardcoding / weak orchestration / browser anti-pattern / missing validation, the recommended fixes, and items flagged for follow-up.`)
     }
   },
   {
@@ -669,11 +685,12 @@ End with a summary table of all steps and their status.${focusText}`)
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
+      const reviewLogSuffix = `\n\nREVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which step(s) you reviewed, the drift findings, the recommendations, and items flagged for follow-up.`
       if (focus) {
         // If text before slash, treat it as a step ID
-        ctx.onSubmit(`Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.`)
+        ctx.onSubmit(`Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.${reviewLogSuffix}`)
       } else {
-        ctx.onSubmit(`Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.`)
+        ctx.onSubmit(`Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.${reviewLogSuffix}`)
       }
     }
   },
@@ -710,7 +727,9 @@ For each todo_task step, report:
 - Per sub-agent route: route ID + verdict
 - Concrete fix suggestions for each issue
 
-End with a summary table.${focusText}`)
+End with a summary table.${focusText}
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which orchestrators you reviewed, the verdicts (good vs issues), the recommendations, and items flagged for follow-up.`)
     }
   },
   {
@@ -919,7 +938,9 @@ Then tell them:
 2. For Type 3: they can mention business rules in chat ("never recommend X", "always include Y") and you (the agent) will offer to persist them via capture_context.
 3. Hypotheses they want to test should be opened as experiments via /improve-* or by saying "I think changing X would help."
 
-DO NOT do any actual workflow improvement here. /improve-setup is setup only. Refer the user to /improve-* commands for the actual improvement loop.`)
+DO NOT do any actual workflow improvement here. /improve-setup is setup only. Refer the user to /improve-* commands for the actual improvement loop.
+
+IMPROVE LOG: append a dated entry to builder/improve.md (read it first if it exists, create it if it does not) covering the chosen workflow_type and oversight_mode (with one-line rationale), the metrics created with their targets/floors/ceilings, the Type 3 context scaffolding if any, and what the user should run next. This is the durable setup record future improvement turns will read.`)
     }
   },
   {

@@ -319,8 +319,15 @@ func getReportPlanCapabilities() reportPlanCapabilitiesResult {
 		},
 		Examples: []reportPlanCapabilityExample{
 			{
-				Name:     "Source-backed KPI row",
+				Name:     "Source-backed KPI row (positional index)",
 				Markdown: "## Key Metrics\n\n```widget:row\n- stat | source: db/sync_runs.json | path: runs.0.employee_sync.total\n- stat | source: db/sync_runs.json | path: runs.0.payslip_sync.total_records\n```",
+			},
+			{
+				// Common pitfall: writing `path: 0.balance | filter: group_name=foo` —
+				// that's wrong because `filter` already narrows the array to a single
+				// row, after which `path:` resolves against the row (no index needed).
+				Name:     "Source-backed KPI row (filter to pick a row by name)",
+				Markdown: "## Account Balances\n\n```widget:row\n- stat | source: db/account_status.json | filter: group_name=mahimakh | path: balance | label: Mahima\n- stat | source: db/account_status.json | filter: group_name=manishiitg | path: balance | label: Manish\n```",
 			},
 			{
 				Name:     "Workflow cost summary",
@@ -1320,13 +1327,19 @@ func validateReportPlan(
 				continue
 			}
 
-			// 4. Filter eligibility — only meaningful on arrays.
+			// 4. Filter eligibility — only meaningful on arrays. Stat / alert
+			// renderers apply filter to the source array first (then unwrap to
+			// a single row before path runs), so the post-path-value array
+			// check below doesn't apply to them — their shape validators do
+			// the renderer-order check instead.
 			if w.Filter != "" {
 				if _, isArr := resolved.([]interface{}); !isArr {
-					result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-						Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
-						Message: fmt.Sprintf("filter %q is set but the resolved value is not an array; filter will be ignored.", w.Filter),
-					})
+					if w.Kind != "stat" && w.Kind != "alert" {
+						result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+							Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
+							Message: fmt.Sprintf("filter %q is set but the resolved value is not an array; filter will be ignored.", w.Filter),
+						})
+					}
 				} else if !strings.Contains(w.Filter, "=") {
 					result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 						Severity: "warning", Section: section.Heading, Line: w.LineNum, Widget: locator,
@@ -1540,23 +1553,96 @@ func validateReportPlanChartShape(
 	}
 }
 
-// widget:stat — `path:` must resolve to a scalar (string or number). delta_path
-// and trend_path are optional; when present they must also resolve.
+// narrowSingularWidgetTarget mirrors the stat / alert renderer's evaluation
+// order: when a filter is set on an array source, narrow it to the matching
+// row(s) and unwrap a single match to its row before path resolution. Returns
+// the target that path: should resolve against, whether the renderer-order
+// narrowing actually fired (used to tailor error hints), and a skip flag for
+// "source has no rows for this filter yet" — the renderer surfaces that as a
+// friendly notice, so we shouldn't error here on volatile data.
+func narrowSingularWidgetTarget(
+	w *reportPlanWidget, data interface{}, kind, section, locator string,
+	result *reportPlanValidationResult,
+) (target interface{}, filterApplied bool, skip bool) {
+	target = data
+	if w.Filter == "" {
+		return target, false, false
+	}
+	arr, ok := data.([]interface{})
+	if !ok {
+		return target, false, false
+	}
+	filtered, _ := applyReportPlanFilter(arr, w.Filter).([]interface{})
+	switch len(filtered) {
+	case 0:
+		// Source is empty for this filter at validation time. Data is
+		// volatile (steps may not have run yet); the renderer shows a
+		// "no rows match filter" notice. Don't synthesize a structural
+		// error from a transient empty slice.
+		return target, true, true
+	case 1:
+		return filtered[0], true, false
+	default:
+		result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+			Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+			Message: fmt.Sprintf("%s filter %q matches %d rows in current source — %s widgets need exactly one row. The renderer will show a multi-match error.", kind, w.Filter, len(filtered), kind),
+			Hint:    "Tighten the filter to match a single row, or precompute a singleton record.",
+		})
+		return filtered[0], true, false
+	}
+}
+
+// looksLikeArrayIndexedPath reports whether a path starts with a numeric
+// segment (e.g. "0", "0.balance", "12.field") — the most common shape for a
+// stat / alert path that ought to drop its index when filter narrows the
+// source to a single row.
+func looksLikeArrayIndexedPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	first := path
+	if dot := strings.Index(path, "."); dot >= 0 {
+		first = path[:dot]
+	}
+	if first == "" {
+		return false
+	}
+	for _, r := range first {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// widget:stat — `path:` must resolve to a scalar (string or number). When
+// `filter:` is set on an array source, the renderer narrows to a single row
+// first and resolves `path:` against that row, so `path:` should address a
+// field of the row directly (no leading array index). delta_path and
+// trend_path resolve against the same target as path.
 func validateReportPlanStatShape(
 	w *reportPlanWidget, data interface{},
 	section, locator string, result *reportPlanValidationResult,
 ) {
-	v, ok := resolveReportPlanPath(data, w.Path)
+	target, filterApplied, skip := narrowSingularWidgetTarget(w, data, "stat", section, locator, result)
+	if skip {
+		return
+	}
+	v, ok := resolveReportPlanPath(target, w.Path)
 	if !ok {
 		result.Valid = false
 		pathLabel := w.Path
 		if pathLabel == "" {
 			pathLabel = "(root)"
 		}
+		hint := "Point `path:` at a scalar field (number or short string)."
+		if filterApplied && looksLikeArrayIndexedPath(w.Path) {
+			hint = "With `filter:` set, the source narrows to a single row before `path:` resolves — drop the leading array index from `path:` and use the bare field name (e.g. `balance` instead of `0.balance`)."
+		}
 		result.Errors = append(result.Errors, reportPlanDiagnostic{
 			Severity: "error", Section: section, Line: w.LineNum, Widget: locator,
 			Message: fmt.Sprintf("stat `path:` %q does not resolve in %s.", pathLabel, w.Source),
-			Hint:    "Point `path:` at a scalar field (number or short string).",
+			Hint:    hint,
 		})
 		return
 	}
@@ -1572,7 +1658,7 @@ func validateReportPlanStatShape(
 		})
 	}
 	if dp := reportPlanFirstNonEmpty(w.Fields["delta_path"], w.Fields["deltapath"]); dp != "" {
-		if _, ok := resolveReportPlanPath(data, dp); !ok {
+		if _, ok := resolveReportPlanPath(target, dp); !ok {
 			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
 				Message: fmt.Sprintf("delta_path %q does not resolve in %s — the delta arrow won't render.", dp, w.Source),
@@ -1580,7 +1666,7 @@ func validateReportPlanStatShape(
 		}
 	}
 	if tp := reportPlanFirstNonEmpty(w.Fields["trend_path"], w.Fields["trendpath"]); tp != "" {
-		resolved, okTP := resolveReportPlanPath(data, tp)
+		resolved, okTP := resolveReportPlanPath(target, tp)
 		if !okTP {
 			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
 				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
@@ -1626,12 +1712,23 @@ func validateReportPlanAlertShape(
 		})
 	}
 	// Validate that path resolves when set (used for {value} interpolation).
+	// Mirror the alert renderer's filter → unwrap → path order so a stale
+	// `0.field` path with a filter is flagged at validation time rather than
+	// silently swallowed.
 	if w.Path != "" {
-		if _, ok := resolveReportPlanPath(data, w.Path); !ok {
-			result.Warnings = append(result.Warnings, reportPlanDiagnostic{
-				Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
-				Message: fmt.Sprintf("alert path %q does not resolve — {value} interpolation will render empty.", w.Path),
-			})
+		target, filterApplied, skip := narrowSingularWidgetTarget(w, data, "alert", section, locator, result)
+		if !skip {
+			if _, ok := resolveReportPlanPath(target, w.Path); !ok {
+				hint := ""
+				if filterApplied && looksLikeArrayIndexedPath(w.Path) {
+					hint = "With `filter:` set, the source narrows to a single row before `path:` resolves — drop the leading array index from `path:` and use the bare field name."
+				}
+				result.Warnings = append(result.Warnings, reportPlanDiagnostic{
+					Severity: "warning", Section: section, Line: w.LineNum, Widget: locator,
+					Message: fmt.Sprintf("alert path %q does not resolve — {value} interpolation will render empty.", w.Path),
+					Hint:    hint,
+				})
+			}
 		}
 	}
 }
@@ -2816,8 +2913,8 @@ func registerReportPlanManagementTools(
 			"id": { "type": "string" },
 			"hidden": { "type": "boolean" },
 			"source": { "type": "string" },
-			"path": { "type": "string" },
-			"filter": { "type": "string" },
+			"path": { "type": "string", "description": "Dot-notation path into the source JSON. For collection widgets (table, chart, cards, pivot) this should resolve to an array. For stat / alert widgets the renderer applies filter first and then resolves path against the matched row, so when filter is set, path must be a bare field name on the row (e.g. \"balance\"), NOT \"0.balance\". Use a leading numeric index only when there is no filter and you intend to pick by position." },
+			"filter": { "type": "string", "description": "Narrows an array source to matching rows. Format: \"key=value\" (string equality). For stat / alert widgets, filter is the right way to pick one row by name — it narrows the array to a single row that path resolves against. For collection widgets, filter narrows the array passed to the renderer (table rows, chart points, etc.)." },
 			"title": { "type": "string" },
 			"description": { "type": "string" },
 			"height": { "type": "integer" },

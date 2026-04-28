@@ -241,7 +241,7 @@ func diffPathsApplied(diff RevertableDiff) []string {
 func isHighRiskInterventionPaths(paths []string, cfg ExperimentsConfig) bool {
 	for _, p := range paths {
 		clean := strings.TrimPrefix(strings.TrimSpace(p), "/")
-		if clean == "evaluation/evaluation_plan.json" || clean == "metrics.json" {
+		if clean == "evaluation/evaluation_plan.json" || clean == "planning/metrics.json" {
 			return true
 		}
 		for _, hr := range cfg.HighRiskPaths {

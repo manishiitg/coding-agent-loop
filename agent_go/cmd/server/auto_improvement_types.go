@@ -341,7 +341,7 @@ func DefaultExperimentsConfig() ExperimentsConfig {
 			"evaluation/evaluation_plan.json",
 			"evaluation/step_config.json",
 			"planning/step_config.json",
-			"metrics.json",
+			"planning/metrics.json",
 		},
 		ForbiddenInterventionPaths: []string{
 			".env",

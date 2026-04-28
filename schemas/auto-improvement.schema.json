@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcp-agent-builder.local/schemas/auto-improvement.schema.json",
   "title": "Auto-Improvement Framework Schemas",
-  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, metrics.json, decisions.jsonl entries, clarifications.jsonl entries, experiment records (active.json + history.jsonl), experiments/config.json, and the four LLM-callable tool inputs.",
+  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, builder/decisions.jsonl entries, experiment records (experiments/active.json + history.jsonl), experiments/config.json, and the LLM-callable tool inputs.",
   "$defs": {
 
     "OversightMode": {
@@ -61,7 +61,7 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-          "description": "Unique within metrics.json. kebab.dot pattern (e.g., audit.accuracy)."
+          "description": "Unique within planning/metrics.json. kebab.dot pattern (e.g., audit.accuracy)."
         },
         "label": {
           "type": "string",

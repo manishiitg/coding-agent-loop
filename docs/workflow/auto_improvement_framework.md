@@ -58,7 +58,7 @@ The framework was built against seven concrete workflow shapes. Six of seven are
 
 ## What success looks like — quantified, not prosed
 
-Today, a workflow's success is described in a free-form `success_criteria` string. The framework keeps that string for high-level intent but adds a structured layer: a `metrics.json` file at the workflow root that defines each metric the workflow is held to.
+Today, a workflow's success is described in a free-form `success_criteria` string. The framework keeps that string for high-level intent but adds a structured layer: a `planning/metrics.json` file that defines each metric the workflow is held to. The file lives under `planning/` so the existing FolderGuard `BlockedWritePaths` makes it tool-only by construction — agents can only write metrics through the privileged `propose_metric` tool, which validates against the framework schema and version-archives prior definitions on amend.
 
 A metric carries:
 
@@ -213,7 +213,7 @@ The existing `/improve-*` commands precheck that `/improve-setup-framework` has 
 
 In the workflow folder, the framework adds:
 
-- `metrics.json` at the root — the metric definitions.
+- `planning/metrics.json` — the metric definitions. Tool-only writes (via `propose_metric`); shell writes blocked by FolderGuard.
 - `builder/decisions.jsonl` — the structured decision log alongside the existing `improve.md` prose.
 - `knowledgebase/rules/` — for Type 3 workflows: user-supplied business rules from `capture_context`. A sub-section of the knowledgebase folder, but excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes so the optimizer never rewrites user content. Steps that have `knowledgebase_access: read` see the rules; the audit trail is folded into `builder/decisions.jsonl` (filter to `source: user`).
 - `experiments/` — active and concluded experiments, with revertable diffs.

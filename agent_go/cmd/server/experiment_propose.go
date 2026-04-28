@@ -312,7 +312,7 @@ func isHighRiskIntervention(changes []InterventionChange, cfg ExperimentsConfig)
 	for _, c := range changes {
 		clean := strings.TrimPrefix(strings.TrimSpace(c.Path), "/")
 		// Hard rule: changing eval plan structure or metrics.json is high risk.
-		if clean == "evaluation/evaluation_plan.json" || clean == "metrics.json" {
+		if clean == "evaluation/evaluation_plan.json" || clean == "planning/metrics.json" {
 			return true
 		}
 		for _, hr := range cfg.HighRiskPaths {

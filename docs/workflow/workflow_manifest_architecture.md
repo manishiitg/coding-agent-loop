@@ -194,7 +194,7 @@ These still live alongside it:
 - `planning/output_plan.json`
 - `variables/variables.json`
 - `evaluation/evaluation_plan.json`
-- `metrics.json` — defines the workflow's quantified goals and how each value is sourced per run. Lives at the workflow root because metrics are referenced by eval, decisions, the experiment loop, SLO monitors, and the report plan. See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
+- `planning/metrics.json` — defines the workflow's quantified goals and how each value is sourced per run. Lives under `planning/` so the existing FolderGuard `BlockedWritePaths` makes it tool-only — only the privileged `propose_metric` tool can write here (same pattern as `planning/step_config.json` / `update_step_config`). See [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
 - `builder/decisions.jsonl` — append-only structured audit log of every change to the workflow (sidecar to the existing `builder/improve.md` prose log). Auto-improvement framework.
 - `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — Type 3 business-rule store. User-supplied rules from `capture_context`. Excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes — never silently rewritten by the optimizer. Audit trail folded into `builder/decisions.jsonl` (filter to `source: user` + `trigger: capture-context`).
 - `experiments/active.json`, `experiments/history.jsonl`, `experiments/config.json`, `experiments/diffs/<id>.patch` — experiment loop persistence (Types 2 and 3).

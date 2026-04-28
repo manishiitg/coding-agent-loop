@@ -136,7 +136,7 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		Source:         DecisionSourceAgent,
 		Trigger:        trigger,
 		Rationale:      fmt.Sprintf("metric %s: %s", status, candidate.ID),
-		AppliedChanges: []string{"metrics.json"},
+		AppliedChanges: []string{"planning/metrics.json"},
 		TargetMetrics:  []string{candidate.ID},
 	}
 	if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {

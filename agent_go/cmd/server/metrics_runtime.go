@@ -19,9 +19,16 @@ import (
 var metricIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 var metricLagPattern = regexp.MustCompile(`^\d+[smhdw]$`)
 
-// workflowMetricsPath returns the canonical path to <workflow>/metrics.json.
+// workflowMetricsPath returns the canonical path to <workflow>/planning/metrics.json.
+//
+// Lives under planning/ so the existing FolderGuard BlockedWritePaths (which
+// already covers planning/) makes it tool-only by construction: shell writes
+// to planning/ are blocked at the kernel sandbox level; the privileged
+// propose_metric tool path goes through the workspace API and bypasses the
+// block. Same pattern that forces step_config.json edits through
+// update_step_config rather than shell.
 func workflowMetricsPath(workspacePath string) string {
-	return path.Join(strings.Trim(workspacePath, "/"), "metrics.json")
+	return path.Join(strings.Trim(workspacePath, "/"), "planning", "metrics.json")
 }
 
 // ReadMetricsFile loads <workflow>/metrics.json. Returns (file, true, nil) when

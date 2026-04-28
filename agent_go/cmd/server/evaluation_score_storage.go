@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	pathpkg "path"
 	"path/filepath"
 	"strings"
@@ -144,7 +145,24 @@ func persistEvaluationReportToScores(ctx context.Context, workspacePath, runFold
 	if err != nil {
 		return err
 	}
-	return writeRawFileToWorkspace(ctx, targetPath, string(jsonData))
+	if err := writeRawFileToWorkspace(ctx, targetPath, string(jsonData)); err != nil {
+		return err
+	}
+
+	// Auto-improvement framework hook: now that this run's eval scores are
+	// persisted (so eval_step source values are queryable) and cost storage
+	// has finalized (so telemetry source values are queryable), fan out to
+	// any active experiments. Async — we don't want eval persistence to wait
+	// on the experiment loop, and a measurement failure must not block the
+	// eval pipeline.
+	go func(workspace, run string) {
+		bgCtx := context.Background()
+		if err := RecordMeasurement(bgCtx, workspace, run); err != nil {
+			log.Printf("[RECORD_MEASUREMENT] async failed for %s / %s: %v", workspace, run, err)
+		}
+	}(workspacePath, runFolder)
+
+	return nil
 }
 
 func readAllEvaluationReportsFromScores(ctx context.Context, workspacePath string) (map[string]EvaluationReport, error) {

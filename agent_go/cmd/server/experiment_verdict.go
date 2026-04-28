@@ -44,6 +44,19 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 		if e.Status != ExpStatusMeasuring {
 			continue
 		}
+		// Dedupe: skip if this run folder has already contributed to this
+		// experiment. Keeps RecordMeasurement idempotent under re-eval scoring.
+		alreadyContributed := false
+		for _, contributed := range e.Measurement.ContributedRuns {
+			if contributed == runFolder {
+				alreadyContributed = true
+				break
+			}
+		}
+		if alreadyContributed {
+			continue
+		}
+
 		if e.Measurement.Values == nil {
 			e.Measurement.Values = map[string][]float64{}
 		}
@@ -71,16 +84,25 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 			e.Measurement.Values[mid] = append(e.Measurement.Values[mid], v)
 			appendedAny = true
 		}
-		if appendedAny {
-			e.Measurement.CompletedRuns++
-			mutated = true
-		}
 		_ = allResolved // reserved for the pending-eval queue logic later
 
-		if e.Measurement.CompletedRuns >= e.Measurement.TargetRuns && e.Measurement.TargetRuns > 0 {
-			ComputeVerdict(e, cfg)
-			e.Status = ExpStatusEvaluating
+		// Only record this run's contribution and bump the counter if at least
+		// one metric resolved. Runs where every metric was delayed/unavailable
+		// don't count toward target_runs.
+		if appendedAny {
+			e.Measurement.CompletedRuns++
+			e.Measurement.ContributedRuns = append(e.Measurement.ContributedRuns, runFolder)
 			mutated = true
+
+			// Verdict trigger: fire EXACTLY when crossing the threshold, not
+			// every subsequent run. Without this guard, an experiment that
+			// gets extended past target_runs (or naturally accrues more runs
+			// while in "measuring") would re-compute the verdict on every
+			// subsequent run.
+			if e.Measurement.CompletedRuns == e.Measurement.TargetRuns && e.Measurement.TargetRuns > 0 {
+				ComputeVerdict(e, cfg)
+				e.Status = ExpStatusEvaluating
+			}
 		}
 	}
 

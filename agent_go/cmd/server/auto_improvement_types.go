@@ -232,10 +232,16 @@ type ExperimentIntervention struct {
 }
 
 // ExperimentMeasurement holds the post-intervention data window.
+//
+// ContributedRuns is the dedupe list. RecordMeasurement appends a run folder
+// here after pulling values from it; subsequent calls for the same run folder
+// (e.g. when eval scoring is re-run on the same iteration) skip — values
+// already counted, no double-counting.
 type ExperimentMeasurement struct {
-	TargetRuns     int                  `json:"target_runs"`
-	CompletedRuns  int                  `json:"completed_runs"`
-	Values         map[string][]float64 `json:"values"`
+	TargetRuns      int                  `json:"target_runs"`
+	CompletedRuns   int                  `json:"completed_runs"`
+	Values          map[string][]float64 `json:"values"`
+	ContributedRuns []string             `json:"contributed_runs,omitempty"`
 }
 
 // ExperimentWorldState pairs the start/end snapshots.

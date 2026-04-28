@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -188,7 +189,7 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 	}
 	switch m.Source.Type {
 	case MetricSourceEvalStep:
-		return resolveFromEvalStep(ctx, workspacePath, runFolder, m.Source.ID)
+		return resolveFromEvalStep(ctx, workspacePath, runFolder, m.Source.ID, m.Source.Field)
 	case MetricSourceTelemetry:
 		return resolveFromTelemetry(ctx, workspacePath, runFolder, m.Source.Field)
 	case MetricSourceExternal, MetricSourceDelayedGroundTruth:
@@ -202,9 +203,19 @@ func ResolveMetricValue(ctx context.Context, workspacePath, runFolder string, m 
 	}
 }
 
-// resolveFromEvalStep reads the named eval step's score/percent from this run's
-// evaluation report (already persisted to /scores/evaluation/).
-func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID string) (float64, bool, error) {
+// resolveFromEvalStep reads a value from the named eval step. Two modes:
+//
+//   field == ""  → returns the eval step's percent score (Score/MaxScore*100).
+//                  Used when one eval step → one metric, no structured output.
+//
+//   field != ""  → looks up the field key in the eval step's structured JSON
+//                  output (OutputContent.Content) and returns the numeric
+//                  value. Used when one eval step's code emits an object with
+//                  many named fields and many metrics each pull one field.
+//
+// Both modes read from the same per-run evaluation report already persisted
+// to /scores/evaluation/<group>/<date>.json by the eval pipeline.
+func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID, field string) (float64, bool, error) {
 	reports, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
 	if err != nil {
 		return 0, false, err
@@ -217,13 +228,70 @@ func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID s
 		if step.StepID != stepID {
 			continue
 		}
-		if step.MaxScore <= 0 {
-			return float64(step.Score), true, nil
+
+		// Mode 1 — no field, return the step's percent score.
+		if strings.TrimSpace(field) == "" {
+			if step.MaxScore <= 0 {
+				return float64(step.Score), true, nil
+			}
+			return (float64(step.Score) / float64(step.MaxScore)) * 100.0, true, nil
 		}
-		// Return as percent (0-100) so units stay consistent with Metric.Unit "percent".
-		return (float64(step.Score) / float64(step.MaxScore)) * 100.0, true, nil
+
+		// Mode 2 — field-keyed lookup into the eval step's structured JSON output.
+		if step.OutputContent == nil {
+			return 0, false, fmt.Errorf("eval step %q produced no OutputContent; cannot read field %q", stepID, field)
+		}
+		if !step.OutputContent.IsJSON {
+			return 0, false, fmt.Errorf("eval step %q output is not JSON; cannot read field %q", stepID, field)
+		}
+		obj, ok := step.OutputContent.Content.(map[string]interface{})
+		if !ok {
+			return 0, false, fmt.Errorf("eval step %q output is %T, not an object; cannot read field %q", stepID, step.OutputContent.Content, field)
+		}
+		raw, present := obj[field]
+		if !present {
+			return 0, false, fmt.Errorf("field %q not present in eval step %q output (keys: %v)", field, stepID, mapKeys(obj))
+		}
+		return coerceToFloat(raw, field)
 	}
 	return 0, false, nil
+}
+
+// coerceToFloat converts a JSON-decoded value to float64. Handles the four
+// common cases: float64 (JSON numbers always decode this way in Go),
+// bool (true=1, false=0), string (parse), and nil (missing → not-available).
+func coerceToFloat(raw interface{}, field string) (float64, bool, error) {
+	switch v := raw.(type) {
+	case float64:
+		return v, true, nil
+	case bool:
+		if v {
+			return 1, true, nil
+		}
+		return 0, true, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, false, nil
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, false, fmt.Errorf("field %q is non-numeric string %q", field, v)
+		}
+		return f, true, nil
+	case nil:
+		return 0, false, nil
+	default:
+		return 0, false, fmt.Errorf("field %q is type %T, not numeric", field, raw)
+	}
+}
+
+func mapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // resolveFromTelemetry reads the named field out of this run's telemetry

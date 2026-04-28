@@ -1240,6 +1240,22 @@ export const agentApi = {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc } })
     return response.data
   },
+  getFrameworkHealth: async (workspacePath: string): Promise<{
+    success: boolean
+    soul_exists: boolean
+    objective_ok: boolean
+    success_criteria_ok: boolean
+    objective?: string
+    success_criteria?: string
+    declared_criteria: string[]
+    uncovered_criteria: string[]
+    unanchored_metrics: string[]
+    telemetry_metrics: string[]
+    error?: string
+  }> => {
+    const response = await api.get('/api/workflow/framework-health', { params: { workspace_path: workspacePath } })
+    return response.data
+  },
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state in a single API call (run folders, variables, phases, progress)

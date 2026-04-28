@@ -397,16 +397,26 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [reviewDoc, setReviewDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
   const [docLoading, setDocLoading] = useState<'improve' | 'review' | null>(null)
   const [docError, setDocError] = useState<string | null>(null)
+  const [frameworkHealth, setFrameworkHealth] = useState<{
+    soul_exists: boolean
+    objective_ok: boolean
+    success_criteria_ok: boolean
+    declared_criteria: string[]
+    uncovered_criteria: string[]
+    unanchored_metrics: string[]
+    telemetry_metrics: string[]
+  } | null>(null)
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return
     setLoading(true)
     setError(null)
     try {
-      const [m, e, d] = await Promise.all([
+      const [m, e, d, h] = await Promise.all([
         agentApi.getAutoImprovementMetrics(workspacePath).catch((err) => ({ success: false, error: String(err), file: undefined })),
         agentApi.getAutoImprovementExperiments(workspacePath, true).catch((err) => ({ success: false, active: [], history: [], error: String(err) })),
         agentApi.getAutoImprovementDecisions(workspacePath).catch((err) => ({ success: false, decisions: [], error: String(err) })),
+        agentApi.getFrameworkHealth(workspacePath).catch((err) => ({ success: false, error: String(err), soul_exists: false, objective_ok: false, success_criteria_ok: false, declared_criteria: [], uncovered_criteria: [], unanchored_metrics: [], telemetry_metrics: [] })),
       ])
       if (m.success && m.file) {
         setMetrics(Array.isArray(m.file.metrics) ? m.file.metrics : [])
@@ -422,7 +432,20 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
       if (d.success) {
         setDecisions(Array.isArray(d.decisions) ? d.decisions : [])
       }
-      const errs = [m.error, e.error, d.error].filter(Boolean)
+      if (h.success) {
+        setFrameworkHealth({
+          soul_exists: !!h.soul_exists,
+          objective_ok: !!h.objective_ok,
+          success_criteria_ok: !!h.success_criteria_ok,
+          declared_criteria: Array.isArray(h.declared_criteria) ? h.declared_criteria : [],
+          uncovered_criteria: Array.isArray(h.uncovered_criteria) ? h.uncovered_criteria : [],
+          unanchored_metrics: Array.isArray(h.unanchored_metrics) ? h.unanchored_metrics : [],
+          telemetry_metrics: Array.isArray(h.telemetry_metrics) ? h.telemetry_metrics : [],
+        })
+      } else {
+        setFrameworkHealth(null)
+      }
+      const errs = [m.error, e.error, d.error, h.error].filter(Boolean)
       if (errs.length > 0) setError(errs.join('; '))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
@@ -610,6 +633,57 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               {error}
             </div>
           )}
+
+          {frameworkHealth && (() => {
+            const issues: { kind: 'critical' | 'warning'; msg: string }[] = []
+            if (!frameworkHealth.soul_exists) {
+              issues.push({ kind: 'critical', msg: 'soul/soul.md is missing — define ## Objective and ## Success Criteria before adding metrics.' })
+            } else {
+              if (!frameworkHealth.objective_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Objective is empty or still a TODO placeholder.' })
+              if (!frameworkHealth.success_criteria_ok) issues.push({ kind: 'critical', msg: 'soul.md ## Success Criteria is empty — without it, metrics have no north star to verdict against.' })
+            }
+            if (frameworkHealth.uncovered_criteria.length > 0) {
+              issues.push({ kind: 'warning', msg: `${frameworkHealth.uncovered_criteria.length} success criterion${frameworkHealth.uncovered_criteria.length === 1 ? '' : 'a'} have no metric pointing at them — invisible to the experiment loop.` })
+            }
+            if (frameworkHealth.unanchored_metrics.length > 0) {
+              issues.push({ kind: 'warning', msg: `${frameworkHealth.unanchored_metrics.length} metric${frameworkHealth.unanchored_metrics.length === 1 ? '' : 's'} have no linked_success_criteria (excluding telemetry SLOs) — verdicts on these don't reflect user-facing success.` })
+            }
+            if (issues.length === 0) return null
+            const hasCritical = issues.some((i) => i.kind === 'critical')
+            return (
+              <div className={`px-4 py-2 text-xs border-b ${hasCritical ? 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border-red-200 dark:border-red-800' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800'}`}>
+                <div className="font-medium mb-1">Framework health</div>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {issues.map((i, n) => <li key={n}>{i.msg}</li>)}
+                </ul>
+                {(frameworkHealth.uncovered_criteria.length > 0 || frameworkHealth.unanchored_metrics.length > 0) && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11px] opacity-80">details</summary>
+                    {frameworkHealth.uncovered_criteria.length > 0 && (
+                      <div className="mt-1">
+                        <span className="font-medium">Uncovered criteria:</span>
+                        <ul className="list-disc list-inside text-[11px] mt-0.5">
+                          {frameworkHealth.uncovered_criteria.map((c, n) => <li key={n}>{c}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {frameworkHealth.unanchored_metrics.length > 0 && (
+                      <div className="mt-1">
+                        <span className="font-medium">Unanchored metrics:</span>{' '}
+                        <code className="text-[11px]">{frameworkHealth.unanchored_metrics.join(', ')}</code>
+                      </div>
+                    )}
+                    {frameworkHealth.telemetry_metrics.length > 0 && (
+                      <div className="mt-1 opacity-75">
+                        <span className="font-medium">Telemetry SLOs (unanchored by design):</span>{' '}
+                        <code className="text-[11px]">{frameworkHealth.telemetry_metrics.join(', ')}</code>
+                      </div>
+                    )}
+                  </details>
+                )}
+              </div>
+            )
+          })()}
 
           <div className="flex-1 overflow-y-auto p-4">
             {tab === 'experiments' && (

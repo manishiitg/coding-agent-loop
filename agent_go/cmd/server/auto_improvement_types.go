@@ -258,11 +258,24 @@ type ExperimentWorldState struct {
 }
 
 // ExperimentEvidence is the numeric evidence produced by compute_verdict.
+//
+// PerMetricVerdict carries the per-metric verdict before they were combined
+// into the overall verdict, so the evaluator (and the UI) can show "outcome
+// kept; cost regressed" without re-deriving from the raw numbers.
+//
+// CostWarning is set when the overall verdict is `kept` because the outcome
+// metric(s) were kept, but at least one telemetry SLO (cost_per_run /
+// run_duration_seconds / any unanchored metric) regressed. The change still
+// stays applied — success criteria are paramount — but the evaluator's
+// rationale should call out the cost or runtime hit so the operator can
+// decide whether to revisit.
 type ExperimentEvidence struct {
-	PostMean         map[string]float64 `json:"post_mean,omitempty"`
+	PostMean          map[string]float64 `json:"post_mean,omitempty"`
 	MagnitudeObserved map[string]float64 `json:"magnitude_observed,omitempty"`
-	PerRunBeatPct    map[string]float64 `json:"per_run_beat_pct,omitempty"`
-	DriftFlagged     bool               `json:"drift_flagged,omitempty"`
+	PerRunBeatPct     map[string]float64 `json:"per_run_beat_pct,omitempty"`
+	PerMetricVerdict  map[string]Verdict `json:"per_metric_verdict,omitempty"`
+	DriftFlagged      bool               `json:"drift_flagged,omitempty"`
+	CostWarning       bool               `json:"cost_warning,omitempty"`
 }
 
 // ExperimentConclusion is filled in at the end of an experiment.

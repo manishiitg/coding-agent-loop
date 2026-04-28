@@ -55,6 +55,13 @@ type ProposeMetricOutput struct {
 // already used by ≥1 active rule is treated as "high-risk" but still applies
 // (UI later can convert this to an awaiting-approval flow).
 func ProposeMetric(ctx context.Context, workspacePath, trigger string, input ProposeMetricInput) (*ProposeMetricOutput, error) {
+	// Soul precondition: an objective and success_criteria must exist before
+	// metrics are defined against them. Without that anchor, metrics are
+	// arbitrary and the framework has no north star to verdict against.
+	if err := RequireSoulPreconditions(ctx, workspacePath); err != nil {
+		return nil, err
+	}
+
 	// Build the candidate metric.
 	candidate := Metric{
 		ID:                    strings.TrimSpace(input.ID),

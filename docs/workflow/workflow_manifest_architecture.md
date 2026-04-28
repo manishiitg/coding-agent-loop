@@ -86,9 +86,7 @@ The backend struct lives in [workflow_manifest.go](/Users/mipl/ai-work/mcp-agent
   ],
   "created_at": "2026-04-09T10:00:00Z",
   "updated_at": "2026-04-09T10:00:00Z",
-  "workflow_type": "exploratory",
   "oversight_mode": "supervised",
-  "plan_stability": "mutable",
   "decision_log_mutability": "append_only"
 }
 ```
@@ -157,14 +155,14 @@ For current runtime behavior, APIs, run history, and workshop-vs-workflow execut
 
 ### Auto-improvement framework fields
 
-Four optional top-level fields configure how the workflow participates in the auto-improvement framework. All default to backward-compatible values; existing workflows can omit them.
+Two optional top-level fields configure hard behavioral gates the auto-improvement framework reads. All default to backward-compatible values; existing workflows can omit them.
 
 | Field | Values | Default | Purpose |
 |---|---|---|---|
-| `workflow_type` | `deterministic` \| `exploratory` \| `contextual` | `exploratory` | Drives metric requirements, eval shape, decision-log behavior, and which `/improve-*` commands are surfaced. |
-| `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for hypothesis acceptance and verdict commitment. |
-| `plan_stability` | `mutable` \| `ratchet` \| `frozen` | `mutable` | `ratchet` allows additions but blocks silent removals; `frozen` blocks any plan-shape change. Used by adversarial / regulated workflows. |
-| `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids any edit to a decision-log entry, even corrective. Used by compliance workflows. |
+| `oversight_mode` | `manual` \| `supervised` \| `autonomous` | `supervised` | Controls when human approval is required for hypothesis acceptance and verdict commitment. Hard gate. |
+| `decision_log_mutability` | `append_only` \| `append_only_strict` | `append_only` | `append_only_strict` forbids any edit to a decision-log entry, even corrective. Used by compliance workflows. Hard gate. |
+
+**The workflow's profile** — typology (deterministic / exploratory / contextual), plan stability, runtime mode (single / dual explore-exploit), and whether it accumulates business context — lives as **prose in `builder/improve.md`** under a `## Workflow Profile` section. The agent reads improve.md on every improvement turn and adjusts behavior accordingly. Real workflows mix axes a single enum can't express (e.g. social-media is exploratory + dual-mode + accumulating-context all at once); prose captures the nuance, and the framework no longer hard-gates on a workflow_type value.
 
 For the design rationale and worked examples, see [auto_improvement_framework.md](/Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow/auto_improvement_framework.md).
 

@@ -8,16 +8,8 @@ import "time"
 // Doc:     docs/workflow/auto_improvement_framework.md
 // =====================================================================
 
-// WorkflowType — drives metric requirements, eval shape, decision-log behavior.
-type WorkflowType string
-
-const (
-	WorkflowTypeDeterministic WorkflowType = "deterministic"
-	WorkflowTypeExploratory   WorkflowType = "exploratory"
-	WorkflowTypeContextual    WorkflowType = "contextual"
-)
-
-// OversightMode — per-workflow oversight policy.
+// OversightMode — per-workflow oversight policy. Hard gate: drives auto-vs-
+// human-approval flow on hypothesis acceptance and verdict commitment.
 type OversightMode string
 
 const (
@@ -26,7 +18,22 @@ const (
 	OversightAutonomous OversightMode = "autonomous"
 )
 
-// PlanStability — controls whether plan-shape changes are allowed.
+// Workflow typology and plan stability are NOT enums anymore. They live as
+// prose in builder/improve.md under the "Workflow Profile" section. The agent
+// reads improve.md on every improvement turn and adjusts behavior; the
+// framework no longer hard-gates on a workflow_type value. Three reasons:
+//
+//   1. Real workflows mix axes the enum couldn't express (Twitter is both
+//      exploratory AND deterministic in dual-mode).
+//   2. The hard gates that did matter (allow-list filtering of plan-mod tools)
+//      added kernel-level enforcement nobody actually needed — the agent
+//      respects guidance in improve.md.
+//   3. Prose captures nuance enums can't ("mostly stable but new tactics
+//      monthly", "frozen except during compliance reviews").
+
+// PlanStability is retained as a type alias for the field in WorkflowManifest
+// during the deprecation window — the framework no longer reads it. New code
+// must NOT introduce new readers. Setting the field has no behavioral effect.
 type PlanStability string
 
 const (
@@ -140,9 +147,15 @@ type MetricArchiveEntry struct {
 }
 
 // MetricsFile is the shape of <workflow>/metrics.json.
+//
+// `ActiveMode` is the runtime state for dual-mode workflows (e.g. Twitter
+// explore/exploit cycles). When the workflow's improve.md declares dual mode,
+// the active value lives here so steps can branch on it via the variable
+// resolver. Workflows that don't declare dual mode leave this empty.
 type MetricsFile struct {
-	Metrics []Metric             `json:"metrics"`
-	Archive []MetricArchiveEntry `json:"archive,omitempty"`
+	Metrics    []Metric             `json:"metrics"`
+	Archive    []MetricArchiveEntry `json:"archive,omitempty"`
+	ActiveMode string               `json:"active_mode,omitempty"`
 }
 
 // ExperimentStatus — the experiment state machine.

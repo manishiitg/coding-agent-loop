@@ -34,9 +34,13 @@ type WorkflowManifest struct {
 	UpdatedAt       string                    `json:"updated_at,omitempty"`
 
 	// Auto-improvement framework fields. See docs/workflow/auto_improvement_framework.md.
-	WorkflowType          WorkflowType          `json:"workflow_type,omitempty"`
+	//
+	// Only fields that drive HARD behavioral gates live here. Workflow profile
+	// (deterministic / exploratory / contextual classification, plan-stability
+	// guidance, dual-mode declarations) lives as prose in builder/improve.md
+	// — the agent reads improve.md on every improvement turn anyway, and prose
+	// captures nuance that enums can't.
 	OversightMode         OversightMode         `json:"oversight_mode,omitempty"`
-	PlanStability         PlanStability         `json:"plan_stability,omitempty"`
 	DecisionLogMutability DecisionLogMutability `json:"decision_log_mutability,omitempty"`
 }
 
@@ -131,25 +135,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 	}
 
 	// Validate auto-improvement framework enum fields if set.
-	if m.WorkflowType != "" {
-		switch m.WorkflowType {
-		case WorkflowTypeDeterministic, WorkflowTypeExploratory, WorkflowTypeContextual:
-		default:
-			return fmt.Errorf("invalid workflow_type: %s", m.WorkflowType)
-		}
-	}
 	if m.OversightMode != "" {
 		switch m.OversightMode {
 		case OversightManual, OversightSupervised, OversightAutonomous:
 		default:
 			return fmt.Errorf("invalid oversight_mode: %s", m.OversightMode)
-		}
-	}
-	if m.PlanStability != "" {
-		switch m.PlanStability {
-		case PlanStabilityMutable, PlanStabilityRatchet, PlanStabilityFrozen:
-		default:
-			return fmt.Errorf("invalid plan_stability: %s", m.PlanStability)
 		}
 	}
 	if m.DecisionLogMutability != "" {
@@ -351,17 +341,11 @@ func applyManifestDefaults(m *WorkflowManifest) {
 		}
 	}
 
-	// Auto-improvement framework defaults. Pre-existing workflows default to
-	// "exploratory" + "supervised" so the framework is opt-in for behavior changes
-	// but readable for the UI immediately.
-	if m.WorkflowType == "" {
-		m.WorkflowType = WorkflowTypeExploratory
-	}
+	// Auto-improvement framework defaults. Only the two hard-gate fields
+	// default-fill — typology and plan-stability live as prose in
+	// builder/improve.md, not as manifest enums.
 	if m.OversightMode == "" {
 		m.OversightMode = OversightSupervised
-	}
-	if m.PlanStability == "" {
-		m.PlanStability = PlanStabilityMutable
 	}
 	if m.DecisionLogMutability == "" {
 		m.DecisionLogMutability = DecisionLogAppendOnly

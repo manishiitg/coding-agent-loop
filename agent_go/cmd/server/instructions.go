@@ -280,11 +280,11 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`experiments/diffs/<id>.patch`" + ` — pre-state snapshot for each experiment. Used by ` + "`apply_revert`" + ` if the verdict is reverted.
 - ` + "`experiments/proposer_prompt.md`" + ` and ` + "`experiments/evaluator_prompt.md`" + ` — system prompts for the two LLMs in the experiment loop. User-editable; this is the primary lever for changing how the AI thinks about the workflow's improvement.
 
-**Workflow type & oversight (in ` + "`workflow.json`" + `):**
-- ` + "`workflow_type`" + ` — ` + "`deterministic`" + ` (frozen plan, SLO monitoring) | ` + "`exploratory`" + ` (plan in flux, optimizer-driven) | ` + "`contextual`" + ` (Type 3, business rules accumulate). Drives which improvement tools are appropriate.
-- ` + "`oversight_mode`" + ` — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `.
-- ` + "`plan_stability`" + ` — ` + "`mutable`" + ` | ` + "`ratchet`" + ` (additions only) | ` + "`frozen`" + ` (no plan-shape change without approval).
-- ` + "`decision_log_mutability`" + ` — ` + "`append_only`" + ` | ` + "`append_only_strict`" + ` (no edits even for corrections; used by compliance workflows).
+**Workflow profile and oversight:**
+- The workflow's **profile** (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose in ` + "`builder/improve.md`" + ` under a "## Workflow Profile" section. Read it on every improvement turn and adjust behavior accordingly. Real workflows don't fit a single enum (e.g. Twitter is exploratory + dual-mode + contextual all at once); prose captures the nuance.
+- ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
+- ` + "`decision_log_mutability`" + ` (in ` + "`workflow.json`" + `) — ` + "`append_only`" + ` | ` + "`append_only_strict`" + ` (no edits even for corrections; used by compliance workflows). Hard gate.
+- For **dual-mode workflows** (declared as such in improve.md), the active mode lives in ` + "`metrics.json`" + ` under ` + "`active_mode`" + ` so steps can branch on it via variables.
 
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/step-X/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
@@ -337,19 +337,19 @@ In ` + "`optimizer`" + ` workshop mode, four framework tools are available along
 
 **Core idea:**
 
-- A workflow declares its ` + "`workflow_type`" + ` (deterministic / exploratory / contextual). Type 3 (contextual) workflows accumulate business rules and **require** a ` + "`metrics.json`" + `.
+- A workflow's profile (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose under a "## Workflow Profile" section in ` + "`builder/improve.md`" + `. Workflows that genuinely accumulate user-supplied business rules **require** a ` + "`metrics.json`" + ` so the rules can be anchored to outcomes.
 - Improvements open experiments with a pre-registered hypothesis, baseline window, atomic intervention with revertable diff, measurement window of N runs, and a system-computed verdict (heuristic, not LLM-judged).
 - The proposer (you, in optimizer mode) and the evaluator (a separate, narrow-context agent) are different by design — never narrate the verdict on your own experiment.
 
 ### Setup precondition: ` + "`/improve-setup-framework`" + `
 
-Before any of the experiment loop or rule-capture machinery can do useful work, the workflow must be classified and (for Type 1 / Type 3) have at least one metric defined. The dedicated entry point for this is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
+Before any of the experiment loop or rule-capture machinery can do useful work, the workflow must have its **Workflow Profile** written into ` + "`builder/improve.md`" + ` and (for workflows that target measurable outcomes) at least one metric defined. The dedicated entry point is ` + "`/improve-setup-framework`" + ` — a one-time setup command that:
 
-1. Classifies ` + "`workflow_type`" + ` and writes it to ` + "`workflow.json`" + ` along with ` + "`oversight_mode`" + ` (and optionally ` + "`plan_stability`" + ` / ` + "`decision_log_mutability`" + `).
-2. Proposes type-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
-3. For Type 3, scaffolds ` + "`knowledgebase/rules/rules.md`" + ` with metric-keyed sections.
+1. Classifies the workflow through conversation (plan stability, runtime mode, business-context accumulation) and writes a "## Workflow Profile" section into ` + "`builder/improve.md`" + `. Sets ` + "`oversight_mode`" + ` and ` + "`decision_log_mutability`" + ` in ` + "`workflow.json`" + ` (those two are hard gates and stay structured).
+2. Proposes profile-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
+3. For workflows that accumulate business context, scaffolds ` + "`knowledgebase/rules/rules.md`" + ` with metric-keyed sections.
 
-When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet, **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is its own command for a reason: it's a meaningful conversation with the user, and conflating it with improvement work bloats every improvement turn.
+When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet (no Workflow Profile in improve.md, or empty metrics.json on a workflow that should have metrics), **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is a meaningful conversation, and conflating it with improvement work bloats every improvement turn.
 
 ### Tool: ` + "`propose_metric`" + `
 Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly. **Required before** ` + "`propose_experiment`" + ` if a target metric is missing.
@@ -396,14 +396,14 @@ There is no slash command for rule capture. When the user shares a business rule
 
 **Capture flow:**
 1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured.
-2. **Anchor.** Read ` + "`metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`metrics.json`" + ` is empty, redirect to ` + "`/improve-workflow`" + ` (which bootstraps both ` + "`workflow_type`" + ` and metrics) — do NOT call ` + "`propose_metric`" + ` here just to satisfy the rule capture.
+2. **Anchor.** Read ` + "`metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`metrics.json`" + ` is empty, redirect to ` + "`/improve-setup-framework`" + ` (which writes the Workflow Profile to improve.md and bootstraps metrics) — do NOT call ` + "`propose_metric`" + ` here just to satisfy the rule capture.
 3. **Section.** Read ` + "`knowledgebase/rules/rules.md`" + ` to pick the right section heading (or propose a new one).
 4. **Capture.** Call ` + "`capture_context`" + ` with section, rule_text, target_metrics, optional example_note.
 5. **Confirm.** Tell the user where it landed and the clarification id.
 
 **On Type 1 / Type 2 workflows**: do NOT call ` + "`capture_context`" + ` (the ` + "`context/`" + ` store is Type-3-only). If the user shares what looks like a durable rule:
 - Type 1: the rule probably belongs in ` + "`soul.md`" + ` or as a hardened eval check; offer that path.
-- Type 2: tell the user that if rule accumulation is becoming the pattern, the workflow may be Type 3 and offer to flip ` + "`workflow_type`" + ` (after which ` + "`/improve-workflow`" + ` will bootstrap metrics and ` + "`capture_context`" + ` becomes available).
+- Type 2: tell the user that if rule accumulation is becoming the pattern, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to declare the workflow as accumulating business context — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the rules folder. Do NOT call ` + "`capture_context`" + ` until the profile is updated.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 

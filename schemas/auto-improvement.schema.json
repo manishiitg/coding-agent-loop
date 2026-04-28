@@ -5,23 +5,10 @@
   "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, metrics.json, decisions.jsonl entries, clarifications.jsonl entries, experiment records (active.json + history.jsonl), experiments/config.json, and the four LLM-callable tool inputs.",
   "$defs": {
 
-    "WorkflowType": {
-      "type": "string",
-      "enum": ["deterministic", "exploratory", "contextual"],
-      "description": "Workflow type. Drives metric requirements, eval shape, decision-log behavior, and which /improve-* commands are surfaced."
-    },
-
     "OversightMode": {
       "type": "string",
       "enum": ["manual", "supervised", "autonomous"],
-      "description": "Per-workflow oversight mode. manual = every change requires approval; supervised = low-risk auto, high-risk gated; autonomous = LLM applies and concludes without gates."
-    },
-
-    "PlanStability": {
-      "type": "string",
-      "enum": ["mutable", "ratchet", "frozen"],
-      "default": "mutable",
-      "description": "mutable = plan can be replanned freely; ratchet = additions allowed, silent removals blocked; frozen = no plan-shape change without explicit human approval."
+      "description": "Per-workflow oversight mode. manual = every change requires approval; supervised = low-risk auto, high-risk gated; autonomous = LLM applies and concludes without gates. Hard gate: drives auto-vs-human approval flow on hypotheses and verdicts."
     },
 
     "DecisionLogMutability": {
@@ -139,17 +126,19 @@
               "definition": { "$ref": "#/$defs/Metric" }
             }
           }
+        },
+        "active_mode": {
+          "type": "string",
+          "description": "Runtime state for dual-mode workflows (declared in builder/improve.md's Workflow Profile). The active mode value (e.g. 'explore' / 'exploit' for social-media; mode names are workflow-defined) — steps branch on this via the variable resolver. Empty for single-mode workflows."
         }
       }
     },
 
     "WorkflowExtensions": {
       "type": "object",
-      "description": "Additions to workflow.json that the auto-improvement framework reads.",
+      "description": "Additions to workflow.json that the auto-improvement framework reads. Only fields that drive HARD behavioral gates live here. Workflow profile (typology, plan stability, runtime mode, business-context accumulation) lives as prose in builder/improve.md under a '## Workflow Profile' section — the agent reads improve.md every turn anyway, and prose captures nuance enums can't.",
       "properties": {
-        "workflow_type": { "$ref": "#/$defs/WorkflowType" },
         "oversight_mode": { "$ref": "#/$defs/OversightMode" },
-        "plan_stability": { "$ref": "#/$defs/PlanStability" },
         "decision_log_mutability": { "$ref": "#/$defs/DecisionLogMutability" }
       }
     },

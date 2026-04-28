@@ -64,6 +64,10 @@ Current fields are defined in [scheduler_config_store.go](/Users/mipl/ai-work/mc
 - `execution_enabled`
 - `disabled_via_env`
 - `disabled_reason`
+- `allowed_workflows` (computed from env)
+- `blocked_workflows` (computed from env)
+- `allowed_users` (computed from env)
+- `blocked_users` (computed from env)
 
 Important distinction:
 
@@ -71,6 +75,22 @@ Important distinction:
 - `execution_enabled` is computed runtime state
 
 If `SCHEDULER_ENABLED=false`, automatic cron execution is disabled on that server, but manual trigger still works.
+
+#### Per-workflow env filter
+
+When the same workspace is shared across multiple machines, you can choose which workflows have their crons run on each machine via these env vars in `agent_go/.env`:
+
+- `SCHEDULER_ALLOWED_WORKFLOWS=label-or-id-1,label-or-id-2` — allowlist; if set, ONLY these workflows run cron on this machine
+- `SCHEDULER_BLOCKED_WORKFLOWS=label-or-id-3` — denylist; these workflows never run cron on this machine
+
+Matching is case-insensitive against the workflow's manifest ID, manifest label, or workspace folder name (whichever the user enters). When both env vars are set, the allowlist wins. Manual `Trigger Now` still works for filtered-out workflows. Logic lives in [scheduler_env_filter.go](/Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/scheduler_env_filter.go) and is enforced inside `LoadSchedule`, so the filter applies both at startup and when a schedule is reloaded after an edit.
+
+The equivalent vars for multi-agent schedules under `_users/{userID}/multiagent-schedules.json` are:
+
+- `SCHEDULER_ALLOWED_USERS=alice,bob`
+- `SCHEDULER_BLOCKED_USERS=carol`
+
+These match against the userID directory name. The rescan loop also honors the user filter so filtered-out users don't reload every 60s.
 
 ### Per-workflow run history
 

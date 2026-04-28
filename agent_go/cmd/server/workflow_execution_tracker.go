@@ -312,6 +312,22 @@ func (api *StreamingAPI) runningWorkflowExecutionBySessionLocked(sessionID strin
 	return best
 }
 
+// runningTrackedExecutionBySessionLocked returns the latest running tracked execution
+// for a session, including workflow-builder background work. api.trackedWorkflowExecutionsMux
+// must already be held.
+func (api *StreamingAPI) runningTrackedExecutionBySessionLocked(sessionID string) *TrackedWorkflowExecution {
+	var best *TrackedWorkflowExecution
+	for _, exec := range api.trackedWorkflowExecutions {
+		if exec == nil || exec.Status != trackedExecutionStatusRunning || exec.SessionID != sessionID {
+			continue
+		}
+		if best == nil || exec.StartedAt.After(best.StartedAt) {
+			best = exec
+		}
+	}
+	return best
+}
+
 func (api *StreamingAPI) listRunningWorkflowExecutions(userID string) []ActiveWorkflowExecution {
 	api.trackedWorkflowExecutionsMux.RLock()
 	defer api.trackedWorkflowExecutionsMux.RUnlock()

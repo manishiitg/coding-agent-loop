@@ -281,6 +281,17 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 			}
 			enriched.RunningBackgroundAgentCount++
 			enriched.HasRunningBackgroundAgents = true
+			if enriched.WorkspacePath == "" && snap.Metadata != nil {
+				if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {
+					enriched.WorkspacePath = workflowPath
+					workflowName := workflowNameFromWorkspacePath(workflowPath)
+					enriched.WorkflowName = workflowName
+					enriched.WorkflowLabel = workflowName
+				}
+				if presetQueryID := strings.TrimSpace(snap.Metadata["preset_query_id"]); presetQueryID != "" {
+					enriched.PresetQueryID = presetQueryID
+				}
+			}
 			if snap.CreatedAt.After(newestRunning) {
 				newestRunning = snap.CreatedAt
 				enriched.CurrentExecutionName = snap.Name
@@ -311,6 +322,22 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 			enriched.CurrentExecutionName = active.PresetName
 		case active.Title != "":
 			enriched.CurrentExecutionName = active.Title
+		}
+		if active.Status != "" {
+			enriched.Status = active.Status
+		}
+	} else if exec := api.runningTrackedExecutionBySessionLocked(session.SessionID); exec != nil {
+		active := trackedExecutionToActive(exec)
+		enriched.PresetQueryID = active.PresetQueryID
+		enriched.PresetName = active.PresetName
+		enriched.WorkspacePath = active.WorkspacePath
+		if active.PresetName != "" {
+			enriched.WorkflowName = active.PresetName
+			enriched.WorkflowLabel = active.PresetName
+		} else if active.WorkspacePath != "" {
+			workflowName := workflowNameFromWorkspacePath(active.WorkspacePath)
+			enriched.WorkflowName = workflowName
+			enriched.WorkflowLabel = workflowName
 		}
 		if active.Status != "" {
 			enriched.Status = active.Status

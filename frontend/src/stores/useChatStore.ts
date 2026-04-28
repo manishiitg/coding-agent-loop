@@ -24,6 +24,13 @@ const STREAMING_INACTIVITY_MS = 60000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
+export type EventViewMode = 'tree' | 'flat'
+type LegacyEventViewMode = EventViewMode | 'detailed' | 'summary'
+
+export function normalizeEventViewMode(viewMode?: LegacyEventViewMode | null): EventViewMode {
+  if (viewMode === 'flat' || viewMode === 'summary') return 'flat'
+  return 'tree'
+}
 
 type LearnCodeScriptExecutionData = {
   step_id?: string
@@ -216,14 +223,9 @@ export interface ChatTab {
   isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (input remains locked as normal)
   canSteer: boolean  // Whether the backend currently has a live agent that can accept steer injection
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
-  // View mode controls how much detail is rendered in the event list.
-  // 'detailed' — full event stream (tool calls, LLM events, delegation internals, etc.)
-  // 'summary'  — lightweight view showing only high-level agent activity:
-  //   agent start/end, step progress, todo items, errors, user messages, delegation cards.
-  //   Drops tool calls, LLM generation, streaming, MCP internals — reducing event count
-  //   from ~500 to ~20-30 for a typical workflow. Ideal for background workflows where
-  //   the user only cares about progress, not execution details.
-  viewMode: 'detailed' | 'summary'
+  // Event layout mode. Legacy persisted values are normalized on read:
+  // 'detailed' -> 'tree', 'summary' -> 'flat'.
+  viewMode: EventViewMode | 'detailed' | 'summary'
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
   lastViewedEventCount: number  // @deprecated - use lastViewedEventCounts instead
@@ -461,7 +463,7 @@ interface ChatState extends StoreActions {
   setTabCanSteer: (tabId: string, canSteer: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
-  setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => void
+  setTabViewMode: (tabId: string, viewMode: EventViewMode) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
   setTabMetadata: (tabId: string, metadataUpdate: Partial<NonNullable<ChatTab['metadata']>>) => void
@@ -1385,7 +1387,7 @@ export const useChatStore = create<ChatState>()(
           isSyntheticTurn: false,
           canSteer: false,
           hideToolCalls: true,
-          viewMode: 'detailed', // Default to full detail — user or system can switch to 'summary' for background workflows
+          viewMode: 'tree',
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
@@ -1767,7 +1769,7 @@ export const useChatStore = create<ChatState>()(
         }))
       },
 
-      setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => {
+      setTabViewMode: (tabId: string, viewMode: EventViewMode) => {
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
@@ -2135,7 +2137,7 @@ export const useChatStore = create<ChatState>()(
                 canSteer: false,
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
-                viewMode: tab.viewMode ?? 'detailed', // Persist view mode across reload
+                viewMode: normalizeEventViewMode(tab.viewMode), // Persist layout mode across reload
                 config: { ...tab.config }, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)
@@ -2210,30 +2212,33 @@ export const useChatStore = create<ChatState>()(
 )
 
 // Hydration flag — set to true once zustand rehydrates persisted tabs from localStorage.
-// Uses a module-level variable (NOT a property on useChatStore) to survive Vite HMR,
-// which re-executes the module and would reset a store property to false after rehydration already fired.
+// The source of truth is `useChatStore.persist.hasHydrated()`. The module-level
+// flag is only a fast path for callers that do not need to touch persist.
 let chatStoreHydrated = false
 
 /** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
 export function waitForChatStoreHydration(): Promise<void> {
-  if (chatStoreHydrated) {
+  if (chatStoreHydrated || useChatStore.persist.hasHydrated()) {
+    chatStoreHydrated = true
     return Promise.resolve()
   }
   return new Promise(resolve => {
-    let elapsed = 0
-    const check = () => {
-      if (chatStoreHydrated) {
-        resolve()
-      } else if (elapsed >= 3000) {
+    const unsubscribe = useChatStore.persist.onFinishHydration(() => {
+      chatStoreHydrated = true
+      clearTimeout(timeoutId)
+      unsubscribe()
+      resolve()
+    })
+    const timeoutId = setTimeout(() => {
+      if (useChatStore.persist.hasHydrated()) {
+        chatStoreHydrated = true
+      } else {
         // Safety timeout: don't hang forever if hydration never fires
         console.warn('[waitForChatStoreHydration] Timeout after 3s, proceeding anyway')
-        resolve()
-      } else {
-        elapsed += 50
-        setTimeout(check, 50)
       }
-    }
-    check()
+      unsubscribe()
+      resolve()
+    }, 3000)
   })
 }
 

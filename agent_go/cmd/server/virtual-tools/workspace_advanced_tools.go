@@ -233,11 +233,16 @@ func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, a
 		}
 
 		provider := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", args["provider"])))
-		if provider == "<nil>" {
-			provider = ""
+		if provider == "" || provider == "<nil>" {
+			return "", fmt.Errorf("provider is required")
 		}
 
-		llmModel, err := createPublishedSearchLLM(ctx, workspaceURL, provider)
+		modelID := strings.TrimSpace(fmt.Sprintf("%v", args["model_id"]))
+		if modelID == "" || modelID == "<nil>" {
+			return "", fmt.Errorf("model_id is required")
+		}
+
+		llmModel, err := createPublishedSearchLLM(ctx, workspaceURL, provider, modelID)
 		if err != nil {
 			return "", err
 		}
@@ -310,20 +315,6 @@ func isSearchProviderAvailable(provider string) bool {
 	}
 }
 
-func sortSearchCandidates(entries []services.PublishedLLM) {
-	sort.SliceStable(entries, func(i, j int) bool {
-		pi := 1000
-		pj := 1000
-		if entries[i].SearchPriority != nil {
-			pi = *entries[i].SearchPriority
-		}
-		if entries[j].SearchPriority != nil {
-			pj = *entries[j].SearchPriority
-		}
-		return pi < pj
-	})
-}
-
 func publishedSearchProviderSummary(entries []services.PublishedLLM) string {
 	var available []string
 	seen := map[string]bool{}
@@ -347,7 +338,7 @@ func publishedSearchProviderSummary(entries []services.PublishedLLM) string {
 	return "Published search-capable providers: " + strings.Join(available, ", ")
 }
 
-func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKeys *llm.ProviderAPIKeys, requestedProvider string) (*services.PublishedLLM, error) {
+func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKeys *llm.ProviderAPIKeys, requestedProvider, requestedModelID string) (*services.PublishedLLM, error) {
 	publishedLLMs, exists, err := services.LoadPublishedLLMs(ctx, workspaceURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load published LLMs: %w", err)
@@ -357,67 +348,46 @@ func loadPublishedSearchProvider(ctx context.Context, workspaceURL string, apiKe
 	}
 
 	requestedProvider = strings.ToLower(strings.TrimSpace(requestedProvider))
-	if requestedProvider != "" {
-		foundProvider := false
-		for _, entry := range publishedLLMs {
-			provider := strings.ToLower(strings.TrimSpace(entry.Provider))
-			if provider != requestedProvider {
-				continue
-			}
-			foundProvider = true
-			if !isSearchCapablePublishedLLM(entry) {
-				continue
-			}
-			if !hasSearchProviderAuth(provider, apiKeys) {
-				return nil, fmt.Errorf("search_web_llm requires auth for requested provider %q in config/provider-api-keys.json. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
-			}
-			if !isSearchProviderAvailable(provider) {
-				return nil, fmt.Errorf("search_web_llm cannot use requested provider %q because its runtime dependency is unavailable. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
-			}
-			candidate := entry
-			return &candidate, nil
-		}
-		if foundProvider {
-			return nil, fmt.Errorf("search_web_llm does not support published provider %q for the selected model(s) yet. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
-		}
-		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
+	requestedModelID = strings.TrimSpace(requestedModelID)
+	if requestedProvider == "" {
+		return nil, fmt.Errorf("provider is required. %s", publishedSearchProviderSummary(publishedLLMs))
+	}
+	if requestedModelID == "" {
+		return nil, fmt.Errorf("model_id is required. %s", publishedSearchProviderSummary(publishedLLMs))
 	}
 
-	var primaryCandidates []services.PublishedLLM
-	var fallbackCandidates []services.PublishedLLM
+	foundProvider := false
+	foundModel := false
 	for _, entry := range publishedLLMs {
 		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
-		if !isSearchCapablePublishedLLM(entry) || !hasSearchProviderAuth(provider, apiKeys) || !isSearchProviderAvailable(provider) {
+		modelID := strings.TrimSpace(entry.ModelID)
+		if provider != requestedProvider {
 			continue
 		}
-		switch entry.SearchRole {
-		case "primary":
-			primaryCandidates = append(primaryCandidates, entry)
-		case "fallback":
-			fallbackCandidates = append(fallbackCandidates, entry)
+		foundProvider = true
+		if !strings.EqualFold(modelID, requestedModelID) {
+			continue
 		}
-	}
-
-	if len(primaryCandidates) > 0 {
-		sortSearchCandidates(primaryCandidates)
-		candidate := primaryCandidates[0]
+		foundModel = true
+		if !isSearchCapablePublishedLLM(entry) {
+			continue
+		}
+		if !hasSearchProviderAuth(provider, apiKeys) {
+			return nil, fmt.Errorf("search_web_llm requires auth for requested provider %q in config/provider-api-keys.json. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
+		}
+		if !isSearchProviderAvailable(provider) {
+			return nil, fmt.Errorf("search_web_llm cannot use requested provider %q because its runtime dependency is unavailable. %s", entry.Provider, publishedSearchProviderSummary(publishedLLMs))
+		}
+		candidate := entry
 		return &candidate, nil
 	}
-	if len(fallbackCandidates) > 0 {
-		sortSearchCandidates(fallbackCandidates)
-		candidate := fallbackCandidates[0]
-		return &candidate, nil
+	if !foundProvider {
+		return nil, fmt.Errorf("search_web_llm could not find requested provider %q in config/published-llms.json. %s", requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
-
-	for _, entry := range publishedLLMs {
-		provider := strings.ToLower(strings.TrimSpace(entry.Provider))
-		if isSearchCapablePublishedLLM(entry) && hasSearchProviderAuth(provider, apiKeys) && isSearchProviderAvailable(provider) {
-			candidate := entry
-			return &candidate, nil
-		}
+	if !foundModel {
+		return nil, fmt.Errorf("search_web_llm could not find model %q under provider %q in config/published-llms.json. %s", requestedModelID, requestedProvider, publishedSearchProviderSummary(publishedLLMs))
 	}
-
-	return nil, fmt.Errorf("search_web_llm requires a published search-capable model in config/published-llms.json. %s", publishedSearchProviderSummary(publishedLLMs))
+	return nil, fmt.Errorf("search_web_llm does not support published provider %q with model %q for search yet. %s", requestedProvider, requestedModelID, publishedSearchProviderSummary(publishedLLMs))
 }
 
 func loadWorkspaceTierModel(ctx context.Context, workspaceURL, tier string) (*TierModel, error) {
@@ -614,9 +584,9 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 	return keys
 }
 
-func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requestedProvider string) (llmtypes.Model, error) {
+func createPublishedSearchLLM(ctx context.Context, workspaceURL string, requestedProvider, requestedModelID string) (llmtypes.Model, error) {
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
-	publishedLLM, err := loadPublishedSearchProvider(ctx, workspaceURL, apiKeys, requestedProvider)
+	publishedLLM, err := loadPublishedSearchProvider(ctx, workspaceURL, apiKeys, requestedProvider, requestedModelID)
 	if err != nil {
 		return nil, err
 	}

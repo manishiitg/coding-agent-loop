@@ -4,7 +4,7 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
-import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS, SUMMARY_MODE_EVENTS } from './eventModeUtils';
+import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
 import { compareEventsChronologically, summarizeEventForDebug } from '../../utils/eventOrdering';
@@ -441,11 +441,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // const setTabHideToolCalls = useChatStore(state => state.setTabHideToolCalls) // kept for future "show all / collapse all"
   const sessionId = tab?.sessionId
   const hideToolCalls = tab?.hideToolCalls || false
-  // 'summary' mode: only show high-level agent activity (agent start/end, step progress,
-  // errors, user messages). Drops tool calls, LLM events, MCP internals — reducing
-  // ~500 events to ~20-30 for background workflows.
-  const viewMode = tab?.viewMode || 'detailed'
-
   // Holds the last returned displayEvents array for ref-stability.
   // The displayEvents memo below does heavy work (dedup, filter, sort, smart cap).
   // Even when the output is identical, it produces a new array ref — which cascades:
@@ -477,12 +472,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       // Dedup by ID
       if (seenIds.has(event.id)) continue;
       seenIds.add(event.id);
-
-      // SUMMARY MODE: Early exit — if the event type isn't in the allowlist, skip it entirely.
-      // This is checked right after dedup so we avoid all downstream filter logic (hidden events,
-      // streaming checks, delegation tool extraction, etc.) for events we'll drop anyway.
-      // Reduces processing from ~500 events to ~20-30 for typical workflows.
-      if (viewMode === 'summary' && !SUMMARY_MODE_EVENTS.has(type)) continue;
 
       // Never-display events
       if (NEVER_DISPLAY_EVENTS.has(type)) continue;
@@ -598,7 +587,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Reverse back to chronological order
     capped.reverse();
     return returnStable(capped);
-  }, [events, loadedOlderEvents, viewMode]);
+  }, [events, loadedOlderEvents]);
 
   // Tool call grouping is done in flattenedItems (after tree building + flattening),
   // so sub-agent events — which are excluded from the flat list at delegation_start nodes —
@@ -914,6 +903,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const realFilteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
 
+    if (flatHierarchy) {
+      return realFilteredEvents.map(event => ({
+        event,
+        children: [],
+        level: 0,
+        isExpanded: expandedNodes.has(event.id),
+      }));
+    }
+
     const inferredStateByExecutionId = new Map<string, InferredExecutionState>();
     const markExecutionState = (executionId: string | undefined, state: InferredExecutionState) => {
       if (!executionId || isRootLikeExecutionId(executionId)) return;
@@ -1189,7 +1187,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, getAgentSessionKey, getExecutionId, getParentId]);
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, executionTree, flatHierarchy, getAgentSessionKey, getExecutionId, getParentId]);
 
   useEffect(() => {
     if (!isEventHierarchyDebugEnabled()) return;

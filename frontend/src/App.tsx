@@ -1139,7 +1139,9 @@ function App() {
   }, [createNewMultiAgentTab, selectedModeCategory, showWorkflowsOverview, toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
 
   useEffect(() => {
-    setWorkspaceMinimized(showWorkflowsOverview)
+    if (showWorkflowsOverview) {
+      setWorkspaceMinimized(true)
+    }
   }, [showWorkflowsOverview, setWorkspaceMinimized])
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { X, ArrowDown, List, ListTree, Radio } from 'lucide-react'
-import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
+import { normalizeEventViewMode, useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -117,10 +117,10 @@ export const WorkflowChatTabs: React.FC = () => {
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
 
-  // View mode for the active tab — 'summary' shows only agent outputs, 'detailed' shows everything
+  // Layout mode for the active tab — tree groups related events, flat shows the old feed.
   const activeViewMode = useChatStore(state => {
     const tab = activeTabId ? state.chatTabs[activeTabId] : null
-    return tab?.viewMode || 'detailed'
+    return normalizeEventViewMode(tab?.viewMode)
   })
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
@@ -217,36 +217,36 @@ export const WorkflowChatTabs: React.FC = () => {
             </span>
           </button>
 
-          {/* View Mode Toggle — switch between detailed (all events) and summary (agent outputs only) */}
+          {/* Layout Toggle — switch between tree hierarchy and the old flat feed */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   if (activeTabId) {
-                    setTabViewMode(activeTabId, activeViewMode === 'summary' ? 'detailed' : 'summary')
+                    setTabViewMode(activeTabId, activeViewMode === 'tree' ? 'flat' : 'tree')
                   }
                 }}
                 className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
-                  ${activeViewMode === 'summary'
+                  ${activeViewMode === 'tree'
                     ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
                   }
                   hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
                 `}
               >
-                {activeViewMode === 'summary' ? (
-                  <List className="w-3.5 h-3.5" />
-                ) : (
+                {activeViewMode === 'tree' ? (
                   <ListTree className="w-3.5 h-3.5" />
+                ) : (
+                  <List className="w-3.5 h-3.5" />
                 )}
                 <span className="hidden sm:inline">
-                  {activeViewMode === 'summary' ? 'Summary' : 'Detailed'}
+                  {activeViewMode === 'tree' ? 'Tree' : 'Flat'}
                 </span>
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>{activeViewMode === 'summary' ? 'Summary view — showing agent outputs only' : 'Detailed view — showing all events'}</p>
+              <p>{activeViewMode === 'tree' ? 'Tree view — group events by workflow and agent' : 'Flat view — show events in chronological order'}</p>
             </TooltipContent>
           </Tooltip>
 

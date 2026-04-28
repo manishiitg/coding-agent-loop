@@ -2183,8 +2183,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
-      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'lg:contents' : ''}`}>
-        <div className={sharedToolbar && showChatArea ? 'lg:col-span-2 lg:row-start-1' : ''}>
+      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'xl:contents' : ''}`}>
+        <div className={sharedToolbar && showChatArea ? 'xl:col-span-2 xl:row-start-1' : ''}>
           <WorkflowToolbar
             status={status}
             hasPlan={false}
@@ -2201,7 +2201,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             onRefresh={handleRefresh}
           />
         </div>
-        <div className={`${sharedToolbar && showChatArea ? 'lg:col-start-2 lg:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
+        <div className={`${sharedToolbar && showChatArea ? 'flex-1 xl:col-start-2 xl:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
               <span className="text-3xl">📋</span>
@@ -2229,8 +2229,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   return (
-    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'lg:contents' : ''}`} ref={reactFlowWrapper}>
-      <div className={sharedToolbar && showChatArea ? 'lg:col-span-2 lg:row-start-1' : ''}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'xl:contents' : ''}`} ref={reactFlowWrapper}>
+      <div className={sharedToolbar && showChatArea ? 'xl:col-span-2 xl:row-start-1' : ''}>
         <WorkflowToolbar
           status={status}
           hasPlan={true}
@@ -2256,7 +2256,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         />
       </div>
 
-      <div className={`${sharedToolbar && showChatArea ? 'lg:col-start-2 lg:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+      <div className={`${sharedToolbar && showChatArea ? 'flex-1 xl:col-start-2 xl:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : canvasViewMode === 'plan' ? (
           <div className="h-full min-h-0 relative">

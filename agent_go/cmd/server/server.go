@@ -3856,6 +3856,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 					}
+
+					// Register workflow schedule tools (list/create/update/delete/trigger/get-runs)
+					schedTools := createWorkflowScheduleTools()
+					schedExecutors := createWorkflowScheduleExecutors(api, currentUserID)
+					for _, tool := range schedTools {
+						if tool.Function == nil {
+							continue
+						}
+						toolName := tool.Function.Name
+						exec, ok := schedExecutors[toolName]
+						if !ok {
+							continue
+						}
+						var params map[string]interface{}
+						if tool.Function.Parameters != nil {
+							paramsBytes, _ := json.Marshal(tool.Function.Parameters)
+							json.Unmarshal(paramsBytes, &params)
+						}
+						capturedExec := exec
+						wrappedExec := func(ctx context.Context, args map[string]interface{}) (string, error) {
+							ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+							return capturedExec(ctx, args)
+						}
+						if err := delegationAgent.RegisterCustomToolWithTimeout(
+							toolName,
+							tool.Function.Description,
+							params,
+							wrappedExec,
+							0,
+							delegationCategory,
+						); err != nil {
+							logfWithContext(queryLogCtx, "[WORKFLOW_SCHEDULE_TOOLS] Failed to register %s: %v", toolName, err)
+						} else {
+							logfWithContext(queryLogCtx, "[WORKFLOW_SCHEDULE_TOOLS] Registered %s", toolName)
+						}
+					}
 				}
 			}
 		}
@@ -6563,6 +6599,11 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		Status:            BGAgentRunning,
 		CreatedAt:         time.Now(),
 		cancel:            start.Cancel,
+		Metadata: map[string]string{
+			"workflow_path":    n.workspacePath,
+			"preset_query_id":  n.presetQueryID,
+			"execution_source": trackedExecutionSourceWorkshopBackground,
+		},
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
 	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.presetQueryID, n.userID, start.ID, start.Name)

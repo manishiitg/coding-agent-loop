@@ -415,21 +415,21 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     : !workspacePaneVisible
       ? 'flex-1 min-h-0 flex flex-col'
       : reportPaneTier === 'mobile'
-        ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:grid-rows-[auto_minmax(0,1fr)]'
+        ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_480px] xl:grid-rows-[auto_minmax(0,1fr)]'
         : reportPaneTier === 'tablet'
-          ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_880px] lg:grid-rows-[auto_minmax(0,1fr)]'
+          ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_880px] xl:grid-rows-[auto_minmax(0,1fr)]'
           : reportPaneTier === 'laptop'
-            ? 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[360px_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]'
-            : 'flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-2 lg:grid-rows-[auto_minmax(0,1fr)]'
+            ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[360px_minmax(0,1fr)] xl:grid-rows-[auto_minmax(0,1fr)]'
+            : 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-2 xl:grid-rows-[auto_minmax(0,1fr)]'
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
       ? 'hidden'
       : reportPaneTier === 'mobile'
-        ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[480px] lg:flex-none'
+        ? 'min-h-0 min-w-0 transition-all duration-300 w-full xl:col-start-2 xl:row-start-2 xl:w-[480px] xl:flex-none'
         : reportPaneTier === 'tablet'
-          ? 'min-h-0 min-w-0 transition-all duration-300 w-full lg:col-start-2 lg:row-start-2 lg:w-[880px] lg:flex-none'
-          : 'min-h-0 min-w-0 transition-all duration-300 lg:col-start-2 lg:row-start-2'
+          ? 'min-h-0 min-w-0 transition-all duration-300 w-full xl:col-start-2 xl:row-start-2 xl:w-[880px] xl:flex-none'
+          : 'min-h-0 min-w-0 transition-all duration-300 xl:col-start-2 xl:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -1242,7 +1242,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {showChatArea && (
           <div className={`flex min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
-              ? `border-b border-border lg:col-start-1 lg:row-start-2 lg:border-b-0 lg:border-r ${shouldUseMobileReportPane ? 'flex-1 lg:flex-[1.35]' : 'flex-1 basis-1/2'}`
+              ? `border-b border-border xl:col-start-1 xl:row-start-2 xl:border-b-0 xl:border-r ${shouldUseMobileReportPane ? 'flex-1 xl:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
           }`}>
             <div className="flex-shrink-0">

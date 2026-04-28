@@ -17,7 +17,7 @@ import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
-import type { ChatTab } from '../stores/useChatStore'
+import { normalizeEventViewMode, type ChatTab } from '../stores/useChatStore'
 import type { CustomPreset } from '../types/preset'
 import { restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
@@ -291,6 +291,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const activeTab = useChatStore(state => 
     targetTabId ? state.chatTabs[targetTabId] : undefined
   )
+  const activeEventViewMode = normalizeEventViewMode(activeTab?.viewMode)
   
   // PERF FIX: Stable tab-session key to avoid phantom re-renders.
   //
@@ -1145,8 +1146,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const eventsBeforeFilter = response.events as PollingEvent[]
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false
-    const tabViewMode = tab ? (chatStore.getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
-
     // Check if we already have frontend-created user messages for this session.
     // We only want to suppress the backend echo for the exact same submitted text.
     // Other backend user_message events, like steer pickup notifications injected
@@ -1432,24 +1431,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         })
       }
 
-      // PERF: In summary mode, skip sub-agent inner events (tool calls, LLM events) from tabEvents.
-      // These are grouped inside agent cards and never shown at the top level,
-      // but adding them triggers the full render cascade on every batch.
-      // In detailed mode, include everything for full drill-down.
-      if (tabViewMode === 'summary' && isSubAgentEvent
-        && event.type !== 'orchestrator_agent_start'
-        && event.type !== 'orchestrator_agent_end'
-        && event.type !== 'todo_task_step_completed'
-        && event.type !== 'todo_task_status_update'
-        && event.type !== 'todo_task_route_selected'
-        && event.type !== 'todo_task_item_created'
-        && event.type !== 'todo_task_item_updated'
-        && event.type !== 'todo_task_item_completed'
-        && event.type !== 'step_progress_updated'
-        && event.type !== 'learn_code_script_execution') {
-        continue
-      }
-
       newEvents.push(event)
     }
     // PERF FIX: Mark workspace as stale instead of auto-fetching.
@@ -1494,10 +1475,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // but we skip side effects (canvas updates, step progress, workspace refresh) to avoid
     // polluting the currently visible workflow's UI state.
     //
-    // PERF: Also skip when tab is in 'summary' viewMode — the user doesn't need live
-    // canvas node updates (running/completed/failed colors) in summary mode, and each
-    // setStepStatus/handleBatchGroup call triggers workflowStore state updates which
-    // cascade into React Flow node re-renders.
     // PERF: Removed step_progress_updated / batch_group_start/end processing from chat events.
     // These were calling setStepStatus/handleBatchGroupStart which update workflowStore →
     // trigger usePlanToFlow → full Dagre layout recomputation for ALL canvas nodes on every event.
@@ -1552,29 +1529,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
     const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
 
-    // PERF: Early drop of sub-agent inner events in summary mode.
-    // With many parallel background agents (5-10+), the SSE floods with tool_call, llm_generation
-    // events that are ultimately filtered out by processEventsResponse. Dropping them here
-    // avoids all downstream processing (streaming checks, correlation ID parsing, store updates).
-    const tab = Object.values(chatStore.chatTabs).find(t => t.sessionId === actualSessionId) || null
-    const isSummaryMode = tab ? (chatStore.getTab(tab.tabId)?.viewMode ?? 'detailed') === 'summary' : false
-    const incomingEvents = isSummaryMode
-      ? msg.events.filter(event => {
-          const agentEvent = event.data as Record<string, unknown> | undefined
-          const innerData = agentEvent?.data as Record<string, unknown> | undefined
-          const cid = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
-          const isSubAgent = typeof cid === 'string' && (cid.startsWith('delegation-') || cid.startsWith('workshop-'))
-          if (!isSubAgent) return true // main agent events always pass
-          // Only keep wrapper events and status events for sub-agents
-          const t = event.type
-          return t === 'orchestrator_agent_start' || t === 'orchestrator_agent_end'
-            || t === 'streaming_start' || t === 'streaming_end'
-            || t === 'todo_task_step_completed' || t === 'todo_task_route_selected'
-            || t === 'todo_task_item_created' || t === 'todo_task_item_updated'
-            || t === 'todo_task_item_completed' || t === 'step_progress_updated'
-            || t === 'learn_code_script_execution'
-        })
-      : msg.events
+    const incomingEvents = msg.events
 
     // Separate streaming events (immediate) from non-streaming events (batched)
     const nonStreamingEvents: PollingEvent[] = []
@@ -2747,7 +2702,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -2765,7 +2720,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
+              <EventDisplay events={displayEvents} executionTree={sessionExecutionTree} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={activeEventViewMode === 'flat'} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>
         )}

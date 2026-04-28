@@ -182,7 +182,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   }, [selectedIndex])
 
   // Switch to a workflow or chat tab. When `minimize` is true (workflow only),
-  // the old workflow's tabs are set to 'summary' viewMode.
+  // the old workflow's tabs are set to flat layout.
   const handleSelect = useCallback((item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'chat') {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
@@ -198,20 +198,20 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     const presetStore = useGlobalPresetStore.getState()
 
     if (minimize) {
-      // Set ALL tabs of the OLD (current) preset to summary mode — they're going to background
+      // Set ALL tabs of the OLD (current) preset to flat mode — they're going to background
       const oldPresetId = presetStore.activePresetIds.workflow
       if (oldPresetId) {
         Object.values(chatStore.chatTabs).forEach(tab => {
           if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === oldPresetId) {
-            chatStore.setTabViewMode(tab.tabId, 'summary')
+            chatStore.setTabViewMode(tab.tabId, 'flat')
           }
         })
       }
 
-      // Set ALL tabs of the NEW preset to detailed mode — they're coming to foreground
+      // Set ALL tabs of the NEW preset to tree mode — they're coming to foreground
       Object.values(chatStore.chatTabs).forEach(tab => {
         if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.id) {
-          chatStore.setTabViewMode(tab.tabId, 'detailed')
+          chatStore.setTabViewMode(tab.tabId, 'tree')
         }
       })
     }
@@ -255,8 +255,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (filteredItems.length > 0 && selectedIndex >= 0 && selectedIndex < filteredItems.length) {
-        // Shift+Enter: switch AND minimize the old workflow (set to summary mode).
-        // Plain Enter: switch normally (keep old workflow in detailed mode).
+        // Shift+Enter: switch AND put the old workflow in flat mode.
+        // Plain Enter: switch normally.
         handleSelect(filteredItems[selectedIndex], e.shiftKey)
       }
     } else if (e.key === 'Escape') {

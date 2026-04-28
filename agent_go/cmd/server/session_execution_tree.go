@@ -481,6 +481,10 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 		if name == "" {
 			name = "Background Agent"
 		}
+		metadata := cloneSessionExecutionMetadata(snap.Metadata)
+		if existing := nodes[snap.ID]; existing != nil && len(metadata) == 0 {
+			metadata = cloneSessionExecutionMetadata(existing.Metadata)
+		}
 		nodes[snap.ID] = &SessionExecutionTreeNode{
 			ExecutionID:       snap.ID,
 			ParentExecutionID: parentID,
@@ -492,7 +496,7 @@ func (api *StreamingAPI) buildSessionExecutionTree(session *ActiveSessionInfo) *
 			StartedAt:         snap.CreatedAt,
 			CompletedAt:       snap.CompletedAt,
 			Error:             snap.Error,
-			Metadata:          cloneSessionExecutionMetadata(snap.Metadata),
+			Metadata:          metadata,
 		}
 	}
 

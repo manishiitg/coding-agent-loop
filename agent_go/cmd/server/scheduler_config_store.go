@@ -22,6 +22,17 @@ type SchedulerConfig struct {
 	ExecutionEnabled bool       `json:"execution_enabled"`
 	DisabledViaEnv   bool       `json:"disabled_via_env,omitempty"`
 	DisabledReason   string     `json:"disabled_reason,omitempty"`
+
+	// Per-workflow env filter — populated from SCHEDULER_ALLOWED_WORKFLOWS /
+	// SCHEDULER_BLOCKED_WORKFLOWS so the UI can show which crons run on this
+	// machine when sharing workspace files across multiple machines.
+	AllowedWorkflows []string `json:"allowed_workflows,omitempty"`
+	BlockedWorkflows []string `json:"blocked_workflows,omitempty"`
+
+	// Per-user multi-agent env filter — populated from SCHEDULER_ALLOWED_USERS /
+	// SCHEDULER_BLOCKED_USERS for multi-agent schedules under _users/{userID}/.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+	BlockedUsers []string `json:"blocked_users,omitempty"`
 }
 
 func sanitizeSchedulerConfig(cfg *SchedulerConfig) *SchedulerConfig {
@@ -58,6 +69,12 @@ func applySchedulerRuntimeState(cfg *SchedulerConfig) *SchedulerConfig {
 		cfg.DisabledViaEnv = true
 		cfg.DisabledReason = "Automatic cron execution is disabled on this server because SCHEDULER_ENABLED=false. Manual runs still work."
 	}
+
+	envFilter := loadSchedulerWorkflowFilter()
+	cfg.AllowedWorkflows = envFilter.rawAllow
+	cfg.BlockedWorkflows = envFilter.rawBlock
+	cfg.AllowedUsers = envFilter.rawAllowUsers
+	cfg.BlockedUsers = envFilter.rawBlockUsers
 
 	return cfg
 }

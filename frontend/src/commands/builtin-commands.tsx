@@ -418,8 +418,8 @@ When you finish, update builder/improve.md with:
       ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in four passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
 
 PASS 0 — FRAMEWORK PRECHECK
-1. Read workflow.json. If \`workflow_type\` is unset, stop and tell the user: "Auto-improvement isn't set up yet. Run /improve-setup first to classify the workflow type and bootstrap metrics."
-2. Read <workflow>/metrics.json. If absent or empty AND the workflow is Type 1 or Type 3, stop and redirect to /improve-setup. Type 2 may proceed without metrics.
+1. Read workflow.json. If \`workflow_type\` is unset, stop and tell the user: "Auto-improvement isn't set up yet. Run /improve-setup-framework first to classify the workflow type and bootstrap metrics."
+2. Read <workflow>/metrics.json. If absent or empty AND the workflow is Type 1 or Type 3, stop and redirect to /improve-setup-framework. Type 2 may proceed without metrics.
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
@@ -478,7 +478,7 @@ DISCOVERY
 2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand the objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-5. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup first." A continuous-improvement schedule with no type and no metrics will optimize nothing concrete. For Type 1 / Type 3, also redirect if metrics.json is empty.
+5. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no type and no metrics will optimize nothing concrete. For Type 1 / Type 3, also redirect if metrics.json is empty.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -566,7 +566,7 @@ SETUP
 1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
-4. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup first to set the workflow type and bootstrap metrics." Then read <workflow>/metrics.json — for Type 1 / Type 3, redirect to /improve-setup if empty. Type 2 may proceed without metrics.
+4. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup-framework first to set the workflow type and bootstrap metrics." Then read <workflow>/metrics.json — for Type 1 / Type 3, redirect to /improve-setup-framework if empty. Type 2 may proceed without metrics.
 5. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
@@ -880,7 +880,7 @@ After the tool returns, tell me:
   // rules in conversation and offer to persist them via the
   // capture_context tool. A separate slash command would be redundant.
   {
-    command: 'improve-setup',
+    command: 'improve-setup-framework',
     description: 'One-time setup: classify workflow type and bootstrap metrics for the auto-improvement framework',
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
@@ -938,7 +938,7 @@ Then tell them:
 2. For Type 3: they can mention business rules in chat ("never recommend X", "always include Y") and you (the agent) will offer to persist them via capture_context.
 3. Hypotheses they want to test should be opened as experiments via /improve-* or by saying "I think changing X would help."
 
-DO NOT do any actual workflow improvement here. /improve-setup is setup only. Refer the user to /improve-* commands for the actual improvement loop.
+DO NOT do any actual workflow improvement here. /improve-setup-framework is setup only. Refer the user to /improve-* commands for the actual improvement loop.
 
 IMPROVE LOG: append a dated entry to builder/improve.md (read it first if it exists, create it if it does not) covering the chosen workflow_type and oversight_mode (with one-line rationale), the metrics created with their targets/floors/ceilings, the Type 3 context scaffolding if any, and what the user should run next. This is the durable setup record future improvement turns will read.`)
     }

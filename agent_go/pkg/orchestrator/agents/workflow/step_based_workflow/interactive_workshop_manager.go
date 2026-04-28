@@ -1029,7 +1029,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Auto-improvement framework tools — registered by
 	// RegisterAutoImprovementProposerTools / RegisterCaptureContextTool in
 	// server.go when the workshop session enters workflow-builder phase.
-	// Available in both builder and optimizer modes (builder for /improve-setup
+	// Available in both builder and optimizer modes (builder for /improve-setup-framework
 	// initial bootstrap; optimizer for the experiment loop and rule capture).
 	autoImprovement := []string{
 		"propose_metric",

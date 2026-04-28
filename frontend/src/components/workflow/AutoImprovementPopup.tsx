@@ -18,9 +18,12 @@ import {
   ChevronDown,
   ChevronRight,
   TrendingUp,
+  FileText,
+  ClipboardCheck,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import ModalPortal from '../ui/ModalPortal'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 // =====================================================================
 // AutoImprovementPopup — surfaces the auto-improvement framework state
@@ -37,7 +40,7 @@ interface AutoImprovementPopupProps {
   workspacePath: string | null
 }
 
-type Tab = 'experiments' | 'metrics' | 'trajectory' | 'decisions'
+type Tab = 'experiments' | 'metrics' | 'trajectory' | 'decisions' | 'improve' | 'review'
 
 interface Metric {
   id: string
@@ -319,6 +322,64 @@ const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({ metrics, experiments,
   )
 }
 
+interface BuilderDocPanelProps {
+  which: 'improve' | 'review'
+  doc: { exists: boolean; content: string; path: string } | null
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+}
+
+const BuilderDocPanel: React.FC<BuilderDocPanelProps> = ({ which, doc, loading, error, onRefresh }) => {
+  const title = which === 'improve' ? 'Improve log' : 'Review log'
+  const blurb = which === 'improve'
+    ? 'The optimizer agent\'s durable improvement log. Slash commands like /improve-eval, /improve-workflow, and /optimize-* read this on the way in and append decisions on the way out.'
+    : 'The reviewer agent\'s findings log. /review-* slash commands append dated entries with severity-ordered findings and follow-ups (REVIEW = recommend, not apply).'
+  const emptyHint = which === 'improve'
+    ? 'No entries yet. Run /improve-setup-framework or any /improve-* command to bootstrap it.'
+    : 'No entries yet. Run any /review-* slash command to append the first entry.'
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {doc?.path && <code className="text-[10px] text-muted-foreground">{doc.path}</code>}
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border hover:bg-accent disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          Refresh
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">{blurb}</p>
+      {error && (
+        <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+          {error}
+        </div>
+      )}
+      {loading && !doc && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      )}
+      {doc && !doc.exists && (
+        <div className="border border-dashed rounded-md p-4 text-sm text-muted-foreground">
+          {emptyHint}
+        </div>
+      )}
+      {doc && doc.exists && (
+        <div className="border rounded-md p-4 bg-card">
+          <MarkdownRenderer content={doc.content} disablePathLinking />
+        </div>
+      )}
+    </div>
+  )
+}
+
 const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath }) => {
   const [tab, setTab] = useState<Tab>('experiments')
   const [loading, setLoading] = useState(false)
@@ -331,6 +392,10 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
   const [expandedExperiment, setExpandedExperiment] = useState<string | null>(null)
   const [expandedHistory, setExpandedHistory] = useState<string | null>(null)
   const [decisionFilter, setDecisionFilter] = useState<'all' | 'agent' | 'user' | 'system'>('all')
+  const [improveDoc, setImproveDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
+  const [reviewDoc, setReviewDoc] = useState<{ exists: boolean; content: string; path: string } | null>(null)
+  const [docLoading, setDocLoading] = useState<'improve' | 'review' | null>(null)
+  const [docError, setDocError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return
@@ -448,6 +513,36 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     }
   }, [workspacePath, refresh])
 
+  const fetchDoc = useCallback(async (which: 'improve' | 'review') => {
+    if (!workspacePath) return
+    setDocLoading(which)
+    setDocError(null)
+    try {
+      const res = await agentApi.getBuilderDoc(workspacePath, which)
+      const payload = { exists: !!res.exists, content: res.content || '', path: res.path || '' }
+      if (which === 'improve') setImproveDoc(payload)
+      else setReviewDoc(payload)
+      if (!res.success && res.error) setDocError(res.error)
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDocLoading(null)
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    if (!isOpen || !workspacePath) return
+    if (tab === 'improve' && improveDoc === null) fetchDoc('improve')
+    if (tab === 'review' && reviewDoc === null) fetchDoc('review')
+  }, [isOpen, workspacePath, tab, improveDoc, reviewDoc, fetchDoc])
+
+  // Bust the cached docs whenever the workspace switches or the popup re-opens.
+  useEffect(() => {
+    setImproveDoc(null)
+    setReviewDoc(null)
+    setDocError(null)
+  }, [workspacePath, isOpen])
+
   const filteredDecisions = decisions.filter((d) => decisionFilter === 'all' || d.source === decisionFilter)
 
   if (!isOpen) return null
@@ -488,6 +583,8 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                 { id: 'metrics', icon: Target, label: `Metrics (${metrics.length})` },
                 { id: 'trajectory', icon: TrendingUp, label: 'Trajectory' },
                 { id: 'decisions', icon: ListChecks, label: `Decisions (${decisions.length})` },
+                { id: 'improve', icon: FileText, label: 'Improve log' },
+                { id: 'review', icon: ClipboardCheck, label: 'Review log' },
               ] as const
             ).map((t) => {
               const Icon = t.icon
@@ -776,6 +873,16 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                   </div>
                 )}
               </div>
+            )}
+
+            {(tab === 'improve' || tab === 'review') && (
+              <BuilderDocPanel
+                which={tab}
+                doc={tab === 'improve' ? improveDoc : reviewDoc}
+                loading={docLoading === tab}
+                error={docError}
+                onRefresh={() => fetchDoc(tab)}
+              />
             )}
           </div>
         </div>

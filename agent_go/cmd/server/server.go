@@ -1196,6 +1196,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/experiments/approve", api.handleApproveExperiment).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/capture-context", api.handleCaptureContext).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/experiments/record-measurement", api.handleRecordMeasurement).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/builder-doc", api.handleGetBuilderDoc).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")

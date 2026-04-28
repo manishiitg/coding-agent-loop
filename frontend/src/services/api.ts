@@ -1236,6 +1236,10 @@ export const agentApi = {
     })
     return response.data
   },
+  getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
+    const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc } })
+    return response.data
+  },
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state in a single API call (run folders, variables, phases, progress)

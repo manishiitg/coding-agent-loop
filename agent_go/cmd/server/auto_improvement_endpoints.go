@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -177,6 +178,53 @@ func (api *StreamingAPI) handleGetExperiments(w http.ResponseWriter, r *http.Req
 		resp.History = hist
 	}
 	writeAIJSON(w, resp)
+}
+
+// BuilderDocResponse is the JSON shape of GET /api/workflow/builder-doc.
+// It returns the markdown content (or empty if the file does not exist yet).
+type BuilderDocResponse struct {
+	Success bool   `json:"success"`
+	Doc     string `json:"doc"`     // "improve" | "review" — echoed back
+	Path    string `json:"path"`    // workspace-relative path that was read
+	Exists  bool   `json:"exists"`  // false if the file does not exist yet
+	Content string `json:"content"` // markdown body, "" when !exists
+	Error   string `json:"error,omitempty"`
+}
+
+// handleGetBuilderDoc serves the contents of builder/improve.md or
+// builder/review.md so the AutoImprovementPopup can render them inline.
+// The "doc" query param picks which file. Read-only.
+func (api *StreamingAPI) handleGetBuilderDoc(w http.ResponseWriter, r *http.Request) {
+	if !setupCORS(w, r, http.MethodGet) {
+		return
+	}
+	workspacePath, ok := requireWorkspacePath(w, r)
+	if !ok {
+		return
+	}
+	doc := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("doc")))
+	var fileName string
+	switch doc {
+	case "improve":
+		fileName = "improve.md"
+	case "review":
+		fileName = "review.md"
+	default:
+		http.Error(w, "doc must be one of: improve, review", http.StatusBadRequest)
+		return
+	}
+	rel := path.Join("builder", fileName)
+	full := path.Join(strings.Trim(workspacePath, "/"), rel)
+	content, exists, err := readFileFromWorkspace(r.Context(), full)
+	if err != nil {
+		writeAIJSON(w, BuilderDocResponse{Success: false, Doc: doc, Path: rel, Error: err.Error()})
+		return
+	}
+	if !exists {
+		writeAIJSON(w, BuilderDocResponse{Success: true, Doc: doc, Path: rel, Exists: false, Content: ""})
+		return
+	}
+	writeAIJSON(w, BuilderDocResponse{Success: true, Doc: doc, Path: rel, Exists: true, Content: content})
 }
 
 // --- Shared HTTP helpers ----------------------------------------------------

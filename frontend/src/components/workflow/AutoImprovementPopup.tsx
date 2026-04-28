@@ -17,6 +17,7 @@ import {
   ListChecks,
   ChevronDown,
   ChevronRight,
+  TrendingUp,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import ModalPortal from '../ui/ModalPortal'
@@ -36,7 +37,7 @@ interface AutoImprovementPopupProps {
   workspacePath: string | null
 }
 
-type Tab = 'experiments' | 'metrics' | 'decisions'
+type Tab = 'experiments' | 'metrics' | 'trajectory' | 'decisions'
 
 interface Metric {
   id: string
@@ -62,7 +63,12 @@ interface Experiment {
   expected_magnitude: number
   baseline?: { mean?: Record<string, number>; std?: Record<string, number>; insufficient?: boolean }
   measurement?: { target_runs: number; completed_runs: number; values?: Record<string, number[]> }
-  conclusion?: { verdict?: string; rationale?: string; evidence?: any; verdict_overridden?: boolean }
+  conclusion?: {
+    verdict?: string
+    rationale?: string
+    evidence?: { post_mean?: Record<string, number>; magnitude_observed?: Record<string, number>; per_run_beat_pct?: Record<string, number>; drift_flagged?: boolean }
+    verdict_overridden?: boolean
+  }
   started_at: string
   concluded_at?: string
   intervention?: { trigger: string; applied_changes: string[] }
@@ -109,6 +115,208 @@ const formatTs = (ts: string) => {
   const d = new Date(ts)
   if (isNaN(d.getTime())) return ts
   return d.toLocaleString()
+}
+
+const VERDICT_DOT: Record<string, string> = {
+  kept: '#16a34a',
+  reverted: '#dc2626',
+  inconclusive: '#d97706',
+  extend: '#2563eb',
+}
+
+interface TrajectoryPanelProps {
+  metrics: Metric[]
+  experiments: Experiment[]
+  decisions: Decision[]
+}
+
+interface TrajectoryPoint {
+  t: number              // ms since epoch — concluded_at OR started_at fallback
+  value: number          // post_mean for finished, baseline_mean for unfinished
+  experiment: Experiment
+  isProjected: boolean   // true if we're plotting baseline (no post_mean yet)
+}
+
+const buildSeries = (metricId: string, experiments: Experiment[]): TrajectoryPoint[] => {
+  const points: TrajectoryPoint[] = []
+  for (const exp of experiments) {
+    if (!exp.target_metrics.includes(metricId)) continue
+    const post = exp.conclusion?.evidence?.post_mean?.[metricId]
+    const baseline = exp.baseline?.mean?.[metricId]
+    const tStr = exp.concluded_at || exp.started_at
+    const t = tStr ? Date.parse(tStr) : NaN
+    if (!Number.isFinite(t)) continue
+    if (typeof post === 'number') {
+      points.push({ t, value: post, experiment: exp, isProjected: false })
+    } else if (typeof baseline === 'number') {
+      points.push({ t, value: baseline, experiment: exp, isProjected: true })
+    }
+  }
+  return points.sort((a, b) => a.t - b.t)
+}
+
+const TrajectoryChart: React.FC<{ metric: Metric; series: TrajectoryPoint[]; decisions: Decision[] }> = ({ metric, series, decisions }) => {
+  const W = 640, H = 180
+  const padL = 56, padR = 16, padT = 12, padB = 28
+  const innerW = W - padL - padR
+  const innerH = H - padT - padB
+
+  if (series.length === 0) {
+    return (
+      <div className="border rounded-md p-3 text-xs text-muted-foreground">
+        <div className="font-medium text-foreground">{metric.id}</div>
+        No experiments have targeted this metric yet.
+      </div>
+    )
+  }
+
+  const ts = series.map((p) => p.t)
+  const vs = series.map((p) => p.value)
+  // Pull target/floor/ceiling into the y range so reference lines stay on canvas.
+  const refValues: number[] = []
+  if (typeof metric.target === 'number') refValues.push(metric.target)
+  if (typeof metric.floor === 'number') refValues.push(metric.floor)
+  if (typeof metric.ceiling === 'number') refValues.push(metric.ceiling)
+  const allYs = [...vs, ...refValues]
+  const yMinRaw = Math.min(...allYs)
+  const yMaxRaw = Math.max(...allYs)
+  const ySpan = yMaxRaw - yMinRaw || Math.max(Math.abs(yMaxRaw) * 0.1, 1)
+  const yMin = yMinRaw - ySpan * 0.1
+  const yMax = yMaxRaw + ySpan * 0.1
+
+  const tMin = Math.min(...ts)
+  const tMax = Math.max(...ts)
+  const tSpan = tMax - tMin || 1
+
+  const xOf = (t: number) => padL + ((t - tMin) / tSpan) * innerW
+  const yOf = (v: number) => padT + (1 - (v - yMin) / (yMax - yMin)) * innerH
+
+  const path = series
+    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${xOf(p.t).toFixed(1)} ${yOf(p.value).toFixed(1)}`)
+    .join(' ')
+
+  const formatY = (v: number) => {
+    if (Math.abs(v) >= 100) return v.toFixed(0)
+    if (Math.abs(v) >= 1) return v.toFixed(2)
+    return v.toFixed(3)
+  }
+  const formatX = (t: number) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+  // Decision markers: vertical ticks at each decision tied to one of the
+  // experiments shown (so we don't clutter the chart with unrelated decisions).
+  const expIds = new Set(series.map((p) => p.experiment.id))
+  const decisionMarkers = decisions
+    .filter((d) => d.linked_experiment_id && expIds.has(d.linked_experiment_id))
+    .map((d) => ({ t: Date.parse(d.ts), source: d.source, trigger: d.trigger }))
+    .filter((d) => Number.isFinite(d.t) && d.t >= tMin && d.t <= tMax)
+
+  // Reference lines: target / floor / ceiling.
+  const refLines: { v: number; label: string; color: string }[] = []
+  if (typeof metric.target === 'number') refLines.push({ v: metric.target, label: `target ${metric.target}`, color: '#7c3aed' })
+  if (typeof metric.floor === 'number') refLines.push({ v: metric.floor, label: `floor ${metric.floor}`, color: '#dc2626' })
+  if (typeof metric.ceiling === 'number') refLines.push({ v: metric.ceiling, label: `ceiling ${metric.ceiling}`, color: '#dc2626' })
+
+  return (
+    <div className="border rounded-md p-3 bg-card">
+      <div className="flex items-baseline justify-between mb-2 gap-2 flex-wrap">
+        <div>
+          <span className="font-medium text-sm">{metric.id}</span>
+          {metric.label && <span className="text-xs text-muted-foreground ml-2">{metric.label}</span>}
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          {metric.unit} · {metric.direction} · {metric.mode} · {series.length} point{series.length === 1 ? '' : 's'}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+        {/* axes */}
+        <line x1={padL} y1={padT} x2={padL} y2={padT + innerH} stroke="currentColor" strokeOpacity={0.25} />
+        <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="currentColor" strokeOpacity={0.25} />
+        {/* y ticks */}
+        {[0, 0.25, 0.5, 0.75, 1].map((f) => {
+          const v = yMin + (yMax - yMin) * (1 - f)
+          const y = padT + innerH * f
+          return (
+            <g key={`y-${f}`}>
+              <line x1={padL} y1={y} x2={padL + innerW} y2={y} stroke="currentColor" strokeOpacity={0.08} />
+              <text x={padL - 6} y={y + 3} textAnchor="end" fontSize={10} fill="currentColor" fillOpacity={0.6}>{formatY(v)}</text>
+            </g>
+          )
+        })}
+        {/* x ticks: first / middle / last */}
+        {[tMin, tMin + tSpan / 2, tMax].map((t, i) => (
+          <text key={`x-${i}`} x={xOf(t)} y={padT + innerH + 16} textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'} fontSize={10} fill="currentColor" fillOpacity={0.6}>
+            {formatX(t)}
+          </text>
+        ))}
+        {/* reference lines */}
+        {refLines.map((r, i) => (
+          <g key={`ref-${i}`}>
+            <line x1={padL} y1={yOf(r.v)} x2={padL + innerW} y2={yOf(r.v)} stroke={r.color} strokeOpacity={0.55} strokeDasharray="4 3" />
+            <text x={padL + innerW - 4} y={yOf(r.v) - 3} textAnchor="end" fontSize={9} fill={r.color}>{r.label}</text>
+          </g>
+        ))}
+        {/* decision markers */}
+        {decisionMarkers.map((d, i) => (
+          <line key={`dec-${i}`} x1={xOf(d.t)} y1={padT} x2={xOf(d.t)} y2={padT + innerH} stroke={d.source === 'user' ? '#10b981' : d.source === 'agent' ? '#6366f1' : '#9ca3af'} strokeOpacity={0.4} strokeDasharray="2 2">
+            <title>{`${d.source} · ${d.trigger} · ${new Date(d.t).toLocaleString()}`}</title>
+          </line>
+        ))}
+        {/* trajectory line */}
+        <path d={path} fill="none" stroke="#7c3aed" strokeOpacity={0.7} strokeWidth={1.5} />
+        {/* points */}
+        {series.map((p, i) => {
+          const verdict = p.experiment.conclusion?.verdict || ''
+          const fill = p.isProjected ? '#9ca3af' : (VERDICT_DOT[verdict] || '#6b7280')
+          return (
+            <circle
+              key={`pt-${i}`}
+              cx={xOf(p.t)}
+              cy={yOf(p.value)}
+              r={p.isProjected ? 3 : 4.5}
+              fill={fill}
+              stroke="white"
+              strokeWidth={1}
+              fillOpacity={p.isProjected ? 0.5 : 1}
+            >
+              <title>{`${p.experiment.id}\n${p.experiment.hypothesis}\nvalue=${formatY(p.value)}${p.isProjected ? ' (baseline — no post-mean yet)' : ''}\nverdict=${verdict || '—'}\n${new Date(p.t).toLocaleString()}`}</title>
+            </circle>
+          )
+        })}
+      </svg>
+      <div className="flex flex-wrap items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+        <span>verdict:</span>
+        {(['kept', 'reverted', 'inconclusive', 'extend'] as const).map((v) => (
+          <span key={v} className="inline-flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: VERDICT_DOT[v] }} />
+            {v}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-gray-400 opacity-50" />
+          baseline (no post-mean yet)
+        </span>
+      </div>
+    </div>
+  )
+}
+
+const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({ metrics, experiments, decisions }) => {
+  if (metrics.length === 0) {
+    return <p className="text-sm text-muted-foreground">No metrics defined yet — define metrics to see their trajectories.</p>
+  }
+  if (experiments.length === 0) {
+    return <p className="text-sm text-muted-foreground">No experiments yet — once experiments run, this view plots their post-means against the metric reference lines.</p>
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Each point is one experiment's post-mean for the metric, plotted at <code>concluded_at</code> (or <code>started_at</code> if still running). Color = verdict. Dashed horizontal lines mark target / floor / ceiling. Vertical ticks mark linked decisions.
+      </p>
+      {metrics.map((m) => (
+        <TrajectoryChart key={m.id} metric={m} series={buildSeries(m.id, experiments)} decisions={decisions} />
+      ))}
+    </div>
+  )
 }
 
 const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onClose, workspacePath }) => {
@@ -278,6 +486,7 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
               [
                 { id: 'experiments', icon: Activity, label: `Experiments (${activeExperiments.length} active / ${historyExperiments.length} done)` },
                 { id: 'metrics', icon: Target, label: `Metrics (${metrics.length})` },
+                { id: 'trajectory', icon: TrendingUp, label: 'Trajectory' },
                 { id: 'decisions', icon: ListChecks, label: `Decisions (${decisions.length})` },
               ] as const
             ).map((t) => {
@@ -512,6 +721,14 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                   </div>
                 )}
               </div>
+            )}
+
+            {tab === 'trajectory' && (
+              <TrajectoryPanel
+                metrics={metrics}
+                experiments={[...activeExperiments, ...historyExperiments]}
+                decisions={decisions}
+              />
             )}
 
             {tab === 'decisions' && (

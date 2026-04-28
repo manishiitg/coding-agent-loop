@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Network } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Network, Beaker } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -567,7 +567,8 @@ SETUP
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
 4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
-5. ${iterationHint} Treat that iteration as the default evidence set for this command run.
+5. **Framework mode.** Read <workflow>/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, you will package the intended changes as an experiment via propose_experiment so the change is gated behind measurement and is auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report. The diagnostic phases below run the same way in both modes — only the application step changes.
+6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
 1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
@@ -586,9 +587,14 @@ For group {group}:
      - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}") to score the existing outputs. Do NOT execute a fresh workflow run in this phase.
      - If there is no meaningful run evidence for this group in the chosen iteration, report that gap clearly and continue with the groups that do have evidence.
   b. **DECIDE** — based on the existing evidence:
-     - If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue reviewing the remaining groups against the updated plan.
-     - Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) and wait for it to finish.
-  c. **BE CONSERVATIVE** — prefer harden_workflow for reliability fixes; use replanning only when the workflow shape is actually wrong.
+     - **DIRECT MODE (no metrics.json):**
+       • If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue reviewing the remaining groups against the updated plan.
+       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) and wait for it to finish.
+     - **EXPERIMENT MODE (metrics.json non-empty):**
+       • For non-structural fixes, do NOT call harden_workflow directly. Instead, identify the smallest concrete change you would have made (e.g. a prompt addition, a validation rule, a config flip) and call propose_experiment with: a falsifiable hypothesis tying the change to one or more declared metrics, expected_direction + expected_magnitude, and intervention_changes spelling out the file edits. The framework applies the diff, captures a baseline, and starts the measurement window — do NOT apply the harden tool too. One experiment per group per command run.
+       • For structural problems severe enough to require replan_workflow_from_results, replan is exempt from the experiment gate (it changes the plan shape, not the decisions metrics measure). Replan first, then continue reviewing remaining groups; non-structural fixes after replan still go through propose_experiment.
+       • If a target metric you need does not yet exist, call propose_metric first.
+  c. **BE CONSERVATIVE** — prefer hardening fixes (or, in experiment mode, narrow per-step interventions) over replanning. Use replanning only when the workflow shape is actually wrong.
 
 PHASE 3 — VERIFY THE IMPROVEMENT
 1. After all groups have been reviewed, compare:
@@ -604,15 +610,17 @@ PHASE 3 — VERIFY THE IMPROVEMENT
 
 FINAL REPORT
 Summarize:
+- Mode used (DIRECT or EXPERIMENT) and why
 - Structural diagnosis from optimize_workflow
 - Whether replan_workflow_from_results was used, and why
-- Per-group: what existing evidence was reviewed, whether eval had to be filled in, harden changes, steps newly marked optimized
-- Which success criteria are now better satisfied than before
+- Per-group: what existing evidence was reviewed, whether eval had to be filled in, harden changes (DIRECT) or experiment ids opened (EXPERIMENT), steps newly marked optimized
+- Which success criteria are now better satisfied than before (DIRECT), or which experiments are now measuring (EXPERIMENT)
 - Remaining gaps that still need human attention, if any
 
 Before finishing, update builder/improve.md with:
 - evidence reviewed
-- workflow changes applied
+- mode (direct vs experiment) and any experiment ids opened
+- workflow changes applied (or, in experiment mode, queued behind experiments)
 - eval/report changes touched if any
 - what improved
 - remaining gaps
@@ -971,6 +979,57 @@ Then tell them:
 DO NOT do any actual workflow improvement here. /improve-setup-framework is setup only.
 
 IMPROVE LOG: the Workflow Profile written in Step 2 IS the durable setup record. Below the profile, append a small dated entry recording the metrics created and what the user should run next. Future improvement turns will read both.`)
+    }
+  },
+  {
+    command: 'propose-experiment',
+    description: 'Open ONE experiment: pick a metric, formulate a hypothesis, apply the intervention through the framework gate',
+    icon: <Beaker className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'optimizer',
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      const focusText = focus ? `\nFocus / hint from user: ${focus}` : ''
+      ctx.onSubmit(`Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. Skip the broader review-and-harden flow — this command is the focused entry point for "I have a specific change in mind, gate it behind measurement."${focusText}
+
+PRECHECKS
+1. Read <workflow>/metrics.json. If empty or missing, stop and redirect: "Run /improve-setup-framework first to bootstrap metrics — propose_experiment requires at least one declared metric to target."
+2. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
+3. Read experiments/active.json. If there are already 3+ active experiments, warn the user and ask whether to proceed (running too many concurrent experiments confounds attribution).
+
+PICK A TARGET
+1. List the metrics in metrics.json with their current trajectory (call /api/workflow/eval-trajectory if helpful, or just summarize from the file). For each, note whether it is on target / off target / no recent data.
+2. Pick exactly ONE metric to target. Prefer:
+   a) a metric the user named in their focus hint, otherwise
+   b) a metric whose recent trajectory is off target, otherwise
+   c) the most load-bearing metric per the Workflow Profile.
+3. If the change you want requires a metric that does not yet exist in metrics.json, call propose_metric first, then continue with the new metric as the target.
+
+FORMULATE THE HYPOTHESIS
+1. Read recent run evidence (latest iteration's logs, eval reports, KB, learnings) to ground the hypothesis in observed behavior, not theory.
+2. Identify the SMALLEST concrete intervention you believe will move the metric — a prompt addition, a validation rule, a config flip, a single step description tightening. NOT a multi-file refactor; experiments work best when the change is small enough to attribute movement.
+3. Write a hypothesis (≤200 chars) in the form: "<change> will <direction> <metric_id> by ≥<magnitude><unit>." Example: "Adding 'never claim X without source Y' to step 3's description will decrease accuracy.hallucination_rate by ≥0.05."
+4. Pick expected_direction (must match the metric's declared direction) and expected_magnitude (absolute, in the metric's unit, > 0).
+
+APPLY THE GATE
+Call propose_experiment with:
+  - hypothesis: the prose from above
+  - target_metrics: [<metric_id>]
+  - expected_direction: increase | decrease | maintain
+  - expected_magnitude: <absolute number>
+  - intervention_changes: array of { path, operation, content } describing the file edits the framework will apply on your behalf
+  - measurement_runs: optional override (default comes from the workflow's experiments config)
+
+Each intervention path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
+
+REPORT
+- Echo the returned experiment_id and decisions_entry_id.
+- State which metric is being measured and over how many runs.
+- Tell the user what to do next: in oversight=manual, run /exp-extend or wait for /improve-approve; in supervised/autonomous, the next workflow runs will populate measurement values automatically.
+
+IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, hypothesis, target metric, expected direction/magnitude, and a one-line note on why this hypothesis. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.`)
     }
   },
   {

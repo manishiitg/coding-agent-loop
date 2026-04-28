@@ -53,6 +53,11 @@ const (
 )
 
 // DecisionEntry is one line of builder/decisions.jsonl. Append-only.
+//
+// Type-3 rule captures (formerly stored in context/clarifications.jsonl) now
+// land here too with `Source: user` + `Trigger: capture-context` + the
+// rule-specific fields below (RuleAdded, RuleSection, ExamplePaths). One
+// audit log, one place to read.
 type DecisionEntry struct {
 	Ts                 string         `json:"ts"`
 	ID                 string         `json:"id"`
@@ -67,21 +72,10 @@ type DecisionEntry struct {
 	Supersedes         string         `json:"supersedes,omitempty"`
 	EditedAt           string         `json:"edited_at,omitempty"`
 	EditedBy           string         `json:"edited_by,omitempty"`
-}
-
-// ClarificationEntry is one line of context/clarifications.jsonl. Type 3 only.
-type ClarificationEntry struct {
-	Ts                 string   `json:"ts"`
-	ID                 string   `json:"id"`
-	Source             string   `json:"source"` // always "user"
-	Trigger            string   `json:"trigger"`
-	RuleAdded          string   `json:"rule_added,omitempty"`
-	RuleSection        string   `json:"rule_section,omitempty"`
-	Clarification      string   `json:"clarification,omitempty"`
-	ExamplePaths       []string `json:"example_paths,omitempty"`
-	AppliedChanges     []string `json:"applied_changes"`
-	TargetMetrics      []string `json:"target_metrics"` // required, min 1
-	LinkedExperimentID string   `json:"linked_experiment_id,omitempty"`
+	// Rule-capture fields. Populated when Source=user + Trigger=capture-context.
+	RuleAdded    string   `json:"rule_added,omitempty"`
+	RuleSection  string   `json:"rule_section,omitempty"`
+	ExamplePaths []string `json:"example_paths,omitempty"`
 }
 
 // MetricDirection — whether higher or lower values are better.
@@ -327,9 +321,9 @@ func DefaultExperimentsConfig() ExperimentsConfig {
 		MaxRuns:                30,
 		BaselineWindow:         5,
 		AllowedInterventionPaths: []string{
-			"context/",
-			"context/rules.md",
-			"context/examples/",
+			"knowledgebase/rules/",
+			"knowledgebase/rules/rules.md",
+			"knowledgebase/rules/examples/",
 			"evaluation/",
 			"evaluation/evaluation_plan.json",
 			"evaluation/step_config.json",

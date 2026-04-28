@@ -208,59 +208,19 @@
           "description": "Decision id this entry supersedes (used for corrections in append_only mode)."
         },
         "edited_at": { "type": "string", "format": "date-time" },
-        "edited_by": { "type": "string" }
-      }
-    },
-
-    "ClarificationEntry": {
-      "type": "object",
-      "description": "One line of context/clarifications.jsonl. Type 3 only. Always source: user.",
-      "additionalProperties": false,
-      "required": ["ts", "id", "source", "trigger", "applied_changes", "target_metrics"],
-      "properties": {
-        "ts": { "type": "string", "format": "date-time" },
-        "id": {
-          "type": "string",
-          "description": "Format: clar-<workflow_id>-<YYYYMMDD>-<sequence>."
-        },
-        "source": {
-          "type": "string",
-          "const": "user"
-        },
-        "trigger": {
-          "type": "string",
-          "description": "Typically capture-context."
-        },
+        "edited_by": { "type": "string" },
         "rule_added": {
           "type": "string",
-          "description": "The rule text added to context/rules.md."
+          "description": "Type-3 rule capture: the rule text appended to knowledgebase/rules/rules.md. Populated when source=user + trigger=capture-context."
         },
         "rule_section": {
           "type": "string",
-          "description": "The section of rules.md the rule was added to."
-        },
-        "clarification": {
-          "type": "string",
-          "description": "Free-form clarification text if not a discrete rule."
+          "description": "Type-3 rule capture: the markdown section heading the rule was added under."
         },
         "example_paths": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Paths under context/examples/ added with this clarification."
-        },
-        "applied_changes": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "target_metrics": {
-          "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1,
-          "description": "REQUIRED. Each clarification must declare which metric(s) it is meant to move."
-        },
-        "linked_experiment_id": {
-          "type": "string",
-          "description": "Experiment opened to validate this clarification's effect."
+          "description": "Type-3 rule capture: workflow-relative paths under knowledgebase/rules/examples/ added with this rule."
         }
       }
     },

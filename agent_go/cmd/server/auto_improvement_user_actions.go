@@ -305,14 +305,13 @@ func (api *StreamingAPI) handleCaptureContext(w http.ResponseWriter, r *http.Req
 		http.Error(w, "workspace_path is required", http.StatusBadRequest)
 		return
 	}
-	clar, dec, err := CaptureContext(r.Context(), req.WorkspacePath, req.Section, req.RuleText, req.TargetMetrics, req.ExampleNote)
+	dec, err := CaptureContext(r.Context(), req.WorkspacePath, req.Section, req.RuleText, req.TargetMetrics, req.ExampleNote)
 	if err != nil {
 		writeAIJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
 	writeAIJSON(w, map[string]interface{}{
-		"success":          true,
-		"clarification_id": clar.ID,
-		"decision_id":      dec.ID,
+		"success":     true,
+		"decision_id": dec.ID,
 	})
 }

@@ -277,6 +277,7 @@ Notes operations the user may ask for:
 - Do not invent topics or sections the knowledgebase did not already contain.
 - Do not purge all topics "to start fresh" unless the instruction literally says so.
 - Do not rename fields in the `+"`"+`_index.json`+"`"+` schema; agents and frontends depend on the shape.
+- **Do NOT touch `+"`"+`knowledgebase/rules/`+"`"+`** — that folder holds user-supplied business rules from the auto-improvement framework. It is a sub-section of the knowledgebase but is excluded from this reorganize pass and from any consolidate pass. The contents are user-owned content captured via the `+"`"+`capture_context`+"`"+` tool; they must never be rewritten by the optimizer. Restrict every read and every write to `+"`"+`knowledgebase/notes/`+"`"+` only.
 
 ## Tools
 - **execute_shell_command** — `+"`"+`cat`+"`"+`, `+"`"+`jq`+"`"+`, `+"`"+`mv`+"`"+`, `+"`"+`rm`+"`"+`, and full rewrites via `+"`"+`cat > file <<EOF ... EOF`+"`"+`. Prefer `+"`"+`jq`+"`"+` transformations for `+"`"+`_index.json`+"`"+` followed by a single atomic overwrite for large changes.
@@ -398,6 +399,7 @@ You own reads and writes to the per-topic narrative files under `+"`"+`{{.NotesF
 - Do NOT extract new observations from step outputs that a step's own KB update agent should have extracted. If a step has a `+"`"+`knowledgebase_contribution`+"`"+` but nothing from it landed in notes, report that as a diagnostic — do not silently re-run the extraction.
 - Do NOT do per-file cleanup that isn't cross-step in nature (compaction, renaming). Those belong to `+"`"+`reorganize_knowledgebase`+"`"+`.
 - Do NOT touch `+"`"+`learnings/`+"`"+` or `+"`"+`db/`+"`"+`.
+- **Do NOT touch `+"`"+`knowledgebase/rules/`+"`"+`** — that folder holds user-supplied business rules from the auto-improvement framework. It is excluded from consolidation. Read and write only `+"`"+`knowledgebase/notes/`+"`"+`.
 
 ## Inputs available to you
 

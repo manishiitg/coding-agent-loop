@@ -335,15 +335,16 @@ func RegisterQueryExperimentHistoryTool(agent *mcpagent.Agent, workspacePath str
 // RegisterCaptureContextTool exposes capture_context to the proposer LLM.
 // The builder agent calls this proactively when a user shares a business
 // rule in conversation about a Type 3 workflow. Atomically writes the rule
-// to context/rules.md, the clarifications.jsonl entry, and the audit
-// decision-log entry.
+// to knowledgebase/rules/rules.md and writes a single audit entry to
+// builder/decisions.jsonl with source=user + trigger=capture-context.
 func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
-	desc := "Capture a user-supplied business rule into context/rules.md, anchored to one or more metrics it is meant to move. " +
-		"Atomically appends the bullet under the requested section heading, writes a context/clarifications.jsonl entry " +
-		"(source=user, target_metrics required and non-empty), and writes a builder/decisions.jsonl audit entry cross-linking " +
-		"the rule to the targeted metric(s). Use ONLY for Type 3 (contextual) workflows. If metrics.json has no metrics, " +
-		"propose them first via propose_metric — this tool refuses if target_metrics references unknown ids. " +
-		"Returns { clarification_id, decision_id }."
+	desc := "Capture a user-supplied business rule into knowledgebase/rules/rules.md, anchored to one or more metrics it is meant to move. " +
+		"Atomically appends the bullet under the requested section heading and writes a builder/decisions.jsonl entry " +
+		"(source=user, trigger=capture-context, target_metrics required and non-empty). Use ONLY for Type 3 (contextual) " +
+		"workflows. If metrics.json has no metrics, propose them first via propose_metric — this tool refuses if " +
+		"target_metrics references unknown ids. Note: knowledgebase/rules/ is excluded from reorganize_knowledgebase / " +
+		"consolidate_knowledgebase passes, so user-supplied content is never silently rewritten by the optimizer. " +
+		"Returns { decision_id }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -380,13 +381,12 @@ func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, log
 				}
 			}
 		}
-		clar, dec, err := CaptureContext(ctx, workspacePath, section, ruleText, targetMetrics, exampleNote)
+		dec, err := CaptureContext(ctx, workspacePath, section, ruleText, targetMetrics, exampleNote)
 		if err != nil {
 			return fmt.Sprintf("capture_context failed: %v", err), nil
 		}
 		out := map[string]string{
-			"clarification_id": clar.ID,
-			"decision_id":      dec.ID,
+			"decision_id": dec.ID,
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		return string(body), nil

@@ -273,7 +273,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Auto-improvement framework files (opt-in per workflow):**
 - ` + "`metrics.json`" + ` (workflow root) — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step / telemetry / external / delayed_ground_truth). Optional ` + "`evaluable_at_lag`" + ` (e.g. ` + "`30d`" + `) declares a metric is delayed; the experiment loop waits for the lag to elapse. **Metrics are required for Type 3 workflows; optional for Type 1 SLO workflows; usually deferred for Type 2.** Edit via the ` + "`propose_metric`" + ` tool, never raw — the tool handles versioning so the trajectory chart stays honest.
-- ` + "`context/rules.md`" + `, ` + "`context/clarifications.jsonl`" + `, ` + "`context/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users. Read ` + "`rules.md`" + ` on every Type 3 run; inject relevant sections into agent prompts.
+- ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users via the ` + "`capture_context`" + ` tool. **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: capture-context`" + `.
 - ` + "`experiments/active.json`" + ` — currently in-flight experiments. Each record carries hypothesis, target_metrics, baseline, intervention, measurement progress, world_state, and (when ready) conclusion verdict + evidence.
 - ` + "`experiments/history.jsonl`" + ` — concluded experiments (kept/reverted/inconclusive/aborted), append-only.
 - ` + "`experiments/config.json`" + ` — sample size defaults, verdict thresholds, intervention path allow-list, pinned hypotheses, focus metrics, drift detection thresholds.
@@ -347,7 +347,7 @@ Before any of the experiment loop or rule-capture machinery can do useful work, 
 
 1. Classifies ` + "`workflow_type`" + ` and writes it to ` + "`workflow.json`" + ` along with ` + "`oversight_mode`" + ` (and optionally ` + "`plan_stability`" + ` / ` + "`decision_log_mutability`" + `).
 2. Proposes type-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
-3. For Type 3, scaffolds ` + "`context/rules.md`" + ` with metric-keyed sections.
+3. For Type 3, scaffolds ` + "`knowledgebase/rules/rules.md`" + ` with metric-keyed sections.
 
 When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet, **stop and redirect them to ` + "`/improve-setup-framework`" + ` first.** Do NOT bootstrap inline — setup is its own command for a reason: it's a meaningful conversation with the user, and conflating it with improvement work bloats every improvement turn.
 
@@ -381,7 +381,7 @@ The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/im
 
 ### Proactive business-context capture (Type 3 only)
 
-There is no slash command for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`context/rules.md`" + ` rather than dying in chat history.
+There is no slash command for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`knowledgebase/rules/rules.md`" + ` rather than dying in chat history.
 
 **Recognition signals (capture-worthy):**
 - Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.
@@ -397,7 +397,7 @@ There is no slash command for rule capture. When the user shares a business rule
 **Capture flow:**
 1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured.
 2. **Anchor.** Read ` + "`metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`metrics.json`" + ` is empty, redirect to ` + "`/improve-workflow`" + ` (which bootstraps both ` + "`workflow_type`" + ` and metrics) — do NOT call ` + "`propose_metric`" + ` here just to satisfy the rule capture.
-3. **Section.** Read ` + "`context/rules.md`" + ` to pick the right section heading (or propose a new one).
+3. **Section.** Read ` + "`knowledgebase/rules/rules.md`" + ` to pick the right section heading (or propose a new one).
 4. **Capture.** Call ` + "`capture_context`" + ` with section, rule_text, target_metrics, optional example_note.
 5. **Confirm.** Tell the user where it landed and the clarification id.
 
@@ -954,9 +954,9 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Builder sessions: `+"`%s/builder/session-{id}-conversation.json`"+` — workshop chat histories (kept 3)
 - Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
 - Metrics: `+"`%s/metrics.json`"+` (workflow root, optional) — quantified goal definitions; required for Type 3 workflows.
-- Context store: `+"`%s/context/rules.md`"+`, `+"`%s/context/clarifications.jsonl`"+`, `+"`%s/context/examples/`"+` — Type 3 only. Accumulated user-supplied business rules.
+- Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=capture-context).
 - Experiments: `+"`%s/experiments/active.json`"+`, `+"`%s/experiments/history.jsonl`"+`, `+"`%s/experiments/config.json`"+` — experiment loop state. See auto-improvement framework.
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

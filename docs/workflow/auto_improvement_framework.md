@@ -215,7 +215,7 @@ In the workflow folder, the framework adds:
 
 - `metrics.json` at the root — the metric definitions.
 - `builder/decisions.jsonl` — the structured decision log alongside the existing `improve.md` prose.
-- `context/` — for Type 3 workflows: rules, examples, and clarifications from human users.
+- `knowledgebase/rules/` — for Type 3 workflows: user-supplied business rules from `capture_context`. A sub-section of the knowledgebase folder, but excluded from `reorganize_knowledgebase` and `consolidate_knowledgebase` passes so the optimizer never rewrites user content. Steps that have `knowledgebase_access: read` see the rules; the audit trail is folded into `builder/decisions.jsonl` (filter to `source: user`).
 - `experiments/` — active and concluded experiments, with revertable diffs.
 
 Every existing workflow keeps working unchanged. Adoption is opt-in, file by file.

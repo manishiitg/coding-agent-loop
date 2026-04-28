@@ -200,15 +200,16 @@ A workflow opts into the capabilities it needs. Most don't need any.
 
 ## What it looks like for the user
 
-A workflow author working in optimizer mode sees four new tools available to the AI and three new slash commands they can invoke directly:
+A workflow author working in optimizer mode sees four new tools available to the AI and four new slash commands they can invoke directly:
 
+- `/improve-setup` — one-time setup. Classifies `workflow_type`, sets `oversight_mode`, proposes starter metrics. Run this first; the improvement commands redirect here if it hasn't been done.
 - `/exp-abort` — revert and stop the active experiment.
 - `/exp-extend` — give the experiment more runs before concluding.
 - `/exp-conclude` — manually render a verdict (the override path).
 
 **Business-context capture has no slash command** — instead, the builder agent's system prompt teaches it to recognize when the user shares a business rule in conversation ("always X", "never X", regulatory clauses, ICP rules) and offer to persist it via the `capture_context` tool. This is the proactive path; rule capture is something the agent notices, not a ritual the user has to invoke.
 
-The existing `/improve-*` commands continue to operate; the four most relevant (`/improve-eval`, `/improve-workflow`, `/improve-continuously`, plus the others) gain a framework-bootstrap pre-step that classifies `workflow_type` first, then proposes type-appropriate metrics if `metrics.json` is empty.
+The existing `/improve-*` commands precheck that `/improve-setup` has been run. If the workflow lacks `workflow_type` or (for Type 1/3) lacks metrics, they redirect the user to `/improve-setup` instead of bootstrapping inline. Setup is its own command because it's a meaningful conversation with the user; conflating it with improvement work bloats every improvement turn.
 
 In the workflow folder, the framework adds:
 

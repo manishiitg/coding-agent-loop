@@ -1026,6 +1026,21 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"reorganize_knowledgebase", "consolidate_knowledgebase",
 	}
 
+	// Auto-improvement framework tools — registered by
+	// RegisterAutoImprovementProposerTools / RegisterCaptureContextTool in
+	// server.go when the workshop session enters workflow-builder phase.
+	// Available in both builder and optimizer modes (builder for /improve-setup
+	// initial bootstrap; optimizer for the experiment loop and rule capture).
+	autoImprovement := []string{
+		"propose_metric",
+		"propose_experiment",
+		"query_experiment_history",
+		"capture_context",
+		// conclude_experiment is intentionally NOT in this list — it is the
+		// evaluator agent's only tool. Exposing it to the proposer would
+		// violate the proposer != evaluator guardrail.
+	}
+
 	var tools []string
 	tools = append(tools, system...)
 	tools = append(tools, readOnly...)
@@ -1051,6 +1066,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
 		tools = append(tools, kb...)
+		tools = append(tools, autoImprovement...)
 		tools = append(tools, "optimize_step")
 		tools = append(tools, "optimize_workflow")
 
@@ -1074,6 +1090,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
 		tools = append(tools, kb...)
+		tools = append(tools, autoImprovement...)
 		tools = append(tools, "optimize_step")
 		tools = append(tools, "optimize_workflow")
 

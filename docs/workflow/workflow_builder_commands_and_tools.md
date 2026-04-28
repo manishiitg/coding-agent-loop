@@ -56,6 +56,7 @@ These are the current workflow slash commands.
 | `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, and missing validation | `builder`, `optimizer`, `run` | read-only shell/file tools |
 | `/review-code` | Review saved `main.py` scripts against step descriptions | `optimizer` | `review_step_code` |
 | `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes | `builder`, `optimizer`, `run` | read-only shell/file tools |
+| `/improve-setup` | One-time framework setup: classify `workflow_type`, set `oversight_mode`, propose starter metrics via `propose_metric`. Required before `/improve-eval` / `/improve-workflow` / `/improve-continuously` will run. | `builder`, `optimizer` | `propose_metric`, shell to edit `workflow.json` |
 | `/exp-abort` | Revert and abort the active experiment via the captured revertable diff | `optimizer` | `POST /api/workflow/experiments/abort` |
 | `/exp-extend` | Add more measurement runs to the active experiment | `optimizer` | `POST /api/workflow/experiments/extend` |
 | `/exp-conclude` | Manually render a verdict (overrides the evaluator) — use only when the heuristic verdict is clearly wrong | `optimizer` | `POST /api/workflow/experiments/manual-conclude` |

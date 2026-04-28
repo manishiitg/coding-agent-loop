@@ -403,24 +403,9 @@ When you finish, update builder/improve.md with:
         : 'If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.'
       ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in four passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
 
-PASS 0 — FRAMEWORK BOOTSTRAP (auto-improvement)
-**0a — workflow type.** Read workflow.json. If \`workflow_type\` is unset (or still the default \`exploratory\` and the workflow is clearly past the exploration phase), classify it first — type drives which metrics make sense and how this command should behave.
-   - **deterministic** — same steps every run (QA suites, ETL pipelines, scheduled scrapes). Eval is mechanical; metrics are SLOs.
-   - **exploratory** — plan structure still in flux; you don't know what to measure yet. Often defer metrics.
-   - **contextual** — stable plan with growing user-supplied business rules (audits, lead-gen, trading, AWS-cost-sec). Metrics are required and load-bearing.
-   Show the user your inference + reasoning, ask to confirm, and update workflow.json to set \`workflow_type\` (and \`oversight_mode\` if unset; default \`supervised\`).
-
-**0b — metrics.json.** Read <workflow>/metrics.json. If absent or empty, eval improvement is much weaker without metrics. Bootstrap based on the type from 0a:
-   - Type 1 (deterministic): SLO-mode metrics — success-rate (floor), cost-per-run (ceiling), latency (ceiling), data freshness.
-   - Type 2 (exploratory): you can defer; just track eval-step trajectories. Skip the bootstrap unless the user explicitly asks for metrics.
-   - Type 3 (contextual): REQUIRED. Outcome metrics + rule-conformance + cost/latency SLO. Do not skip.
-
-   For Type 1 and Type 3:
-   a. Read soul/soul.md, planning/plan.json, evaluation/evaluation_plan.json.
-   b. Propose 3–5 starter metrics with unit, direction, mode, and source (\`eval_step\` for existing eval steps, \`telemetry\` for cost/latency).
-   c. Show the user with one-line rationales. Ask which to keep / drop / amend.
-   d. For each accepted metric, call propose_metric.
-3. If both \`workflow_type\` and metrics.json (where required) are already populated, skip the bootstrap and continue.
+PASS 0 — FRAMEWORK PRECHECK
+1. Read workflow.json. If \`workflow_type\` is unset, stop and tell the user: "Auto-improvement isn't set up yet. Run /improve-setup first to classify the workflow type and bootstrap metrics."
+2. Read <workflow>/metrics.json. If absent or empty AND the workflow is Type 1 or Type 3, stop and redirect to /improve-setup. Type 2 may proceed without metrics.
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
@@ -479,15 +464,7 @@ DISCOVERY
 2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand the objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-
-5. **Framework bootstrap** — workflow_type FIRST, then metrics. A continuous-improvement schedule with no type and no metrics will optimize nothing concrete:
-   a. Read workflow.json. If \`workflow_type\` is unset, classify and confirm with the user (deterministic / exploratory / contextual). Update workflow.json with the chosen type and \`oversight_mode\` (default \`supervised\`).
-   b. Read <workflow>/metrics.json. Bootstrap based on type:
-      - Type 1 → SLO metrics (success-rate, cost, latency, freshness)
-      - Type 2 → optional; the optimizer can run without metrics on Type 2 by tracking eval-step trajectories
-      - Type 3 → REQUIRED. Outcome + rule-conformance + cost SLO
-      For Type 1 / Type 3, propose 3–5 starter metrics, confirm with the user, call propose_metric for each.
-   The optimizer schedule's message below will reference \`workflow_type\` and the metrics; do not skip this step.
+5. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup first." A continuous-improvement schedule with no type and no metrics will optimize nothing concrete. For Type 1 / Type 3, also redirect if metrics.json is empty.
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
@@ -575,19 +552,7 @@ SETUP
 1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
-
-4. **Framework bootstrap** — workflow_type FIRST, then metrics:
-   a. Read workflow.json. If \`workflow_type\` is unset (or still default \`exploratory\` and the workflow is clearly past exploration), classify and confirm with the user:
-      - **deterministic** — same steps every run; eval is mechanical; metrics are SLOs
-      - **exploratory** — plan structure still in flux; defer metrics
-      - **contextual** — stable plan with growing user-supplied rules; metrics required
-      Update workflow.json to set \`workflow_type\` and \`oversight_mode\` (default \`supervised\`) once confirmed.
-   b. Read <workflow>/metrics.json. Bootstrap based on the type from 4a:
-      - Type 1 → SLO metrics (success-rate floor, cost ceiling, latency ceiling, freshness)
-      - Type 2 → can defer; just track eval-step trajectories
-      - Type 3 → REQUIRED. Outcome metrics + cost/latency SLO
-      For Type 1 / Type 3: propose 3–5 starter metrics derived from success_criteria + existing eval steps. Show with rationales, ask user which to keep, then call propose_metric for each. Without metrics, harden_workflow and replan_workflow_from_results have no concrete target — the hardening loop devolves into vibes.
-
+4. **Framework precheck.** Read workflow.json. If \`workflow_type\` is unset, stop and redirect: "Run /improve-setup first to set the workflow type and bootstrap metrics." Then read <workflow>/metrics.json — for Type 1 / Type 3, redirect to /improve-setup if empty. Type 2 may proceed without metrics.
 5. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — STRUCTURAL DIAGNOSIS
@@ -895,6 +860,68 @@ After the tool returns, tell me:
   // The builder agent's system prompt teaches it to recognize business
   // rules in conversation and offer to persist them via the
   // capture_context tool. A separate slash command would be redundant.
+  {
+    command: 'improve-setup',
+    description: 'One-time setup: classify workflow type and bootstrap metrics for the auto-improvement framework',
+    icon: <Wrench className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: ['builder', 'optimizer'],
+    source: 'builtin',
+    execute: (ctx) => {
+      const focus = ctx.beforeSlash.trim()
+      ctx.onSubmit(`Set up the auto-improvement framework on this workflow. This is a one-time configuration: classify the workflow type, set the oversight mode, and bootstrap an initial metrics.json so /improve-* and the experiment loop have something concrete to work with.${focus ? `\n\nFocus / hints from user: ${focus}` : ''}
+
+DISCOVERY (read-only)
+1. Read workflow.json. Note any existing values for \`workflow_type\`, \`oversight_mode\`, \`plan_stability\`, \`decision_log_mutability\`.
+2. Read soul/soul.md to extract the workflow's objective and success_criteria.
+3. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux).
+4. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
+5. Read <workflow>/metrics.json if present.
+6. Read runs/ to see how mature the workflow is (no runs = early Type 2; many stable runs = candidate for Type 1 or 3).
+
+STEP 1 — Classify workflow_type
+Pick exactly one based on what the workflow actually does:
+- **deterministic** — same exact steps every run; success = "executed correctly"; eval is mechanical (file existence, exact match, schema validation). Examples in this repo's target list: QA suites, ETL pipelines, scheduled scrapes.
+- **exploratory** — plan structure still in flux; the team is figuring out what works; LLM-judge / human review is the only honest eval today. Defer metrics.
+- **contextual** — stable plan with growing user-supplied business rules (audits, lead-gen, trading bots, AWS-cost-security). Metrics required and load-bearing.
+
+Show the user your inference + reasoning + the alternative classifications you considered. Ask them to confirm. Then update workflow.json:
+- Set \`workflow_type\` to the chosen value.
+- Set \`oversight_mode\`. Defaults: deterministic → \`manual\` (changes are risky); exploratory → \`autonomous\` (iteration speed matters); contextual → \`supervised\` (recommended).
+- Set \`plan_stability\` if the workflow benefits from \`ratchet\` (compliance, security) or \`frozen\` (hard-locked production).
+- Set \`decision_log_mutability\` to \`append_only_strict\` ONLY for compliance/audit workflows; default \`append_only\` is right for most.
+
+STEP 2 — Bootstrap metrics
+Behavior depends on workflow_type:
+
+- **Type 1 (deterministic)**: propose 3–5 SLO-mode metrics — success-rate (floor), cost-per-run (ceiling), latency p95 (ceiling), data freshness, optionally regression-count. Source: \`telemetry\` for cost/latency, \`eval_step\` for the rest.
+- **Type 2 (exploratory)**: tell the user metrics can be deferred. Skip the metric proposal unless they explicitly ask. Type 2's primary artifact is the decision log + per-eval-step trajectory, not metrics.
+- **Type 3 (contextual)**: propose 3–5 outcome + rule-conformance metrics derived from the success_criteria. Mix: outcome metrics (accuracy, coverage) with mode=\`target\`, plus a cost or cycle-time SLO.
+
+For each proposed metric, show: id, label, unit, direction, mode, target/floor/ceiling, source. Give a one-line rationale: "this metric exists because the workflow's stated objective is X, so we need to measure Y."
+
+Ask the user which to keep / drop / amend. For each accepted metric, call \`propose_metric\`.
+
+STEP 3 — Type-3 only — scaffold the context store
+If workflow_type=contextual:
+- Create context/rules.md if absent (the propose_metric tool path leaves this; the rules.md preamble auto-creates on first \`capture_context\` call but we can prepare it now).
+- Create section headings keyed off the metric tree (e.g. one section per metric grouping). The agent will populate them as the user shares rules in conversation.
+
+STEP 4 — Confirm and tell the user what's next
+Print a clean summary:
+- workflow_type: <chosen> (oversight_mode: <chosen>)
+- metrics: <list of ids with units and targets>
+- Type 3 only: context/rules.md scaffolded with sections <list>
+
+Then tell them:
+1. They can now run /improve-eval, /improve-workflow, /improve-continuously and the framework precheck will pass.
+2. For Type 3: they can mention business rules in chat ("never recommend X", "always include Y") and you (the agent) will offer to persist them via capture_context.
+3. Hypotheses they want to test should be opened as experiments via /improve-* or by saying "I think changing X would help."
+
+DO NOT do any actual workflow improvement here. /improve-setup is setup only. Refer the user to /improve-* commands for the actual improvement loop.`)
+    }
+  },
   {
     command: 'exp-abort',
     description: 'Revert and abort the active experiment',

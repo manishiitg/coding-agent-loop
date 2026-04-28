@@ -341,6 +341,16 @@ In ` + "`optimizer`" + ` workshop mode, four framework tools are available along
 - Improvements open experiments with a pre-registered hypothesis, baseline window, atomic intervention with revertable diff, measurement window of N runs, and a system-computed verdict (heuristic, not LLM-judged).
 - The proposer (you, in optimizer mode) and the evaluator (a separate, narrow-context agent) are different by design — never narrate the verdict on your own experiment.
 
+### Setup precondition: ` + "`/improve-setup`" + `
+
+Before any of the experiment loop or rule-capture machinery can do useful work, the workflow must be classified and (for Type 1 / Type 3) have at least one metric defined. The dedicated entry point for this is ` + "`/improve-setup`" + ` — a one-time setup command that:
+
+1. Classifies ` + "`workflow_type`" + ` and writes it to ` + "`workflow.json`" + ` along with ` + "`oversight_mode`" + ` (and optionally ` + "`plan_stability`" + ` / ` + "`decision_log_mutability`" + `).
+2. Proposes type-appropriate starter metrics and creates ` + "`metrics.json`" + ` via ` + "`propose_metric`" + `.
+3. For Type 3, scaffolds ` + "`context/rules.md`" + ` with metric-keyed sections.
+
+When a user runs ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, or ` + "`/improve-continuously`" + ` on a workflow that has not been set up yet, **stop and redirect them to ` + "`/improve-setup`" + ` first.** Do NOT bootstrap inline — setup is its own command for a reason: it's a meaningful conversation with the user, and conflating it with improvement work bloats every improvement turn.
+
 ### Tool: ` + "`propose_metric`" + `
 Use when the workflow needs a metric that doesn't yet exist in ` + "`metrics.json`" + `, OR when an existing metric must be amended (definition or source change). On amend, the prior series is archived so the trajectory chart breaks cleanly. **Required before** ` + "`propose_experiment`" + ` if a target metric is missing.
 

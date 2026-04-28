@@ -7,6 +7,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // =====================================================================
@@ -225,44 +227,71 @@ func resolveFromEvalStep(ctx context.Context, workspacePath, runFolder, stepID s
 }
 
 // resolveFromTelemetry reads the named field out of this run's telemetry
-// payload. The telemetry layout today is the cost storage; we read the per-run
-// total cost when field == "run.total_cost_usd". Other fields land as needed.
+// payload. Two fields are wired today:
+//
+//   run.total_cost_usd   — sum of TotalCost across all models in the run's
+//                          execution-scope TokenUsageFile.
+//   run.duration_seconds — UpdatedAt - CreatedAt of the run's execution-scope
+//                          TokenUsageFile, in seconds. Approximate wall-clock
+//                          time the runtime took to finish the run.
+//
+// Other field names return (0, false, nil) so a workflow that declares an
+// unsupported telemetry metric just doesn't progress for that metric — no
+// crash, no silent zero.
 func resolveFromTelemetry(ctx context.Context, workspacePath, runFolder, field string) (float64, bool, error) {
 	field = strings.TrimSpace(field)
 	if field == "" {
 		return 0, false, fmt.Errorf("telemetry source field is empty")
 	}
+
+	tokenFile, ok, err := readRunTokenUsage(ctx, workspacePath, runFolder)
+	if err != nil {
+		return 0, false, err
+	}
+	if !ok || tokenFile == nil {
+		return 0, false, nil
+	}
+
 	switch field {
 	case "run.total_cost_usd":
-		v, ok, err := readRunTotalCostUSD(ctx, workspacePath, runFolder)
-		if err != nil {
-			return 0, false, err
+		var total float64
+		for _, m := range tokenFile.ByModel {
+			if m == nil {
+				continue
+			}
+			total += m.TotalCost
 		}
-		return v, ok, nil
+		return total, true, nil
+
+	case "run.duration_seconds":
+		if tokenFile.CreatedAt.IsZero() || tokenFile.UpdatedAt.IsZero() {
+			return 0, false, nil
+		}
+		dur := tokenFile.UpdatedAt.Sub(tokenFile.CreatedAt).Seconds()
+		if dur < 0 {
+			dur = 0
+		}
+		return dur, true, nil
+
 	default:
-		// Unknown telemetry field: not an error, just unavailable.
+		// Unknown telemetry field: not an error, just unavailable. Recognized
+		// fields are documented above.
 		return 0, false, nil
 	}
 }
 
-// readRunTotalCostUSD scans the per-run cost files for a single number that
-// represents the run's total spend. Best-effort; if storage layout doesn't
-// match, returns (0, false, nil) so callers can fall back gracefully.
-func readRunTotalCostUSD(ctx context.Context, workspacePath, runFolder string) (float64, bool, error) {
-	// Cost storage path: workflow/runs/<iter>/<group>/costs/total_cost.json (best effort).
-	candidate := path.Join(strings.Trim(workspacePath, "/"), "runs", runFolder, "costs", "total_cost.json")
-	content, exists, err := readFileFromWorkspace(ctx, candidate)
+// readRunTokenUsage looks up this run's execution-scope TokenUsageFile by
+// scanning the workspace's cost storage. Returns (nil, false, nil) when no
+// entry is found — common for runs that haven't finished yet or workflows
+// that didn't track costs.
+func readRunTokenUsage(ctx context.Context, workspacePath, runFolder string) (*orchestrator.TokenUsageFile, bool, error) {
+	all, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeExecution)
 	if err != nil {
-		return 0, false, err
+		return nil, false, err
 	}
-	if !exists || strings.TrimSpace(content) == "" {
-		return 0, false, nil
+	tokenFile, ok := all[runFolder]
+	if !ok || tokenFile == nil {
+		return nil, false, nil
 	}
-	var payload struct {
-		TotalUSD float64 `json:"total_usd"`
-	}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		return 0, false, nil
-	}
-	return payload.TotalUSD, true, nil
+	return tokenFile, true, nil
 }

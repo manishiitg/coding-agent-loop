@@ -936,10 +936,14 @@ These are the only structured framework fields; they drive real behavior.
 STEP 4 — Bootstrap metrics.json
 Behavior depends on the profile from Step 1:
 
-- Plan stability \`mutable\` + business context \`none\`: tell the user metrics can be deferred. Skip the metric proposal unless they explicitly ask. Track per-eval-step trajectories instead.
-- Plan stability \`ratchet\`/\`frozen\` + business context \`none\` (e.g. QA suite, ETL): propose 3–5 SLO-mode metrics — success-rate (floor), cost-per-run (ceiling), latency p95 (ceiling), data freshness. Source: \`telemetry\` for cost/latency, \`eval_step\` for the rest.
-- Business context \`accumulating\`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria. Mix outcome metrics (mode=\`target\`) with cost / cycle-time SLOs.
+- Plan stability \`mutable\` + business context \`none\`: tell the user outcome metrics can be deferred. Track per-eval-step trajectories instead. **But still propose the two universal telemetry SLOs below** — they're free and catch cost/runtime regressions while exploring.
+- Plan stability \`ratchet\`/\`frozen\` + business context \`none\` (e.g. QA suite, ETL): propose 3–5 SLO-mode metrics — success-rate (floor), \`cost_per_run\` (ceiling), \`run_duration_seconds\` (ceiling), data freshness. Source: \`telemetry\` for cost/duration, \`eval_step\` for the rest.
+- Business context \`accumulating\`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria, **plus the two universal telemetry SLOs**. Mix outcome metrics (mode=\`target\`) with cost / runtime SLOs.
 - Runtime mode \`dual\`: also include at least one metric per mode (e.g. \`explore.discovery_rate\`, \`exploit.win_rate\`) so the experiment loop can tell whether mode flips actually help.
+
+**Two universal telemetry SLOs** — propose these on EVERY workflow regardless of profile (the framework collects them automatically; ignoring them means missing free signal):
+- \`cost_per_run\` — unit \`usd\`, direction \`lower_better\`, mode \`slo\`, ceiling chosen based on the workflow's expected complexity (start at 0.50 USD for short workflows, 5.00 USD for long ones; user can adjust). Source: \`{ type: telemetry, field: "run.total_cost_usd" }\`.
+- \`run_duration_seconds\` — unit \`seconds\`, direction \`lower_better\`, mode \`slo\`, ceiling chosen based on the workflow (300s for short, 1800s for long). Source: \`{ type: telemetry, field: "run.duration_seconds" }\`.
 
 For each proposed metric, show: id, label, unit, direction, mode, target/floor/ceiling, source. Rationale per metric. Ask the user which to keep / drop / amend. For each accepted, call \`propose_metric\`.
 

@@ -225,6 +225,57 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 	}
 }
 
+// GenerateTextOneShot is an exported helper that mirrors generate_text_llm
+// but is callable directly from Go code (not via the LLM tool surface). Used
+// by the auto-improvement framework's evaluator-agent path to narrate
+// experiment verdicts without having to spin up a full agent.
+//
+// Pass tier "low", "medium", or "high"; system + user are the two messages.
+// Returns the model's text response, trimmed.
+func GenerateTextOneShot(ctx context.Context, tier, systemMessage, userMessage string) (string, error) {
+	if strings.TrimSpace(userMessage) == "" {
+		return "", fmt.Errorf("user_message is required")
+	}
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier != "high" && tier != "medium" && tier != "low" {
+		return "", fmt.Errorf("tier must be one of: high, medium, low")
+	}
+
+	workspaceURL := getWorkspaceAPIURL()
+
+	tierModel, err := loadWorkspaceTierModel(ctx, workspaceURL, tier)
+	if err != nil {
+		return "", err
+	}
+
+	llmModel, err := createLLMFromTierModel(ctx, tierModel, loadWorkspaceProviderAPIKeys(ctx, workspaceURL))
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize LLM for tier %q: %w", tier, err)
+	}
+
+	messages := make([]llmtypes.MessageContent, 0, 2)
+	if strings.TrimSpace(systemMessage) != "" {
+		messages = append(messages, llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeSystem,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemMessage}},
+		})
+	}
+	messages = append(messages, llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: userMessage}},
+	})
+
+	resp, err := llmModel.GenerateContent(ctx, messages)
+	if err != nil {
+		return "", fmt.Errorf("GenerateTextOneShot failed for tier %q: %w", tier, err)
+	}
+
+	if len(resp.Choices) > 0 {
+		return strings.TrimSpace(resp.Choices[0].Content), nil
+	}
+	return "", nil
+}
+
 func createSearchWebLLMExecutor(workspaceURL string) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		query := strings.TrimSpace(fmt.Sprintf("%v", args["query"]))

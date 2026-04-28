@@ -39,6 +39,7 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 	}
 
 	mutated := false
+	var transitionedToEvaluating []string
 	for i := range file.Experiments {
 		e := &file.Experiments[i]
 		if e.Status != ExpStatusMeasuring {
@@ -102,12 +103,22 @@ func RecordMeasurement(ctx context.Context, workspacePath, runFolder string) err
 			if e.Measurement.CompletedRuns == e.Measurement.TargetRuns && e.Measurement.TargetRuns > 0 {
 				ComputeVerdict(e, cfg)
 				e.Status = ExpStatusEvaluating
+				transitionedToEvaluating = append(transitionedToEvaluating, e.ID)
 			}
 		}
 	}
 
 	if mutated {
-		return WriteActiveFile(ctx, workspacePath, file)
+		if err := WriteActiveFile(ctx, workspacePath, file); err != nil {
+			return err
+		}
+		// Auto-spawn the evaluator for any experiment that just transitioned
+		// to evaluating. Spawned AFTER WriteActiveFile so the evaluator reads
+		// the persisted state (verdict + status). Each spawn is async; failure
+		// is logged inside the goroutine and does not block the loop.
+		for _, expID := range transitionedToEvaluating {
+			SpawnEvaluatorAgent(ctx, workspacePath, expID)
+		}
 	}
 	return nil
 }

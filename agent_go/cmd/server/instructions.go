@@ -425,6 +425,24 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, and learnings as one surface, and an experiment may bundle changes across all three when they share one belief. When a workflow has ` + "`planning/metrics.json`" + ` non-empty, ` + "`/improve-*`" + ` commands operate in EXPERIMENT MODE: changes go through ` + "`propose_experiment`" + ` so they're gated behind measurement and auto-revertible. When ` + "`metrics.json`" + ` is empty, they operate in DIRECT MODE and apply changes immediately via the legacy tools.
 
+### Resolution discipline
+
+` + "`builder/review.md`" + ` and ` + "`builder/improve.md`" + ` are append-only logs of findings and proposals. They go stale fast unless every fix that lands is mirrored back into them — otherwise the next ` + "`/review-*`" + ` run re-flags the same items and the user can't tell what's outstanding.
+
+**Finding IDs.** When a ` + "`/review-*`" + ` template emits findings into ` + "`builder/review.md`" + `, every distinct finding gets a stable id of the form ` + "`F-YYYY-MM-DD-NNN`" + ` — today's date plus a 3-digit sequence that restarts at ` + "`001`" + ` per day per file. The same convention applies when ` + "`/improve-*`" + ` records a proposed change in ` + "`builder/improve.md`" + ` (id prefix ` + "`I-YYYY-MM-DD-NNN`" + `). Read the file first to find the next free sequence; never reuse an id.
+
+**Close-out marker.** When you apply a fix — whether triggered by a slash command, a chat-intent fix, an experiment conclusion, or a manual user request — and that fix addresses one or more existing findings, you MUST edit the original entry to append, on its own line immediately after the finding text:
+
+` + "```" + `
+**[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+` + "```" + `
+
+Do not delete or rewrite the original finding. The marker preserves audit history; the un-resolved findings stay visible above and below it. If only part of a finding was addressed, write ` + "`[PARTIALLY RESOLVED ...]`" + ` and explain what's still open. If a finding turned out to be wrong, write ` + "`[INVALID YYYY-MM-DD — ...]`" + ` instead.
+
+**Decisions.jsonl linkage.** When the fix lands a ` + "`builder/decisions.jsonl`" + ` entry (experiment, rule capture, direct-mode change), include ` + "`linked_review_finding`" + ` (or ` + "`linked_improve_entry`" + `) in the entry payload, set to the id(s) you just resolved — array if multiple. This makes the audit trail searchable: every line in ` + "`decisions.jsonl`" + ` that closed a review item points back at it, and every resolved review item names the decision that closed it.
+
+**When to apply.** This discipline runs whenever you write to ` + "`builder/decisions.jsonl`" + ` AND a corresponding finding exists in ` + "`review.md`" + ` / ` + "`improve.md`" + `. Don't skip it because the fix came from chat instead of a slash command — the .md files are the user's view of what's outstanding, and silent fixes break that view.
+
 ### Honesty rules
 
 - Never fabricate baselines or measurement values. The system reads them from real run history.

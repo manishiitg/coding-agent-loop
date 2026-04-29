@@ -26,3 +26,22 @@ When you finish, update builder/improve.md with:
 - the main report weaknesses you found
 - what you recommended
 - what was applied vs deferred
+
+Each new entry that records a *proposed but not-yet-applied* report change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Reporting findings rarely live in builder/review.md (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.md), apply close-out the same way the other /improve-* commands do:
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+
+2. **Append a builder/decisions.jsonl entry** for the report change (use `diff_patch_workspace_file`):
+   ```json
+   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
+   ```
+   `linked_review_finding` is omitted when no matching finding exists. This decision-trail is what makes report-layout changes auditable alongside plan/eval changes.
+
+This applies to chat-intent report fixes too.

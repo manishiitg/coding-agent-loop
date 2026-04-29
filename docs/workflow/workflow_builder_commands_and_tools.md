@@ -246,6 +246,17 @@ Returns `{ kind, guidance }` where `guidance` is the rendered markdown the agent
 - `capture_context` → replaced by `diff_patch_workspace_file` for `knowledgebase/rules/rules.md` plus a `decisions.jsonl` line with `source=user`, `trigger=rule-captured`. The system prompt's "Proactive business-context capture" section in `instructions.go` documents the line format.
 - `query_experiment_history` → replaced by direct reads of `experiments/history.jsonl` and `experiments/config.json::pinned_hypotheses` before calling `propose_experiment`. Two file reads, no helper tool.
 
+### Resolution Discipline
+
+`builder/review.md` and `builder/improve.md` are append-only logs of findings (from `/review-*`) and proposals (from `/improve-*`). Without a discipline that mirrors fixes back into them, both files go stale fast: the next `/review-*` re-flags the same items, and the user can't tell what's outstanding.
+
+The full rules live in the system prompt (`instructions.go` → "### Resolution discipline"). Summary:
+
+- **Finding IDs** — every finding/proposal gets a stable id: `F-YYYY-MM-DD-NNN` for review entries, `I-YYYY-MM-DD-NNN` for improve entries. Sequence restarts at `001` per day per file.
+- **Close-out marker** — when a fix lands that addresses a finding, append `**[RESOLVED YYYY-MM-DD — <one-line how>]**` on its own line immediately after the original entry. Use `[PARTIALLY RESOLVED ...]` for partial fixes and `[INVALID ...]` if the finding turned out to be wrong. Never delete or rewrite the original; the marker preserves audit history.
+- **Decisions linkage** — when a fix writes a `builder/decisions.jsonl` entry (experiment, rule capture, direct-mode change), include `linked_review_finding` (or `linked_improve_entry`) in the payload, set to the array of resolved ids.
+- **Applies to chat-intent fixes too** — not just slash-command flows. Every `/improve-*` template in this doc carries the close-out instruction.
+
 ### Read-Only HTTP Endpoints (consumed by the popup)
 
 The popup (Beaker icon) is read-only and consumes only GET endpoints. All experiment mutations — abort, extend, conclude, approve — flow through slash commands that drive the optimizer agent to manipulate `experiments/active.json`, `experiments/history.jsonl`, and `decisions.jsonl` directly via `diff_patch_workspace_file`. There is no HTTP path for these mutations and no UI button to invoke them; the popup just reflects state.
@@ -463,6 +474,8 @@ Then a cross-step summary:
 - **Top 5 issues to fix first** (highest-impact across all phases).
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator findings (Phase 3), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
+
+**Finding IDs.** Every distinct finding (whether from Phase 1, 2, or 3) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "structural"> — <finding>` so the close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 #### `review-goal-alignment` (`review/review-goal-alignment.md`)
@@ -490,6 +503,8 @@ Then give:
 - the top next actions, clearly separated into workflow fixes vs eval fixes.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the goal/eval verdict, the main gaps ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+
+**Finding IDs.** Every distinct gap or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <workflow|eval> — <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 #### `review-speed` (`review/review-speed.md`)
@@ -513,6 +528,8 @@ Then give:
 - the top next actions, with expected impact and risk to success criteria.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the timing analysis, the top bottlenecks, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+
+**Finding IDs.** Every distinct bottleneck or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "plan-shape"> — <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 #### `review-cost` (`review/review-cost.md`)
@@ -536,6 +553,8 @@ Then give:
 - the top next actions, with expected savings and risk to success criteria.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the cost analysis, the top cost drivers, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+
+**Finding IDs.** Every distinct cost driver or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "plan-shape"> — <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 #### `review-config` (`review/review-config.md`)
@@ -616,6 +635,8 @@ END WITH READY-TO-PASTE COMMANDS
 List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
+
+**Finding IDs.** Every distinct misconfig or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <kb|db|lock_learnings|lock_code|convert>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 #### `review-code` (`review/review-code.md`)
@@ -684,6 +705,8 @@ For each step audited:
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
+
+**Finding IDs.** Every distinct finding (drift, shortcut, browser, operational) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <lens>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.
 ````
 
 ### Improvements (AI proposes; framework gates when metrics defined)
@@ -831,6 +854,26 @@ Before finishing, update builder/improve.md with:
 - what improved
 - remaining gaps
 - next hypotheses
+
+Each new entry that records a *proposed* change (DIRECT mode harden suggestion that wasn't applied, deferred candidate, queued experiment) gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Before applying any change in this run, scan builder/review.md for findings that the change addresses. The match is by intent, not by exact wording — a Phase-2 Lens-B hardcoded-path finding for `step-3` and a fix that updates `step-3` to read from variables both target the same finding. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+
+After each change is applied (DIRECT mode) or queued as an experiment (EXPERIMENT mode):
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+   Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; explain what's still open. Use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong on closer inspection. Never delete or rewrite the original finding; the marker preserves audit history.
+
+2. **In EXPERIMENT MODE**, when you call `propose_experiment`, include `linked_review_finding` in the experiment payload with the array of matched `F-...` ids — so when the experiment is later concluded, the resulting decisions.jsonl entry inherits the linkage and the audit trail is searchable from both ends.
+
+3. **In DIRECT MODE**, when the underlying primitive (harden_workflow / replan_workflow_from_results / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings) writes a `builder/decisions.jsonl` entry, also append `linked_review_finding=[F-...]` to that entry. If the primitive does not write the decision itself, you append the JSONL line via `diff_patch_workspace_file` — same shape as the rule-capture flow in the system prompt — with `linked_review_finding` populated.
+
+This applies to chat-intent fixes too. If the user asks "fix that step-3 hardcoded path" outside of any slash command and you apply the fix, you still scan review.md for matching findings, append the RESOLVED marker, and link the decision.
 ````
 
 #### `improve-eval` (`improve/improve-eval.md`)
@@ -892,6 +935,24 @@ When you finish, update builder/improve.md with:
 - which eval steps you skipped because they're under active measurement (per Pass 0 guard)
 - what you recommended and what was applied
 - the decisions.jsonl entries you appended (rubric-change markers)
+
+Each new entry that records a *proposed but not-yet-applied* eval change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (most likely from /review-goal-alignment, but /review-plan can also surface "no validation_schema / weak measurement" findings that map to eval). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+
+After each eval change is applied:
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+   Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong. Never delete or rewrite the original finding.
+
+2. **In the decisions.jsonl entry from Pass 4** (the rubric-change marker), include `linked_review_finding` populated with the array of matched `F-...` ids. This is what makes the audit trail searchable: every rubric change that closed a review item points back at it, and every resolved review item names the decision that closed it.
+
+This applies to chat-intent eval fixes too. If the user asks "tighten that eval check on segment coverage" outside of any slash command and you apply the fix, you still scan review.md for matching findings, append the RESOLVED marker, and link the decision.
 ````
 
 #### `improve-continuously` (`improve/improve-continuously.md`)
@@ -964,6 +1025,7 @@ DIRECT MODE (when metrics.json is empty):
 ALWAYS:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
 - update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+- when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the decisions.jsonl entry (DIRECT MODE).
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
@@ -1023,6 +1085,25 @@ When you finish, update builder/improve.md with:
 - the main report weaknesses you found
 - what you recommended
 - what was applied vs deferred
+
+Each new entry that records a *proposed but not-yet-applied* report change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Reporting findings rarely live in builder/review.md (the /review-* commands focus on plan/eval/cost/speed, not report layout). But if you can find a matching finding (e.g. user previously flagged "the funnel chart is unreadable" and that landed in review.md), apply close-out the same way the other /improve-* commands do:
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+
+2. **Append a builder/decisions.jsonl entry** for the report change (use `diff_patch_workspace_file`):
+   ```json
+   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"agent","trigger":"improve-report","applied_changes":["reports/report_plan.json"],"rationale":"<one-line>","linked_review_finding":["F-..."]}
+   ```
+   `linked_review_finding` is omitted when no matching finding exists. This decision-trail is what makes report-layout changes auditable alongside plan/eval changes.
+
+This applies to chat-intent report fixes too.
 ````
 
 ### Experiment lifecycle

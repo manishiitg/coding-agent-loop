@@ -73,3 +73,5 @@ END WITH READY-TO-PASTE COMMANDS
 List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
+
+**Finding IDs.** Every distinct misconfig or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <kb|db|lock_learnings|lock_code|convert>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

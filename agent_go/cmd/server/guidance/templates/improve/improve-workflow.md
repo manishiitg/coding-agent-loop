@@ -81,3 +81,23 @@ Before finishing, update builder/improve.md with:
 - what improved
 - remaining gaps
 - next hypotheses
+
+Each new entry that records a *proposed* change (DIRECT mode harden suggestion that wasn't applied, deferred candidate, queued experiment) gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Before applying any change in this run, scan builder/review.md for findings that the change addresses. The match is by intent, not by exact wording — a Phase-2 Lens-B hardcoded-path finding for `step-3` and a fix that updates `step-3` to read from variables both target the same finding. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+
+After each change is applied (DIRECT mode) or queued as an experiment (EXPERIMENT mode):
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+   Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; explain what's still open. Use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong on closer inspection. Never delete or rewrite the original finding; the marker preserves audit history.
+
+2. **In EXPERIMENT MODE**, when you call `propose_experiment`, include `linked_review_finding` in the experiment payload with the array of matched `F-...` ids — so when the experiment is later concluded, the resulting decisions.jsonl entry inherits the linkage and the audit trail is searchable from both ends.
+
+3. **In DIRECT MODE**, when the underlying primitive (harden_workflow / replan_workflow_from_results / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings) writes a `builder/decisions.jsonl` entry, also append `linked_review_finding=[F-...]` to that entry. If the primitive does not write the decision itself, you append the JSONL line via `diff_patch_workspace_file` — same shape as the rule-capture flow in the system prompt — with `linked_review_finding` populated.
+
+This applies to chat-intent fixes too. If the user asks "fix that step-3 hardcoded path" outside of any slash command and you apply the fix, you still scan review.md for matching findings, append the RESOLVED marker, and link the decision.

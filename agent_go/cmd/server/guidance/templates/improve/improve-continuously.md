@@ -65,6 +65,7 @@ DIRECT MODE (when metrics.json is empty):
 ALWAYS:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
 - update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+- when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the decisions.jsonl entry (DIRECT MODE).
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.

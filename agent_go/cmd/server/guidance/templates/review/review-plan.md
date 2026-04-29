@@ -78,3 +78,5 @@ Then a cross-step summary:
 - **Top 5 issues to fix first** (highest-impact across all phases).
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator findings (Phase 3), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
+
+**Finding IDs.** Every distinct finding (whether from Phase 1, 2, or 3) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "structural"> — <finding>` so the close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

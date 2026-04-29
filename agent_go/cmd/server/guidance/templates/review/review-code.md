@@ -61,3 +61,5 @@ For each step audited:
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
+
+**Finding IDs.** Every distinct finding (drift, shortcut, browser, operational) gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id> — <lens>: <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

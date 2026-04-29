@@ -20,3 +20,5 @@ Then give:
 - the top next actions, clearly separated into workflow fixes vs eval fixes.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the goal/eval verdict, the main gaps ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+
+**Finding IDs.** Every distinct gap or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <workflow|eval> — <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

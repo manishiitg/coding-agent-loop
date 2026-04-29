@@ -54,3 +54,21 @@ When you finish, update builder/improve.md with:
 - which eval steps you skipped because they're under active measurement (per Pass 0 guard)
 - what you recommended and what was applied
 - the decisions.jsonl entries you appended (rubric-change markers)
+
+Each new entry that records a *proposed but not-yet-applied* eval change gets a stable id of the form `I-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id.
+
+CLOSE-OUT EDITS — read this carefully.
+
+Before applying eval changes in this run, scan builder/review.md for findings that the change addresses (most likely from /review-goal-alignment, but /review-plan can also surface "no validation_schema / weak measurement" findings that map to eval). The match is by intent, not exact wording. Collect the matching `F-YYYY-MM-DD-NNN` ids before you apply.
+
+After each eval change is applied:
+
+1. **Edit builder/review.md** to append, on its own line immediately after each matched finding:
+   ```
+   **[RESOLVED YYYY-MM-DD — <one-line how it was fixed>]**
+   ```
+   Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong. Never delete or rewrite the original finding.
+
+2. **In the decisions.jsonl entry from Pass 4** (the rubric-change marker), include `linked_review_finding` populated with the array of matched `F-...` ids. This is what makes the audit trail searchable: every rubric change that closed a review item points back at it, and every resolved review item names the decision that closed it.
+
+This applies to chat-intent eval fixes too. If the user asks "tighten that eval check on segment coverage" outside of any slash command and you apply the fix, you still scan review.md for matching findings, append the RESOLVED marker, and link the decision.

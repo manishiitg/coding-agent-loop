@@ -16,3 +16,5 @@ Then give:
 - the top next actions, with expected impact and risk to success criteria.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the timing analysis, the top bottlenecks, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+
+**Finding IDs.** Every distinct bottleneck or recommendation gets a stable id of the form `F-YYYY-MM-DD-NNN` — today's date plus a 3-digit sequence that restarts at `001` per day. Scan the file for today's highest existing sequence and continue from there; never reuse an id. Format each finding line as `- [F-YYYY-MM-DD-NNN] <severity>: <step-id or "plan-shape"> — <finding>` so close-out edits performed later by `/improve-*` (or by chat-driven fixes) can target the exact entry.

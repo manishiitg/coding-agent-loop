@@ -1,4 +1,11 @@
-Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.{{if .Focus}}
+Review and improve evaluation/evaluation_plan.json. Eval is the framework's measurement layer — it bridges "the plan ran" and "the goal was met." A good eval plan covers BOTH dimensions:
+
+  - **Operational quality** — how well each step actually ran (output shape, completeness, validation pass rate, stylistic checks, format conformance). These eval steps watch the plan's mechanics.
+  - **Goal achievement** — whether the workflow's outputs satisfy the success_criteria from soul.md. These eval steps watch the goal.
+
+If the eval plan only checks one dimension, it's incomplete: a plan that runs cleanly but misses the goal is silent failure; a plan that hits the goal but produces malformed outputs breaks downstream consumers. Both must be visible.
+
+Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
@@ -24,13 +31,14 @@ PASS 2 — OUTPUT-FIRST ALIGNMENT (does eval catch what success_criteria care ab
    - whether any eval checks give false confidence (says pass when outputs are clearly weak) or miss obvious failure modes
 
 PASS 3 — IMPROVEMENT SUGGESTIONS
-Propose improvements in these categories:
-1. **Coverage**: does each important success criterion have a clear eval step?
-2. **Directness**: is the eval checking the actual desired outcome, or only proxies?
-3. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce?
-4. **Redundancy**: are multiple eval steps measuring the same thing with little added value?
-5. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria?
-6. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly?
+Propose improvements in these categories. Tag each suggestion with which dimension it strengthens — **OPERATIONAL** (how well the plan ran) or **GOAL** (did the plan achieve success_criteria) — so the user sees both dimensions are getting attention.
+1. **Goal coverage** (GOAL): does each important success criterion from soul.md have a clear eval step? Missing coverage on a criterion means the framework can't verdict experiments against that part of the goal.
+2. **Operational coverage** (OPERATIONAL): does every step that produces consequential output have an eval check on its shape / completeness / validation? Steps without operational coverage fail silently downstream.
+3. **Directness**: is the eval checking the actual desired outcome, or only a proxy that may not move with the real signal?
+4. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce? An LLM-judge eval that scores the same output differently on different days isn't a measurement, it's noise.
+5. **Redundancy**: are multiple eval steps measuring the same thing with little added value? Trim duplicates.
+6. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria? An eval that always passes on criteria the user actually misses is false confidence.
+7. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly? Where the human eye says "this is bad" but the eval says "pass," the eval is broken.
 
 Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
 

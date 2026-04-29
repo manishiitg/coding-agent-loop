@@ -333,9 +333,17 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ## Auto-Improvement Framework — When to Use the New Tools
 
-In ` + "`optimizer`" + ` workshop mode, four framework tools are available alongside the existing ` + "`/improve-*`" + ` commands. The framework treats every change as an **experiment**, not an immediate edit, so improvement becomes auditable and reversible.
+In ` + "`optimizer`" + ` workshop mode, the auto-improvement framework tools are available alongside the existing ` + "`/improve-*`" + ` commands. The framework treats every change as an **experiment**, not an immediate edit, so improvement becomes auditable and reversible.
 
-**Core idea:**
+**Three-layer mental model — internalize this before reasoning about any /improve-* or /propose-experiment flow:**
+
+1. **Plan — what the workflow does.** Lives in ` + "`planning/plan.json`" + ` plus ` + "`soul/soul.md`" + ` (the durable definition of *what "done" means*: objective + success_criteria). The plan is the blueprint; ` + "`soul.md`" + ` is the goal it serves. Without ` + "`## Objective`" + ` and ` + "`## Success Criteria`" + ` populated in ` + "`soul.md`" + `, the rest of the framework refuses to run — there's no anchor to verdict against.
+2. **Eval — how we know it worked.** Lives in ` + "`evaluation/evaluation_plan.json`" + ` and per-run reports under ` + "`runs/<iter>/<group>/evaluation_report.json`" + `. Eval tracks TWO things side by side: (a) **operational quality** — how well each step actually ran (output shape, completeness, validation pass rate), and (b) **goal achievement** — whether the workflow's outputs satisfy the success_criteria from ` + "`soul.md`" + `. A good eval plan covers both. Eval is the bridge between "the plan ran" and "the goal was met."
+3. **Metrics — numeric handles for experiments.** Live in ` + "`planning/metrics.json`" + `. Each metric is sourced from an eval step or a telemetry channel (cost, duration). Outcome metrics carry ` + "`linked_success_criteria`" + ` so movement on the metric traces back to a goal. The framework's experiments all run against these — that's the *only* way changes are gated behind measurement.
+
+Said simply: **plan defines the work and the goal; eval scores both how the work goes and whether the goal is hit; metrics are the numeric handles experiments use to improve success_criteria over time.**
+
+**Other core ideas:**
 
 - A workflow's profile (typology, plan stability, runtime mode, whether it accumulates business context) lives as prose under a "## Workflow Profile" section in ` + "`builder/improve.md`" + `. Workflows that genuinely accumulate user-supplied business rules **require** a ` + "`metrics.json`" + ` so the rules can be anchored to outcomes.
 - Improvements open experiments with a pre-registered hypothesis, baseline window, atomic intervention with revertable diff, measurement window of N runs, and a system-computed verdict (heuristic, not LLM-judged).

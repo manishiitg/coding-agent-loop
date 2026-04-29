@@ -26,6 +26,22 @@ One source of truth (the templates), three callers, no drift between them. Editi
 
 ## Mental Model
 
+### How a workflow's quality is measured
+
+The framework treats workflow quality as a three-layer stack. Every slash command, every tool, every template assumes this hierarchy:
+
+1. **Plan — what the workflow does.** Lives in [`planning/plan.json`](#) plus `soul/soul.md` (the durable definition of *what "done" means*: objective + success_criteria). The plan is the blueprint; `soul.md` is the goal it serves. Without `## Objective` and `## Success Criteria` in `soul.md`, the rest of the framework refuses to run — there's no anchor.
+2. **Eval — how we know it worked.** Lives in `evaluation/evaluation_plan.json` and the per-run reports under `runs/<iter>/<group>/evaluation_report.json`. Eval tracks TWO things side by side:
+   - **Operational quality** — how well each step actually ran (output shape, completeness, stylistic checks, validation pass rates).
+   - **Goal achievement** — whether the workflow's outputs satisfy the `success_criteria` declared in `soul.md`.
+
+   A good eval plan covers both. Eval is the bridge between "the plan ran" and "the goal was met."
+3. **Metrics — numeric handles for experiments.** Live in `planning/metrics.json`. Each metric is sourced from an eval step or a telemetry channel (cost, duration). Outcome metrics carry `linked_success_criteria` so movement on the metric traces back to a goal in `soul.md`. The auto-improvement framework's experiments all run against these — that's the *only* way changes are gated behind measurement.
+
+Said another way: **plan defines the work and the goal**, **eval scores both how the work goes and whether the goal is hit**, **metrics are the numeric handles experiments use to improve success_criteria over time**.
+
+### Slash commands, templates, tools
+
 - Add a **slash command** when you want a UI shortcut for a flow that already has a template.
 - Add a **guided-flow template** when you want a reusable multi-step plan the agent can follow consistently.
 - Add a **tool** when you need a new primitive capability.
@@ -267,6 +283,7 @@ If you are trying to:
 - **Rewrite the workflow structure from evidence**: `replan_workflow_from_results` (called by `/improve-workflow` when warranted); replan is exempt from the experiment gate
 - **Improve reliability without redesigning the workflow** (legacy DIRECT-MODE path): `harden_workflow` (called by `/improve-workflow` when no metrics defined)
 - **Capture a user-stated business rule**: no slash command — the agent recognizes the rule in chat and persists it via `diff_patch_workspace_file` + a `decisions.jsonl` line with `source=user`, `trigger=rule-captured`
+
 
 
 
@@ -809,7 +826,14 @@ Before finishing, update builder/improve.md with:
 #### `improve-eval` (`improve/improve-eval.md`)
 
 ````text
-Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.{{if .Focus}}
+Review and improve evaluation/evaluation_plan.json. Eval is the framework's measurement layer — it bridges "the plan ran" and "the goal was met." A good eval plan covers BOTH dimensions:
+
+  - **Operational quality** — how well each step actually ran (output shape, completeness, validation pass rate, stylistic checks, format conformance). These eval steps watch the plan's mechanics.
+  - **Goal achievement** — whether the workflow's outputs satisfy the success_criteria from soul.md. These eval steps watch the goal.
+
+If the eval plan only checks one dimension, it's incomplete: a plan that runs cleanly but misses the goal is silent failure; a plan that hits the goal but produces malformed outputs breaks downstream consumers. Both must be visible.
+
+Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
@@ -835,13 +859,14 @@ PASS 2 — OUTPUT-FIRST ALIGNMENT (does eval catch what success_criteria care ab
    - whether any eval checks give false confidence (says pass when outputs are clearly weak) or miss obvious failure modes
 
 PASS 3 — IMPROVEMENT SUGGESTIONS
-Propose improvements in these categories:
-1. **Coverage**: does each important success criterion have a clear eval step?
-2. **Directness**: is the eval checking the actual desired outcome, or only proxies?
-3. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce?
-4. **Redundancy**: are multiple eval steps measuring the same thing with little added value?
-5. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria?
-6. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly?
+Propose improvements in these categories. Tag each suggestion with which dimension it strengthens — **OPERATIONAL** (how well the plan ran) or **GOAL** (did the plan achieve success_criteria) — so the user sees both dimensions are getting attention.
+1. **Goal coverage** (GOAL): does each important success criterion from soul.md have a clear eval step? Missing coverage on a criterion means the framework can't verdict experiments against that part of the goal.
+2. **Operational coverage** (OPERATIONAL): does every step that produces consequential output have an eval check on its shape / completeness / validation? Steps without operational coverage fail silently downstream.
+3. **Directness**: is the eval checking the actual desired outcome, or only a proxy that may not move with the real signal?
+4. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce? An LLM-judge eval that scores the same output differently on different days isn't a measurement, it's noise.
+5. **Redundancy**: are multiple eval steps measuring the same thing with little added value? Trim duplicates.
+6. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria? An eval that always passes on criteria the user actually misses is false confidence.
+7. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly? Where the human eye says "this is bad" but the eval says "pass," the eval is broken.
 
 Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
 
@@ -996,6 +1021,11 @@ When you finish, update builder/improve.md with:
 
 ````text
 Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+
+THREE-LAYER STACK (read this before picking a target)
+- **Plan** = what the workflow does (planning/plan.json) + soul.md (objective + success_criteria). The plan is the blueprint; soul.md is the goal it serves.
+- **Eval** = how we know it worked (evaluation/evaluation_plan.json + per-run reports). Tracks both **operational quality** (how well the plan ran) and **goal achievement** (did outputs satisfy success_criteria). The eval reports under runs/<iter>/<group>/evaluation_report.json are your primary evidence.
+- **Metrics** = numeric handles for experiments (planning/metrics.json). Sourced from eval steps + telemetry. Outcome metrics carry linked_success_criteria. **This command targets metrics** — but the value of the experiment is whether the metric movement actually moves a success criterion. A metric not linked to soul.md is suspect; the framework will still verdict it but the user can't tell whether the win is real.
 
 MENTAL MODEL
 Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that surface here are things a domain expert would notice when reading what the workflow produced:

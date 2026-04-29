@@ -1,5 +1,10 @@
 Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
+THREE-LAYER STACK (read this before picking a target)
+- **Plan** = what the workflow does (planning/plan.json) + soul.md (objective + success_criteria). The plan is the blueprint; soul.md is the goal it serves.
+- **Eval** = how we know it worked (evaluation/evaluation_plan.json + per-run reports). Tracks both **operational quality** (how well the plan ran) and **goal achievement** (did outputs satisfy success_criteria). The eval reports under runs/<iter>/<group>/evaluation_report.json are your primary evidence.
+- **Metrics** = numeric handles for experiments (planning/metrics.json). Sourced from eval steps + telemetry. Outcome metrics carry linked_success_criteria. **This command targets metrics** — but the value of the experiment is whether the metric movement actually moves a success criterion. A metric not linked to soul.md is suspect; the framework will still verdict it but the user can't tell whether the win is real.
+
 MENTAL MODEL
 Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that surface here are things a domain expert would notice when reading what the workflow produced:
 - "Every Twitter reply has the same tone, but the success criteria mention engaging different audience segments — segment by follower type and vary voice."

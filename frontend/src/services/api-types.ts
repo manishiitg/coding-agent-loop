@@ -1750,6 +1750,11 @@ export interface ScheduledJob {
   consecutive_failures: number
   missed_run_count?: number
   latest_missed_run_at?: string
+  // env_filtered means this schedule is defined in the workflow file but its cron
+  // is NOT registered on this machine because SCHEDULER_ALLOWED_WORKFLOWS /
+  // SCHEDULER_BLOCKED_WORKFLOWS (or _USERS for multi-agent) gates it. Manual
+  // trigger still works; the cron just won't fire automatically here.
+  env_filtered?: boolean
   created_at?: string
   updated_at?: string
 }

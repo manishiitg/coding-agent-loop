@@ -1418,7 +1418,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                       </div>
                     )}
 
-                    <div className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
+                    <div className={`px-5 py-4 ${!job.enabled || job.env_filtered ? 'opacity-60' : ''}`}>
                     {/* Row top */}
                     <div className="flex items-start gap-3">
                       {/* Status dot */}
@@ -1457,6 +1457,18 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
                               Paused
                             </span>
+                          )}
+                          {job.env_filtered && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-help">
+                                  Env-filtered
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-xs">
+                                The cron is not registered on this machine — gated by SCHEDULER_ALLOWED_WORKFLOWS / SCHEDULER_BLOCKED_WORKFLOWS in agent_go/.env. Manual "Run now" still works; only automatic firing is suppressed.
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                         </div>
 
@@ -1501,7 +1513,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             {job.last_status === 'running' ? 'Running...' : `Last: ${timeAgo(job.last_run_at)}`}
                           </span>
                           <span>
-                            {job.enabled
+                            {job.env_filtered
+                              ? "won't fire on this machine (env-filtered)"
+                              : job.enabled
                               ? isMissedJob && missedDelayMs != null
                                 ? job.missed_run_count && job.missed_run_count > 1
                                   ? `${job.missed_run_count} missed · latest ${formatOverdueDuration(missedDelayMs)} ago`

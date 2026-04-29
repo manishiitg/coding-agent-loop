@@ -43,6 +43,11 @@ type ScheduledJobResponse struct {
 	ConsecutiveFailures int             `json:"consecutive_failures"`
 	MissedRunCount      int             `json:"missed_run_count,omitempty"`
 	LatestMissedRunAt   *time.Time      `json:"latest_missed_run_at,omitempty"`
+	// EnvFiltered means the schedule lives in the workflow file but the cron is
+	// not registered on this machine because SCHEDULER_ALLOWED_WORKFLOWS /
+	// SCHEDULER_BLOCKED_WORKFLOWS (or the _USERS variants for multi-agent) gates
+	// it. Manual TriggerNow still works; the cron just won't fire automatically.
+	EnvFiltered         bool            `json:"env_filtered,omitempty"`
 	CreatedAt           string          `json:"created_at,omitempty"`
 	UpdatedAt           string          `json:"updated_at,omitempty"`
 }
@@ -79,7 +84,11 @@ type UpdateScheduleRequest struct {
 }
 
 // buildJobResponse combines manifest schedule + runtime state into an API response.
-func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
+// envFilter is consulted so the response can flag schedules whose cron is gated
+// out by SCHEDULER_ALLOWED_WORKFLOWS / SCHEDULER_BLOCKED_WORKFLOWS on this machine —
+// the UI uses that to label otherwise-enabled schedules that won't actually fire.
+func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus, envFilter schedulerWorkflowFilter) ScheduledJobResponse {
+	envFiltered := envFilter.IsActive() && !envFilter.IsWorkflowAllowed(manifest.ID, manifest.Label, workspacePath)
 	return ScheduledJobResponse{
 		ID:                  sched.ID,
 		Name:                sched.Name,
@@ -107,13 +116,17 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		MissedRunCount:      missed.MissedRunCount,
 		LatestMissedRunAt:   missed.LatestMissedRunAt,
+		EnvFiltered:         envFiltered,
 		CreatedAt:           manifest.CreatedAt,
 		UpdatedAt:           manifest.UpdatedAt,
 	}
 }
 
 // buildMultiAgentJobResponse combines a multi-agent schedule + runtime state into an API response.
-func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
+// envFilter is consulted so the response can flag schedules whose cron is gated out by
+// SCHEDULER_ALLOWED_USERS / SCHEDULER_BLOCKED_USERS on this machine.
+func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state ScheduleRuntimeState, envFilter schedulerWorkflowFilter) ScheduledJobResponse {
+	envFiltered := envFilter.IsUserFilterActive() && !envFilter.IsUserAllowed(userID)
 	return ScheduledJobResponse{
 		ID:                  sched.ID,
 		Name:                sched.Name,
@@ -134,6 +147,7 @@ func buildMultiAgentJobResponse(userID string, sched WorkflowSchedule, state Sch
 		LastDurationMs:      state.LastDurationMs,
 		RunCount:            state.RunCount,
 		ConsecutiveFailures: state.ConsecutiveFailures,
+		EnvFiltered:         envFiltered,
 	}
 }
 
@@ -228,6 +242,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 
 		var allJobs []ScheduledJobResponse
 		missedResolver := newWorkflowMissedStatusResolver(r.Context())
+		envFilter := loadSchedulerWorkflowFilter()
 
 		if modeFilter == "" || modeFilter == "workflow" || modeFilter == "workshop" {
 			for _, dw := range workflows {
@@ -244,7 +259,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 
 					state := svc.GetRuntimeState(sched.ID)
 					missed := missedResolver.get(dw.WorkspacePath, sched)
-					allJobs = append(allJobs, buildJobResponse(dw.WorkspacePath, dw.Manifest, sched, state, missed))
+					allJobs = append(allJobs, buildJobResponse(dw.WorkspacePath, dw.Manifest, sched, state, missed, envFilter))
 				}
 			}
 		}
@@ -269,7 +284,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 							}
 						}
 						state := svc.GetRuntimeState(sched.ID)
-						allJobs = append(allJobs, buildMultiAgentJobResponse(userIDFilter, sched, state))
+						allJobs = append(allJobs, buildMultiAgentJobResponse(userIDFilter, sched, state, envFilter))
 					}
 				}
 			} else {
@@ -284,7 +299,7 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 								}
 							}
 							state := svc.GetRuntimeState(sched.ID)
-							allJobs = append(allJobs, buildMultiAgentJobResponse(ma.UserID, sched, state))
+							allJobs = append(allJobs, buildMultiAgentJobResponse(ma.UserID, sched, state, envFilter))
 						}
 					}
 				}
@@ -378,7 +393,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 
 			state := svc.GetRuntimeState(newSched.ID)
-			resp := buildMultiAgentJobResponse(userID, newSched, state)
+			resp := buildMultiAgentJobResponse(userID, newSched, state, loadSchedulerWorkflowFilter())
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -436,7 +451,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		state := svc.GetRuntimeState(newSched.ID)
 		missedResolver := newWorkflowMissedStatusResolver(r.Context())
-		resp := buildJobResponse(req.WorkspacePath, manifest, newSched, state, missedResolver.get(req.WorkspacePath, newSched))
+		resp := buildJobResponse(req.WorkspacePath, manifest, newSched, state, missedResolver.get(req.WorkspacePath, newSched), loadSchedulerWorkflowFilter())
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -461,11 +476,11 @@ func getScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		state := svc.GetRuntimeState(id)
 		var resp ScheduledJobResponse
 		if result.SourceType == "multi-agent" {
-			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state)
+			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state, loadSchedulerWorkflowFilter())
 		} else {
 			missedResolver := newWorkflowMissedStatusResolver(r.Context())
 			sched := result.Manifest.Schedules[result.Index]
-			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched))
+			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched), loadSchedulerWorkflowFilter())
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -538,7 +553,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 
 			state := svc.GetRuntimeState(id)
-			resp := buildMultiAgentJobResponse(result.UserID, *sched, state)
+			resp := buildMultiAgentJobResponse(result.UserID, *sched, state, loadSchedulerWorkflowFilter())
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
@@ -604,7 +619,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		state := svc.GetRuntimeState(id)
 		missedResolver := newWorkflowMissedStatusResolver(r.Context())
-		resp := buildJobResponse(workspacePath, manifest, *sched, state, missedResolver.get(workspacePath, *sched))
+		resp := buildJobResponse(workspacePath, manifest, *sched, state, missedResolver.get(workspacePath, *sched), loadSchedulerWorkflowFilter())
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -675,7 +690,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				scheduleLogf("[SCHEDULER] Failed to reload multi-agent schedule %s after enable: %v", id, err)
 			}
 			state := svc.GetRuntimeState(id)
-			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state)
+			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state, loadSchedulerWorkflowFilter())
 		} else {
 			result.Manifest.Schedules[result.Index].Enabled = true
 			if err := WriteWorkflowManifest(r.Context(), result.WorkspacePath, result.Manifest); err != nil {
@@ -688,7 +703,7 @@ func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			state := svc.GetRuntimeState(id)
 			missedResolver := newWorkflowMissedStatusResolver(r.Context())
 			sched := result.Manifest.Schedules[result.Index]
-			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched))
+			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched), loadSchedulerWorkflowFilter())
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -722,7 +737,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				http.Error(w, "failed to write multi-agent schedules: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state)
+			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], state, loadSchedulerWorkflowFilter())
 		} else {
 			result.Manifest.Schedules[result.Index].Enabled = false
 			if err := WriteWorkflowManifest(r.Context(), result.WorkspacePath, result.Manifest); err != nil {
@@ -731,7 +746,7 @@ func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			}
 			missedResolver := newWorkflowMissedStatusResolver(r.Context())
 			sched := result.Manifest.Schedules[result.Index]
-			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched))
+			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, state, missedResolver.get(result.WorkspacePath, sched), loadSchedulerWorkflowFilter())
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -861,11 +876,11 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		updatedState := svc.GetRuntimeState(id)
 		var resp ScheduledJobResponse
 		if result.SourceType == "multi-agent" {
-			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], updatedState)
+			resp = buildMultiAgentJobResponse(result.UserID, result.ScheduleFile.Schedules[result.Index], updatedState, loadSchedulerWorkflowFilter())
 		} else {
 			missedResolver := newWorkflowMissedStatusResolver(r.Context())
 			sched := result.Manifest.Schedules[result.Index]
-			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, updatedState, missedResolver.get(result.WorkspacePath, sched))
+			resp = buildJobResponse(result.WorkspacePath, result.Manifest, sched, updatedState, missedResolver.get(result.WorkspacePath, sched), loadSchedulerWorkflowFilter())
 		}
 
 		w.Header().Set("Content-Type", "application/json")

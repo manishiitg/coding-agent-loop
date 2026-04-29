@@ -57,14 +57,12 @@ var allKinds = map[string]kindMeta{
 	"ready-to-optimize":     {Group: "builder", Description: "Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.)", Modes: []string{"builder"}},
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
-	"review-plan":           {Group: "review", Description: "Critical review of workflow design decisions", Modes: []string{"builder", "optimizer", "run"}},
+	"review-plan":           {Group: "review", Description: "Comprehensive plan audit: structure (review_plan tool) + per-step description quality + todo_task orchestrator quality", Modes: []string{"builder", "optimizer", "run"}},
 	"review-goal-alignment": {Group: "review", Description: "Goal-vs-outcome alignment: is the workflow achieving the objective; are success_criteria met; does eval measure them properly", Modes: []string{"optimizer"}},
 	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
 	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
 	"review-config":         {Group: "review", Description: "Per-step KB / db / lock_learnings / lock_code recommendations", Modes: []string{"builder", "optimizer", "run"}},
-	"review-descriptions":   {Group: "review", Description: "Plan descriptions vs skill/learning confusion audit", Modes: []string{"builder", "optimizer", "run"}},
 	"review-code":           {Group: "review", Description: "Saved main.py vs current step descriptions drift check", Modes: []string{"optimizer"}},
-	"review-orchestrators":  {Group: "review", Description: "todo_task orchestrator descriptions and route quality", Modes: []string{"builder", "optimizer", "run"}},
 
 	// Improvements — AI proposes; framework gates when metrics defined
 	"improve-setup-framework": {Group: "improve", Description: "One-time bootstrap of the auto-improvement framework (Workflow Profile + metrics)", Modes: []string{"optimizer"}},

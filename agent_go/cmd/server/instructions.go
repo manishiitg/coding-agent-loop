@@ -392,14 +392,12 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - ready-to-optimize      → pre-optimizer readiness checklist
 
   Reviews (recommend, don't apply; appends to ` + "`builder/review.md`" + `):
-    - review-plan            → workflow design review
+    - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
     - review-goal-alignment  → goal-vs-outcome alignment (workflow + eval)
     - review-speed           → latency analysis
     - review-cost            → cost analysis
     - review-config          → per-step KB/db/lock recommendations
-    - review-descriptions    → descriptions vs skill/learning confusion
-    - review-code            → saved main.py vs step descriptions
-    - review-orchestrators   → todo_task orchestrator review
+    - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
 
   Improvements (AI proposes; framework gates when metrics defined):
     - improve-setup-framework  → one-time framework bootstrap

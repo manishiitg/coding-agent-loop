@@ -152,19 +152,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'review-descriptions',
-    description: 'Review all steps for description vs skill/learning confusion',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-descriptions", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
-    }
-  },
-  {
     command: 'review-code',
     description: 'Review saved scripts (main.py) against step descriptions to detect drift',
     icon: <FileText className="w-4 h-4" />,
@@ -175,19 +162,6 @@ export const builtinCommands: CommandDefinition[] = [
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
       ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-code", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
-    }
-  },
-  {
-    command: 'review-orchestrators',
-    description: 'Review todo_task orchestrator descriptions for quality',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      const focus = ctx.beforeSlash.trim()
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="review-orchestrators", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {

@@ -91,10 +91,8 @@ Designing a new workflow.
 |---|---|
 | `/design-flow` | Inspect context dependencies and handoff design between steps |
 | `/ready-to-optimize` | Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.) |
-| `/review-plan` | Critically review workflow design decisions |
+| `/review-plan` | **Comprehensive plan audit** — structural review (via `review_plan` tool) + per-step description quality (vs skill confusion, hardcoded values, browser anti-patterns, missing validation) + todo_task orchestrator quality. |
 | `/review-config` | Review per-step KB / db / lock_learnings / lock_code recommendations |
-| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, missing validation |
-| `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes |
 
 All `/review-*` are recommend-only — they append a dated entry to `builder/review.md` and do not apply changes.
 
@@ -132,14 +130,12 @@ Improving an existing workflow. Same tool set as Builder; the differences are in
 
 | Slash Command | Purpose |
 |---|---|
-| `/review-plan` | Critically review workflow design decisions (also in builder, run) |
+| `/review-plan` | Comprehensive plan audit — structure + per-step descriptions + todo_task orchestrators (also in builder, run) |
 | `/review-config` | Review per-step KB / db / lock recommendations (also in builder, run) |
-| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, etc. (also in builder, run) |
-| `/review-orchestrators` | Review `todo_task` orchestrator descriptions (also in builder, run) |
 | `/review-goal-alignment` | Goal-vs-outcome alignment: does a real run achieve the objective, are success_criteria met, does eval measure them |
 | `/review-speed` | Analyze workflow latency and recommend safe speedups |
 | `/review-cost` | Analyze workflow cost and recommend safe reductions |
-| `/review-code` | Review saved `main.py` scripts against step descriptions |
+| `/review-code` | Review saved `main.py` scripts: drift, dynamic-vs-shortcut, browser best practices |
 
 **Improvements — AI proposes; framework gates when metrics defined:**
 
@@ -178,10 +174,8 @@ Executing the finished workflow and inspecting outcomes. Read-only with respect 
 
 | Slash Command | Purpose |
 |---|---|
-| `/review-plan` | Critically review workflow design decisions |
+| `/review-plan` | Comprehensive plan audit — structure + per-step descriptions + todo_task orchestrators |
 | `/review-config` | Review per-step KB / db / lock recommendations |
-| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, etc. |
-| `/review-orchestrators` | Review `todo_task` orchestrator descriptions |
 
 ### Tools
 
@@ -234,7 +228,7 @@ The framework's design (soul preconditions, metric→success_criteria trace, pro
 ```
 kind: "design-flow" | "ready-to-optimize" |
       "review-plan" | "review-goal-alignment" | "review-speed" | "review-cost" |
-      "review-config" | "review-descriptions" | "review-code" | "review-orchestrators" |
+      "review-config" | "review-code" |
       "improve-setup-framework" | "improve-workflow" | "improve-eval" |
       "improve-continuously" | "improve-report" |
       "propose-experiment" |
@@ -283,6 +277,7 @@ If you are trying to:
 - **Rewrite the workflow structure from evidence**: `replan_workflow_from_results` (called by `/improve-workflow` when warranted); replan is exempt from the experiment gate
 - **Improve reliability without redesigning the workflow** (legacy DIRECT-MODE path): `harden_workflow` (called by `/improve-workflow` when no metrics defined)
 - **Capture a user-stated business rule**: no slash command — the agent recognizes the rule in chat and persists it via `diff_patch_workspace_file` + a `decisions.jsonl` line with `source=user`, `trigger=rule-captured`
+
 
 
 
@@ -388,13 +383,86 @@ REVIEW LOG: append a dated entry to builder/review.md (create if absent) with th
 #### `review-plan` (`review/review-plan.md`)
 
 ````text
-Run review_plan() to critically analyze the current workflow plan.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Critical audit of the workflow plan — the comprehensive review. Where /design-flow asks "what would a designer make better," this asks "what's wrong, weak, risky, or unjustified, and which steps need attention." Findings go to builder/review.md as recommendations; nothing is applied here.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
+The audit has three phases. Run each in order. Skip Phase 3's orchestrator block when the workflow has no todo_task steps.
 
-This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.
+PHASE 1 — STRUCTURAL ANALYSIS
 
-REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+1. Call review_plan() — the server-side review tool. It analyzes plan structure: step boundaries, step types, execution modes, context flow integrity, validation coverage, portability, and whether choices are justified by the objective + success_criteria from soul.md.
+2. Read its output carefully. Group findings by severity: CRITICAL (broken structure, missing required fields, contradictions vs soul.md), WARNING (questionable choices that need defense), INFO (style/minor).
+3. Compare against soul.md's objective + success_criteria explicitly: for each weak structural choice, name which criterion it fails or under-serves.
+
+PHASE 2 — PER-STEP DESCRIPTION AUDIT
+
+For every step in plan.json, read the step's description and (if present) the step's SKILL.md / learnings. Apply each lens; skip a lens when it doesn't fire.
+
+LENS A — Description vs Skill Confusion
+- **Description contains runtime learnings**: the description should be an *instruction* (what to do), not a *retrospective* (what worked last time). "Use batch mode because single inserts timeout", "avoid X which caused failures", or specific tool parameter values discovered at runtime belong in SKILL.md, not the description.
+- **Skill contains task instructions**: SKILL.md should capture *reusable patterns and pitfalls discovered during execution*, not restate what the step is supposed to do. If the skill reads like a task description, it's confused.
+- **Duplication**: same guidance appearing in both description and skill — pick one home.
+- **Description defers to skill**: phrases like "follow the skill" or "see learnings" instead of giving clear instructions.
+
+LENS B — Hardcoded Values
+- **Hardcoded paths**: absolute paths like `/app/workspace-docs/...`, `/Users/...`, `/home/...`, or specific local paths. Should use workspace-relative or workspace-rooted paths instead.
+- **Hardcoded run/iteration paths**: references to `runs/iteration-0/...`, `execution/step-3/...`, or hardcoded group names like `group-1`. These break across runs and groups — the orchestrator resolves these via context_dependencies at runtime.
+- **Hardcoded credentials/secrets**: API keys, tokens, passwords, auth headers. Should reference `SECRET_*` environment variables.
+- **Hardcoded IDs/URLs/user-specific values**: spreadsheet IDs, database names, API endpoints, user IDs, email addresses, phone numbers, account numbers. Should use variable placeholders (e.g., `{USER_ID}`, `{SHEET_ID}`, `{EMAIL}`) in descriptions, with actual values in `variables.json` / variable groups.
+
+LENS C — Browser Anti-Patterns (only for steps that use playwright/browser/agent_browser)
+- **Prescribes browser_evaluate for interactions**: description tells the LLM to use `browser_evaluate`/`eval` to click, fill, or navigate. Should say "take a snapshot, find the element, click/type using its ref" instead.
+- **Prescribes CSS selectors**: patterns like `browser_click({'selector': '...'})` or `browser_type({'selector': '...'})`. Use ref-based interaction from snapshots.
+- **Prescribes hardcoded element references**: specific DOM selectors, iframe indices, or element IDs that may change. Describe intent ("find the password field", "click the login button") and let the LLM discover elements via snapshot.
+- **Over-specifies implementation**: description dictates exact tool calls and parameters instead of describing WHAT to accomplish. For learn_code steps, the description should focus on the goal and let the LLM figure out the implementation using `get_api_spec` and snapshots.
+
+LENS D — Missing Pre-Validation Schema
+- **No validation_schema**: every step that produces a context_output should have a `validation_schema` defined. Without it, there's no automated quality gate — a step can produce garbage and downstream steps will blindly consume it. Check that `validation_schema` exists, has file checks matching the context_output filename, and includes meaningful `json_checks` (not just `must_exist`).
+
+PHASE 3 — TODO_TASK ORCHESTRATOR AUDIT (skip if no todo_task steps)
+
+For every step where `step_type == "todo_task"`, read its description and ALL its `predefined_routes` (sub-agent descriptions). Apply each lens.
+
+LENS E — Orchestrator Description Quality
+- **Missing objective/intent**: the orchestrator description must clearly state WHAT we are trying to achieve — the overall goal. Without this, the orchestrator can't make intelligent decisions when things go wrong or unexpected situations arise. A good orchestrator description answers: "Why do these sub-agents exist together? What outcome are we after?"
+- **Reduced to a sequencer**: if the description is just "run route A, then route B, then route C" or a fixed checklist, the orchestrator is being wasted. It's a capable LLM — its description should enable reasoning, not just list steps. If all it does is follow a fixed order, these should be regular steps in sequence instead.
+- **No edge case / failure guidance**: the description should explain how to handle failures, retries, partial results, missing data, or unexpected sub-agent states. The orchestrator's core value is making decisions when things don't go as planned.
+- **No routing criteria**: the description doesn't explain WHEN or WHY to pick each route. The orchestrator needs to know what conditions, inputs, or states map to which sub-agent.
+
+LENS F — Orchestrator vs Sub-Agent Boundary
+- **Inline execution logic**: detailed task instructions for a specific sub-task written inside the orchestrator description. Each distinct task should be its own route with its own description, learnings, and tools. Orchestrator dispatches; sub-agents execute.
+- **Duplicates sub-agent descriptions**: orchestrator restates what sub-agents already describe. Orchestrator should focus on coordination and decision-making.
+- **Sub-agent descriptions too vague**: route descriptions that are too thin because all the detail is in the orchestrator. Each sub-agent should be self-contained — a junior agent reading only its own description should know exactly what to do.
+
+LENS G — Sub-Agent Hardcoded Values
+- Same hardcoded-value checks from Lens B applied to sub-agent route descriptions (paths, run/iteration paths, credentials, IDs/URLs).
+
+OUTPUT FORMAT
+
+For each step, produce a per-step report:
+
+```
+### step-id: <name> (type: <regular|learn_code|todo_task|routing|conditional|human_input>)
+**Description summary:** <one-line>
+**Lens A — Description vs Skill:** <findings or "clean">
+**Lens B — Hardcoded:** <findings or "clean">
+**Lens C — Browser:** <findings or "n/a (no browser capability)" or "clean">
+**Lens D — Validation:** <findings or "clean">
+**Lens E — Orchestrator description:** <findings, or "n/a (not a todo_task)" or "clean">
+**Lens F — Orchestrator/sub-agent boundary:** <findings or "n/a" or "clean">
+**Lens G — Sub-agent hardcoded:** <findings or "n/a" or "clean">
+**Severity verdict:** CRITICAL / WARNING / INFO / clean
+**Top recommendation:** <single highest-value fix>
+```
+
+Then a cross-step summary:
+
+- **Phase 1 structural findings** (from review_plan tool): list by severity.
+- **Steps with description issues** (Lens A/B/C/D): per-step, which lenses fired.
+- **Todo_task steps with orchestrator issues** (Lens E/F/G): per-step, which lenses fired.
+- **Steps that look clean across all phases.**
+- **Top 5 issues to fix first** (highest-impact across all phases).
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, the structural findings (Phase 1), the description findings grouped by lens (Phase 2), the orchestrator findings (Phase 3), the cross-step summary, the top-5 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
 ````
 
 #### `review-goal-alignment` (`review/review-goal-alignment.md`)
@@ -500,16 +568,36 @@ DB ACCESS:
 - Suggest the file name + primary_key convention (e.g. db/account_status.json, primary_key=group_name).
 - FLAG: step description claims to "save state" / "update results" / "track" something but doesn't explicitly name a db/ file — likely a portability bug; the step is probably writing into runs/{iter}/ instead of the workspace-level db/.
 
+LOCK PRINCIPLE (read this before applying lock rules below)
+Lock is a **reward for proven outcome quality, not a default for operational stability**. A step that ran cleanly 3 times isn't proven; a step whose linked eval score / outcome metric has stayed at-or-above target across 10+ runs spanning 2+ variable groups IS proven. The framework's three layers are the basis: PLAN defines the work + goal, EVAL scores both how the plan ran and whether the goal was met, METRICS are the numeric trajectory. Lock decisions ride on EVAL + METRICS evidence, not on operational counts alone. If a step has no eval coverage at all, you cannot prove outcome quality — recommend the user add eval coverage first OR accept the risk and lock manually; do NOT recommend auto-lock for outcome-blind steps.
+
 LOCK_LEARNINGS (true | false):
-- Lock when ALL: successful_runs >= 3 AND SKILL.md is stable across recent runs (learning agent producing near-duplicate edits) AND description_hash matches stored value.
-- DO NOT lock when ANY: description recently changed (hash mismatch), recent failures triggered learning rewrites, fewer than 3 successful runs, step is still mid-iteration.
+- Lock when ALL of:
+  - successful_runs >= 10 (raise from the legacy "3" — 3 is operational stability only, not outcome confidence)
+  - successful runs span >= 2 different variable groups (so the step has been seen across the variation surface, not just one group repeated)
+  - description_hash matches stored value
+  - **Eval evidence**: at least one of (a) an eval_step targets this step (by id) and its average score over the last 10 runs is at or above the eval's pass threshold, OR (b) a metric in metrics.json sources from this step's eval_step and has been at-or-above its target/floor across the last 10 runs (with linked_success_criteria so the trace to the goal is auditable).
+  - SKILL.md is stable (learning agent producing near-duplicate edits in recent runs)
+- DO NOT lock when ANY: description recently changed (hash mismatch), recent failures triggered learning rewrites, < 10 successful runs, runs all on a single group, no eval coverage, eval is below threshold or missing.
 - If currently locked but description_hash drifted → recommend UNLOCK (learnings are stale relative to intent).
+- If currently locked but linked eval/metric has dropped below target on recent runs → recommend UNLOCK (the locked behavior stopped working).
 
 LOCK_CODE (true | false; learn_code steps only):
-- Lock when ALL: main.py exists AND script_metadata.json shows >= 3 successful runs across all active groups AND no recent fix-loop rewrites AND description hash matches.
-- DO NOT lock when ANY: main.py rewritten in last 2 runs, transient failures present, description being iterated, fewer than 3 successful runs.
-- When recommending lock_code=true, also recommend lock_learnings=true and optimized=true together — they should move as a set per the workshop convention. Include optimized_reason citing the evidence (groups passed, eval scores, no fix-loop rewrites).
+- Lock when ALL of:
+  - main.py exists AND script_metadata.json shows >= 10 successful runs across >= 2 different variable groups
+  - No recent fix-loop rewrites of main.py (last 5 runs)
+  - Description hash matches stored value
+  - **Eval evidence** as defined above (eval_step at threshold for last 10 runs, OR linked metric at-or-above target/floor for last 10 runs)
+- DO NOT lock when ANY: main.py rewritten in last 5 runs, transient failures present, description being iterated, < 10 successful runs, runs all on a single group, no eval coverage, eval below threshold.
+- When recommending lock_code=true, also recommend lock_learnings=true and optimized=true together — they should move as a set per the workshop convention. Include optimized_reason citing the **outcome evidence** (groups passed, eval scores at threshold across N runs, linked metric trajectory at target).
 - If currently locked but description_hash drifted → recommend UNLOCK (main.py may be stale).
+- If currently locked but linked eval/metric has dropped below target on recent runs → recommend UNLOCK (locked code stopped delivering).
+
+CONVERT REGULAR → LEARN_CODE (suggest only when ALL):
+- Step's behavior is mechanical (deterministic transform on stable input shape — filter / aggregate / map fields) rather than per-instance LLM judgment.
+- 10+ successful runs of the regular step across 2+ groups, eval at threshold throughout — proving the step's BEHAVIOR is stable enough to capture in code.
+- Saving the LLM cost is meaningful (the step runs frequently, or is on the critical path).
+- DO NOT suggest conversion for steps that need per-instance LLM judgment (classification, summarization, decision-making) — even if they look "shape-preserving" the answer changes per instance and locking the LLM out via main.py loses the value of the step.
 
 OUTPUT FORMAT
 
@@ -528,54 +616,6 @@ END WITH READY-TO-PASTE COMMANDS
 List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
-````
-
-#### `review-descriptions` (`review/review-descriptions.md`)
-
-````text
-Audit every step's description in plan.json. For each step, do the following:
-
-1. Read the step description from plan.json.
-2. Read the step's SKILL.md / learnings (if any exist).
-3. Check for these problems:
-
-   **Description vs Skill Confusion:**
-   - **Description contains runtime learnings**: The description should be an *instruction* (what to do), not a *retrospective* (what worked last time). Phrases like "use batch mode because single inserts timeout", "avoid X which caused failures", or specific tool parameter values discovered at runtime belong in SKILL.md, not the description.
-   - **Skill contains task instructions**: The SKILL.md should capture *reusable patterns and pitfalls discovered during execution*, not restate what the step is supposed to do. If the skill reads like a task description, it's confused.
-   - **Duplication**: Same guidance appearing in both description and skill — pick one home.
-   - **Description is vague because it defers to skill**: The description says something like "follow the skill" or "see learnings" instead of giving clear instructions.
-
-   **Hardcoded Values:**
-   - **Hardcoded paths**: Absolute paths ("/app/workspace-docs/...", "/Users/...", "/home/...") or specific local paths. Should use relative paths instead.
-   - **Hardcoded run/iteration paths**: References to specific run folders like "runs/iteration-0/...", "execution/step-3/...", or hardcoded group names like "group-1". These break across different runs and groups — the orchestrator resolves these at runtime via context_dependencies.
-   - **Hardcoded credentials/secrets**: API keys, tokens, passwords, auth headers, or any sensitive values. Should reference SECRET_* environment variables instead.
-   - **Hardcoded IDs/URLs/user-specific values**: Specific spreadsheet IDs, database names, API endpoints, user IDs, email addresses, phone numbers, account numbers, or other environment-specific values. Should use variable placeholders (e.g., {USER_ID}, {SHEET_ID}, {EMAIL}) in descriptions, with actual values in variables.json / variable groups.
-
-   **Todo Task / Orchestrator Description Quality (for todo_task steps only):**
-   - **Missing objective/intent**: The orchestrator description should clearly state WHAT we are trying to achieve — the goal and purpose of this orchestration. Without this, the orchestrator can't make intelligent decisions or handle unexpected situations.
-   - **Reduced to a sequencer**: If the description is just "call route A, then route B, then route C" or a fixed execution order, it's a script not orchestration. The orchestrator is a capable LLM — its description should enable it to reason about what to do, not just follow a checklist. If fixed sequencing is all that's needed, these should be regular steps instead.
-   - **No edge case / failure guidance**: The description should explain how to handle failures, retries, partial results, or unexpected states. The orchestrator's value is making decisions when things don't go as planned.
-   - **Inline execution logic**: Detailed task instructions for a specific sub-task written inside the orchestrator description instead of being a sub-agent route. Each distinct task should be its own route with its own description, learnings, and tools.
-   - **Duplicates sub-agent descriptions**: The orchestrator restates what sub-agents do instead of focusing on dispatch logic and decision-making.
-   - **No routing criteria**: The description doesn't explain WHEN or WHY to use each route — the orchestrator needs to know what conditions or inputs map to which sub-agent.
-
-   **Browser Anti-Patterns in Description (for steps that use playwright/browser):**
-   - **Prescribes browser_evaluate for interactions**: Description tells the LLM to use browser_evaluate/eval to click, fill, or navigate. Should say "take a snapshot, find the element, click/type using its ref" instead.
-   - **Prescribes CSS selectors**: Description uses patterns like browser_click({'selector': '...'}) or browser_type({'selector': '...'}). Should use ref-based interaction from snapshots instead.
-   - **Prescribes hardcoded element references**: Description references specific DOM selectors, iframe indices, or element IDs that may change. Should describe the intent ("find the password field", "click the login button") and let the LLM discover elements via snapshot.
-   - **Over-specifies implementation**: Description dictates exact tool calls and parameters instead of describing WHAT to accomplish. For learn_code steps, the description should focus on the goal and let the LLM figure out the implementation using get_api_spec and snapshots.
-
-   **Missing Pre-Validation Schema:**
-   - **No validation_schema**: Every step that produces a context_output should have a validation_schema defined. Without it, there's no automated quality gate — a step can produce garbage output and downstream steps will blindly consume it. Check that validation_schema exists, has file checks matching the context_output filename, and includes meaningful json_checks (not just must_exist).
-
-For each step, report:
-- Step ID (and step type)
-- Status: CLEAN, CONFUSED (description/skill issues), HARDCODED (hardcoded values found), WEAK_ORCHESTRATOR (for todo_task steps with orchestrator issues), BROWSER_ANTIPATTERN (prescribes evaluate/selectors instead of ref-based interaction), or NO_VALIDATION (missing or weak validation_schema) — a step can have multiple
-- If issues found: which problems and a concrete fix suggestion
-
-End with a summary table of all steps and their status.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
-
-REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which steps had issues, the categories of confusion / hardcoding / weak orchestration / browser anti-pattern / missing validation, the recommended fixes, and items flagged for follow-up.
 ````
 
 #### `review-code` (`review/review-code.md`)
@@ -644,36 +684,6 @@ For each step audited:
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply — fixes go through optimizer-mode tools or the experiment loop).
-````
-
-#### `review-orchestrators` (`review/review-orchestrators.md`)
-
-````text
-Audit all todo_task steps in plan.json. For each todo_task step, read its todo_task_step description and all its predefined_routes sub-agent descriptions. Check for these problems:
-
-**Orchestrator Description Quality:**
-- **Missing objective/intent**: The orchestrator description must clearly state WHAT we are trying to achieve — the overall goal and purpose. Without this, the orchestrator can't make intelligent decisions when things go wrong or when it encounters unexpected situations. A good orchestrator description answers: "Why do these sub-agents exist together? What outcome are we after?"
-- **Reduced to a sequencer**: If the description is just "run route A, then route B, then route C" or a fixed checklist, the orchestrator is being wasted. It's a capable LLM — its description should enable reasoning, not just list steps. If all it does is follow a fixed order, these should be regular steps in sequence instead.
-- **No edge case / failure guidance**: The description should explain how to handle failures, retries, partial results, missing data, or unexpected states from sub-agents. What happens if a sub-agent fails? Skip it? Retry? Use a fallback? The orchestrator's core value is making decisions when things don't go as planned.
-- **No routing criteria**: The description doesn't explain WHEN or WHY to pick each route. The orchestrator needs to know what conditions, inputs, or states map to which sub-agent.
-
-**Orchestrator vs Sub-Agent Boundary:**
-- **Inline execution logic**: Detailed task instructions for a specific sub-task written inside the orchestrator description. Each distinct task should be its own route with its own description, learnings, and tools. The orchestrator should dispatch, not execute.
-- **Duplicates sub-agent descriptions**: The orchestrator restates what sub-agents already describe. The orchestrator should focus on coordination and decision-making, not repeat execution details.
-- **Sub-agent descriptions too vague**: Sub-agent route descriptions that are too thin because all the detail is in the orchestrator. Each sub-agent should be self-contained — a junior agent reading only its own description should know exactly what to do.
-
-**Hardcoded Values (same checks as regular steps):**
-- Hardcoded paths, run/iteration paths, credentials, IDs, group names, or user-specific values in orchestrator or sub-agent descriptions.
-
-For each todo_task step, report:
-- Step ID
-- Orchestrator description verdict: GOOD or issues found
-- Per sub-agent route: route ID + verdict
-- Concrete fix suggestions for each issue
-
-End with a summary table.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
-
-REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which orchestrators you reviewed, the verdicts (good vs issues), the recommendations, and items flagged for follow-up.
 ````
 
 ### Improvements (AI proposes; framework gates when metrics defined)

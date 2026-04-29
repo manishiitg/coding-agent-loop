@@ -10,7 +10,7 @@ func shellToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) and may be subject to workspace access restrictions.",
+			Description: "Execute a shell command and return stdout, stderr, and exit code. Runs via shell (`sh -c`) with the working directory set to the workspace docs root. Both relative paths (resolved against the docs root) and absolute paths under the docs root are accepted. Absolute paths under any OTHER host root (e.g. /Users/... outside the docs root, /home/...) are rejected by the path guard.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -43,7 +43,7 @@ func imageToolDef() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the image file. Must always be workspace-relative (e.g., 'Downloads/hdfc_login.png', 'images/photo.jpg', 'screenshots/screen.png'). Do not use absolute paths.",
+						"description": "Path to the image file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/Downloads/hdfc_login.png') or a workspace-relative path (e.g., 'Downloads/hdfc_login.png', 'images/photo.jpg'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"query": map[string]interface{}{
 						"type":        "string",
@@ -68,7 +68,7 @@ func videoReadToolDef() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the video file. Must always be workspace-relative (e.g., 'Downloads/demo.mp4', 'videos/clip.mov'). Do not use absolute paths.",
+						"description": "Path to the video file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/Downloads/demo.mp4') or a workspace-relative path (e.g., 'Downloads/demo.mp4', 'videos/clip.mov'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"query": map[string]interface{}{
 						"type":        "string",
@@ -97,7 +97,7 @@ func pdfToolDef() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Path to the PDF file. Must be workspace-relative (e.g., 'documents/report.pdf', 'Downloads/contract.pdf'). Do not use absolute paths.",
+						"description": "Path to the PDF file. Either an absolute path under the workspace docs root (e.g., '/workspace-docs/documents/report.pdf') or a workspace-relative path (e.g., 'documents/report.pdf', 'Downloads/contract.pdf'). Both forms are accepted. Absolute paths outside the workspace docs root are rejected.",
 					},
 					"page_range": map[string]interface{}{
 						"type":        "string",

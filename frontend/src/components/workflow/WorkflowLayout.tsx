@@ -500,7 +500,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
           return null
         })
-      if (builderHistory) {
+      if (builderHistory && builderHistory.source !== 'workspace') {
         if (builderHistory.session_id && builderHistory.session_id !== builderTab.sessionId) {
           chatStore.updateTabSessionId(builderTab.tabId, builderHistory.session_id)
         }
@@ -1146,13 +1146,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
                 return null
               })
-            if (builderHistory) {
+            if (builderHistory?.source === 'workspace') {
               setRestoreOffer({
                 kind: 'builder-history',
                 presetId: activePresetId,
                 session: builderHistory
               })
               await createFreshWorkflowBuilderTab(activePresetId)
+              return
+            }
+            if (builderHistory) {
+              await restoreBuilderHistory(activePresetId, builderHistory)
               return
             }
             const defaultTabId = await createChatTab('Workflow Builder', {
@@ -1169,12 +1173,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               switchTab(streamingTab.tabId)
               setShowChatArea(true)
             } else {
-              setRestoreOffer({
-                kind: 'existing-tabs',
-                presetId: activePresetId,
-                tabs: existingWorkflowTabs
-              })
-              await createFreshWorkflowBuilderTab(activePresetId)
+              await restoreExistingWorkflowTabs(existingWorkflowTabs, activePresetId)
               return
             }
           }
@@ -1188,7 +1187,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab])
+  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab, restoreBuilderHistory, restoreExistingWorkflowTabs])
 
 
   // Auto-minimize workflows when switching to a different preset

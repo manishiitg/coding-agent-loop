@@ -919,31 +919,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [events, activeSessionId])
 
-  // Track if reconnection has already been attempted to prevent duplicates
-  const hasReconnectedRef = useRef(false)
+  // Track reconnection by preset to prevent duplicate tabs while still allowing
+  // Ctrl+K workflow switches to run the builder restore decision for that preset.
+  const reconnectedPresetIdsRef = useRef<Set<string>>(new Set())
 
-  // Track whether this is the initial mount (page refresh) vs a preset switch
-  const isInitialMountRef = useRef(true)
-  useEffect(() => {
-    // After the first reconnection completes, mark as no longer initial mount
-    // Subsequent preset changes are handled by WorkflowChatTabs preset filter (no reconnection needed)
-    if (isInitialMountRef.current && hasReconnectedRef.current) {
-      isInitialMountRef.current = false
-    }
-  }, [activePresetId])
-
-  // Reconnect workflow tabs on page refresh — database-driven (not localStorage)
-  // Only runs ONCE on initial mount, not on every preset switch
+  // Reconnect workflow tabs on page refresh and first visit to each workflow preset.
   useEffect(() => {
     if (!activePresetId) {
       return
     }
-    if (hasReconnectedRef.current) {
+    if (reconnectedPresetIdsRef.current.has(activePresetId)) {
       return
     }
 
     const reconnectWorkflowTabs = async () => {
-      hasReconnectedRef.current = true
+      reconnectedPresetIdsRef.current.add(activePresetId)
+      setRestoreOffer(null)
       // Wait for zustand to rehydrate persisted tabs from localStorage.
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
       await waitForChatStoreHydration()

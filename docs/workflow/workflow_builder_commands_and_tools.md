@@ -1,11 +1,11 @@
 # Workflow Builder Commands And Tools
 
-This doc is a reference for the workflow-builder surface.
+This doc is a reference for the workflow-builder surface, organized **by workshop mode**. Each mode lists the slash commands and tools available in it.
 
-It separates two different concepts that are easy to confuse:
+It separates two concepts that are easy to confuse:
 
 - **Slash commands**: frontend shortcuts defined in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx). These are prompt macros. They do not perform work themselves.
-- **Tools**: backend workflow-builder tools registered in [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). These are the actual callable operations the builder agent can execute.
+- **Tools**: backend tools registered in [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). These are the actual callable operations the agent can execute.
 
 Short version:
 
@@ -16,233 +16,245 @@ Short version:
 
 ## Mental Model
 
-Use this rule:
+- Add a **slash command** when you want a guided workflow or a common prompt pattern.
+- Add a **tool** when you need a new primitive capability.
 
-- Add a **slash command** when you want a guided workflow or a common prompt pattern
-- Add a **tool** when you need a new primitive capability
-
-A slash command can call multiple tools.
-A tool can exist without any dedicated slash command.
+A slash command can call multiple tools. A tool can exist without any dedicated slash command.
 
 ## Workshop Modes
 
-Current workflow-builder workshop modes used by the UI:
+Four workshop modes:
 
-- `builder`
-- `optimizer`
-- `run`
+- `builder` — designing a new workflow (plan, step config, evaluation plan, report plan).
+- `optimizer` — improving an existing workflow (review evidence, harden, replan, run experiments via the auto-improvement framework).
+- `run` — executing the finished workflow and inspecting outcomes. Read-only with respect to plan/config.
+- `reporting` — focused surface for designing the live report (widgets, layout, color). No plan/config mutations.
 
-Availability in this doc is expressed in terms of those three modes.
+**Builder and Optimizer have identical tool sets.** What differs between them is the system prompt (more design-focused vs. more improvement-focused) and which slash commands appear. The mode picker in the UI is mostly about prompt framing, not tool gating.
 
-## Slash Commands
+## Always-Available Base Tools
 
-These are the current workflow slash commands.
+These are exposed to the agent regardless of workshop mode. Every per-mode list below assumes these are also available.
 
-| Slash Command | Purpose | Available In | Typical Tools It Drives |
-|---|---|---|---|
-| `/design-flow` | Inspect context dependencies and handoff design | `builder` | read-only shell/file tools |
-| `/ready-to-optimize` | Run a readiness checklist before switching into optimizer work | `builder` | read-only shell/file tools |
-| `/review-plan` | Critically review workflow design decisions | `builder`, `optimizer`, `run` | `review_plan` |
-| `/review-goal` | Check whether a real run is achieving the goal and whether eval measures it properly | `optimizer` | `review_workflow_results` |
-| `/review-speed` | Analyze workflow latency and recommend how to make it faster safely | `optimizer` | `review_workflow_timing` |
-| `/review-cost` | Analyze workflow cost and recommend how to reduce it safely | `optimizer` | `review_workflow_costs` |
-| `/review-config` | Review KB/db/lock recommendations | `builder`, `optimizer`, `run` | read-only shell/file tools, step-config inspection |
-| `/improve-kb` | Review and improve the knowledgebase using the current graph, plan, and run evidence | `optimizer` | `reorganize_knowledgebase`, `consolidate_knowledgebase`, read-only inspection tools |
-| `/improve-learnings` | Review and improve shared learnings using current learnings, plan, and run evidence | `optimizer` | `organize_global_learnings`, read-only inspection tools |
-| `/improve-eval` | Validate and improve `evaluation/evaluation_plan.json` against the objective, success criteria, and real run evidence | `optimizer` | `validate_evaluation_plan`, `review_workflow_results`, sometimes `run_full_evaluation` |
-| `/improve-report` | Validate and improve `reports/report_plan.md` using a rendered preview plus underlying data | `optimizer` | `validate_report_plan`, `preview_report_render`, read-only shell/file tools |
-| `/improve-continuously` | Set up recurring run + slower recurring optimizer improvement, with `builder/improve.md` as durable memory | `optimizer` | `get_workflow_config`, `get_schedule_runs`, `create_schedule`, `update_schedule`, file-edit tools |
-| `/improve-workflow` | Hybrid optimization flow: structural review, optional replan, evidence-based harden, optional verification run | `optimizer` | `optimize_workflow`, `replan_workflow_from_results`, `harden_workflow`, sometimes `run_full_evaluation`, optionally `run_full_workflow` |
-| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, and missing validation | `builder`, `optimizer`, `run` | read-only shell/file tools |
-| `/review-code` | Review saved `main.py` scripts against step descriptions | `optimizer` | `review_step_code` |
-| `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes | `builder`, `optimizer`, `run` | read-only shell/file tools |
-| `/improve-setup-framework` | One-time framework setup: writes the `## Workflow Profile` section to `builder/improve.md`, sets `oversight_mode` + `decision_log_mutability` in `workflow.json`, proposes starter metrics via `propose_metric`. Required before `/improve-eval` / `/improve-workflow` / `/improve-continuously` will run. | `builder`, `optimizer` | `propose_metric`, `diff_patch_workspace_file` |
-| `/exp-abort` | Revert and abort the active experiment via the captured revertable diff | `optimizer` | `POST /api/workflow/experiments/abort` |
-| `/exp-extend` | Add more measurement runs to the active experiment | `optimizer` | `POST /api/workflow/experiments/extend` |
-| `/exp-conclude` | Manually render a verdict (overrides the evaluator) — use only when the heuristic verdict is clearly wrong | `optimizer` | `POST /api/workflow/experiments/manual-conclude` |
+| Category | Tools |
+|---|---|
+| Workspace I/O | `execute_shell_command`, `diff_patch_workspace_file` |
+| Read helpers | `read_image`, `read_pdf` |
+| LLM helpers | `generate_text_llm`, `search_web_llm` |
+| Image | `image_gen`, `image_edit` |
+| Video | `generate_video` |
+| Secrets | `list_secrets`, `set_user_secret`, `delete_user_secret` |
+| Human | `human_feedback` |
+| Browser | `agent_browser` |
+| MCP virtual | `get_api_spec`, `get_prompt`, `get_resource` |
+| Sub-agent | `call_sub_agent`, `call_generic_agent`, `get_sub_agent_conversation`, `get_route_description` |
+| Inspection | `get_step_prompts`, `get_workflow_config`, `get_llm_config`, `get_cost_summary` |
 
-The `/exp-*` commands belong to the auto-improvement framework. See `auto_improvement_framework.md` for the design and the experiment lifecycle these commands operate on.
+(Internal workspace executors like `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, `move_workspace_file`, `list_workspace_files` are backend APIs the runtime uses — they are not exposed to the LLM as tools.)
 
-**Business-context capture has no slash command.** The builder agent's system prompt teaches it to recognize business rules in conversation (imperatives like "always X" / "never X", regulatory clauses, ICP rules) and offer to persist them via the `capture_context` tool. The tool is registered alongside `propose_experiment` / `propose_metric` in optimizer mode. See the proactive-capture section in `instructions.go` and the framework doc.
+---
 
-## Backend Tools
+## Builder Mode
 
-These are the actual workflow-builder tools. The builder agent can call them directly when the current workshop mode allows it.
+Designing a new workflow.
 
-### Always Available Base Tools
+### Slash Commands
 
-These are available regardless of workshop mode.
-This section lists tools actually exposed to the workflow-builder LLM. Internal workspace executors such as `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, and `move_workspace_file` are intentionally excluded here because they are backend APIs/executors, not workflow-mode LLM tools.
+| Slash Command | Purpose |
+|---|---|
+| `/design-flow` | Inspect context dependencies and handoff design between steps |
+| `/ready-to-optimize` | Pre-optimizer readiness checklist (objective, success criteria, runs, validation, etc.) |
+| `/review-plan` | Critically review workflow design decisions |
+| `/review-config` | Review per-step KB / db / lock_learnings / lock_code recommendations |
+| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, browser anti-patterns, missing validation |
+| `/review-orchestrators` | Review `todo_task` orchestrator descriptions and routes |
+
+All `/review-*` are recommend-only — they append a dated entry to `builder/review.md` and do not apply changes.
+
+### Tools
+
+In addition to the always-available base tools above:
+
+| Category | Tools |
+|---|---|
+| Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_in_background`, `run_full_workflow`, `debug_step` |
+| Step config | `update_step_config`, `update_validation_schema` |
+| Plan editing | `add_regular_step`, `add_routing_step`, `add_human_input_step`, `add_todo_task_step`, `add_todo_task_route`, `update_regular_step`, `update_routing_step`, `update_human_input_step`, `update_todo_task_step`, `update_todo_task_route`, `delete_todo_task_route`, `delete_plan_steps`, `publish_workflow_version`, `restore_workflow_version` |
+| Variables | `update_variable`, `add_group`, `update_group`, `delete_group` |
+| Workflow config | `update_workflow_config` |
+| Schedules | `create_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs` |
+| Skills | `list_skills`, `search_skills`, `install_skill`, `uninstall_skill`, `import_skill` |
+| LLM config | `list_published_llms`, `list_provider_models`, `test_llm`, `set_workflow_llm_config` |
+| Review (read-only) | `review_plan`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
+| Optimization | `optimize_step`, `optimize_workflow` |
+| Evaluation | `validate_evaluation_plan`, `run_full_evaluation`, `get_reporting_capabilities` |
+| Reporting (validation) | `validate_report_plan`, `preview_report_render` |
+| Knowledgebase | `reorganize_knowledgebase`, `consolidate_knowledgebase` |
+| Learnings | `organize_global_learnings` |
+| Auto-improvement framework | `propose_metric`, `propose_experiment` (see framework section below) |
+
+---
+
+## Optimizer Mode
+
+Improving an existing workflow. Same tool set as Builder; the differences are in the slash commands and the system prompt.
+
+### Slash Commands
+
+**Audits — recommend, don't apply:**
+
+| Slash Command | Purpose |
+|---|---|
+| `/review-plan` | Critically review workflow design decisions (also in builder, run) |
+| `/review-config` | Review per-step KB / db / lock recommendations (also in builder, run) |
+| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, etc. (also in builder, run) |
+| `/review-orchestrators` | Review `todo_task` orchestrator descriptions (also in builder, run) |
+| `/review-goal` | Check whether a real run is achieving the goal and whether eval measures it properly |
+| `/review-speed` | Analyze workflow latency and recommend safe speedups |
+| `/review-cost` | Analyze workflow cost and recommend safe reductions |
+| `/review-code` | Review saved `main.py` scripts against step descriptions |
+
+**Improvements — AI proposes; framework gates when metrics defined:**
+
+| Slash Command | Purpose |
+|---|---|
+| `/improve-setup-framework` | One-time bootstrap of the auto-improvement framework. Writes `## Workflow Profile` to `builder/improve.md`, sets `oversight_mode` + `decision_log_mutability` in `workflow.json`, proposes starter metrics. Required before any other `/improve-*`. |
+| `/improve-workflow` | Unified improvement command. Phase 1 reads run outputs against success criteria as a business analyst would. Subsumes the legacy `/improve-kb` and `/improve-learnings` — discovery covers plan + KB + learnings as one surface. EXPERIMENT MODE (metrics defined) opens experiments via `propose_experiment`; DIRECT MODE (no metrics) applies the legacy tools directly. |
+| `/improve-eval` | Reviews `evaluation/evaluation_plan.json`. Special-case: eval changes are NOT experiments (they change the measurement layer). PASS 0 active-experiment guard refuses mid-stream rubric edits while affected metrics are under measurement. PASS 4 appends a `decisions.jsonl` rubric-change marker so the trajectory chart breaks the line. |
+| `/improve-continuously` | Sets up TWO cron schedules: a workflow-run schedule and a slower optimizer/improve schedule. The improve schedule's message is itself a state machine that respects EXPERIMENT/DIRECT mode, the cadence guard (improve fires < target_runs × run_period), the active-experiment-count limit, and treats "no proposal this fire" as a valid outcome. |
+
+**Focused experiment opener:**
+
+| Slash Command | Purpose |
+|---|---|
+| `/propose-experiment` | Skip the broad review/diagnostic phases — pick ONE metric, formulate ONE hypothesis grounded in run-output evidence, call `propose_experiment`. Use when you already know what to test. The change does NOT have to be small; bundled multi-file changes are fine when they share one underlying belief. |
+
+**Active-experiment management:**
+
+| Slash Command | Purpose |
+|---|---|
+| `/exp-abort` | Revert and abort the active experiment via the captured revertable diff |
+| `/exp-extend` | Add more measurement runs to the active experiment |
+| `/exp-conclude` | Manually render a verdict (overrides the evaluator) — use only when the heuristic verdict is clearly wrong |
+
+### Tools
+
+Identical to Builder's tool set (see above). The optimizer's differentiation is in the system prompt and slash-command surface, not in tool gating.
+
+---
+
+## Run Mode
+
+Executing the finished workflow and inspecting outcomes. Read-only with respect to plan/config — no `update_*`, no `add_*`, no harden/replan, no auto-improvement. Read-only review tools stay available so the agent can inspect outcomes.
+
+### Slash Commands
+
+| Slash Command | Purpose |
+|---|---|
+| `/review-plan` | Critically review workflow design decisions |
+| `/review-config` | Review per-step KB / db / lock recommendations |
+| `/review-descriptions` | Review plan descriptions for confusion, hardcoding, etc. |
+| `/review-orchestrators` | Review `todo_task` orchestrator descriptions |
+
+### Tools
+
+In addition to the always-available base tools:
+
+| Category | Tools |
+|---|---|
+| Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_in_background`, `run_full_workflow`, `debug_step` |
+| Review (read-only) | `review_plan`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
+
+---
+
+## Reporting Mode
+
+Focused surface for the live report — widgets, themes, layouts. When the underlying `db/` data is missing, individual steps can be re-run to populate it. No plan/config mutations, no optimizer-level hardening.
+
+### Slash Commands
+
+| Slash Command | Purpose |
+|---|---|
+| `/improve-report` | Validate `reports/report_plan.json` and propose layout/color/density improvements based on a rendered preview. Visualization-only; no framework gating. |
+
+### Tools
+
+In addition to the always-available base tools:
+
+| Category | Tools |
+|---|---|
+| Execution | `execute_step`, `query_step`, `stop_step`, `stop_all_executions`, `list_executions`, `run_in_background`, `run_full_workflow`, `debug_step` |
+| Review (read-only) | `review_plan`, `review_workflow_results`, `review_workflow_timing`, `review_workflow_costs` |
+| Reporting | `get_reporting_capabilities`, `validate_report_plan`, `preview_report_render`, plus the report-widget mutation tools (e.g. `move_report_widget` and the widget add/update set) |
+
+---
+
+## Auto-Improvement Framework
+
+The framework's design (soul preconditions, metric→success_criteria trace, proposer ≠ evaluator guardrail, weighted verdict combiner, experiment state machine) is documented in [`auto_improvement_framework.md`](./auto_improvement_framework.md).
+
+### Tools (registered for builder + optimizer)
 
 | Tool | Purpose |
 |---|---|
-| `execute_shell_command` | Run shell commands in the workflow workspace |
-| `diff_patch_workspace_file` | Patch a workspace file with a diff |
-| `read_image` | Read an image artifact |
-| `read_pdf` | Read a PDF artifact |
-| `generate_text_llm` | One-off text generation helper |
-| `search_web_llm` | Web-search helper |
-| `image_gen` | Generate images |
-| `image_edit` | Edit images |
-| `list_secrets` / `set_user_secret` / `delete_user_secret` | Inspect or manage user secrets |
-| `human_feedback` | Ask the human for a response |
-| `agent_browser` | Browser automation entry point |
-| `get_api_spec` / `get_prompt` / `get_resource` | MCP virtual helper tools |
-| `call_sub_agent` / `call_generic_agent` / `get_sub_agent_conversation` / `get_route_description` | Sub-agent helper tools |
-| `get_step_prompts` | Show prompts for a workflow step |
-| `get_workflow_config` | Inspect workflow-level config |
-| `get_llm_config` | Inspect active LLM config |
-| `get_cost_summary` | Show token/cost breakdown |
+| `propose_metric` | Define a new metric or amend an existing one in `planning/metrics.json`. Refuses if `soul.md` is missing or if `## Objective` / `## Success Criteria` are empty. Carries `linked_success_criteria` so each outcome metric traces to a criterion. |
+| `propose_experiment` | Open an experiment: hypothesis + target_metrics + intervention_changes (file edits across plan/KB/learnings/etc., paths constrained by `experiments/config.json::allowed_intervention_paths`). Atomically captures baseline + world_state + revertable_diff, applies the intervention, opens the measurement window. |
+| `conclude_experiment` | **Evaluator agent only.** Narrates the system-computed verdict for an experiment whose measurement window has closed. Exposing this to the proposer would violate the proposer ≠ evaluator guardrail — the optimizer/builder must not see this tool. |
 
-### Execution Tools
+**Two earlier tools were removed in favor of agent primitives:**
 
-These are the run/test/inspection primitives.
+- `capture_context` → replaced by `diff_patch_workspace_file` for `knowledgebase/rules/rules.md` plus a `decisions.jsonl` line with `source=user`, `trigger=rule-captured`. The system prompt's "Proactive business-context capture" section in `instructions.go` documents the line format.
+- `query_experiment_history` → replaced by direct reads of `experiments/history.jsonl` and `experiments/config.json::pinned_hypotheses` before calling `propose_experiment`. Two file reads, no helper tool.
 
-| Tool | Purpose | Available In |
-|---|---|---|
-| `execute_step` | Run one step in the background | `builder`, `optimizer`, `run` |
-| `query_step` | Inspect execution progress and tool calls | `builder`, `optimizer`, `run` |
-| `stop_step` | Stop one running execution | `builder`, `optimizer`, `run` |
-| `stop_all_executions` | Stop all running executions in the session | `builder`, `optimizer`, `run` |
-| `list_executions` | List known background executions | `builder`, `optimizer`, `run` |
-| `run_in_background` | Spawn a background agent with the same workflow context | `builder`, `optimizer`, `run` |
-| `run_full_workflow` | Run the full workflow | `builder`, `optimizer`, `run` |
-| `debug_step` | Inspect a step’s execution state, logs, and learning status | `builder`, `optimizer`, `run` |
+### HTTP Endpoints (used by the popup and `/exp-*` commands)
 
-### Review And Optimization Tools
+The frontend popup (Beaker icon) and the `/exp-*` slash commands hit these endpoints rather than tools.
 
-These are the most important tools when people say “review”, “optimize”, “replan”, or “harden”.
-
-| Tool | Purpose | Mutates? | Available In |
-|---|---|---|---|
-| `review_plan` | Critically review workflow design decisions, optionally using run evidence | No | `builder`, `optimizer`, `run` |
-| `review_workflow_results` | Review actual outcomes against objective/success criteria and audit eval quality | No | `builder`, `optimizer`, `run` |
-| `review_workflow_timing` | Review actual run latency and recommend safe speedups | No | `builder`, `optimizer`, `run` |
-| `review_workflow_costs` | Review actual run cost and recommend safe cost reductions | No | `builder`, `optimizer`, `run` |
-| `review_step_code` | Review saved `main.py` against current step descriptions | No | `builder`, `optimizer` |
-| `optimize_step` | Analyze one step for optimization opportunities | No | `builder`, `optimizer` |
-| `optimize_workflow` | Analyze the overall workflow structure against the objective | No | `builder`, `optimizer` |
-| `replan_workflow_from_results` | Rewrite the workflow structure from actual run evidence | Yes | `builder`, `optimizer` |
-| `harden_workflow` | Apply non-structural reliability fixes from eval failures | Yes | `builder`, `optimizer` |
-| `analyze_step` | Step-focused inspection helper | Yes/No depends on usage context, but used as analysis tooling | `builder`, `optimizer` |
-
-Important distinction:
-
-- Use `review_workflow_results` when the question is: “Did the run actually achieve the goal, and is eval measuring that correctly?”
-- Use `replan_workflow_from_results` when the question is: “Is the workflow structure wrong based on what happened in a real run?”
-- Use `harden_workflow` when the structure is right but the steps need to become more reliable.
-
-### Plan And Step-Editing Tools
-
-These mutate the workflow plan/config directly.
-
-| Tool | Purpose | Available In |
-|---|---|---|
-| `add_regular_step` | Add a regular step | `builder`, `optimizer` |
-| `add_routing_step` | Add a routing step | `builder`, `optimizer` |
-| `add_human_input_step` | Add a human-input step | `builder`, `optimizer` |
-| `add_todo_task_step` | Add a `todo_task` step | `builder`, `optimizer` |
-| `add_todo_task_route` | Add a route inside a `todo_task` | `builder`, `optimizer` |
-| `update_regular_step` | Update a regular step | `builder`, `optimizer` |
-| `update_routing_step` | Update a routing step | `builder`, `optimizer` |
-| `update_human_input_step` | Update a human-input step | `builder`, `optimizer` |
-| `update_todo_task_step` | Update a `todo_task` step | `builder`, `optimizer` |
-| `update_todo_task_route` | Update a `todo_task` route | `builder`, `optimizer` |
-| `delete_todo_task_route` | Delete a `todo_task` route | `builder`, `optimizer` |
-| `delete_plan_steps` | Delete workflow steps | `builder`, `optimizer` |
-| `update_validation_schema` | Update a step’s validation schema | `builder`, `optimizer` |
-| `update_step_config` | Update per-step execution/configuration settings | `builder`, `optimizer` |
-| `publish_workflow_version` | Publish a workflow version | `builder`, `optimizer` |
-| `restore_workflow_version` | Restore a prior workflow version | `builder`, `optimizer` |
-
-### Variables, Workflow Config, Scheduling, Skills
-
-| Tool | Purpose | Available In |
-|---|---|---|
-| `update_variable` | Update a variable definition | `builder`, `optimizer` |
-| `add_group` / `update_group` / `delete_group` | Manage variable groups | `builder`, `optimizer` |
-| `update_workflow_config` | Update workflow-level config | `builder`, `optimizer` |
-| `create_schedule` / `update_schedule` / `delete_schedule` / `trigger_schedule` / `get_schedule_runs` | Manage workflow schedules | `builder`, `optimizer` |
-| `list_skills` / `search_skills` / `install_skill` / `uninstall_skill` / `import_skill` | Manage skills | `builder`, `optimizer` |
-| `list_published_llms` / `list_provider_models` / `test_llm` / `set_workflow_llm_config` | Inspect or configure LLM settings | `builder`, `optimizer` |
-
-### Evaluation And Reporting Tools
-
-| Tool | Purpose | Available In |
-|---|---|---|
-| `validate_evaluation_plan` | Validate the evaluation plan | `builder`, `optimizer` |
-| `run_full_evaluation` | Execute the evaluation plan | `builder`, `optimizer` |
-| `get_reporting_capabilities` | Show report grammar/capabilities | `builder`, `optimizer` |
-| `validate_report_plan` | Validate `reports/report_plan.md` | `builder`, `optimizer` |
-| `preview_report_render` | Preview report rendering | `builder`, `optimizer` |
-
-### Knowledgebase Tools
-
-| Tool | Purpose | Available In |
-|---|---|---|
-| `reorganize_knowledgebase` | Apply a natural-language KB reorganization | `builder`, `optimizer` |
-| `consolidate_knowledgebase` | Consolidate KB content across steps/runs | `builder`, `optimizer` |
-
-## Common Crosswalks
-
-These are the most common “what slash command maps to what tool?” relationships.
-
-| Slash Command | Usually Calls |
+| Endpoint | Purpose |
 |---|---|
-| `/review-plan` | `review_plan` |
-| `/review-goal` | `review_workflow_results` |
-| `/review-speed` | `review_workflow_timing` |
-| `/review-cost` | `review_workflow_costs` |
-| `/review-code` | `review_step_code` |
-| `/improve-eval` | `validate_evaluation_plan`, `review_workflow_results`, and sometimes `run_full_evaluation` |
-| `/improve-continuously` | `get_workflow_config`, `get_schedule_runs`, `create_schedule`, `update_schedule`, and file-edit tools for `builder/improve.md` |
-| `/improve-workflow` | `optimize_workflow`, sometimes `replan_workflow_from_results`, then `harden_workflow`; only uses `run_full_evaluation` or `run_full_workflow` when existing evidence is missing or verification is needed |
-| `/improve-kb` | `reorganize_knowledgebase`, `consolidate_knowledgebase`, and read-only KB inspection |
-| `/improve-learnings` | `organize_global_learnings` and read-only learnings inspection |
-| `/improve-report` | `validate_report_plan`, `preview_report_render`, plus read-only data inspection |
+| `GET /api/workflow/metrics` | Read `planning/metrics.json` |
+| `GET /api/workflow/experiments?include_history=true` | List active + concluded experiments |
+| `GET /api/workflow/decisions` | Read `decisions.jsonl` |
+| `GET /api/workflow/eval-trajectory` | Per-eval-step time series for the trajectory chart |
+| `GET /api/workflow/builder-doc?doc=improve\|review` | Read `builder/improve.md` or `builder/review.md` |
+| `GET /api/workflow/framework-health` | Soul preconditions + success-criteria coverage check + unanchored-metric list |
+| `POST /api/workflow/experiments/abort` | Revert + abort an experiment (used by `/exp-abort`) |
+| `POST /api/workflow/experiments/extend` | Add measurement runs (used by `/exp-extend`) |
+| `POST /api/workflow/experiments/manual-conclude` | Manually verdict an experiment (used by `/exp-conclude`) |
+| `POST /api/workflow/experiments/approve` | Approve hypothesis or conclusion gate (oversight_mode=manual) |
+| `POST /api/workflow/experiments/record-measurement` | Manually re-trigger the measurement-recording hook |
+
+---
 
 ## Which One Should I Use?
 
 If you are trying to:
 
-- **Review the design**: use `/review-plan` or `review_plan`
-- **Review whether a real run actually achieved the goal**: use `/review-goal` or `review_workflow_results`
-- **Review where runtime is being spent**: use `/review-speed` or `review_workflow_timing`
-- **Review where cost is being spent**: use `/review-cost` or `review_workflow_costs`
-- **Improve the knowledgebase**: use `/improve-kb`
-- **Improve learnings**: use `/improve-learnings`
-- **Improve the evaluation plan**: use `/improve-eval`
-- **Set up recurring execution + continuous optimization**: use `/improve-continuously`
-- **Rewrite the workflow structure from evidence**: use `replan_workflow_from_results` or let `/improve-workflow` decide
-- **Improve reliability without redesigning the workflow**: use `harden_workflow` or let `/improve-workflow` decide
-- **Do an end-to-end optimization pass**: use `/improve-workflow`
+- **Review the design** (recommend, don't apply): `/review-plan` or `review_plan`
+- **Review whether a real run actually achieved the goal**: `/review-goal` or `review_workflow_results`
+- **Review where runtime is being spent**: `/review-speed` or `review_workflow_timing`
+- **Review where cost is being spent**: `/review-cost` or `review_workflow_costs`
+- **Bootstrap the auto-improvement framework on a workflow**: `/improve-setup-framework` (one-time)
+- **Improve the workflow** (any aspect — plan, KB, learnings): `/improve-workflow`
+- **Improve the evaluation plan**: `/improve-eval`
+- **Set up recurring execution + continuous improvement**: `/improve-continuously`
+- **Open ONE experiment for a specific change you have in mind**: `/propose-experiment`
+- **Rewrite the workflow structure from evidence**: `replan_workflow_from_results` (called by `/improve-workflow` when warranted); replan is exempt from the experiment gate
+- **Improve reliability without redesigning the workflow** (legacy DIRECT-MODE path): `harden_workflow` (called by `/improve-workflow` when no metrics defined)
+- **Capture a user-stated business rule**: no slash command — the agent recognizes the rule in chat and persists it via `diff_patch_workspace_file` + a `decisions.jsonl` line with `source=user`, `trigger=rule-captured`
 
-## Exact Slash Command Messages
 
-This appendix captures the exact normalized prompt templates used by the workflow slash commands in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx).
 
-Normalization rules:
+## Exact Slash Command Texts
 
-- Runtime values are shown as placeholders such as `<focus>`, `<selected-run-folder>`, `<step-id>`, and `<instruction>`.
-- If a command has multiple behaviors depending on whether text appears before the slash, both variants are shown.
-- If a command does not immediately submit a message and instead pre-fills the chat input, that draft text is shown explicitly.
-- Common placeholders:
-  - `<focus-text>` means either empty or ` Focus especially on: <focus>.`
-  - `<focus-line>` means either empty or a new line carrying the focus text, exactly as shown in the relevant command section
-  - `<run-text>` means the selected-run-folder sentence or the fallback “find the latest meaningful evidence first” sentence
+Snapshot of the verbatim text each slash command sends as a user message. Captured from [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx) — that file is the source of truth and may have drifted since this snapshot was taken. Runtime values are template-literal interpolations; the placeholders read as `${focus}`, `${runFolder}`, etc. Outer code fences use four backticks so the inner ``` blocks inside the prompts render cleanly.
 
-### `/design-flow`
+### Builder-mode audits
 
-If text exists before the slash, append:
+#### `/design-flow`
 
-```text
-Pay special attention to: <focus>
-```
-
-Submitted message:
-
-```text
-Read planning/plan.json and analyze the context flow between steps.<focus-text>
+````text
+Read planning/plan.json and analyze the context flow between steps.${focusText}
 
 Check for:
 1. **Broken chain** — step depends on a context_output that no earlier step produces
@@ -256,13 +268,13 @@ Show me:
 - A dependency graph: step-a (produces X) → step-b (consumes X, produces Y) → step-c (consumes Y)
 - Any issues found with severity (CRITICAL / WARNING / INFO)
 - Suggested fixes for each issue
-```
 
-### `/ready-to-optimize`
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+````
 
-Submitted message:
+#### `/ready-to-optimize`
 
-```text
+````text
 Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
 
 1. **Objective set?** — Read soul/soul.md and check the "## Objective" section. FAIL if the file is missing, the section is absent, or its body is empty / still a "<TODO: ...>" placeholder.
@@ -279,28 +291,30 @@ Summary:
 - READY if 0 FAILs
 - NOT READY if any FAILs — list what needs to be done
 - If READY with WARNs — "Ready but recommended to fix these first"
-```
 
-### `/review-plan`
+REVIEW LOG: append a dated entry to builder/review.md (create if absent) with the readiness verdict, the FAILs/WARNs list, and what needs to be done before optimizing.
+````
 
-Submitted message:
+### Reviews (recommend, don't apply)
 
-```text
-Run review_plan() to critically analyze the current workflow plan.<focus-text>
+#### `/review-plan`
+
+````text
+Run review_plan() to critically analyze the current workflow plan.${focusText}
 
 Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
 
 This is a plan/design review. Use review_workflow_results() when the question is whether a real run is actually achieving the goal and whether eval measures that properly.
-```
 
-### `/review-goal`
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+````
 
-Submitted message:
+#### `/review-goal`
 
-```text
-Run review_workflow_results() to judge actual workflow outcomes, not just the plan.<focus-text>
+````text
+Run review_workflow_results() to judge actual workflow outcomes, not just the plan.${focusText}
 
-<run-text>
+${runText}
 
 Assess three things separately:
 1. Is the workflow actually achieving the stated objective?
@@ -318,16 +332,16 @@ Then give:
 - the most important workflow gaps
 - the most important eval gaps
 - the top next actions, clearly separated into workflow fixes vs eval fixes.
-```
 
-### `/review-speed`
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the goal/eval verdict, the main gaps ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+````
 
-Submitted message:
+#### `/review-speed`
 
-```text
-Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.<focus-text>
+````text
+Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.${focusText}
 
-<run-text>
+${runText}
 
 Assess four things separately:
 1. What is the overall workflow wall-clock, and what is the biggest bottleneck class: LLM latency, tool latency, orchestration overhead, or plan shape?
@@ -341,28 +355,16 @@ Then give:
 - the best plan changes to reduce handoffs or unnecessary steps
 - the best model/tool/config changes
 - the top next actions, with expected impact and risk to success criteria.
-```
 
-Where `<run-text>` is one of:
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the timing analysis, the top bottlenecks, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+````
 
-```text
-Use the selected run folder "<selected-run-folder>" unless you find stronger newer evidence is needed.
-```
+#### `/review-cost`
 
-or
+````text
+Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.${focusText}
 
-```text
-If no run folder is selected, find the latest meaningful run evidence first.
-```
-
-### `/review-cost`
-
-Submitted message:
-
-```text
-Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.<focus-text>
-
-<run-text>
+${runText}
 
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?
@@ -376,26 +378,14 @@ Then give:
 - the best plan changes to reduce unnecessary steps or handoffs
 - the best model/tool/config changes
 - the top next actions, with expected savings and risk to success criteria.
-```
 
-Where `<run-text>` is one of:
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the cost analysis, the top cost drivers, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+````
 
-```text
-Use the selected run folder "<selected-run-folder>" unless you find stronger newer evidence is needed.
-```
+#### `/review-config`
 
-or
-
-```text
-If no run folder is selected, find the latest meaningful run and cost evidence first.
-```
-
-### `/review-config`
-
-Submitted message:
-
-```text
-Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.<focus-text>
+````text
+Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.${focusText}
 
 PROCEDURE
 1. Read planning/plan.json and planning/step_config.json. For each step capture: id, title, description, declared_execution_mode, and current AgentConfigs (knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash).
@@ -448,371 +438,13 @@ Then summary sections:
 
 END WITH READY-TO-PASTE COMMANDS
 List the exact update_step_config calls the user can copy/paste to apply each recommendation, one per line. Group by recommendation type (KB updates, lock updates) so the user can apply them selectively. Do NOT call update_step_config yourself.
-```
 
-### `/improve-kb`
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
+````
 
-Submitted message:
+#### `/review-descriptions`
 
-```text
-Review and improve the workflow knowledgebase. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your KB findings and applied decisions when you finish.<focus-text>
-
-DISCOVERY
-1. Read soul/soul.md to understand the objective and success criteria.
-2. Read planning/plan.json and planning/step_config.json so you understand which steps should read from or contribute to the KB.
-3. Read knowledgebase/notes/_index.json and any topic files the task references.
-4. <run-text>
-
-DECISION
-Assess whether the KB needs:
-- no change
-- targeted graph reorganization
-- cross-step consolidation
-- both
-
-Look for:
-- duplicate entities
-- type-name drift
-- property-name drift
-- orphaned relationships
-- contested facts
-- missing step contributions that should have been persisted
-- KB structure that no longer matches the workflow objective or current step outputs
-
-ACTION
-- Use reorganize_knowledgebase when the graph structure itself needs cleanup or normalization.
-- Use consolidate_knowledgebase when cross-step consolidation or canonicalization is needed.
-- Automatically APPLY high-confidence, evidence-backed KB improvements instead of only listing recommendations.
-- Be conservative and bounded; do not ask for human confirmation during this improve run.
-
-When you finish, update builder/improve.md with:
-- what KB evidence you reviewed
-- the main KB weaknesses you found
-- what was reorganized or consolidated
-- what was applied vs deferred
-- remaining KB gaps
-```
-
-Where `<run-text>` is one of:
-
-```text
-Use the selected run folder "<selected-run-folder>" when recent run evidence helps explain KB drift or missing contributions.
-```
-
-or
-
-```text
-If recent run evidence is needed to explain KB drift or missing contributions, find the latest meaningful run first.
-```
-
-### `/improve-learnings`
-
-Submitted message:
-
-```text
-Review and improve workflow learnings. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your learnings findings and applied decisions when you finish.<focus-text>
-
-DISCOVERY
-1. Read soul/soul.md to understand the objective and success criteria.
-2. Read planning/step_config.json to inspect learning_objective coverage across steps.
-3. Read learnings/_global/SKILL.md and references/*.md when present.
-4. Inspect relevant step learnings when current failures, duplication, or missing knowledge appear to be step-specific.
-5. <run-text>
-
-DECISION
-Assess whether learnings need:
-- no change
-- targeted cleanup
-- holistic consolidation
-- promotion of repeated step-specific lessons into _global references
-
-Look for:
-- duplicated lessons
-- stale guidance
-- missing guidance for declared learning objectives
-- repeated run fixes that should become durable learnings
-- step-specific learnings that really belong in _global
-
-ACTION
-- Use organize_global_learnings when the learnings set needs cleanup, consolidation, or promotion into shared references.
-- Automatically APPLY high-confidence, evidence-backed learnings improvements instead of only listing recommendations.
-- Be conservative and bounded; do not ask for human confirmation during this improve run.
-
-When you finish, update builder/improve.md with:
-- what learnings evidence you reviewed
-- the main learnings weaknesses you found
-- what was reorganized or promoted
-- what was applied vs deferred
-- remaining learnings gaps
-```
-
-Where `<run-text>` is one of:
-
-```text
-Use the selected run folder "<selected-run-folder>" when recent run evidence helps explain stale, missing, or duplicated learnings.
-```
-
-or
-
-```text
-If recent run evidence is needed to explain stale, missing, or duplicated learnings, find the latest meaningful run first.
-```
-
-### `/improve-report`
-
-Submitted message:
-
-```text
-Review and improve reports/report_plan.md in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.<focus-line>
-
-PASS 1 — VALIDATION
-Call validate_report_plan.
-- For each error: explain what's wrong in plain language, show the section + widget it refers to, and propose the exact fix (which line to change, to what).
-- For warnings: group by severity. Flag ones that would visibly degrade the report (unknown chart_type, missing axis fields, invalid colors) separately from cosmetic ones (empty arrays that will fill in after a run).
-
-PASS 2 — IMPROVEMENT SUGGESTIONS
-Call preview_report_render first so you can inspect what the report actually renders like with current data. Treat that rendered preview as a required input, not an optional extra.
-
-Then call get_report_plan yourself and also sample the underlying db/*.json and knowledgebase/*.json sources. Use both the rendered preview and the raw data/plan to propose improvements in these categories:
-
-1. **Layout**: are the most important widgets at the top? Are there too many widgets in a row cramming the view? Is the H2 structure grouping related content?
-2. **Chart-type fit**: for each chart, is bar/line/area/pie the right choice for that data? (bar=categorical, line=time series, pie=composition ≤6 slices)
-3. **Color**: does the report use semantic coloring where meaningful (status fields, pass/fail, severity)? Suggest adding color_by + color_map for any status-like fields you see in the data. Propose palettes (colors + colors_dark) for brand consistency if multiple charts share a theme.
-4. **Formatting**: any number/date/currency fields that should have a format preset? Any tables with too many columns that could benefit from hide_columns?
-5. **Density**: any charts with >10 points that need top_n? Any tables without default_sort that would be hard to scan?
-6. **Rendered reality check**: based on the preview, what actually looks broken, cramped, misleading, empty, or visually weak even if the JSON is technically valid?
-
-Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.md until I confirm.
-
-When you finish, update builder/improve.md with:
-- what report evidence you reviewed
-- the main report weaknesses you found
-- what you recommended
-- what was applied vs deferred
-```
-
-Where `<focus-line>` is either empty or:
-
-```text
-
-Focus on: <focus>.
-```
-
-### `/improve-eval`
-
-Submitted message:
-
-```text
-Review and improve evaluation/evaluation_plan.json in three passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.<focus-line>
-
-PASS 1 — VALIDATION
-1. Call validate_evaluation_plan.
-2. For each error: explain what's wrong in plain language, show the eval step/widget/field it refers to, and propose the exact fix.
-3. For warnings: separate correctness-risk warnings from lower-priority quality issues.
-
-PASS 2 — GOAL / SUCCESS-CRITERIA ALIGNMENT
-1. Read soul/soul.md and extract the objective and success criteria.
-2. Read planning/plan.json so you understand what the workflow is actually producing.
-3. <run-text>
-4. If existing run evidence is available, use review_workflow_results() or inspect the existing run/eval outputs to judge:
-   - which success criteria are directly measured
-   - which are only weakly or indirectly measured
-   - which are not measured at all
-   - whether any eval checks give false confidence or miss obvious failure modes
-
-PASS 3 — IMPROVEMENT SUGGESTIONS
-Propose improvements in these categories:
-1. **Coverage**: does each important success criterion have a clear eval step?
-2. **Directness**: is the eval checking the actual desired outcome, or only proxies?
-3. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce?
-4. **Redundancy**: are multiple eval steps measuring the same thing with little added value?
-5. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria?
-6. **Reality check**: if existing run evidence shows obvious failure or success, does the eval report reflect that honestly?
-
-Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
-
-When you finish, update builder/improve.md with:
-- what workflow/eval evidence you reviewed
-- the main eval weaknesses you found
-- what you recommended
-- what was applied vs deferred
-```
-
-Where `<focus-line>` is either empty or:
-
-```text
-
-Focus on: <focus>.
-```
-
-Where `<run-text>` is one of:
-
-```text
-Use the selected run folder "<selected-run-folder>" as the primary evidence set when judging whether eval measures the real objective and success criteria well.
-```
-
-or
-
-```text
-If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.
-```
-
-### `/improve-continuously`
-
-Submitted message:
-
-```text
-Set up automatic run + improve scheduling for this workflow. Do this autonomously and avoid creating duplicate schedules.<focus-text>
-
-GOAL
-Create or update TWO complementary schedules:
-1. a normal workflow run schedule for recurring execution
-2. a slower optimizer/workshop schedule that continuously improves the workflow and evaluation over time
-
-DISCOVERY
-1. Read soul/soul.md to understand the objective and success criteria.
-2. Read variables/variables.json to identify valid group names and enabled groups.
-3. Call get_workflow_config and inspect the current schedule list carefully.
-4. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
-
-SCHEDULE STRATEGY
-1. Prefer updating or reusing good existing schedules instead of creating duplicates.
-2. Only create a new schedule when there is no existing schedule that already serves that purpose.
-3. The improve schedule must be LESS frequent than the run schedule.
-4. If cadence is not obvious:
-   - choose a practical recurring run cadence based on the workflow objective and any existing schedules
-   - choose a larger/slower cadence for optimizer improvement
-   - stay conservative if the workflow does not appear highly time-sensitive
-5. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
-
-RUN SCHEDULE
-Create or update a schedule for normal recurring execution with:
-- mode="workflow"
-- valid group_names
-- a clear name and description that make it obvious this is the primary recurring run schedule
-
-IMPROVE SCHEDULE
-Create or update a schedule for recurring improvement with:
-- mode="workshop"
-- workshop_mode="optimizer"
-- valid group_names
-- a clear name and description that make it obvious this is the slower recurring optimizer schedule
-- a single scheduled message whose purpose is to improve BOTH workflow quality and eval quality over time
-
-The optimizer schedule message should explicitly do the following:
-- read builder/improve.md if it exists and treat it as the prior improvement log / decision history
-- read soul/soul.md, planning/plan.json, evaluation/evaluation_plan.json, and current schedules
-- review the latest meaningful run and evaluation evidence
-- take decisions in continuity with builder/improve.md unless newer evidence clearly contradicts it
-- use the same improvement logic as the improve commands for workflow, eval, and report when relevant
-- automatically APPLY high-confidence, evidence-backed improvements instead of only listing recommendations
-- do not wait for human confirmation during the scheduled improve run; be conservative and bounded instead
-- improve the evaluation plan when objective/success-criteria coverage is weak or misleading
-- improve the report plan when the rendered report is weak, misleading, or clearly behind the workflow's current outputs
-- improve the workflow using existing evidence first; only run verification when genuinely needed
-- update builder/improve.md with timestamp, evidence reviewed, schedule context, workflow changes, eval changes, report changes, what was applied automatically, remaining gaps, and next hypotheses<improve-continuously-focus>
-
-PERSISTENT IMPROVEMENT LOG
-Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
-Bootstrap it with:
-- objective and success criteria snapshot
-- current schedule strategy
-- what the run cadence is
-- what the improve cadence is
-- current known workflow gaps
-- current known eval gaps
-- next improvement hypotheses
-
-SCHEDULE CREATION RULES
-1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
-2. If an existing run schedule already serves the purpose, keep it and only refine it if needed.
-3. If an existing optimizer/improve schedule already serves the purpose, keep it and only refine it if needed.
-4. Use create_schedule / update_schedule as appropriate.
-
-FINAL REPORT
-Summarize:
-- what schedules already existed
-- what you created vs updated
-- run schedule: ID, name, cadence, timezone, groups
-- improve schedule: ID, name, cadence, timezone, groups
-- where you saved builder/improve.md
-- the exact optimizer schedule message you configured
-```
-
-Where `<improve-continuously-focus>` is either empty or:
-
-```text
- Focus especially on: <focus>.
-```
-
-### `/improve-workflow`
-
-Submitted message:
-
-```text
-Your single goal: improve this workflow end-to-end with the minimum necessary changes, starting from existing run evidence. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end. Review the current iteration first, then replan or harden from that evidence. Only run a fresh verification pass if it is actually needed.<focus-text>
-
-SETUP
-1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
-2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
-3. Read variables.json to get the enabled group names.
-4. <iteration-hint> Treat that iteration as the default evidence set for this command run.
-
-PHASE 1 — STRUCTURAL DIAGNOSIS
-1. Call optimize_workflow(<focus-call>).
-2. Read the optimize_workflow result carefully and classify the findings:
-   - **Structural**: missing steps, redundant steps, wrong ordering, wrong step type, broken context flow.
-   - **Non-structural**: weak prompts, weak validation, step reliability issues, tool/config issues.
-3. If the findings show a MATERIAL structural problem and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"<focus-arg>) ONCE before doing the hardening review.
-4. If the findings are minor or mostly non-structural, skip replanning and keep the current structure.
-5. Do not thrash the plan. At most one structural replan in this command run.
-
-PHASE 2 — PER-GROUP EVIDENCE REVIEW → HARDEN
-Repeat the following for each enabled group, sequentially, using the selected/latest iteration as the default evidence set.
-
-For group {group}:
-  a. **REVIEW EXISTING EVIDENCE** — inspect this group's existing outputs, logs, validation failures, and evaluation report for "{starting_iter}/{group}".
-     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}") to score the existing outputs. Do NOT execute a fresh workflow run in this phase.
-     - If there is no meaningful run evidence for this group in the chosen iteration, report that gap clearly and continue with the groups that do have evidence.
-  b. **DECIDE** — based on the existing evidence:
-     - If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"<focus-arg>), then continue reviewing the remaining groups against the updated plan.
-     - Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"<focus-arg>) and wait for it to finish.
-  c. **BE CONSERVATIVE** — prefer harden_workflow for reliability fixes; use replanning only when the workflow shape is actually wrong.
-
-PHASE 3 — VERIFY THE IMPROVEMENT
-1. After all groups have been reviewed, compare:
-   - structural issues found in Phase 1
-   - per-group existing run outcomes
-   - per-group existing eval results
-   - harden/replan changes applied
-2. If the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification pass on the highest-value group only:
-   - run_full_workflow(enabled_group_names=["{group}"])
-   - run_full_evaluation(target_run_folder="iteration-0/{group}")
-3. Do not loop indefinitely. Maximum one extra verification pass.
-4. Do not run a fresh workflow pass unless verification is genuinely needed to confirm the improvements.
-
-FINAL REPORT
-Summarize:
-- Structural diagnosis from optimize_workflow
-- Whether replan_workflow_from_results was used, and why
-- Per-group: what existing evidence was reviewed, whether eval had to be filled in, harden changes, steps newly marked optimized
-- Which success criteria are now better satisfied than before
-- Remaining gaps that still need human attention, if any
-
-Before finishing, update builder/improve.md with:
-- evidence reviewed
-- workflow changes applied
-- eval/report changes touched if any
-- what improved
-- remaining gaps
-- next hypotheses
-```
-
-### `/review-descriptions`
-
-Submitted message:
-
-```text
+````text
 Audit every step's description in plan.json. For each step, do the following:
 
 1. Read the step description from plan.json.
@@ -853,28 +485,20 @@ For each step, report:
 - Status: CLEAN, CONFUSED (description/skill issues), HARDCODED (hardcoded values found), WEAK_ORCHESTRATOR (for todo_task steps with orchestrator issues), BROWSER_ANTIPATTERN (prescribes evaluate/selectors instead of ref-based interaction), or NO_VALIDATION (missing or weak validation_schema) — a step can have multiple
 - If issues found: which problems and a concrete fix suggestion
 
-End with a summary table of all steps and their status.<focus-text>
-```
+End with a summary table of all steps and their status.${focusText}
 
-### `/review-code`
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which steps had issues, the categories of confusion / hardcoding / weak orchestration / browser anti-pattern / missing validation, the recommended fixes, and items flagged for follow-up.
+````
 
-If text exists before the slash, the command immediately submits:
+#### `/review-code`
 
-```text
-Run review_step_code(step_id="<step-id>") to check if the saved main.py for step "<step-id>" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.
-```
+````text
+Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.${reviewLogSuffix}
+````
 
-If no text exists before the slash, the command immediately submits:
+#### `/review-orchestrators`
 
-```text
-Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.
-```
-
-### `/review-orchestrators`
-
-Submitted message:
-
-```text
+````text
 Audit all todo_task steps in plan.json. For each todo_task step, read its todo_task_step description and all its predefined_routes sub-agent descriptions. Check for these problems:
 
 **Orchestrator Description Quality:**
@@ -897,8 +521,454 @@ For each todo_task step, report:
 - Per sub-agent route: route ID + verdict
 - Concrete fix suggestions for each issue
 
-End with a summary table.<focus-text>
+End with a summary table.${focusText}
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which orchestrators you reviewed, the verdicts (good vs issues), the recommendations, and items flagged for follow-up.
+````
+
+### Improvements (AI proposes; framework gates when metrics defined)
+
+#### `/improve-setup-framework`
+
+````text
+Set up the auto-improvement framework on this workflow. One-time configuration: write a "## Workflow Profile" section into builder/improve.md (the durable behavioral metadata the agent reads on every turn), set the two hard-gate fields in workflow.json (oversight_mode + decision_log_mutability), and bootstrap an initial metrics.json so /improve-* and the experiment loop have something concrete to work with.${focus ? `\n\nFocus / hints from user: ${focus}` : ''}
+
+DISCOVERY (read-only)
+1. Read workflow.json. Note any existing oversight_mode / decision_log_mutability.
+2. Read builder/improve.md if present — note any existing "## Workflow Profile" section.
+3. Read soul/soul.md to extract the workflow's objective and success_criteria.
+4. Read planning/plan.json — note the steps, their types, and overall structure (frozen plan vs in flux vs explore/exploit).
+5. Read evaluation/evaluation_plan.json if present — eval steps will be the natural source for many starter metrics.
+6. Read <workflow>/planning/metrics.json if present.
+7. Read runs/ to see how mature the workflow is.
+
+STEP 1 — Classify the workflow profile
+Walk the user through the four axes. Real workflows mix them; do not force a single enum.
+
+- **Plan stability** — `mutable` (plan changes freely), `ratchet` (additions only — compliance, security), `frozen` (no plan-shape change without explicit user OK).
+- **Runtime mode** — `single` (one plan, runs as-is) vs `dual` (alternates explore / exploit; e.g. social-media trying new tactics weekly then exploiting the winner).
+- **Business context accumulation** — does the workflow accumulate user-supplied business rules (audit clauses, ICP filters, risk constraints)? `yes` for Type-3-style workflows; `no` for QA suites and pure exploratory creative.
+- **Improvement cadence** — how often is this workflow expected to improve? Daily / weekly / per-incident / quarterly / never (frozen).
+
+Show your inference + reasoning + the alternative answers you considered for each axis. Ask the user to confirm.
+
+STEP 2 — Write the Workflow Profile to builder/improve.md
+Append (or replace, if a section already exists) the following section in builder/improve.md. Use `diff_patch_workspace_file` — do NOT `mkdir` via shell. Use workflow-relative paths.
+
+```markdown
+## Workflow Profile (auto-improvement framework)
+
+- **Plan stability**: <chosen> — <one-line rationale>
+- **Runtime mode**: <single | dual> — <one-line rationale; if dual, name the modes: e.g., "explore (weekly reset) / exploit (daily default)">
+- **Business context**: <accumulating | none> — <one-line rationale>
+- **Improvement cadence**: <chosen> — <one-line rationale>
+
+Behavioral implications the agent should respect on every turn:
+- <plan-stability implication, e.g. "Do not call replan_workflow_from_results or delete_plan_steps without explicit user approval.">
+- <runtime-mode implication, e.g. "When dual: read metrics.json for active_mode; honor it in step branching.">
+- <business-context implication, e.g. "Recognize user-supplied rules in conversation and offer capture_context.">
 ```
+
+STEP 3 — Set the two hard-gate fields in workflow.json
+These are the only structured framework fields; they drive real behavior.
+
+- `oversight_mode` — `manual` / `supervised` (default) / `autonomous`. Recommended defaults: deterministic + ratcheting workflow → `manual`; exploratory → `autonomous`; contextual / business-context → `supervised`.
+- `decision_log_mutability` — `append_only` (default) / `append_only_strict`. Set strict ONLY for compliance / audit workflows where the decision log is forensic.
+
+STEP 4 — Bootstrap metrics.json
+Behavior depends on the profile from Step 1:
+
+- Plan stability `mutable` + business context `none`: tell the user outcome metrics can be deferred. Track per-eval-step trajectories instead. **But still propose the two universal telemetry SLOs below** — they're free and catch cost/runtime regressions while exploring.
+- Plan stability `ratchet`/`frozen` + business context `none` (e.g. QA suite, ETL): propose 3–5 SLO-mode metrics — success-rate (floor), `cost_per_run` (ceiling), `run_duration_seconds` (ceiling), data freshness. Source: `telemetry` for cost/duration, `eval_step` for the rest.
+- Business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria, **plus the two universal telemetry SLOs**. Mix outcome metrics (mode=`target\
+````
+
+#### `/improve-workflow`
+
+````text
+Improve this workflow by surfacing changes the user is NOT thinking about — non-obvious improvements grounded in what the workflow actually produced. /review-* commands are for small fixes the user reviews; this command's job is AI-proposed changes the user wouldn't have asked for. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end.${focusText}
+
+MENTAL MODEL
+Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that matter here are things a domain expert would notice when reading what the workflow produced:
+- "Every reply has the same tone, but success criteria mention engaging different audience segments — segment by follower type and vary voice."
+- "The workflow researches every prospect from scratch, but 40% of last month's runs were repeats — cache and refresh deltas instead."
+- "Outreach copy leads with our product; the high-converting examples in run history all led with the prospect's pain point."
+- "Validation accepts any non-empty reply. Half the replies in run history are 'thanks' — that's not engagement, raise the bar."
+You should be uncomfortable with how obvious-in-retrospect a change feels after you read enough run output. That's the right mode.
+
+SETUP
+1. Read planning/plan.json to extract the objective and success_criteria — north star for every decision.
+2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
+3. Read variables.json to get the enabled group names.
+4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
+5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, package the intended changes as experiments via propose_experiment so they're gated behind measurement and auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report.
+6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
+
+PHASE 1 — OUTPUT REVIEW (the heart of the discovery)
+This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call. This command subsumes what used to be /improve-kb and /improve-learnings — the discovery looks across plan, KB, and learnings as one surface, not as separate concerns.
+1. Open the iteration folder under runs/ for the most recent meaningful iteration. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
+2. Read evaluation reports for the same iteration. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
+3. Compare outputs against the success criteria from soul.md. Where's the gap a domain expert would see?
+4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing failed ideas.
+5. **When output patterns suggest the issue isn't in the plan itself**, also inspect:
+   - **knowledgebase/notes/_index.json + topic files** — outputs that contradict each other, leak stale facts, or miss context the workflow should have known often trace to KB drift (duplicate or overlapping topics, stale narrative, missing step contributions).
+   - **learnings/_global/SKILL.md and references/*.md** — outputs that repeat known mistakes, or that reveal step rationale contradicting established guidance, often trace to learnings gaps (duplicated lessons, missing guidance for declared learning_objectives, repeated run fixes that should have become durable lessons, step-specific learnings that belong in _global).
+   - **knowledgebase/rules/rules.md** — when outputs violate user-stated business rules, the rule may be missing or out of date (note: rule additions are user-authoritative and don't go through the experiment gate; this command flags them for the user, doesn't add them).
+6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
+
+PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
+1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
+2. Read the result and classify findings as Structural (missing steps, wrong ordering, broken context flow, wrong step type) vs Non-structural (weak prompts, weak validation, reliability gaps).
+3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before continuing.
+4. Do not thrash the plan. At most one structural replan per command run.
+5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something optimize_workflow missed (likely, because optimize_workflow looks at code-shape, not outputs), trust the output review.
+
+PHASE 3 — PER-GROUP REVIEW → APPLY CHANGES
+Repeat the following for each enabled group, sequentially.
+
+For group {group}:
+  a. **REVIEW EVIDENCE** — inspect outputs, logs, validation failures, and the evaluation report for "{starting_iter}/{group}".
+     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}"). Do NOT execute a fresh workflow run here.
+     - If there's no meaningful run evidence for this group, report the gap and continue with groups that have evidence.
+  b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
+     - **DIRECT MODE (no metrics.json):**
+       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue.
+       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) for plan/prompt/validation fixes.
+       • If the candidate's primary lever is KB cleanup, call reorganize_knowledgebase or consolidate_knowledgebase as appropriate.
+       • If the candidate's primary lever is learnings cleanup or promotion, call organize_global_learnings.
+       • These tools may run in sequence within a single group's review.
+     - **EXPERIMENT MODE (metrics.json non-empty):**
+       • Pick the highest-impact candidate from Phase 1 for this group. Do NOT call harden_workflow / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings — they direct-edit, bypassing the gate.
+       • Formulate a hypothesis tying the change to ONE belief about the workflow, expressed against ONE target metric. Bundled multi-file changes that span plan + KB + learnings are FINE if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise step-3 validation to require pain-point reference + promote 'always cite source' learning to _global" — three files across three layers, one belief about generic outreach). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND clean up unrelated KB topics" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
+       • Call propose_experiment with: hypothesis (≤200 chars, in form "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run evidence>"), target_metrics, expected_direction (must match the metric's declared direction), expected_magnitude (absolute, > 0), intervention_changes (file edits across any of plan/, knowledgebase/notes/, learnings/, validation rules, prompts — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically and reverts on a bad verdict. One experiment per group per command run.
+       • Before proposing, read experiments/history.jsonl and experiments/config.json::pinned_hypotheses to avoid retrying anything that recently failed or that the user pinned as forbidden.
+       • For structural problems severe enough to require replan, replan is exempt from the experiment gate (it changes plan shape, not the decisions metrics measure). Replan first, then continue.
+       • If a target metric you need does not yet exist, call propose_metric first (with linked_success_criteria populated from soul.md).
+  c. **THE CHANGE DOES NOT HAVE TO BE SMALL.** The framework auto-reverts on a bad verdict, so blast radius is recoverable. Optimize for "the experiment will tell us something useful" — not for "the change is tiny." Multi-file bundled changes that share one belief are often higher-signal than fragmented small ones.
+
+PHASE 4 — VERIFY (DIRECT MODE only)
+In DIRECT MODE: if the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification on the highest-value group: run_full_workflow + run_full_evaluation. Maximum one extra pass; do not loop.
+In EXPERIMENT MODE: skip this phase. Verification IS the experiment loop — running the workflow now would just be one of the measurement runs, and the framework will compute a verdict deterministically when target_runs is reached. The next workflow runs will populate measurement.values automatically.
+
+FINAL REPORT
+Summarize:
+- Mode used (DIRECT or EXPERIMENT) and why
+- Output-review findings (Phase 1) — what patterns in run outputs surfaced
+- Structural diagnosis (Phase 2) — what optimize_workflow added or contradicted
+- Whether replan_workflow_from_results was used, and why
+- Per-group: evidence reviewed, harden changes (DIRECT) or experiment_ids opened with their hypotheses (EXPERIMENT)
+- Which success criteria are now better satisfied (DIRECT), or which experiments are now measuring against which criteria (EXPERIMENT)
+- Remaining gaps that still need human attention, if any
+
+Before finishing, update builder/improve.md with:
+- evidence reviewed
+- mode (direct vs experiment) and any experiment ids opened
+- workflow changes applied (or, in experiment mode, queued behind experiments)
+- eval/report changes touched if any
+- what improved
+- remaining gaps
+- next hypotheses
+````
+
+#### `/improve-eval`
+
+````text
+Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+
+PASS 0 — FRAMEWORK PRECHECK + ACTIVE-EXPERIMENT GUARD
+1. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
+2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Plain mutable+exploratory workflows may proceed without metrics.
+3. **Active-experiment guard.** Read experiments/active.json. For each experiment whose status is 'measuring' or 'evaluating', look at its target_metrics and resolve each metric in metrics.json. If any of those metrics is sourced from an eval step you might be about to edit (source.type=eval_step, source.id matches an eval step id), STOP and tell the user: "experiment <id> is currently measuring metric <m> against eval step <step_id>. Editing that step now would change its rubric mid-stream and invalidate the experiment's baseline. Either wait for the experiment to conclude (or /exp-abort it) before editing this eval step, or focus this command on eval steps not under active measurement." Proceed only with eval steps that are NOT under measurement.
+
+PASS 1 — VALIDATION
+1. Call validate_evaluation_plan.
+2. For each error: explain what's wrong in plain language, show the eval step/widget/field it refers to, and propose the exact fix.
+3. For warnings: separate correctness-risk warnings from lower-priority quality issues.
+
+PASS 2 — OUTPUT-FIRST ALIGNMENT (does eval catch what success_criteria care about?)
+1. Read soul/soul.md and extract the objective and success criteria. These are the standard eval should measure against.
+2. **Read run outputs first.** Open the latest meaningful iteration under runs/ and look at what was produced. Then read the matching eval reports. Where does the eval rubric MISS what a domain expert would notice? Examples: outputs are bland and repetitive but eval says they pass; outputs make unsupported claims but eval doesn't check; outputs ignore audience segmentation but eval has no segment-specific check.
+3. Read planning/plan.json so you understand what the workflow is producing.
+4. ${runText}
+5. From the output review + run/eval comparison, judge:
+   - which success criteria are directly measured by the current eval
+   - which are only weakly or indirectly measured
+   - which are not measured at all (coverage gap)
+   - whether any eval checks give false confidence (says pass when outputs are clearly weak) or miss obvious failure modes
+
+PASS 3 — IMPROVEMENT SUGGESTIONS
+Propose improvements in these categories:
+1. **Coverage**: does each important success criterion have a clear eval step?
+2. **Directness**: is the eval checking the actual desired outcome, or only proxies?
+3. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce?
+4. **Redundancy**: are multiple eval steps measuring the same thing with little added value?
+5. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria?
+6. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly?
+
+Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
+
+PASS 4 — RECORD THE CHANGE (every eval edit)
+After applying any change to evaluation/evaluation_plan.json:
+1. Append an entry to decisions.jsonl using diff_patch_workspace_file. Format (one JSON object per line):
+   {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-eval", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
+2. The decisions entry serves as a "rubric change" marker. Trajectory chart renderers should break the line at this timestamp because pre-change and post-change scores aren't comparable.
+
+When you finish, update builder/improve.md with:
+- what workflow/eval evidence you reviewed (especially output-vs-rubric mismatches from Pass 2)
+- the main eval weaknesses you found
+- which eval steps you skipped because they're under active measurement (per Pass 0 guard)
+- what you recommended and what was applied
+- the decisions.jsonl entries you appended (rubric-change markers)
+````
+
+#### `/improve-continuously`
+
+````text
+Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid creating duplicate schedules.${focusText}
+
+GOAL
+Create or update TWO complementary schedules:
+1. a normal workflow run schedule for recurring execution
+2. a slower optimizer/workshop schedule that continuously improves the workflow and evaluation over time
+
+DISCOVERY
+1. Call get_workflow_config and inspect the current schedule list carefully before doing anything else.
+2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
+3. Read soul/soul.md to understand the objective and success criteria.
+4. Read variables/variables.json to identify valid group names and enabled groups.
+5. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no profile and no metrics will optimize nothing concrete. If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
+6. **Framework mode.** Read planning/metrics.json. If it has at least one entry, the scheduled improve runs will operate in EXPERIMENT MODE — open at most one experiment per fire, gated through propose_experiment. If empty, scheduled improve runs are in DIRECT MODE — apply changes directly. Note this in the schedule's name/description so the operator knows which mode the schedule is using.
+7. Read planning/experiments/config.json (if it exists) to find default_measurement_runs / target_runs — needed to size the improve cadence correctly (see SCHEDULE STRATEGY below).
+
+SCHEDULE STRATEGY
+1. Prefer updating or reusing good existing schedules instead of creating duplicates.
+2. Only create a new schedule when there is no existing schedule that already serves that purpose.
+3. The improve schedule must be LESS frequent than the run schedule.
+4. **Experiment cadence guard (EXPERIMENT MODE only).** The improve schedule MUST fire less often than (target_runs × run_schedule_period). Reason: each experiment needs target_runs of the workflow to conclude, and opening a new experiment before prior ones conclude confounds attribution. Example: run_schedule daily, target_runs=5 → improve schedule no more frequent than weekly. If the desired improve cadence violates this, slow it down or raise the run schedule frequency, not the other way around.
+5. If cadence is not obvious:
+   - choose a practical recurring run cadence based on the workflow objective and any existing schedules
+   - choose a larger/slower cadence for optimizer improvement (subject to the cadence guard above in EXPERIMENT MODE)
+   - stay conservative if the workflow does not appear highly time-sensitive
+6. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
+
+RUN SCHEDULE
+Create or update a schedule for normal recurring execution with:
+- mode="workflow"
+- valid group_names
+- a clear name and description that make it obvious this is the primary recurring run schedule
+
+IMPROVE SCHEDULE
+Create or update a schedule for recurring improvement with:
+- mode="workshop"
+- workshop_mode="optimizer"
+- valid group_names
+- a clear name and description that make it obvious this is the slower recurring optimizer schedule
+- a single scheduled message whose purpose is to improve BOTH workflow quality and eval quality over time
+
+The optimizer schedule message must encode the following behavior. Write it explicitly into the schedule message — the agent that fires has no other context.
+
+OPENING (every fire):
+- read builder/improve.md (prior improvement log + decision history)
+- read soul/soul.md (objective + success criteria — the north star)
+- read planning/metrics.json — branches the rest of this turn:
+   • if metrics.json has at least one entry → **EXPERIMENT MODE**
+   • if empty or missing → **DIRECT MODE**
+- read experiments/active.json — list active experiments and their status (proposed / awaiting-approval / measuring / evaluating)
+
+EXPERIMENT MODE (when metrics.json is non-empty):
+1. **Check active experiments first.** If 3+ experiments are already active, do nothing this fire — log "deferring: too many active experiments" to improve.md and return. Opening experiment #4 while 1–3 are still measuring confounds attribution.
+2. If any active experiment is in 'awaiting-approval' or 'awaiting-conclusion-approval', do nothing this fire — those need human action, not new proposals. Log and return.
+3. **Discover** by reading run outputs first (latest iteration under runs/), eval reports, decisions.jsonl. Compare outputs to soul.md success criteria as a business analyst — what gap is most worth testing? Look for things the user is NOT asking about: tone uniformity that should segment, redundant work that should cache, weak validation that should tighten, content that misses the prospect's pain point. Read enough run output that patterns appear; do not skim.
+4. **Pick exactly ONE candidate** — the highest-impact change defensible by specific run-output evidence. Multi-file bundles are fine if they share ONE underlying belief; if you need an "and" connecting distinct claims, those are separate experiments and you only open one.
+5. **Pick the target metric.** Prefer outcome metrics (linked_success_criteria non-empty) whose criterion is failing or drifting. Telemetry SLOs are last resort. State explicitly: "this experiment targets <metric_id> which operationalizes success criterion: <quoted criterion>."
+6. **Call propose_experiment.** Do NOT call harden_workflow or apply changes directly — the framework gates and reverts on a bad verdict.
+7. If no candidate is strong enough (no clear evidence-backed hypothesis), do nothing this fire. Log "no high-confidence hypothesis surfaced" to improve.md and return. A scheduled fire with no proposal is a valid outcome.
+
+DIRECT MODE (when metrics.json is empty):
+1. Apply the legacy autonomous improvement logic — review evidence, optimize_workflow, harden_workflow / replan_workflow_from_results as needed, improve evaluation_plan / report_plan when their coverage is weak.
+2. Be conservative and bounded — do not loop or run a fresh workflow pass unless verification is genuinely needed.
+
+ALWAYS:
+- improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
+- update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses${improveMessageFocus}
+
+PERSISTENT IMPROVEMENT LOG
+Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
+Bootstrap it with:
+- objective and success criteria snapshot
+- current schedule strategy
+- what the run cadence is
+- what the improve cadence is
+- current known workflow gaps
+- current known eval gaps
+- next improvement hypotheses
+
+SCHEDULE CREATION RULES
+1. Do NOT delete schedules unless they are clearly redundant and safe to remove. Prefer update over delete.
+2. If an existing run schedule already serves the purpose, keep it and only refine it if needed.
+3. If an existing optimizer/improve schedule already serves the purpose, keep it and only refine it if needed.
+4. Use create_schedule / update_schedule as appropriate.
+
+FINAL REPORT
+Summarize:
+- what schedules already existed
+- what you created vs updated
+- run schedule: ID, name, cadence, timezone, groups
+- improve schedule: ID, name, cadence, timezone, groups
+- where you saved builder/improve.md
+- the exact optimizer schedule message you configured
+````
+
+#### `/improve-report`
+
+````text
+Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.${focusLine}
+
+PASS 1 — VALIDATION
+Call validate_report_plan.
+- For each error: explain what's wrong in plain language, show the section + widget it refers to, and propose the exact fix (which line to change, to what).
+- For warnings: group by severity. Flag ones that would visibly degrade the report (unknown chart_type, missing axis fields, invalid colors) separately from cosmetic ones (empty arrays that will fill in after a run).
+
+PASS 2 — IMPROVEMENT SUGGESTIONS
+Call preview_report_render first so you can inspect what the report actually renders like with current data. Treat that rendered preview as a required input, not an optional extra.
+
+Then call get_report_plan yourself and also sample the underlying db/*.json and knowledgebase/*.json sources. Use both the rendered preview and the raw data/plan to propose improvements in these categories:
+
+1. **Layout**: are the most important widgets at the top? Are there too many widgets in a row cramming the view? Is the H2 structure grouping related content?
+2. **Chart-type fit**: for each chart, is bar/line/area/pie the right choice for that data? (bar=categorical, line=time series, pie=composition ≤6 slices)
+3. **Color**: does the report use semantic coloring where meaningful (status fields, pass/fail, severity)? Suggest adding color_by + color_map for any status-like fields you see in the data. Propose palettes (colors + colors_dark) for brand consistency if multiple charts share a theme.
+4. **Formatting**: any number/date/currency fields that should have a format preset? Any tables with too many columns that could benefit from hide_columns?
+5. **Density**: any charts with >10 points that need top_n? Any tables without default_sort that would be hard to scan?
+6. **Rendered reality check**: based on the preview, what actually looks broken, cramped, misleading, empty, or visually weak even if the JSON is technically valid?
+
+Show ALL proposed changes as a diff (before/after snippets per widget) before editing. Ask whether to apply all, some, or none. Don't edit report_plan.json until I confirm.
+
+When you finish, update builder/improve.md with:
+- what report evidence you reviewed
+- the main report weaknesses you found
+- what you recommended
+- what was applied vs deferred
+````
+
+### Experiment lifecycle
+
+#### `/propose-experiment`
+
+````text
+Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there. /review-* commands are for small fixes the user reviews; this command (and the experiment loop) is for AI-proposed changes that move outcomes the user cares about.${focusText}
+
+MENTAL MODEL
+Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that surface here are things a domain expert would notice when reading what the workflow produced:
+- "Every Twitter reply has the same tone, but the success criteria mention engaging different audience segments — segment by follower type and vary voice."
+- "The workflow researches every prospect from scratch, but 40% of last month's runs were repeats — cache and refresh deltas instead."
+- "Outreach copy leads with our product; the high-converting examples in run history all led with the prospect's pain point."
+- "Validation accepts any non-empty reply. Half the replies in run history are 'thanks' — that's not engagement, raise the bar."
+You should be uncomfortable with how obvious-in-retrospect the change feels after you read enough run output. That's the right mode.
+
+PRECHECKS
+1. Read <workflow>/planning/metrics.json. If empty or missing, stop and redirect: "Run /improve-setup-framework first to bootstrap metrics — propose_experiment requires at least one declared metric to target."
+2. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
+3. Read experiments/active.json. If 3+ experiments are already active, warn the user and ask whether to proceed (concurrent experiments on related steps confound attribution).
+
+DISCOVER (this is the heart of the command)
+1. Read soul/soul.md's "## Success Criteria" section — these are the north star.
+2. **Read run outputs first, plan second.** Open the latest meaningful iteration under runs/ and read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Compare those outputs against the success criteria as a domain expert would. Where's the gap?
+3. Read evaluation reports for the same iteration — what scored poorly and why? The eval rationale text is often the richest signal.
+4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing things that already failed.
+5. Only after steps 2–4, look at planning/plan.json and step descriptions. Use the plan to understand structure; do NOT use it as the primary source of "what's wrong." Plans look fine on paper while outputs reveal the rot.
+6. Surface 3–5 candidate hypotheses ranked by expected impact. Each candidate must be defensible by something specific in the run outputs ("in iteration-3/group-a, posts 7, 12, 19 all got <2 engagement and all share <pattern>"), not by abstract reasoning about the plan.
+
+PICK A TARGET METRIC
+1. List metrics from planning/metrics.json with their current trajectory and `linked_success_criteria`. For each, note: which success criterion it operationalizes, whether it's on target / off target / no recent data.
+2. Pick exactly ONE metric to target. Prefer in this order:
+   a) a metric the user named in their focus hint
+   b) an OUTCOME metric (non-empty linked_success_criteria) whose criterion is currently failing
+   c) an OUTCOME metric whose recent trajectory is drifting off target
+   d) a TELEMETRY metric (cost_per_run / run_duration_seconds) only if its SLO is being violated AND no outcome metric is failing.
+3. State explicitly: "this experiment targets metric <id>, which operationalizes success criterion: <quoted criterion>." If you can't fill that sentence in honestly, pick a different metric (or define one via propose_metric — populate linked_success_criteria from soul.md).
+
+PICK ONE HYPOTHESIS FROM THE CANDIDATES
+1. From the candidates surfaced in DISCOVER, pick the one with the highest expected impact on the chosen metric, grounded in the most concrete run-output evidence.
+2. The change does NOT have to be small. Multi-file changes are fine if they share ONE underlying business belief. Examples of a coherent multi-file bundle: "personalize outreach by reading prospect's last post + change validation to require pain-point reference + add a fallback when no signal is available" — three files, one belief ("our outreach is too generic"). Examples of an INCOHERENT bundle that should be split: "add personalization AND reduce step 4's temperature AND fix the typo in step 7's prompt" — three unrelated beliefs, three experiments.
+3. The single-belief test: write the hypothesis in one sentence first. If you need an "and" to connect two distinct claims, those are two experiments.
+4. Bundled changes are recoverable: if the verdict is reverted, the framework restores every byte of `intervention_changes` atomically. Bigger blast radius is okay because it's auto-reversible. Optimize for "the experiment will tell us something useful" — not for "the change is tiny."
+
+WRITE IT
+1. Hypothesis (≤200 chars) in the form: "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run-output evidence>." Example: "Switching outreach copy to lead with prospect pain point will increase outreach.reply_rate by ≥5pp because run history shows pain-led posts converted 4× more often."
+2. expected_direction must match the metric's declared direction.
+3. expected_magnitude is absolute, in the metric's unit, > 0.
+4. intervention_changes: array of { path, operation, content }. Each path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
+
+CALL THE TOOL
+Call propose_experiment with the fields above. The framework captures the revertable diff, applies the changes, opens the measurement window, and returns { experiment_id, status, decisions_entry_id, linked_success_criteria, unanchored_metrics }.
+
+REPORT
+- Echo experiment_id, status, target metric, expected direction/magnitude.
+- Restate the one belief the experiment is testing in plain English.
+- Name the linked success criterion the metric operationalizes.
+- Tell the user what to do next: in oversight=manual, run /exp-extend or wait for /improve-approve; in supervised/autonomous, the next workflow runs will populate measurement values automatically.
+
+IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, the one belief tested, the run-output evidence that surfaced it, target metric, expected direction/magnitude. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.
+
+IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, hypothesis, target metric, expected direction/magnitude, and a one-line note on why this hypothesis. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.
+````
+
+#### `/exp-abort`
+
+````text
+Abort the active experiment and revert its intervention.${focus ? `\n\nReason: ${focus}` : ''}
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> and find the active experiment.
+2. If multiple are active, ask the user which one.
+3. Confirm the user wants to abort (this rolls back the intervention via the captured revertable_diff).
+
+ACTION
+POST /api/workflow/experiments/abort with { workspace_path, experiment_id, reason: "<why>", actor_user: "<user>" }.
+
+REPORT
+- Confirm the experiment is gone from active.json and is now in history.jsonl with status=aborted.
+- List the files restored.
+````
+
+#### `/exp-extend`
+
+````text
+Extend the active experiment's measurement window.${focus ? `\n\nFocus / why: ${focus}` : ''}
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> to find the active experiment.
+2. Ask the user how many additional runs are needed (default = workflow's default_measurement_runs).
+
+ACTION
+POST /api/workflow/experiments/extend with { workspace_path, experiment_id, additional_runs, reason }.
+
+REPORT
+- New target_runs.
+- Status (back to "measuring" if it was "evaluating").
+````
+
+#### `/exp-conclude`
+
+````text
+Manually conclude the active experiment.${focus ? `\n\nFocus / reason: ${focus}` : ''}
+
+This is the OVERRIDE path. Prefer letting the evaluator agent narrate the system-computed verdict. Use this only when you genuinely believe the heuristic is wrong (large world drift, broken eval, mistaken metric).
+
+DISCOVERY
+1. GET /api/workflow/experiments?workspace_path=<current> and confirm the experiment id.
+2. Decide the verdict: kept | reverted | inconclusive | extend.
+3. Write the rationale (≤500 chars) and the override reason.
+
+ACTION
+POST /api/workflow/experiments/manual-conclude with { workspace_path, experiment_id, verdict, reason, rationale, actor_user }.
+
+REPORT
+- final_verdict.
+- Whether it was archived to history.jsonl.
+- If verdict=reverted, list the files restored.
+````
+
 
 ## Source Of Truth
 

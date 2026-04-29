@@ -264,7 +264,7 @@ REVIEW LOG: append a dated entry to builder/review.md (read it first if it exist
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
+    requiredWorkshopMode: 'reporting',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
@@ -833,7 +833,7 @@ After the tool returns, tell me:
     icon: <Wrench className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['builder', 'optimizer'],
+    requiredWorkshopMode: 'optimizer',
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()

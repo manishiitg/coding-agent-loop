@@ -514,7 +514,8 @@ func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 				BlockedPaths: guard.BlockedPaths,
 			}
 			if err := validatePathAgainstGuard(unionGuard, relPath, false); err != nil {
-				return fmt.Errorf("access denied: absolute workspace path %q is outside this step's allowed folders: %w", candidate, err)
+				allowed := deduplicateStrings(append(append([]string{}, guard.ReadPaths...), guard.WritePaths...))
+				return fmt.Errorf("access denied: absolute workspace path %q is outside this step's allowed folders. Allowed: %s. Underlying check: %w", candidate, strings.Join(allowed, ", "), err)
 			}
 			continue
 		}
@@ -522,16 +523,43 @@ func blockAbsoluteHostPaths(command string, guard *FolderGuardConfig) error {
 		candidateLower := strings.ToLower(candidate)
 		for _, dir := range blockedDirs {
 			if candidateLower == dir || strings.HasPrefix(candidateLower, dir+"/") {
+				roots := workspaceDocsRoots()
+				suggestion := closestWorkspaceRootHint(candidate, roots)
 				return fmt.Errorf(
-					"access denied: shell command references absolute host path (%s). "+
-						"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
-						"absolute workspace paths inside the step's allowed folders instead",
-					candidate,
+					"access denied: shell command references absolute host path (%s) that is not under any allowed workspace root. "+
+						"Allowed workspace roots: %s. "+
+						"%s"+
+						"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or absolute paths under one of the allowed roots.",
+					candidate, strings.Join(roots, ", "), suggestion,
 				)
 			}
 		}
 	}
 	return nil
+}
+
+// closestWorkspaceRootHint returns a "Did you mean" hint when the rejected
+// path's tail (everything after the first /Workflow, /skills, /Chats, etc.)
+// could plausibly fit under one of the allowed workspace roots. Returns ""
+// when no useful suggestion can be made — the caller passes through whatever
+// it gets and the message reads cleanly either way.
+func closestWorkspaceRootHint(rejected string, roots []string) string {
+	clean := filepath.Clean(rejected)
+	// Look for the first known top-level workspace folder name in the rejected
+	// path; if found, the tail is what we'd append to a real root.
+	knownTops := []string{"/Workflow/", "/skills/", "/Chats/", "/Downloads/", "/subagents/", "/memory/", "/config/"}
+	for _, top := range knownTops {
+		if idx := strings.Index(clean, top); idx >= 0 {
+			tail := clean[idx:] // e.g. "/Workflow/linkedin/..."
+			for _, root := range roots {
+				if root == "" {
+					continue
+				}
+				return fmt.Sprintf("Did you mean: %s%s? ", filepath.Clean(root), tail)
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeAbsoluteWorkspacePath(inputPath string) (string, bool) {

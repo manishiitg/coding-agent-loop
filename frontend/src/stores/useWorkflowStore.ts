@@ -45,11 +45,11 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-export type WorkflowWorkspaceView = 'builder' | 'report' | 'plan' | 'flow' | null
+export type WorkflowWorkspaceView = 'builder' | 'report' | 'flow' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
-export type CanvasViewMode = 'flow' | 'plan' | 'report'
+export type CanvasViewMode = 'flow' | 'report'
 
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
@@ -71,10 +71,11 @@ function normalizeWorkflowWorkspaceView(view: unknown): WorkflowWorkspaceView {
   switch (view) {
     case 'builder':
     case 'report':
-    case 'plan':
     case 'flow':
     case null:
       return view
+    case 'plan':
+      return 'flow'
     default:
       return null
   }
@@ -131,9 +132,10 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
         workflowWorkspaceView: normalizeWorkflowWorkspaceView(candidate.workflowWorkspaceView) ?? undefined,
         canvasViewMode:
           candidate.canvasViewMode === 'flow' ||
-          candidate.canvasViewMode === 'plan' ||
           candidate.canvasViewMode === 'report'
             ? candidate.canvasViewMode as CanvasViewMode
+            : candidate.canvasViewMode === 'plan'
+              ? 'flow'
             : undefined,
       }
     }
@@ -305,7 +307,7 @@ interface WorkflowStore {
   chatAreaExpanded: boolean
   workflowWorkspaceView: WorkflowWorkspaceView
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
-  canvasViewMode: CanvasViewMode // 'flow' = React Flow diagram, 'plan' = readable outline
+  canvasViewMode: CanvasViewMode // 'flow' = React Flow diagram, 'report' = report preview
 
   // Multi-tab chat state
   workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
@@ -529,9 +531,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
       canvasViewMode: (() => {
         try {
           const saved = localStorage.getItem(CANVAS_VIEW_MODE_KEY)
-          if (saved === 'flow' || saved === 'plan' || saved === 'report') {
+          if (saved === 'flow' || saved === 'report') {
             return saved
           }
+          if (saved === 'plan') return 'flow'
         } catch {
           // ignore
         }
@@ -1447,7 +1450,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set(state => {
           // Legacy callers passing 'eval' / 'output' get folded into 'plan' + 'builder'.
-          const normalizedMode: 'plan' = 'plan'
+          const normalizedMode = 'plan' as const
           const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
           const resolvedWorkshopMode: WorkshopMode =
             (mode === 'eval' || mode === 'output')
@@ -1681,10 +1684,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
               : true
           const persistedCanvasViewMode =
             persistedUIState.canvasViewMode
-          // When the effective workspace view is plan/flow/report, keep canvasViewMode
+          // When the effective workspace view is flow/report, keep canvasViewMode
           // in lock-step so the canvas renders the same shape the user left on last time.
           const syncedCanvasMode: CanvasViewMode | undefined =
-            persistedWorkspaceView === 'plan' ||
             persistedWorkspaceView === 'flow' ||
             persistedWorkspaceView === 'report'
               ? persistedWorkspaceView

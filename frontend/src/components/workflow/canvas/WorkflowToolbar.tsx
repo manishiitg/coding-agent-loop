@@ -286,7 +286,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const isBuilderPaneVisible = showChatArea === true && !showWorkspacePane
   const isBuilderModeActive = workflowWorkspaceView === 'builder' || isBuilderPaneVisible
   const isReportWorkspace = showWorkspacePane && canvasViewMode === 'report'
-  const isPlanWorkspace = showWorkspacePane && canvasViewMode === 'plan'
   const isFlowWorkspace = showWorkspacePane && canvasViewMode === 'flow'
   const canStopActiveWorkflowSession = !!(
     activeWorkflowTab?.sessionId &&
@@ -408,25 +407,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 }`}
               >
                 Flow
-              </button>
-              <button
-                onClick={() => {
-                  const store = useWorkflowStore.getState()
-                  if (canvasViewMode === 'plan' && showWorkspacePane && showChatArea) {
-                    store.setShowWorkspacePane(false)
-                    return
-                  }
-                  store.setWorkflowWorkspaceView('plan')
-                  store.setShowWorkspacePane(true)
-                  store.setCanvasViewMode('plan')
-                }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                  isPlanWorkspace
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                Plan
               </button>
               <button
                 onClick={() => {

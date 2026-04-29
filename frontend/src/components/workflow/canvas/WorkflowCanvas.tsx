@@ -9,7 +9,7 @@ import {
   ReactFlowProvider,
   type NodeChange
 } from '@xyflow/react'
-import { Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
+import { Braces, FileText, GitBranch, Laptop, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -18,7 +18,6 @@ import { WorkflowToolbar } from './WorkflowToolbar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { BatchProgressHeader } from '../BatchProgressHeader'
-import { PlanOutlineView } from './PlanOutlineView'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   REPORT_PREVIEW_PREFERENCE_KEY,
@@ -27,16 +26,17 @@ import {
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { useOutputPlanData } from '../hooks/useOutputPlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type WorkflowArtifactNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type ConditionalNodeData, type WorkflowArtifactNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
-import type { PlanningResponse } from '../../../utils/stepConfigMatching'
+import type { PlanStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
+import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -151,6 +151,149 @@ function FloatingWorkflowViewControls({
   )
 }
 
+function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2)
+}
+
+function DetailSection({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ElementType
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="border-b border-border px-4 py-3 last:border-b-0">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        {title}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function ReadOnlyStepDetailPanel({
+  node,
+  onClose,
+}: {
+  node: WorkflowNode
+  onClose: () => void
+}) {
+  const data = node.data as WorkflowNodeData
+  const step = 'step' in data && data.step ? data.step as PlanStep : null
+  const title = (typeof data.title === 'string' && data.title) || step?.title || node.id
+  const type = step?.type || node.type || 'node'
+  const routes = step?.type === 'routing'
+    ? step.routes
+    : step?.type === 'todo_task'
+      ? step.predefined_routes
+      : undefined
+  const validationSchema = step?.validation_schema || ('validation_schema' in data ? data.validation_schema : undefined)
+  const agentConfigs = step?.agent_configs
+  const contextInputs = step?.context_dependencies || []
+  const contextOutput = step?.context_output
+  const contextOutputs = Array.isArray(contextOutput) ? contextOutput : (contextOutput ? [contextOutput] : [])
+  const conditionQuestion = typeof data.condition_question === 'string' ? data.condition_question : undefined
+  const routingQuestion = typeof data.routing_question === 'string' ? data.routing_question : undefined
+
+  return (
+    <aside className="flex h-full w-[380px] max-w-[42vw] shrink-0 flex-col border-l border-border bg-background shadow-xl">
+      <div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{type}</span>
+            {step?.id && <span className="truncate font-mono text-[10px] text-muted-foreground">{step.id}</span>}
+          </div>
+          <h3 className="truncate text-sm font-semibold text-foreground">{title}</h3>
+        </div>
+        <button
+          onClick={onClose}
+          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Close step details"
+          title="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {step?.description && (
+          <DetailSection icon={FileText} title="Description">
+            <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1">
+              <MarkdownRenderer content={step.description} className="max-w-none" />
+            </div>
+          </DetailSection>
+        )}
+
+        {(conditionQuestion || routingQuestion || routes?.length) && (
+          <DetailSection icon={step?.type === 'routing' || step?.type === 'todo_task' ? Route : GitBranch} title="Routing">
+            {conditionQuestion && <p className="mb-2 text-sm text-foreground/85">{conditionQuestion}</p>}
+            {routingQuestion && <p className="mb-2 text-sm text-foreground/85">{routingQuestion}</p>}
+            {routes?.length ? (
+              <div className="space-y-2">
+                {routes.map((route, index) => (
+                  <div key={route.route_id || route.route_name || index} className="rounded-md border border-border bg-muted/25 p-2">
+                    <div className="text-xs font-semibold text-foreground">{route.route_name || route.route_id || `Route ${index + 1}`}</div>
+                    {'condition' in route && route.condition && (
+                      <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{route.condition}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </DetailSection>
+        )}
+
+        {(contextInputs.length > 0 || contextOutputs.length > 0) && (
+          <DetailSection icon={FileText} title="Context">
+            <div className="space-y-2 text-xs">
+              {contextInputs.length > 0 && (
+                <div>
+                  <div className="mb-1 font-medium text-muted-foreground">Reads</div>
+                  <div className="space-y-1">{contextInputs.map(path => <div key={path} className="rounded bg-muted/40 px-2 py-1 font-mono text-foreground/80">{path}</div>)}</div>
+                </div>
+              )}
+              {contextOutputs.length > 0 && (
+                <div>
+                  <div className="mb-1 font-medium text-muted-foreground">Writes</div>
+                  <div className="space-y-1">{contextOutputs.map(path => <div key={path} className="rounded bg-muted/40 px-2 py-1 font-mono text-foreground/80">{path}</div>)}</div>
+                </div>
+              )}
+            </div>
+          </DetailSection>
+        )}
+
+        {!!validationSchema && (
+          <DetailSection icon={Braces} title="Schema">
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted/35 p-2 font-mono text-[11px] leading-relaxed text-foreground/80">
+              {formatJson(validationSchema)}
+            </pre>
+          </DetailSection>
+        )}
+
+        {agentConfigs && (
+          <DetailSection icon={Settings} title="Step Config">
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted/35 p-2 font-mono text-[11px] leading-relaxed text-foreground/80">
+              {formatJson(agentConfigs)}
+            </pre>
+          </DetailSection>
+        )}
+
+        {!step && (
+          <DetailSection icon={FileText} title="Details">
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted/35 p-2 font-mono text-[11px] leading-relaxed text-foreground/80">
+              {formatJson(data)}
+            </pre>
+          </DetailSection>
+        )}
+      </div>
+    </aside>
+  )
+}
+
 // Ref interface for external control of the canvas
 export interface WorkflowCanvasRef {
   refresh: (changedStepIDs?: string[], deletedStepIDs?: string[]) => Promise<PlanChanges | null>
@@ -197,7 +340,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Flow view is vertical-only.
   const layoutDirection = 'TB' as const
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
-  const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
@@ -294,6 +436,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const [variablesManifest, setVariablesManifest] = React.useState<VariablesManifest | null>(null)
   const [isLoadingVariables, setIsLoadingVariables] = React.useState(false)
   const [showVariablesSidebar, setShowVariablesSidebar] = React.useState(false)
+  const [selectedFlowNode, setSelectedFlowNode] = React.useState<WorkflowNode | null>(null)
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
@@ -342,11 +485,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Load workflow data for the main canvas and append eval/output artifacts to it.
   const planData = usePlanData(workspacePath)
-  // Keep last non-null plan so PlanOutlineView doesn't unmount during refresh
-  const [stablePlan, setStablePlan] = React.useState<PlanningResponse | null>(null)
-  React.useEffect(() => {
-    if (planData.plan) setStablePlan(planData.plan)
-  }, [planData.plan])
   const evalData = useEvaluationPlanData(workspacePath)
   const outputData = useOutputPlanData(workspacePath)
 
@@ -800,7 +938,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
     isLoadingVariables,  // Whether variables are loading
     layoutDirection,  // Layout direction: 'LR' for horizontal, 'TB' for vertical
-    disabled: toolbarOnly || canvasViewMode === 'plan'
+    disabled: toolbarOnly
   })
 
   const augmentedFlow = React.useMemo(() => {
@@ -971,7 +1109,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // CRITICAL: Force header nodes to correct positions after nodes update
   // Ensure header nodes maintain correct positions (safety net in case something tries to override them)
   React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    if (toolbarOnly) return // Skip when canvas is hidden
     if (nodes.length === 0 || initialNodes.length === 0) return
     
     const varsNode = initialNodes.find(n => n.id === 'variables')
@@ -1003,12 +1141,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Rebuild node groups when nodes change
   React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    if (toolbarOnly) return // Skip when canvas is hidden
     hasInitializedView.current = false
   }, [canvasViewMode, toolbarOnly])
 
   React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    if (toolbarOnly) return // Skip when canvas is hidden
     if (nodes.length > 0) {
       buildNodeGroups(nodes)
     }
@@ -1017,7 +1155,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
     // Skip node/edge updates when canvas is hidden (toolbarOnly or plan mode) — no React Flow to update
-    if (toolbarOnly || canvasViewMode === 'plan') return
+    if (toolbarOnly) return
 
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
@@ -1382,7 +1520,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Fit the full plan on first render so the workflow shape is visible by default.
   React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return
+    if (toolbarOnly) return
     if (!hasInitializedView.current && nodes.length > 0) {
       const fitTimer = window.setTimeout(() => {
         window.requestAnimationFrame(() => {
@@ -1404,7 +1542,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update node status based on maps from events (only when stepStatusMap actually changes)
   React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    if (toolbarOnly) return // Skip when canvas is hidden
 
     // Check if stepStatusMap actually changed by comparing entries
     const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
@@ -1461,8 +1599,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [stepStatusMap, setNodes, toolbarOnly, canvasViewMode])
 
 
-  const onNodeClick = useCallback(() => {}, [])
-  const onPaneClick = useCallback(() => {}, [])
+  const onNodeClick = useCallback((_: React.MouseEvent, node: WorkflowNode) => {
+    if (node.type === 'variables') {
+      setShowVariablesSidebar(true)
+      setSelectedFlowNode(null)
+      return
+    }
+    setSelectedFlowNode(node)
+  }, [])
+  const onPaneClick = useCallback(() => {
+    setSelectedFlowNode(null)
+  }, [])
 
   // Handle start phase with execution options (for toolbar)
   const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
@@ -1616,22 +1763,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
-        {toolbarOnly ? null : canvasViewMode === 'plan' ? (
-          <div className="h-full min-h-0 relative">
-            {stablePlan && <PlanOutlineView
-              plan={stablePlan}
-                stepStatusMap={stepStatusMap}
-              onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
-              workspacePath={workspacePath}
-              className="h-full"
-            />}
-            <FloatingWorkflowViewControls
-              viewLabel="plan"
-              showPreviewControls={showChatArea}
-              onRefresh={() => { void handleRefresh() }}
-            />
-          </div>
-        ) : canvasViewMode === 'report' ? (
+        {toolbarOnly ? null : canvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
             {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
           </div>
@@ -1693,6 +1825,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onRefresh={() => { void handleRefresh() }}
         />
         </div>
+
+        {selectedFlowNode && (
+          <ReadOnlyStepDetailPanel
+            node={selectedFlowNode}
+            onClose={() => setSelectedFlowNode(null)}
+          />
+        )}
 
         {/* Variables Sidebar */}
         {showVariablesSidebar && (

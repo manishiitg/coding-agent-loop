@@ -580,7 +580,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const isPreviewableWorkspaceCanvas =
     showChatArea &&
     workspacePaneVisible &&
-    (canvasViewMode === 'report' || canvasViewMode === 'plan' || canvasViewMode === 'flow')
+    (canvasViewMode === 'report' || canvasViewMode === 'flow')
   const previewPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isPreviewableWorkspaceCanvas
     ? reportPreviewPreference === 'mobile'
       ? 'mobile'
@@ -595,7 +595,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const shouldUseMobileReportPane = previewPaneTier === 'mobile'
   const isWorkspaceViewActive =
     workflowWorkspaceView === 'flow' ||
-    workflowWorkspaceView === 'plan' ||
     workflowWorkspaceView === 'report'
   const chatPaneVisibilityClass =
     workspacePaneVisible && isWorkspaceViewActive

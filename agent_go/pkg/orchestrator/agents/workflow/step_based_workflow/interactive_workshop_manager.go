@@ -1038,6 +1038,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	autoImprovement := []string{
 		"propose_metric",
 		"propose_experiment",
+		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 		// conclude_experiment is intentionally NOT in this list — it is the
 		// evaluator agent's only tool. Exposing it to the proposer would
 		// violate the proposer != evaluator guardrail.
@@ -1108,6 +1109,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_results")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
+		tools = append(tools, "get_workflow_command_guidance") // /review-* commands need this even in run mode
 
 	case "reporting":
 		// REPORTING: focused surface for the live report — design widgets, set
@@ -1124,6 +1126,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, report...)
+		tools = append(tools, "get_workflow_command_guidance") // /improve-report lives in this mode
 
 	default:
 		// Unknown mode — allow everything (no restriction)

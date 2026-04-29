@@ -1,0 +1,3 @@
+{{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to check if the saved main.py for step "{{.Focus}}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.{{else}}Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.{{end}}
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which step(s) you reviewed, the drift findings, the recommendations, and items flagged for follow-up.

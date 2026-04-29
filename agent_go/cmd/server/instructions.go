@@ -367,6 +367,52 @@ Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." 
 ### Tool: ` + "`conclude_experiment`" + `
 **ONLY the evaluator agent has this tool.** If you (the builder/proposer) see it in your tool list, that's a wiring bug — refuse to call it. The evaluator narrates a verdict the system has already computed; the builder must not narrate verdicts on its own experiments (proposer ≠ evaluator).
 
+### Tool: ` + "`get_workflow_command_guidance`" + `
+
+Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
+
+  1. The user invokes a slash command (` + "`/improve-workflow`" + `, ` + "`/propose-experiment`" + `, ` + "`/review-goal`" + `, ` + "`/exp-abort`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "abort the active experiment"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
+  3. You're running on a schedule (e.g. ` + "`/improve-continuously`" + `'s scheduled improve message). The schedule message names the kind to call.
+
+**Kinds — match to intent:**
+
+  Builder-mode audits:
+    - design-flow            → context dependency / handoff design
+    - ready-to-optimize      → pre-optimizer readiness checklist
+
+  Reviews (recommend, don't apply; appends to ` + "`builder/review.md`" + `):
+    - review-plan            → workflow design review
+    - review-goal            → did a real run achieve the goal; eval coverage
+    - review-speed           → latency analysis
+    - review-cost            → cost analysis
+    - review-config          → per-step KB/db/lock recommendations
+    - review-descriptions    → descriptions vs skill/learning confusion
+    - review-code            → saved main.py vs step descriptions
+    - review-orchestrators   → todo_task orchestrator review
+
+  Improvements (AI proposes; framework gates when metrics defined):
+    - improve-setup-framework  → one-time framework bootstrap
+    - improve-workflow         → unified plan + KB + learnings improvement
+    - improve-eval             → evaluation_plan changes
+    - improve-continuously     → set up cron schedules
+    - improve-report           → report layout/color improvements
+
+  Experiments:
+    - propose-experiment       → focused experiment opener
+    - exp-abort                → abort + revert active experiment
+    - exp-extend               → add measurement runs
+    - exp-conclude             → manually verdict an experiment
+
+**Optional parameters:**
+  - ` + "`focus`" + `       : the user's free-text hint, if any
+  - ` + "`iteration`" + `   : run iteration to use as evidence (e.g. "iteration-3")
+  - ` + "`run_folder`" + `  : full run folder path (e.g. "iteration-3/group-a")
+
+**Mode validation.** Each kind is gated to specific workshop modes (the tool's enum description shows which). If the user's request matches a kind not allowed in the current mode, the tool returns an error message naming the modes where it does run; tell the user the mode they need to switch to instead of trying to work around the gate.
+
+The returned text is your instructions for this turn — do not paraphrase or skip steps.
+
 ### How ` + "`/improve-*`" + ` commands evolve
 
 The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, and learnings as one surface, and an experiment may bundle changes across all three when they share one belief. When a workflow has ` + "`planning/metrics.json`" + ` non-empty, ` + "`/improve-*`" + ` commands operate in EXPERIMENT MODE: changes go through ` + "`propose_experiment`" + ` so they're gated behind measurement and auto-revertible. When ` + "`metrics.json`" + ` is empty, they operate in DIRECT MODE and apply changes immediately via the legacy tools.

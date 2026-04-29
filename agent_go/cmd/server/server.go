@@ -55,6 +55,7 @@ import (
 	"github.com/joho/godotenv"
 
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
+	"mcp-agent-builder-go/agent_go/cmd/server/guidance"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
@@ -4946,6 +4947,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Auto-improvement framework — proposer-side tools (optimizer mode).
 						RegisterAutoImprovementProposerTools(underlyingAgent, phaseWorkspacePath, "improve-workflow", api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s", workflowPhaseID)
+						// Guided-flow text for every workflow slash command, returned via
+						// get_workflow_command_guidance(kind=...). Available across modes;
+						// per-kind mode validation lives in the tool itself.
+						guidance.RegisterGuidanceTool(underlyingAgent, phaseTemplateVars["WorkshopMode"], api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered get_workflow_command_guidance in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 					}
 				default:
 					// planning: plan modification tools

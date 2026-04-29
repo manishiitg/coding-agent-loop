@@ -2,24 +2,35 @@
 
 This doc is a reference for the workflow-builder surface, organized **by workshop mode**. Each mode lists the slash commands and tools available in it.
 
-It separates two concepts that are easy to confuse:
+It separates three concepts:
 
-- **Slash commands**: frontend shortcuts defined in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx). These are prompt macros. They do not perform work themselves.
-- **Tools**: backend tools registered in [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go). These are the actual callable operations the agent can execute.
+- **Slash commands**: frontend shortcuts defined in [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx). They are thin pointers — each `onSubmit` body is now a one-liner that calls `get_workflow_command_guidance(kind=...)` and tells the agent to follow the returned instructions verbatim. The slash commands carry no prose of their own.
+- **Guided-flow templates**: the actual canonical prose for every slash command lives in markdown templates under [`agent_go/cmd/server/guidance/templates/{builder,review,improve,experiment}/`](../../agent_go/cmd/server/guidance/templates/), grouped by intent. One file per kind. Embedded into the binary via `//go:embed`. Source of truth.
+- **Tools**: backend tools registered in [`interactive_workshop_manager.go`](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go) and friends. These are the actual callable operations the agent can execute (e.g. `harden_workflow`, `propose_experiment`, `review_workflow_results`).
 
 Short version:
 
-- `/improve-workflow` is a slash command
-- `harden_workflow` is a tool
-- `/review-goal` is a slash command
-- `review_workflow_results` is a tool
+- `/improve-workflow` is a slash command — calls `get_workflow_command_guidance(kind="improve-workflow")`.
+- `improve-workflow.md` is the guided-flow template — holds the actual prose.
+- `harden_workflow` is a tool — does real work.
+
+## Why this shape
+
+The same guided flow is reachable from three contexts:
+
+1. **A user typed a slash command** — the slash command names the kind to pass to the guidance tool.
+2. **A user described the same intent in plain chat** ("help me improve this workflow", "abort the active experiment") — the agent recognizes the intent, picks the matching kind, and calls the tool.
+3. **A scheduled fire** (e.g. `/improve-continuously`'s recurring optimizer message) — the scheduled message names the kind.
+
+One source of truth (the templates), three callers, no drift between them. Editing a flow is editing one markdown file.
 
 ## Mental Model
 
-- Add a **slash command** when you want a guided workflow or a common prompt pattern.
+- Add a **slash command** when you want a UI shortcut for a flow that already has a template.
+- Add a **guided-flow template** when you want a reusable multi-step plan the agent can follow consistently.
 - Add a **tool** when you need a new primitive capability.
 
-A slash command can call multiple tools. A tool can exist without any dedicated slash command.
+A slash command can call multiple tools. A tool can exist without any dedicated slash command. A template can be invoked without a slash command (chat intent, schedule).
 
 ## Workshop Modes
 
@@ -197,9 +208,28 @@ The framework's design (soul preconditions, metric→success_criteria trace, pro
 
 | Tool | Purpose |
 |---|---|
+| `get_workflow_command_guidance` | Returns the canonical guided-flow text for any workflow slash command. Single-source-of-truth for all slash command prose. Available across builder/optimizer/run/reporting modes; per-kind mode validation lives inside the tool. Source: [`agent_go/cmd/server/guidance/`](../../agent_go/cmd/server/guidance/). |
 | `propose_metric` | Define a new metric or amend an existing one in `planning/metrics.json`. Refuses if `soul.md` is missing or if `## Objective` / `## Success Criteria` are empty. Carries `linked_success_criteria` so each outcome metric traces to a criterion. |
-| `propose_experiment` | Open an experiment: hypothesis + target_metrics + intervention_changes (file edits across plan/KB/learnings/etc., paths constrained by `experiments/config.json::allowed_intervention_paths`). Atomically captures baseline + world_state + revertable_diff, applies the intervention, opens the measurement window. |
+| `propose_experiment` | Open an experiment: hypothesis + target_metrics (array — one or more metrics that share the SAME declared direction and the same underlying belief; mixed-direction targets must be split because `expected_direction` is single-valued) + intervention_changes (file edits across plan/KB/learnings/etc., paths constrained by `experiments/config.json::allowed_intervention_paths`). Atomically captures baseline + world_state + revertable_diff, applies the intervention, opens the measurement window. |
 | `conclude_experiment` | **Evaluator agent only.** Narrates the system-computed verdict for an experiment whose measurement window has closed. Exposing this to the proposer would violate the proposer ≠ evaluator guardrail — the optimizer/builder must not see this tool. |
+
+#### `get_workflow_command_guidance` — kinds & params
+
+```
+kind: "design-flow" | "ready-to-optimize" |
+      "review-plan" | "review-goal" | "review-speed" | "review-cost" |
+      "review-config" | "review-descriptions" | "review-code" | "review-orchestrators" |
+      "improve-setup-framework" | "improve-workflow" | "improve-eval" |
+      "improve-continuously" | "improve-report" |
+      "propose-experiment" |
+      "exp-abort" | "exp-extend" | "exp-conclude"
+
+focus?:      string  // user's free-text hint
+iteration?:  string  // run iteration (e.g. "iteration-3")
+run_folder?: string  // full run path (e.g. "iteration-3/group-a")
+```
+
+Returns `{ kind, guidance }` where `guidance` is the rendered markdown the agent should follow verbatim.
 
 **Two earlier tools were removed in favor of agent primitives:**
 
@@ -241,16 +271,24 @@ If you are trying to:
 
 
 
-## Exact Slash Command Texts
 
-Snapshot of the verbatim text each slash command sends as a user message. Captured from [`frontend/src/commands/builtin-commands.tsx`](../../frontend/src/commands/builtin-commands.tsx) — that file is the source of truth and may have drifted since this snapshot was taken. Runtime values are template-literal interpolations; the placeholders read as `${focus}`, `${runFolder}`, etc. Outer code fences use four backticks so the inner ``` blocks inside the prompts render cleanly.
+
+## Guided-Flow Templates (verbatim)
+
+Snapshot of the markdown templates in [`agent_go/cmd/server/guidance/templates/`](../../agent_go/cmd/server/guidance/templates/) — these are the single source of truth for what every slash command, chat-intent invocation, and scheduled fire actually tells the agent. Slash commands collapse to one-liners that call `get_workflow_command_guidance(kind=..., ...)` and follow the returned text verbatim.
+
+Template syntax uses Go `text/template` placeholders:
+
+- `{{.Focus}}` — user's focus / free-text hint (often wrapped in `{{if .Focus}}...{{end}}`)
+- `{{.Iteration}}` — run iteration (e.g. `iteration-3`)
+- `{{.RunFolder}}` — full run folder path (e.g. `iteration-3/group-a`)
 
 ### Builder-mode audits
 
-#### `/design-flow`
+#### `design-flow` (`builder/design-flow.md`)
 
 ````text
-Read planning/plan.json and analyze the context flow between steps.${focusText}
+Read planning/plan.json and analyze the context flow between steps.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 Check for:
 1. **Broken chain** — step depends on a context_output that no earlier step produces
@@ -268,7 +306,7 @@ Show me:
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `/ready-to-optimize`
+#### `ready-to-optimize` (`builder/ready-to-optimize.md`)
 
 ````text
 Run an optimization-readiness checklist. Check each item and report PASS or FAIL:
@@ -293,10 +331,10 @@ REVIEW LOG: append a dated entry to builder/review.md (create if absent) with th
 
 ### Reviews (recommend, don't apply)
 
-#### `/review-plan`
+#### `review-plan` (`review/review-plan.md`)
 
 ````text
-Run review_plan() to critically analyze the current workflow plan.${focusText}
+Run review_plan() to critically analyze the current workflow plan.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 Challenge every decision: step boundaries, step types, execution modes, context flow, validation coverage, portability, and whether choices are justified by the objective and success criteria. Report findings by severity — don't just summarize, identify what's weak, risky, or unjustified.
 
@@ -305,12 +343,12 @@ This is a plan/design review. Use review_workflow_results() when the question is
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `/review-goal`
+#### `review-goal` (`review/review-goal.md`)
 
 ````text
-Run review_workflow_results() to judge actual workflow outcomes, not just the plan.${focusText}
+Run review_workflow_results() to judge actual workflow outcomes, not just the plan.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-${runText}
+{{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
 Assess three things separately:
 1. Is the workflow actually achieving the stated objective?
@@ -332,12 +370,12 @@ Then give:
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the goal/eval verdict, the main gaps ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `/review-speed`
+#### `review-speed` (`review/review-speed.md`)
 
 ````text
-Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.${focusText}
+Run review_workflow_timing() to analyze where workflow time is actually going and how to make it faster.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-${runText}
+{{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
 Assess four things separately:
 1. What is the overall workflow wall-clock, and what is the biggest bottleneck class: LLM latency, tool latency, orchestration overhead, or plan shape?
@@ -355,12 +393,12 @@ Then give:
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the timing analysis, the top bottlenecks, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `/review-cost`
+#### `review-cost` (`review/review-cost.md`)
 
 ````text
-Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.${focusText}
+Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-${runText}
+{{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?
@@ -378,10 +416,10 @@ Then give:
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with the cost analysis, the top cost drivers, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `/review-config`
+#### `review-config` (`review/review-config.md`)
 
 ````text
-Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.${focusText}
+Audit every step in this workflow's plan and recommend the right values for: knowledgebase_access, knowledgebase_contribution, lock_learnings, and lock_code (learn_code steps only). This is a READ-ONLY analysis pass — do NOT apply any changes via update_step_config. Produce a recommendation table the user will review and apply selectively.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PROCEDURE
 1. Read planning/plan.json and planning/step_config.json. For each step capture: id, title, description, declared_execution_mode, and current AgentConfigs (knowledgebase_access, knowledgebase_contribution, lock_learnings, lock_code, optimized, successful_runs, description_hash).
@@ -438,7 +476,7 @@ List the exact update_step_config calls the user can copy/paste to apply each re
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what config you reviewed, the main misconfigs found, the recommended changes, and items flagged for follow-up.
 ````
 
-#### `/review-descriptions`
+#### `review-descriptions` (`review/review-descriptions.md`)
 
 ````text
 Audit every step's description in plan.json. For each step, do the following:
@@ -481,18 +519,20 @@ For each step, report:
 - Status: CLEAN, CONFUSED (description/skill issues), HARDCODED (hardcoded values found), WEAK_ORCHESTRATOR (for todo_task steps with orchestrator issues), BROWSER_ANTIPATTERN (prescribes evaluate/selectors instead of ref-based interaction), or NO_VALIDATION (missing or weak validation_schema) — a step can have multiple
 - If issues found: which problems and a concrete fix suggestion
 
-End with a summary table of all steps and their status.${focusText}
+End with a summary table of all steps and their status.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which steps had issues, the categories of confusion / hardcoding / weak orchestration / browser anti-pattern / missing validation, the recommended fixes, and items flagged for follow-up.
 ````
 
-#### `/review-code`
+#### `review-code` (`review/review-code.md`)
 
 ````text
-Run review_step_code(step_id="${focus}") to check if the saved main.py for step "${focus}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.${reviewLogSuffix}
+{{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to check if the saved main.py for step "{{.Focus}}" still matches its current description. Report any drift — missing functionality, stale behavior, hardcoded values, or output format mismatches.{{else}}Run review_step_code() to compare ALL learn_code steps' saved main.py scripts against their current descriptions. For each step, check if the script still does what the description says — flag missing features, stale logic, hardcoded values, and output format drift. Report findings by severity.{{end}}
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which step(s) you reviewed, the drift findings, the recommendations, and items flagged for follow-up.
 ````
 
-#### `/review-orchestrators`
+#### `review-orchestrators` (`review/review-orchestrators.md`)
 
 ````text
 Audit all todo_task steps in plan.json. For each todo_task step, read its todo_task_step description and all its predefined_routes sub-agent descriptions. Check for these problems:
@@ -517,17 +557,19 @@ For each todo_task step, report:
 - Per sub-agent route: route ID + verdict
 - Concrete fix suggestions for each issue
 
-End with a summary table.${focusText}
+End with a summary table.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with which orchestrators you reviewed, the verdicts (good vs issues), the recommendations, and items flagged for follow-up.
 ````
 
 ### Improvements (AI proposes; framework gates when metrics defined)
 
-#### `/improve-setup-framework`
+#### `improve-setup-framework` (`improve/improve-setup-framework.md`)
 
 ````text
-Set up the auto-improvement framework on this workflow. One-time configuration: write a "## Workflow Profile" section into builder/improve.md (the durable behavioral metadata the agent reads on every turn), set the two hard-gate fields in workflow.json (oversight_mode + decision_log_mutability), and bootstrap an initial metrics.json so /improve-* and the experiment loop have something concrete to work with.${focus ? `\n\nFocus / hints from user: ${focus}` : ''}
+Set up the auto-improvement framework on this workflow. One-time configuration: write a "## Workflow Profile" section into builder/improve.md (the durable behavioral metadata the agent reads on every turn), set the two hard-gate fields in workflow.json (oversight_mode + decision_log_mutability), and bootstrap an initial metrics.json so /improve-* and the experiment loop have something concrete to work with.{{if .Focus}}
+
+Focus / hints from user: {{.Focus}}{{end}}
 
 DISCOVERY (read-only)
 1. Read workflow.json. Note any existing oversight_mode / decision_log_mutability.
@@ -579,10 +621,10 @@ Behavior depends on the profile from Step 1:
 - Business context `accumulating`: REQUIRED. Propose 3–5 outcome + rule-conformance metrics derived from success_criteria, **plus the two universal telemetry SLOs**. Mix outcome metrics (mode=`target\
 ````
 
-#### `/improve-workflow`
+#### `improve-workflow` (`improve/improve-workflow.md`)
 
 ````text
-Improve this workflow by surfacing changes the user is NOT thinking about — non-obvious improvements grounded in what the workflow actually produced. /review-* commands are for small fixes the user reviews; this command's job is AI-proposed changes the user wouldn't have asked for. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end.${focusText}
+Improve this workflow by surfacing changes the user is NOT thinking about — non-obvious improvements grounded in what the workflow actually produced. Your job is to propose AI-surfaced changes the user wouldn't have asked for, not to incrementally harden what's already there. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that matter here are things a domain expert would notice when reading what the workflow produced:
@@ -598,10 +640,10 @@ SETUP
 3. Read variables.json to get the enabled group names.
 4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
 5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, package the intended changes as experiments via propose_experiment so they're gated behind measurement and auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report.
-6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
+6. {{if .Iteration}}Use iteration "{{.Iteration}}" as the starting evidence set for structural review.{{else}}Read runs/ to find the latest iteration and use that as the starting evidence set for structural review.{{end}} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — OUTPUT REVIEW (the heart of the discovery)
-This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call. This command subsumes what used to be /improve-kb and /improve-learnings — the discovery looks across plan, KB, and learnings as one surface, not as separate concerns.
+This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call. The discovery looks across plan, knowledgebase, and learnings as one surface — not as separate concerns. A single proposed change may span all three when they share one belief.
 1. Open the iteration folder under runs/ for the most recent meaningful iteration. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
 2. Read evaluation reports for the same iteration. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
 3. Compare outputs against the success criteria from soul.md. Where's the gap a domain expert would see?
@@ -613,9 +655,9 @@ This is the primary signal in EXPERIMENT MODE and the most undervalued one in DI
 6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
 
 PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
-1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
+1. Call optimize_workflow({{if .Focus}}focus="{{.Focus}}"{{end}}).
 2. Read the result and classify findings as Structural (missing steps, wrong ordering, broken context flow, wrong step type) vs Non-structural (weak prompts, weak validation, reliability gaps).
-3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before continuing.
+3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) ONCE before continuing.
 4. Do not thrash the plan. At most one structural replan per command run.
 5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something optimize_workflow missed (likely, because optimize_workflow looks at code-shape, not outputs), trust the output review.
 
@@ -628,15 +670,16 @@ For group {group}:
      - If there's no meaningful run evidence for this group, report the gap and continue with groups that have evidence.
   b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
      - **DIRECT MODE (no metrics.json):**
-       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue.
-       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) for plan/prompt/validation fixes.
+       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}), then continue.
+       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) for plan/prompt/validation fixes.
        • If the candidate's primary lever is KB cleanup, call reorganize_knowledgebase or consolidate_knowledgebase as appropriate.
        • If the candidate's primary lever is learnings cleanup or promotion, call organize_global_learnings.
        • These tools may run in sequence within a single group's review.
      - **EXPERIMENT MODE (metrics.json non-empty):**
        • Pick the highest-impact candidate from Phase 1 for this group. Do NOT call harden_workflow / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings — they direct-edit, bypassing the gate.
-       • Formulate a hypothesis tying the change to ONE belief about the workflow, expressed against ONE target metric. Bundled multi-file changes that span plan + KB + learnings are FINE if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise step-3 validation to require pain-point reference + promote 'always cite source' learning to _global" — three files across three layers, one belief about generic outreach). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND clean up unrelated KB topics" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
-       • Call propose_experiment with: hypothesis (≤200 chars, in form "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run evidence>"), target_metrics, expected_direction (must match the metric's declared direction), expected_magnitude (absolute, > 0), intervention_changes (file edits across any of plan/, knowledgebase/notes/, learnings/, validation rules, prompts — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically and reverts on a bad verdict. One experiment per group per command run.
+       • Formulate a hypothesis tying the change to ONE belief about the workflow. Bundled multi-file changes that span plan + KB + learnings are FINE if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise step-3 validation to require pain-point reference + promote 'always cite source' learning to _global" — three files across three layers, one belief about generic outreach). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND clean up unrelated KB topics" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
+       • Pick target metric(s). Most experiments target one metric; multiple metrics are allowed when they share the SAME declared direction and trace to the same belief (e.g. caching predicts both `cost_per_run` and `run_duration_seconds` decrease together). Mixed-direction targets must be split — `expected_direction` is single-valued.
+       • Call propose_experiment with: hypothesis (≤200 chars, "<change> will <direction> <metric_id(s)> by ≥<magnitude> because <one-line mechanism rooted in run evidence>"), target_metrics (array — pass all chosen ids), expected_direction (must match every targeted metric's declared direction), expected_magnitude (single number, applied to each metric, > 0), intervention_changes (file edits across any of plan/, knowledgebase/notes/, learnings/, validation rules, prompts — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically and reverts on a bad verdict. One experiment per group per command run.
        • Before proposing, read experiments/history.jsonl and experiments/config.json::pinned_hypotheses to avoid retrying anything that recently failed or that the user pinned as forbidden.
        • For structural problems severe enough to require replan, replan is exempt from the experiment gate (it changes plan shape, not the decisions metrics measure). Replan first, then continue.
        • If a target metric you need does not yet exist, call propose_metric first (with linked_success_criteria populated from soul.md).
@@ -666,10 +709,12 @@ Before finishing, update builder/improve.md with:
 - next hypotheses
 ````
 
-#### `/improve-eval`
+#### `improve-eval` (`improve/improve-eval.md`)
 
 ````text
-Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.{{if .Focus}}
+
+Focus on: {{.Focus}}.{{end}}
 
 PASS 0 — FRAMEWORK PRECHECK + ACTIVE-EXPERIMENT GUARD
 1. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
@@ -685,7 +730,7 @@ PASS 2 — OUTPUT-FIRST ALIGNMENT (does eval catch what success_criteria care ab
 1. Read soul/soul.md and extract the objective and success criteria. These are the standard eval should measure against.
 2. **Read run outputs first.** Open the latest meaningful iteration under runs/ and look at what was produced. Then read the matching eval reports. Where does the eval rubric MISS what a domain expert would notice? Examples: outputs are bland and repetitive but eval says they pass; outputs make unsupported claims but eval doesn't check; outputs ignore audience segmentation but eval has no segment-specific check.
 3. Read planning/plan.json so you understand what the workflow is producing.
-4. ${runText}
+4. {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 5. From the output review + run/eval comparison, judge:
    - which success criteria are directly measured by the current eval
    - which are only weakly or indirectly measured
@@ -717,10 +762,10 @@ When you finish, update builder/improve.md with:
 - the decisions.jsonl entries you appended (rubric-change markers)
 ````
 
-#### `/improve-continuously`
+#### `improve-continuously` (`improve/improve-continuously.md`)
 
 ````text
-Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid creating duplicate schedules.${focusText}
+Set up automatic run + improve scheduling for this workflow. FIRST check what already exists before proposing or creating anything. Do this autonomously and avoid creating duplicate schedules.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 GOAL
 Create or update TWO complementary schedules:
@@ -786,7 +831,7 @@ DIRECT MODE (when metrics.json is empty):
 
 ALWAYS:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
-- update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses${improveMessageFocus}
+- update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
@@ -815,10 +860,12 @@ Summarize:
 - the exact optimizer schedule message you configured
 ````
 
-#### `/improve-report`
+#### `improve-report` (`improve/improve-report.md`)
 
 ````text
-Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.${focusLine}
+Review and improve reports/report_plan.json in two passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your report-plan findings and applied decisions when you finish.{{if .Focus}}
+
+Focus on: {{.Focus}}.{{end}}
 
 PASS 1 — VALIDATION
 Call validate_report_plan.
@@ -848,10 +895,10 @@ When you finish, update builder/improve.md with:
 
 ### Experiment lifecycle
 
-#### `/propose-experiment`
+#### `propose-experiment` (`experiment/propose-experiment.md`)
 
 ````text
-Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there. /review-* commands are for small fixes the user reviews; this command (and the experiment loop) is for AI-proposed changes that move outcomes the user cares about.${focusText}
+Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
 MENTAL MODEL
 Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that surface here are things a domain expert would notice when reading what the workflow produced:
@@ -874,14 +921,15 @@ DISCOVER (this is the heart of the command)
 5. Only after steps 2–4, look at planning/plan.json and step descriptions. Use the plan to understand structure; do NOT use it as the primary source of "what's wrong." Plans look fine on paper while outputs reveal the rot.
 6. Surface 3–5 candidate hypotheses ranked by expected impact. Each candidate must be defensible by something specific in the run outputs ("in iteration-3/group-a, posts 7, 12, 19 all got <2 engagement and all share <pattern>"), not by abstract reasoning about the plan.
 
-PICK A TARGET METRIC
+PICK TARGET METRICS
 1. List metrics from planning/metrics.json with their current trajectory and `linked_success_criteria`. For each, note: which success criterion it operationalizes, whether it's on target / off target / no recent data.
-2. Pick exactly ONE metric to target. Prefer in this order:
+2. Pick the target metric(s). Most experiments target a single metric — pick that one. Prefer in this order:
    a) a metric the user named in their focus hint
    b) an OUTCOME metric (non-empty linked_success_criteria) whose criterion is currently failing
    c) an OUTCOME metric whose recent trajectory is drifting off target
    d) a TELEMETRY metric (cost_per_run / run_duration_seconds) only if its SLO is being violated AND no outcome metric is failing.
-3. State explicitly: "this experiment targets metric <id>, which operationalizes success criterion: <quoted criterion>." If you can't fill that sentence in honestly, pick a different metric (or define one via propose_metric — populate linked_success_criteria from soul.md).
+3. **Multiple metrics are allowed when they share ONE belief and ONE direction.** Examples that legitimately bundle: "caching prospect research will decrease both `cost_per_run` AND `run_duration_seconds`" (one belief: caching helps; both metrics lower_better; both targeted). "Personalization will increase both `outreach.reply_rate` AND `outreach.click_through`" (one belief: pain-led copy converts; both higher_better; both targeted). What does NOT belong in a bundle: metrics with different declared directions (the schema rejects mixed directions; `expected_direction` is single-valued), or metrics that test different beliefs.
+4. State explicitly: "this experiment targets <metric_ids>, each operationalizing success criterion: <quoted criterion(s)>. The shared belief is: <one sentence>." If you can't fill that sentence in honestly, narrow the target list (or define a metric via propose_metric — populate linked_success_criteria from soul.md).
 
 PICK ONE HYPOTHESIS FROM THE CANDIDATES
 1. From the candidates surfaced in DISCOVER, pick the one with the highest expected impact on the chosen metric, grounded in the most concrete run-output evidence.
@@ -890,10 +938,11 @@ PICK ONE HYPOTHESIS FROM THE CANDIDATES
 4. Bundled changes are recoverable: if the verdict is reverted, the framework restores every byte of `intervention_changes` atomically. Bigger blast radius is okay because it's auto-reversible. Optimize for "the experiment will tell us something useful" — not for "the change is tiny."
 
 WRITE IT
-1. Hypothesis (≤200 chars) in the form: "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run-output evidence>." Example: "Switching outreach copy to lead with prospect pain point will increase outreach.reply_rate by ≥5pp because run history shows pain-led posts converted 4× more often."
-2. expected_direction must match the metric's declared direction.
-3. expected_magnitude is absolute, in the metric's unit, > 0.
-4. intervention_changes: array of { path, operation, content }. Each path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
+1. Hypothesis (≤200 chars) naming each target metric and the shared direction. Form: "<change> will <direction> <metric_id(s)> by ≥<magnitude><unit each> because <one-line mechanism rooted in run-output evidence>." Single-metric example: "Switching outreach copy to lead with prospect pain point will increase outreach.reply_rate by ≥5pp because run history shows pain-led posts converted 4× more often." Multi-metric example: "Caching prospect research will decrease cost_per_run by ≥0.30 USD AND run_duration_seconds by ≥120 because 40% of last month's runs were repeats."
+2. `expected_direction` must match every targeted metric's declared direction. If the metrics' declared directions differ, you cannot bundle them — open separate experiments.
+3. `expected_magnitude` is a single number applied to each metric. If targets have different magnitude expectations, either bundle them only when the magnitude is the floor that all should clear, or split.
+4. `target_metrics` is an array — pass all chosen metric ids.
+5. `intervention_changes`: array of { path, operation, content }. Each path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
 
 CALL THE TOOL
 Call propose_experiment with the fields above. The framework captures the revertable diff, applies the changes, opens the measurement window, and returns { experiment_id, status, decisions_entry_id, linked_success_criteria, unanchored_metrics }.
@@ -902,17 +951,19 @@ REPORT
 - Echo experiment_id, status, target metric, expected direction/magnitude.
 - Restate the one belief the experiment is testing in plain English.
 - Name the linked success criterion the metric operationalizes.
-- Tell the user what to do next: in oversight=manual, run /exp-extend or wait for /improve-approve; in supervised/autonomous, the next workflow runs will populate measurement values automatically.
+- Tell the user what happens next: in supervised/autonomous oversight, the next workflow runs will populate measurement values automatically until target_runs is hit, at which point the verdict computer fires and the evaluator agent narrates a verdict. In manual oversight, the experiment status will be "awaiting-approval" and the user must approve it (today this means manually editing experiments/active.json status to "measuring" — there is no slash command for approval yet).
 
 IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, the one belief tested, the run-output evidence that surfaced it, target metric, expected direction/magnitude. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.
 
 IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, hypothesis, target metric, expected direction/magnitude, and a one-line note on why this hypothesis. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.
 ````
 
-#### `/exp-abort`
+#### `exp-abort` (`experiment/exp-abort.md`)
 
 ````text
-Abort the active experiment and revert its intervention. Use shell + file primitives — there is no dedicated tool for this and you should NOT call any HTTP API.${focus ? `\n\nReason: ${focus}` : ''}
+Abort the active experiment and revert its intervention. Use shell + file primitives — there is no dedicated tool for this and you should NOT call any HTTP API.{{if .Focus}}
+
+Reason: {{.Focus}}{{end}}
 
 DISCOVERY
 1. Read experiments/active.json. List active experiments. If multiple, ask the user which one to abort.
@@ -941,10 +992,12 @@ REPORT
 - Echo the decisions.jsonl entry id.
 ````
 
-#### `/exp-extend`
+#### `exp-extend` (`experiment/exp-extend.md`)
 
 ````text
-Extend the active experiment's measurement window. Use shell + file primitives — no API call.${focus ? `\n\nFocus / why: ${focus}` : ''}
+Extend the active experiment's measurement window. Use shell + file primitives — no API call.{{if .Focus}}
+
+Focus / why: {{.Focus}}{{end}}
 
 DISCOVERY
 1. Read experiments/active.json. List active experiments. If multiple, ask the user which one.
@@ -965,10 +1018,12 @@ REPORT
 - Decisions entry id.
 ````
 
-#### `/exp-conclude`
+#### `exp-conclude` (`experiment/exp-conclude.md`)
 
 ````text
-Manually conclude the active experiment. Use shell + file primitives — no API call.${focus ? `\n\nFocus / reason: ${focus}` : ''}
+Manually conclude the active experiment. Use shell + file primitives — no API call.{{if .Focus}}
+
+Focus / reason: {{.Focus}}{{end}}
 
 This is the OVERRIDE path. Prefer letting the evaluator agent narrate the system-computed verdict. Use this only when you genuinely believe the heuristic is wrong (large world drift, broken eval, mistaken metric, or to early-conclude an experiment whose direction is obvious).
 

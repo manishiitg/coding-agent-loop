@@ -62,9 +62,10 @@ const (
 // DecisionEntry is one line of builder/decisions.jsonl. Append-only.
 //
 // Type-3 rule captures (formerly stored in context/clarifications.jsonl) now
-// land here too with `Source: user` + `Trigger: capture-context` + the
+// land here too with `Source: user` + `Trigger: rule-captured` + the
 // rule-specific fields below (RuleAdded, RuleSection, ExamplePaths). One
-// audit log, one place to read.
+// audit log, one place to read. Agents append these directly via
+// diff_patch_workspace_file when the user states a rule in chat.
 type DecisionEntry struct {
 	Ts                 string         `json:"ts"`
 	ID                 string         `json:"id"`
@@ -79,7 +80,7 @@ type DecisionEntry struct {
 	Supersedes         string         `json:"supersedes,omitempty"`
 	EditedAt           string         `json:"edited_at,omitempty"`
 	EditedBy           string         `json:"edited_by,omitempty"`
-	// Rule-capture fields. Populated when Source=user + Trigger=capture-context.
+	// Rule-capture fields. Populated when Source=user + Trigger=rule-captured.
 	RuleAdded    string   `json:"rule_added,omitempty"`
 	RuleSection  string   `json:"rule_section,omitempty"`
 	ExamplePaths []string `json:"example_paths,omitempty"`

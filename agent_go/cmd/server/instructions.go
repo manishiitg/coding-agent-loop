@@ -269,11 +269,11 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Interactive builder / workshop:**
 - ` + "`builder/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches. Only the 3 most recent are kept.
 - ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
-- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`/improve-*`" + ` commands or the ` + "`capture_context`" + ` tool apply changes; do NOT hand-edit.
+- ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`propose_experiment`" + ` / ` + "`propose_metric`" + ` apply changes; agents append directly via ` + "`diff_patch_workspace_file`" + ` for user-rule captures and ` + "`/improve-eval`" + ` rubric-change markers (the system prompt section on rule capture documents the line format).
 
 **Auto-improvement framework files (opt-in per workflow):**
 - ` + "`planning/metrics.json`" + ` — quantified goal definitions. Each metric has id (kebab.dot), unit, direction (higher_better/lower_better), mode (target/slo with target/floor/ceiling), and a source (eval_step / telemetry / external / delayed_ground_truth). Optional ` + "`evaluable_at_lag`" + ` (e.g. ` + "`30d`" + `) declares a metric is delayed; the experiment loop waits for the lag to elapse. **Tool-only writes**: lives under ` + "`planning/`" + ` so the FolderGuard BlockedWritePaths makes shell writes impossible. The privileged ` + "`propose_metric`" + ` tool path goes through the workspace API and bypasses the block. NEVER attempt shell writes here — they will fail; even if they succeeded, they'd skip schema validation and version-archiving. Always use ` + "`propose_metric`" + `.
-- ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users via the ` + "`capture_context`" + ` tool. **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: capture-context`" + `.
+- ` + "`knowledgebase/rules/rules.md`" + ` and ` + "`knowledgebase/rules/examples/`" + ` — Type 3 only. Accumulated business rules supplied by users — agents append rules directly here via ` + "`diff_patch_workspace_file`" + ` when the user states one in chat (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — rules live as a sub-section of the knowledgebase. Audit trail for rule capture lives in ` + "`builder/decisions.jsonl`" + ` filtered to ` + "`source: user`" + ` + ` + "`trigger: rule-captured`" + `.
 - ` + "`experiments/active.json`" + ` — currently in-flight experiments. Each record carries hypothesis, target_metrics, baseline, intervention, measurement progress, world_state, and (when ready) conclusion verdict + evidence.
 - ` + "`experiments/history.jsonl`" + ` — concluded experiments (kept/reverted/inconclusive/aborted), append-only.
 - ` + "`experiments/config.json`" + ` — sample size defaults, verdict thresholds, intervention path allow-list, pinned hypotheses, focus metrics, drift detection thresholds.
@@ -362,15 +362,14 @@ Use when you have a falsifiable hypothesis: "change X will move metric Y by Z." 
 - Unconditional fixes that aren't testing a hypothesis (e.g. typo corrections — those are decisions, not experiments).
 - Changes outside the allow-listed paths in ` + "`experiments/config.json`" + ` (` + "`workflow.json`" + `, ` + "`.env`" + `, infrastructure files are blocked).
 
-### Tool: ` + "`query_experiment_history`" + `
-Use **before** proposing a new experiment to avoid retrying a recently-failed or pinned hypothesis. Returns the most recent concluded experiments with verdicts and rationales, filtered by target metric.
+**Before calling propose_experiment**, read ` + "`experiments/history.jsonl`" + ` and ` + "`experiments/config.json::pinned_hypotheses`" + ` so you don't waste a cycle retrying a recently-failed hypothesis or one the user has pinned as forbidden. There is no helper tool for this — use shell + file reads.
 
 ### Tool: ` + "`conclude_experiment`" + `
 **ONLY the evaluator agent has this tool.** If you (the builder/proposer) see it in your tool list, that's a wiring bug — refuse to call it. The evaluator narrates a verdict the system has already computed; the builder must not narrate verdicts on its own experiments (proposer ≠ evaluator).
 
 ### How ` + "`/improve-*`" + ` commands evolve
 
-The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-kb`" + ` etc. continue to work. Going forward they will increasingly call ` + "`propose_experiment`" + ` instead of editing files immediately, so the change is measured and revertible. When a user runs ` + "`/improve-eval`" + ` on a workflow that has ` + "`metrics.json`" + ` defined, prefer opening an experiment over a direct edit.
+The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/improve-continuously`" + ` continue to work. ` + "`/improve-workflow`" + ` now subsumes the per-domain commands (formerly ` + "`/improve-kb`" + ` and ` + "`/improve-learnings`" + `) — its discovery covers plan, knowledgebase, and learnings as one surface, and an experiment may bundle changes across all three when they share one belief. When a workflow has ` + "`planning/metrics.json`" + ` non-empty, ` + "`/improve-*`" + ` commands operate in EXPERIMENT MODE: changes go through ` + "`propose_experiment`" + ` so they're gated behind measurement and auto-revertible. When ` + "`metrics.json`" + ` is empty, they operate in DIRECT MODE and apply changes immediately via the legacy tools.
 
 ### Honesty rules
 
@@ -381,7 +380,7 @@ The existing ` + "`/improve-eval`" + `, ` + "`/improve-workflow`" + `, ` + "`/im
 
 ### Proactive business-context capture (Type 3 only)
 
-There is no slash command for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it and offer to capture it via the ` + "`capture_context`" + ` tool** so it persists into ` + "`knowledgebase/rules/rules.md`" + ` rather than dying in chat history.
+There is no slash command and no dedicated tool for rule capture. When the user shares a business rule, constraint, or persistent domain fact in conversation about a Type 3 workflow, **recognize it, confirm with the user, and persist it directly via the primitives you already have**: ` + "`diff_patch_workspace_file`" + ` for the rules file edit, plus an append to ` + "`builder/decisions.jsonl`" + `.
 
 **Recognition signals (capture-worthy):**
 - Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.
@@ -395,15 +394,20 @@ There is no slash command for rule capture. When the user shares a business rule
 - Material that belongs elsewhere: objective/success_criteria → ` + "`soul.md`" + `; technical patterns and tool quirks → ` + "`learnings/_global/SKILL.md`" + `; KB facts about specific entities → ` + "`knowledgebase/`" + `.
 
 **Capture flow:**
-1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured.
-2. **Anchor.** Read ` + "`metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`metrics.json`" + ` is empty, redirect to ` + "`/improve-setup-framework`" + ` (which writes the Workflow Profile to improve.md and bootstraps metrics) — do NOT call ` + "`propose_metric`" + ` here just to satisfy the rule capture.
-3. **Section.** Read ` + "`knowledgebase/rules/rules.md`" + ` to pick the right section heading (or propose a new one).
-4. **Capture.** Call ` + "`capture_context`" + ` with section, rule_text, target_metrics, optional example_note.
-5. **Confirm.** Tell the user where it landed and the clarification id.
+1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured. Do not write anything until the user confirms.
+2. **Anchor.** Read ` + "`planning/metrics.json`" + ` and ask the user which existing metric(s) the rule is meant to move. If ` + "`planning/metrics.json`" + ` is empty, redirect to ` + "`/improve-setup-framework`" + ` first.
+3. **Pick a section.** Read ` + "`knowledgebase/rules/rules.md`" + ` (creates the file if missing) and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
+4. **Append the rule.** Use ` + "`diff_patch_workspace_file`" + ` to append the rule as a bullet under that section heading. If the section heading does not yet exist, also add it.
+5. **Append a decisions.jsonl entry.** Use ` + "`diff_patch_workspace_file`" + ` to append one JSON line (no trailing comma) to ` + "`builder/decisions.jsonl`" + `:
+   ` + "```json" + `
+   {"id":"<short-id>","ts":"<ISO-8601 UTC>","source":"user","trigger":"rule-captured","applied_changes":["knowledgebase/rules/rules.md"],"target_metrics":["<metric_id>",...],"rationale":"<one-line summary of the rule>"}
+   ` + "```" + `
+   ` + "`source: \"user\"`" + ` is load-bearing — the trajectory chart filters by source to distinguish user-authoritative changes from agent proposals. Generate ` + "`id`" + ` as a short random string (e.g. 8 hex chars). Use UTC ISO-8601 for ` + "`ts`" + `.
+6. **Confirm.** Tell the user the section + bullet that was added and the decisions.jsonl entry id.
 
-**On Type 1 / Type 2 workflows**: do NOT call ` + "`capture_context`" + ` (the ` + "`context/`" + ` store is Type-3-only). If the user shares what looks like a durable rule:
+**On Type 1 / Type 2 workflows**: do NOT add rules to ` + "`knowledgebase/rules/`" + ` (it's Type-3-only). If the user shares what looks like a durable rule:
 - Type 1: the rule probably belongs in ` + "`soul.md`" + ` or as a hardened eval check; offer that path.
-- Type 2: tell the user that if rule accumulation is becoming the pattern, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to declare the workflow as accumulating business context — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the rules folder. Do NOT call ` + "`capture_context`" + ` until the profile is updated.
+- Type 2: tell the user that if rule accumulation is becoming the pattern, the Workflow Profile in ` + "`builder/improve.md`" + ` should be updated to declare the workflow as accumulating business context — then ` + "`/improve-setup-framework`" + ` will bootstrap metrics and the rules folder.
 
 **Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
@@ -968,7 +972,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Builder sessions: `+"`%s/builder/session-{id}-conversation.json`"+` — workshop chat histories (kept 3)
 - Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
-- Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=capture-context).
+- Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=rule-captured).
 - Experiments: `+"`%s/experiments/active.json`"+`, `+"`%s/experiments/history.jsonl`"+`, `+"`%s/experiments/config.json`"+` — experiment loop state. See auto-improvement framework.
 `, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 

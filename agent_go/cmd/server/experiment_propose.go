@@ -51,8 +51,9 @@ type ProposeExperimentOutput struct {
 // See docs/workflow/auto_improvement_framework.md for design background.
 //
 // Caller must supply the originating slash command in `trigger` (e.g.
-// "improve-eval", "capture-context"); this is what gets recorded as the
-// experiment's intervention.trigger and the decision-log trigger.
+// "improve-workflow", "improve-eval", "propose-experiment"); this is what
+// gets recorded as the experiment's intervention.trigger and the
+// decision-log trigger.
 func ProposeExperiment(ctx context.Context, workspacePath, trigger string, input ProposeExperimentInput) (*ProposeExperimentOutput, error) {
 	// 1. Validate inputs.
 	if err := validateProposeInput(&input); err != nil {

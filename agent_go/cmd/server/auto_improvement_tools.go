@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -12,7 +11,7 @@ import (
 
 // =====================================================================
 // auto_improvement_tools.go — register propose_experiment, propose_metric,
-// conclude_experiment, and query_experiment_history with an mcpagent so the
+// and conclude_experiment with an mcpagent so the
 // proposer (builder in optimizer mode) and evaluator (narrow-context agent)
 // can call them.
 //
@@ -237,181 +236,19 @@ func RegisterConcludeExperimentTool(agent *mcpagent.Agent, workspacePath string,
 	}
 }
 
-// RegisterQueryExperimentHistoryTool exposes the optional query_experiment_history
-// helper to the proposer. Lets the LLM avoid retrying recently-failed or pinned
-// hypotheses without doing raw history.jsonl reads.
-func RegisterQueryExperimentHistoryTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
-	desc := "Read the workflow's experiment history. Returns the most recent concluded experiments with their verdicts " +
-		"and rationales. Use this BEFORE proposing a new experiment to avoid retrying hypotheses that recently failed " +
-		"or that the user has pinned/forbidden. Returns a JSON array."
-	params := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"target_metrics": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Filter to experiments that targeted any of these metric ids. Optional.",
-			},
-			"since": map[string]interface{}{"type": "string", "description": "ISO-8601 timestamp; only experiments concluded on/after."},
-			"exclude_pinned": map[string]interface{}{"type": "boolean", "description": "Default true."},
-			"limit":          map[string]interface{}{"type": "integer", "description": "Default 20, max 200."},
-		},
-	}
-
-	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
-		filterMetrics, _ := args["target_metrics"].([]interface{})
-		since, _ := args["since"].(string)
-		excludePinned := true
-		if v, ok := args["exclude_pinned"].(bool); ok {
-			excludePinned = v
-		}
-		limit := 20
-		if v, ok := args["limit"].(float64); ok {
-			limit = int(v)
-		}
-		if limit > 200 {
-			limit = 200
-		}
-
-		hist, err := ReadHistoryExperiments(ctx, workspacePath)
-		if err != nil {
-			return fmt.Sprintf("query_experiment_history failed: %v", err), nil
-		}
-		// Build pinned set for filter.
-		pinned := map[string]struct{}{}
-		if excludePinned {
-			cfg, _ := ReadExperimentsConfig(ctx, workspacePath)
-			for _, p := range cfg.PinnedHypotheses {
-				pinned[strings.TrimSpace(p.Text)] = struct{}{}
-			}
-		}
-		filterSet := map[string]struct{}{}
-		for _, x := range filterMetrics {
-			if s, ok := x.(string); ok {
-				filterSet[s] = struct{}{}
-			}
-		}
-
-		out := make([]ExperimentRecord, 0, len(hist))
-		for _, e := range hist {
-			if since != "" && e.ConcludedAt < since {
-				continue
-			}
-			if len(filterSet) > 0 {
-				match := false
-				for _, m := range e.TargetMetrics {
-					if _, ok := filterSet[m]; ok {
-						match = true
-						break
-					}
-				}
-				if !match {
-					continue
-				}
-			}
-			if _, isPinned := pinned[strings.TrimSpace(e.Hypothesis)]; isPinned {
-				continue
-			}
-			out = append(out, e)
-		}
-		// Most recent first; cap to limit.
-		// (history.jsonl is append-order; concluded_at is best proxy for recency.)
-		// Inline sort to avoid pulling in sort just for this.
-		for i := 0; i < len(out); i++ {
-			for j := i + 1; j < len(out); j++ {
-				if out[j].ConcludedAt > out[i].ConcludedAt {
-					out[i], out[j] = out[j], out[i]
-				}
-			}
-		}
-		if len(out) > limit {
-			out = out[:limit]
-		}
-		body, _ := json.MarshalIndent(out, "", "  ")
-		return string(body), nil
-	}
-
-	if err := agent.RegisterCustomTool("query_experiment_history", desc, params, handler, "auto_improvement"); err != nil {
-		if logger != nil {
-			logger.Warn(fmt.Sprintf("Failed to register query_experiment_history: %v", err))
-		}
-	}
-}
-
-// RegisterCaptureContextTool exposes capture_context to the proposer LLM.
-// The builder agent calls this proactively when a user shares a business
-// rule in conversation about a Type 3 workflow. Atomically writes the rule
-// to knowledgebase/rules/rules.md and writes a single audit entry to
-// builder/decisions.jsonl with source=user + trigger=capture-context.
-func RegisterCaptureContextTool(agent *mcpagent.Agent, workspacePath string, logger loggerv2.Logger) {
-	desc := "Capture a user-supplied business rule into knowledgebase/rules/rules.md, anchored to one or more metrics it is meant to move. " +
-		"Atomically appends the bullet under the requested section heading and writes a builder/decisions.jsonl entry " +
-		"(source=user, trigger=capture-context, target_metrics required and non-empty). Use ONLY for Type 3 (contextual) " +
-		"workflows. If metrics.json has no metrics, propose them first via propose_metric — this tool refuses if " +
-		"target_metrics references unknown ids. Note: knowledgebase/rules/ is excluded from reorganize_knowledgebase / " +
-		"consolidate_knowledgebase passes, so user-supplied content is never silently rewritten by the optimizer. " +
-		"Returns { decision_id }."
-	params := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"section": map[string]interface{}{
-				"type":        "string",
-				"description": "Markdown section heading the rule belongs under (e.g. \"Risk Controls\", \"Eligibility\"). Created if it does not exist. Optional — defaults to \"General\".",
-			},
-			"rule_text": map[string]interface{}{
-				"type":        "string",
-				"description": "The rule itself, in user-readable language. Lands as a bullet under the section heading.",
-			},
-			"target_metrics": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string"},
-				"description": "Metric ids this rule is meant to move. REQUIRED, non-empty. Each must already exist in <workflow>/planning/metrics.json.",
-			},
-			"example_note": map[string]interface{}{
-				"type":        "string",
-				"description": "Optional free-form clarification beyond the bullet text — context, the case that motivated the rule, etc.",
-			},
-		},
-		"required": []string{"rule_text", "target_metrics"},
-	}
-
-	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {
-		section, _ := args["section"].(string)
-		ruleText, _ := args["rule_text"].(string)
-		exampleNote, _ := args["example_note"].(string)
-		var targetMetrics []string
-		if raw, ok := args["target_metrics"].([]interface{}); ok {
-			for _, x := range raw {
-				if s, ok := x.(string); ok && strings.TrimSpace(s) != "" {
-					targetMetrics = append(targetMetrics, s)
-				}
-			}
-		}
-		dec, err := CaptureContext(ctx, workspacePath, section, ruleText, targetMetrics, exampleNote)
-		if err != nil {
-			return fmt.Sprintf("capture_context failed: %v", err), nil
-		}
-		out := map[string]string{
-			"decision_id": dec.ID,
-		}
-		body, _ := json.MarshalIndent(out, "", "  ")
-		return string(body), nil
-	}
-
-	if err := agent.RegisterCustomTool("capture_context", desc, params, handler, "auto_improvement"); err != nil {
-		if logger != nil {
-			logger.Warn(fmt.Sprintf("Failed to register capture_context: %v", err))
-		}
-	}
-}
-
 // RegisterAutoImprovementProposerTools registers the proposer-side tools
-// (propose_experiment + propose_metric + query_experiment_history +
-// capture_context). Call this alongside the existing builder tools when the
-// workshop session enters optimizer mode.
+// (propose_experiment + propose_metric). Call this alongside the existing
+// builder tools when the workshop session enters optimizer mode.
+//
+// Two earlier tools are intentionally NOT registered:
+//   - capture_context — the optimizer/builder reads chat for user-supplied
+//     business rules and writes them directly via diff_patch_workspace_file
+//     (knowledgebase/rules/rules.md) plus a decisions.jsonl entry with
+//     source=user. The system prompt documents the format.
+//   - query_experiment_history — before propose_experiment, the agent reads
+//     experiments/history.jsonl and experiments/config.json::pinned_hypotheses
+//     directly. Two file reads, no special tool needed.
 func RegisterAutoImprovementProposerTools(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
 	RegisterProposeExperimentTool(agent, workspacePath, triggerSource, logger)
 	RegisterProposeMetricTool(agent, workspacePath, triggerSource, logger)
-	RegisterQueryExperimentHistoryTool(agent, workspacePath, logger)
-	RegisterCaptureContextTool(agent, workspacePath, logger)
 }

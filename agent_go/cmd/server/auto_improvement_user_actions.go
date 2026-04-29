@@ -284,34 +284,3 @@ func (api *StreamingAPI) handleRecordMeasurement(w http.ResponseWriter, r *http.
 	writeAIJSON(w, map[string]interface{}{"success": true})
 }
 
-type captureContextReq struct {
-	WorkspacePath string   `json:"workspace_path"`
-	Section       string   `json:"section,omitempty"`
-	RuleText      string   `json:"rule_text"`
-	TargetMetrics []string `json:"target_metrics"`
-	ExampleNote   string   `json:"example_note,omitempty"`
-}
-
-func (api *StreamingAPI) handleCaptureContext(w http.ResponseWriter, r *http.Request) {
-	if !setupCORS(w, r, http.MethodPost) {
-		return
-	}
-	var req captureContextReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.WorkspacePath == "" {
-		http.Error(w, "workspace_path is required", http.StatusBadRequest)
-		return
-	}
-	dec, err := CaptureContext(r.Context(), req.WorkspacePath, req.Section, req.RuleText, req.TargetMetrics, req.ExampleNote)
-	if err != nil {
-		writeAIJSON(w, map[string]interface{}{"success": false, "error": err.Error()})
-		return
-	}
-	writeAIJSON(w, map[string]interface{}{
-		"success":     true,
-		"decision_id": dec.ID,
-	})
-}

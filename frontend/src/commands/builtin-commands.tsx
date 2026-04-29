@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Network, Beaker } from 'lucide-react'
+import { FileText, Lightbulb, Download, Server, Cpu, Bot, Layers, Minimize2, AlertTriangle, RefreshCw, Wrench, GitBranch, CheckCircle, Search, Lock, Beaker } from 'lucide-react'
 import type { CommandDefinition } from './types'
 
 export const builtinCommands: CommandDefinition[] = [
@@ -259,109 +259,6 @@ REVIEW LOG: append a dated entry to builder/review.md (read it first if it exist
     }
   },
   {
-    command: 'improve-kb',
-    description: 'Review and improve the knowledgebase using the current graph, plan, and run evidence',
-    icon: <Network className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" when recent run evidence helps explain KB drift or missing contributions.`
-        : 'If recent run evidence is needed to explain KB drift or missing contributions, find the latest meaningful run first.'
-      ctx.onSubmit(`Review and improve the workflow knowledgebase. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your KB findings and applied decisions when you finish.${focusText}
-
-DISCOVERY
-1. Read soul/soul.md to understand the objective and success criteria.
-2. Read planning/plan.json and planning/step_config.json so you understand which steps should read from or contribute to the KB.
-3. Read knowledgebase/notes/_index.json and skim the topic files that look relevant.
-4. ${runText}
-
-DECISION
-Assess whether the KB needs:
-- no change
-- targeted notes reorganization
-- cross-step consolidation
-- both
-
-Look for:
-- duplicate or overlapping topics
-- topic-name drift
-- stale narrative that no longer matches current step outputs
-- contested claims across topics
-- missing step contributions that should have been persisted
-- notes structure that no longer matches the workflow objective
-
-ACTION
-- Use reorganize_knowledgebase when the notes structure itself needs cleanup or normalization.
-- Use consolidate_knowledgebase when cross-step consolidation or canonicalization is needed.
-- Automatically APPLY high-confidence, evidence-backed KB improvements instead of only listing recommendations.
-- Be conservative and bounded; do not ask for human confirmation during this improve run.
-
-When you finish, update builder/improve.md with:
-- what KB evidence you reviewed
-- the main KB weaknesses you found
-- what was reorganized or consolidated
-- what was applied vs deferred
-- remaining KB gaps`)
-    }
-  },
-  {
-    command: 'improve-learnings',
-    description: 'Review and improve shared learnings using current learnings, plan, and run evidence',
-    icon: <Lightbulb className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'optimizer',
-    source: 'builtin',
-    execute: (ctx) => {
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      const focus = ctx.beforeSlash.trim()
-      const focusText = focus ? `\nFocus especially on: ${focus}.` : ''
-      const runText = runFolder
-        ? `Use the selected run folder "${runFolder}" when recent run evidence helps explain stale, missing, or duplicated learnings.`
-        : 'If recent run evidence is needed to explain stale, missing, or duplicated learnings, find the latest meaningful run first.'
-      ctx.onSubmit(`Review and improve workflow learnings. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your learnings findings and applied decisions when you finish.${focusText}
-
-DISCOVERY
-1. Read soul/soul.md to understand the objective and success criteria.
-2. Read planning/step_config.json to inspect learning_objective coverage across steps.
-3. Read learnings/_global/SKILL.md and references/*.md when present.
-4. Inspect relevant step learnings when current failures, duplication, or missing knowledge appear to be step-specific.
-5. ${runText}
-
-DECISION
-Assess whether learnings need:
-- no change
-- targeted cleanup
-- holistic consolidation
-- promotion of repeated step-specific lessons into _global references
-
-Look for:
-- duplicated lessons
-- stale guidance
-- missing guidance for declared learning objectives
-- repeated run fixes that should become durable learnings
-- step-specific learnings that really belong in _global
-
-ACTION
-- Use organize_global_learnings when the learnings set needs cleanup, consolidation, or promotion into shared references.
-- Automatically APPLY high-confidence, evidence-backed learnings improvements instead of only listing recommendations.
-- Be conservative and bounded; do not ask for human confirmation during this improve run.
-
-When you finish, update builder/improve.md with:
-- what learnings evidence you reviewed
-- the main learnings weaknesses you found
-- what was reorganized or promoted
-- what was applied vs deferred
-- remaining learnings gaps`)
-    }
-  },
-  {
     command: 'improve-report',
     description: 'Validate reports/report_plan.json and suggest layout/color improvements',
     icon: <CheckCircle className="w-4 h-4" />,
@@ -415,26 +312,28 @@ When you finish, update builder/improve.md with:
       const runText = runFolder
         ? `Use the selected run folder "${runFolder}" as the primary evidence set when judging whether eval measures the real objective and success criteria well.`
         : 'If a meaningful prior run exists, use it as evidence when judging whether eval measures the real objective and success criteria well. You may inspect existing evaluation results and only run evaluation if needed to test the current eval plan.'
-      ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json in four passes. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
+      ctx.onSubmit(`Review and improve evaluation/evaluation_plan.json. Eval changes are special-cased in the framework: they change WHAT is measured, not the workflow's behavior. So eval changes do NOT open experiments — but they DO have rules to follow because changing the rubric mid-stream invalidates trajectory baselines and active experiments. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and append your eval findings and applied decisions when you finish.${focusLine}
 
-PASS 0 — FRAMEWORK PRECHECK
-1. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and tell the user: "Auto-improvement isn't set up yet. Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics."
-2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares the workflow has business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Workflows declared as plain mutable+exploratory may proceed without metrics.
+PASS 0 — FRAMEWORK PRECHECK + ACTIVE-EXPERIMENT GUARD
+1. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
+2. Read <workflow>/planning/metrics.json. If absent or empty AND the Workflow Profile declares business-context accumulation OR a frozen/ratchet plan, stop and redirect to /improve-setup-framework. Plain mutable+exploratory workflows may proceed without metrics.
+3. **Active-experiment guard.** Read experiments/active.json. For each experiment whose status is 'measuring' or 'evaluating', look at its target_metrics and resolve each metric in metrics.json. If any of those metrics is sourced from an eval step you might be about to edit (source.type=eval_step, source.id matches an eval step id), STOP and tell the user: "experiment <id> is currently measuring metric <m> against eval step <step_id>. Editing that step now would change its rubric mid-stream and invalidate the experiment's baseline. Either wait for the experiment to conclude (or /exp-abort it) before editing this eval step, or focus this command on eval steps not under active measurement." Proceed only with eval steps that are NOT under measurement.
 
 PASS 1 — VALIDATION
 1. Call validate_evaluation_plan.
 2. For each error: explain what's wrong in plain language, show the eval step/widget/field it refers to, and propose the exact fix.
 3. For warnings: separate correctness-risk warnings from lower-priority quality issues.
 
-PASS 2 — GOAL / SUCCESS-CRITERIA ALIGNMENT
-1. Read soul/soul.md and extract the objective and success criteria.
-2. Read planning/plan.json so you understand what the workflow is actually producing.
-3. ${runText}
-4. If existing run evidence is available, use review_workflow_results() or inspect the existing run/eval outputs to judge:
-   - which success criteria are directly measured
+PASS 2 — OUTPUT-FIRST ALIGNMENT (does eval catch what success_criteria care about?)
+1. Read soul/soul.md and extract the objective and success criteria. These are the standard eval should measure against.
+2. **Read run outputs first.** Open the latest meaningful iteration under runs/ and look at what was produced. Then read the matching eval reports. Where does the eval rubric MISS what a domain expert would notice? Examples: outputs are bland and repetitive but eval says they pass; outputs make unsupported claims but eval doesn't check; outputs ignore audience segmentation but eval has no segment-specific check.
+3. Read planning/plan.json so you understand what the workflow is producing.
+4. ${runText}
+5. From the output review + run/eval comparison, judge:
+   - which success criteria are directly measured by the current eval
    - which are only weakly or indirectly measured
-   - which are not measured at all
-   - whether any eval checks give false confidence or miss obvious failure modes
+   - which are not measured at all (coverage gap)
+   - whether any eval checks give false confidence (says pass when outputs are clearly weak) or miss obvious failure modes
 
 PASS 3 — IMPROVEMENT SUGGESTIONS
 Propose improvements in these categories:
@@ -443,15 +342,22 @@ Propose improvements in these categories:
 3. **Determinism**: are any eval steps too vague, subjective, or hard to reproduce?
 4. **Redundancy**: are multiple eval steps measuring the same thing with little added value?
 5. **Thresholds / scoring**: are pass/fail thresholds or scores aligned with the stated success criteria?
-6. **Reality check**: if existing run evidence shows obvious failure or success, does the eval report reflect that honestly?
+6. **Reality check**: if outputs you read in Pass 2 show obvious failure or success, does the eval report reflect that honestly?
 
 Show ALL proposed changes as a diff (before/after snippets per eval step) before editing. Ask whether to apply all, some, or none. Don't edit evaluation/evaluation_plan.json until I confirm.
 
+PASS 4 — RECORD THE CHANGE (every eval edit)
+After applying any change to evaluation/evaluation_plan.json:
+1. Append an entry to decisions.jsonl using diff_patch_workspace_file. Format (one JSON object per line):
+   {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-eval", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
+2. The decisions entry serves as a "rubric change" marker. Trajectory chart renderers should break the line at this timestamp because pre-change and post-change scores aren't comparable.
+
 When you finish, update builder/improve.md with:
-- what workflow/eval evidence you reviewed
+- what workflow/eval evidence you reviewed (especially output-vs-rubric mismatches from Pass 2)
 - the main eval weaknesses you found
-- what you recommended
-- what was applied vs deferred`)
+- which eval steps you skipped because they're under active measurement (per Pass 0 guard)
+- what you recommended and what was applied
+- the decisions.jsonl entries you appended (rubric-change markers)`)
     }
   },
   {
@@ -596,12 +502,16 @@ SETUP
 6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
 PHASE 1 — OUTPUT REVIEW (the heart of the discovery)
-This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call.
+This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call. This command subsumes what used to be /improve-kb and /improve-learnings — the discovery looks across plan, KB, and learnings as one surface, not as separate concerns.
 1. Open the iteration folder under runs/ for the most recent meaningful iteration. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
 2. Read evaluation reports for the same iteration. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
 3. Compare outputs against the success criteria from soul.md. Where's the gap a domain expert would see?
 4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing failed ideas.
-5. List 3–5 candidate changes ranked by expected business impact. Each must be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning.
+5. **When output patterns suggest the issue isn't in the plan itself**, also inspect:
+   - **knowledgebase/notes/_index.json + topic files** — outputs that contradict each other, leak stale facts, or miss context the workflow should have known often trace to KB drift (duplicate or overlapping topics, stale narrative, missing step contributions).
+   - **learnings/_global/SKILL.md and references/*.md** — outputs that repeat known mistakes, or that reveal step rationale contradicting established guidance, often trace to learnings gaps (duplicated lessons, missing guidance for declared learning_objectives, repeated run fixes that should have become durable lessons, step-specific learnings that belong in _global).
+   - **knowledgebase/rules/rules.md** — when outputs violate user-stated business rules, the rule may be missing or out of date (note: rule additions are user-authoritative and don't go through the experiment gate; this command flags them for the user, doesn't add them).
+6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
 
 PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
 1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
@@ -620,11 +530,15 @@ For group {group}:
   b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
      - **DIRECT MODE (no metrics.json):**
        • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue.
-       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}).
+       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) for plan/prompt/validation fixes.
+       • If the candidate's primary lever is KB cleanup, call reorganize_knowledgebase or consolidate_knowledgebase as appropriate.
+       • If the candidate's primary lever is learnings cleanup or promotion, call organize_global_learnings.
+       • These tools may run in sequence within a single group's review.
      - **EXPERIMENT MODE (metrics.json non-empty):**
-       • Pick the highest-impact candidate from Phase 1 for this group. Do NOT call harden_workflow.
-       • Formulate a hypothesis tying the change to ONE belief about the workflow, expressed against ONE target metric. Bundled multi-file changes are fine if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise validation to require pain-point reference + add fallback when no signal" — three files, one belief). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND fix typo in step 7" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
-       • Call propose_experiment with: hypothesis (≤200 chars, in form "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run evidence>"), target_metrics, expected_direction (must match the metric's declared direction), expected_magnitude (absolute, > 0), intervention_changes (file edits — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically; do NOT apply the harden tool too. One experiment per group per command run.
+       • Pick the highest-impact candidate from Phase 1 for this group. Do NOT call harden_workflow / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings — they direct-edit, bypassing the gate.
+       • Formulate a hypothesis tying the change to ONE belief about the workflow, expressed against ONE target metric. Bundled multi-file changes that span plan + KB + learnings are FINE if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise step-3 validation to require pain-point reference + promote 'always cite source' learning to _global" — three files across three layers, one belief about generic outreach). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND clean up unrelated KB topics" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
+       • Call propose_experiment with: hypothesis (≤200 chars, in form "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run evidence>"), target_metrics, expected_direction (must match the metric's declared direction), expected_magnitude (absolute, > 0), intervention_changes (file edits across any of plan/, knowledgebase/notes/, learnings/, validation rules, prompts — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically and reverts on a bad verdict. One experiment per group per command run.
+       • Before proposing, read experiments/history.jsonl and experiments/config.json::pinned_hypotheses to avoid retrying anything that recently failed or that the user pinned as forbidden.
        • For structural problems severe enough to require replan, replan is exempt from the experiment gate (it changes plan shape, not the decisions metrics measure). Replan first, then continue.
        • If a target metric you need does not yet exist, call propose_metric first (with linked_success_criteria populated from soul.md).
   c. **THE CHANGE DOES NOT HAVE TO BE SMALL.** The framework auto-reverts on a bad verdict, so blast radius is recoverable. Optimize for "the experiment will tell us something useful" — not for "the change is tiny." Multi-file bundled changes that share one belief are often higher-signal than fragmented small ones.

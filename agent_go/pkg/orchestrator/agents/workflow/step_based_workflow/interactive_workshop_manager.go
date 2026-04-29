@@ -1027,15 +1027,17 @@ func GetToolsForWorkshopMode(mode string) []string {
 	}
 
 	// Auto-improvement framework tools — registered by
-	// RegisterAutoImprovementProposerTools / RegisterCaptureContextTool in
-	// server.go when the workshop session enters workflow-builder phase.
-	// Available in both builder and optimizer modes (builder for /improve-setup-framework
-	// initial bootstrap; optimizer for the experiment loop and rule capture).
+	// RegisterAutoImprovementProposerTools in server.go when the workshop
+	// session enters workflow-builder phase. Available in both builder and
+	// optimizer modes (builder for /improve-setup-framework initial bootstrap;
+	// optimizer for the experiment loop). Rule capture (Type 3 workflows) is
+	// done via diff_patch_workspace_file + a decisions.jsonl append by the
+	// agent itself — no dedicated tool. Reading experiment history before
+	// proposing a new one is also done via raw file reads of
+	// experiments/history.jsonl + experiments/config.json::pinned_hypotheses.
 	autoImprovement := []string{
 		"propose_metric",
 		"propose_experiment",
-		"query_experiment_history",
-		"capture_context",
 		// conclude_experiment is intentionally NOT in this list — it is the
 		// evaluator agent's only tool. Exposing it to the proposer would
 		// violate the proposer != evaluator guardrail.

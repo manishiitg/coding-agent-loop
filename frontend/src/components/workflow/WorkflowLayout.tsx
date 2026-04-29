@@ -560,9 +560,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   //   tablet  → report 880px column, chat takes the rest
   //   laptop  → chat collapses to ~360px, report fills the remaining width
   //   default → 50/50 split (no preview pref, or running in non-report views)
-  const isReportCanvas =
-    showChatArea && workspacePaneVisible && canvasViewMode === 'report'
-  const reportPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isReportCanvas
+  const isPreviewableWorkspaceCanvas =
+    showChatArea &&
+    workspacePaneVisible &&
+    (canvasViewMode === 'report' || canvasViewMode === 'plan' || canvasViewMode === 'flow')
+  const previewPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isPreviewableWorkspaceCanvas
     ? reportPreviewPreference === 'mobile'
       ? 'mobile'
       : reportPreviewPreference === 'tablet'
@@ -573,7 +575,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     : null
   // Backward-compat alias kept for downstream readers — mobile pane behaviour
   // is unchanged.
-  const shouldUseMobileReportPane = reportPaneTier === 'mobile'
+  const shouldUseMobileReportPane = previewPaneTier === 'mobile'
   const isWorkspaceViewActive =
     workflowWorkspaceView === 'flow' ||
     workflowWorkspaceView === 'plan' ||
@@ -586,20 +588,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ? 'flex-1 min-h-0 flex flex-col'
     : !workspacePaneVisible
       ? 'flex-1 min-h-0 flex flex-col'
-      : reportPaneTier === 'mobile'
+      : previewPaneTier === 'mobile'
         ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px] md:grid-rows-[auto_minmax(0,1fr)]'
-        : reportPaneTier === 'tablet'
+        : previewPaneTier === 'tablet'
           ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(520px,880px)] md:grid-rows-[auto_minmax(0,1fr)]'
-          : reportPaneTier === 'laptop'
+          : previewPaneTier === 'laptop'
             ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
             : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
-      ? 'hidden'
-      : reportPaneTier === 'mobile'
+    ? 'hidden'
+    : previewPaneTier === 'mobile'
         ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[480px] md:flex-none'
-        : reportPaneTier === 'tablet'
+        : previewPaneTier === 'tablet'
           ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-full md:flex-none'
           : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2 md:row-start-2'
 

@@ -9,7 +9,7 @@ import {
   ReactFlowProvider,
   type NodeChange
 } from '@xyflow/react'
-import { RefreshCw } from 'lucide-react'
+import { Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -19,7 +19,11 @@ import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { PlanOutlineView } from './PlanOutlineView'
-import { ReportView } from '../ReportViewer'
+import {
+  REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
+  REPORT_PREVIEW_PREFERENCE_KEY,
+  ReportView,
+} from '../ReportViewer'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { useOutputPlanData } from '../hooks/useOutputPlanData'
@@ -39,6 +43,8 @@ const HIGHLIGHT_DURATION = 4000
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
+type WorkflowPreviewMode = 'desktop' | 'tablet' | 'mobile'
+
 interface WorkflowCanvasProps {
   workspacePath: string | null
   presetQueryId: string | null
@@ -51,6 +57,98 @@ interface WorkflowCanvasProps {
   sharedToolbar?: boolean
   paneClassName?: string
   className?: string
+}
+
+function FloatingWorkflowViewControls({
+  viewLabel,
+  showPreviewControls,
+  onRefresh,
+}: {
+  viewLabel: string
+  showPreviewControls: boolean
+  onRefresh: () => void
+}) {
+  const [previewPreference, setPreviewPreference] = React.useState<'auto' | WorkflowPreviewMode>(() => {
+    try {
+      const saved = localStorage.getItem(REPORT_PREVIEW_PREFERENCE_KEY)
+      return saved === 'desktop' || saved === 'tablet' || saved === 'mobile' ? saved : 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
+  const [previewControlsExpanded, setPreviewControlsExpanded] = React.useState(false)
+
+  const previewMode: WorkflowPreviewMode = previewPreference === 'auto' ? 'desktop' : previewPreference
+
+  const setPreviewMode = (mode: WorkflowPreviewMode) => {
+    setPreviewPreference(() => {
+      try {
+        localStorage.setItem(REPORT_PREVIEW_PREFERENCE_KEY, mode)
+        window.dispatchEvent(new CustomEvent(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, { detail: { preference: mode } }))
+      } catch {
+        // ignore
+      }
+      return mode
+    })
+  }
+
+  return (
+    <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
+      {showPreviewControls && (
+        <div
+          role="group"
+          aria-label={`${viewLabel} preview width`}
+          onMouseEnter={() => setPreviewControlsExpanded(true)}
+          onMouseLeave={() => setPreviewControlsExpanded(false)}
+          onFocus={() => setPreviewControlsExpanded(true)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setPreviewControlsExpanded(false)
+            }
+          }}
+          className="inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring"
+        >
+          {([
+            { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
+            { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (≈880px)' },
+            { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
+          ] as const).map(({ mode, Icon, label }) => {
+            const active = previewMode === mode
+            const visible = active || previewControlsExpanded
+            return (
+              <button
+                key={mode}
+                onClick={() => setPreviewMode(mode)}
+                className={`inline-flex h-8 items-center justify-center overflow-hidden rounded-full transition-[width,opacity] duration-150 ease-out ${
+                  active
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                }`}
+                style={{
+                  width: visible ? 32 : 0,
+                  opacity: visible ? 1 : 0,
+                  pointerEvents: visible ? 'auto' : 'none',
+                }}
+                title={label}
+                aria-label={label}
+                aria-pressed={active}
+              >
+                <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <button
+        onClick={onRefresh}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/95 text-muted-foreground shadow-lg backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
+        title={`Refresh ${viewLabel}`}
+        aria-label={`Refresh ${viewLabel}`}
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  )
 }
 
 // Ref interface for external control of the canvas
@@ -1524,13 +1622,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               plan={stablePlan}
                 stepStatusMap={stepStatusMap}
               onStepClick={(stepId) => { setCanvasViewMode('flow'); handleNavigateToStep(stepId) }}
-              onFileClick={(filePath) => {
-                useWorkspaceStore.getState().highlightFile(filePath)
-              }}
-              onRefresh={handleRefresh}
               workspacePath={workspacePath}
               className="h-full"
             />}
+            <FloatingWorkflowViewControls
+              viewLabel="plan"
+              showPreviewControls={showChatArea}
+              onRefresh={() => { void handleRefresh() }}
+            />
           </div>
         ) : canvasViewMode === 'report' ? (
           <div className="h-full min-h-0 relative">
@@ -1588,17 +1687,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
 
-        {/* Floating canvas controls — top right */}
-        <div className="absolute top-3 right-3 z-20 flex items-center gap-0.5 rounded-md border border-border bg-card/95 backdrop-blur shadow-md px-1 py-0.5">
-          {/* Refresh */}
-          <button
-            onClick={() => handleRefresh()}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title="Refresh plan & variables"
-          >
-            <RefreshCw className="w-3 h-3" />
-          </button>
-        </div>
+        <FloatingWorkflowViewControls
+          viewLabel="flow"
+          showPreviewControls={showChatArea}
+          onRefresh={() => { void handleRefresh() }}
+        />
         </div>
 
         {/* Variables Sidebar */}

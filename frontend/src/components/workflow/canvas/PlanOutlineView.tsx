@@ -9,15 +9,12 @@ import {
   GitBranch,
   User,
   Route,
-  ListTodo,
   CheckCircle2,
   Loader2,
   XCircle,
   Settings,
   Braces,
-  Play,
   X,
-  RefreshCw,
 } from 'lucide-react'
 import type { PlanStep, PlanningResponse, PlanRoutingRoute } from '../../../utils/stepConfigMatching'
 import type { PlannerFile } from '../../../services/api-types'
@@ -28,8 +25,6 @@ interface PlanOutlineViewProps {
   plan: PlanningResponse
   stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
   onStepClick?: (stepId: string) => void
-  onFileClick?: (filePath: string) => void
-  onRefresh?: () => Promise<void>
   workspacePath?: string | null
   className?: string
 }
@@ -71,17 +66,6 @@ function StatusDot({ status }: { status?: 'pending' | 'running' | 'completed' | 
       return <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
     default:
       return null
-  }
-}
-
-function stepTypeIcon(step: PlanStep): { icon: React.ElementType; accent: string } {
-  switch (step.type) {
-    case 'conditional': return { icon: GitBranch, accent: 'text-purple-500' }
-    case 'human_input': return { icon: User, accent: 'text-blue-500' }
-    case 'todo_task': return { icon: ListTodo, accent: 'text-teal-500' }
-    case 'routing': return { icon: Route, accent: 'text-orange-500' }
-    default:
-      return { icon: Play, accent: 'text-muted-foreground' }
   }
 }
 
@@ -210,7 +194,7 @@ function LazyFolder({
         })
 
         setChildren(files)
-      } catch (err) {
+      } catch {
 
         setChildren([])
         setError(true)
@@ -494,8 +478,6 @@ export function PlanOutlineView({
   plan,
   stepStatusMap,
   onStepClick,
-  onFileClick,
-  onRefresh,
   workspacePath,
   className = '',
 }: PlanOutlineViewProps) {
@@ -565,17 +547,6 @@ export function PlanOutlineView({
     <div className={`h-full flex bg-background ${className}`}>
       {/* Left: File tree */}
       <div className={`${activeFile ? 'w-64' : 'w-full max-w-md'} flex-shrink-0 border-r border-border overflow-y-auto pb-1 font-mono`}>
-        {/* Refresh button */}
-        <div className="flex items-center justify-end px-2 pt-1.5 pb-1">
-          <button
-            onClick={() => { onRefresh?.() }}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className="w-3 h-3" />
-          </button>
-        </div>
-
         {steps.map((step, i) => {
           const status = stepStatusMap.get(step.id)
           return (

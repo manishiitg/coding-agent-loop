@@ -1,16 +1,50 @@
-Read planning/plan.json and analyze the context flow between steps.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
+Read planning/plan.json and act as a senior workflow designer reviewing this plan with the user. Your job is to make the design BETTER — not just catch what's broken. Where review-plan asks "what's wrong?", design-flow asks "what would a thoughtful designer change?"{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Check for:
-1. **Broken chain** — step depends on a context_output that no earlier step produces
-2. **Orphaned outputs** — step produces context_output that no later step consumes
-3. **Circular dependencies** — A depends on B depends on A
-4. **Implicit dependencies** — step description references data from another step but context_dependencies doesn't list it
-5. **Type mismatches** — upstream produces a JSON file but downstream expects CSV, or field names don't align
-6. **Missing validation** — steps that produce context_output but have no validation_schema
+The output has three parts: (1) a visual map so the user sees what they have, (2) integrity checks (the strict broken-chain stuff), (3) **constructive recommendations** keyed to design best-practices, even when nothing is broken.
 
-Show me:
-- A dependency graph: step-a (produces X) → step-b (consumes X, produces Y) → step-c (consumes Y)
-- Any issues found with severity (CRITICAL / WARNING / INFO)
-- Suggested fixes for each issue
+PART 1 — VISUAL MAP
+Draw a dependency graph from plan.json so the user can see their workflow at a glance:
 
-REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
+  step-1: ingest_emails  (produces: raw_emails, sender_index)
+        ↓ raw_emails
+  step-2: classify_intent  (consumes: raw_emails; produces: classified)
+        ↓ classified
+  step-3: route_by_intent  (routing: → step-4a, step-4b, step-4c)
+
+Use ASCII or a markdown table — whichever fits the plan size. Annotate each step with its execution_mode (regular / learn_code / todo_task / human_input / routing / conditional) and which group(s) of variables it runs in.
+
+PART 2 — INTEGRITY CHECKS
+Flag the strict structural issues:
+
+1. **Broken chain** — step depends on a context_output that no earlier step produces.
+2. **Orphaned outputs** — step produces context_output that no later step consumes.
+3. **Circular dependencies** — A depends on B depends on A.
+4. **Implicit dependencies** — description references upstream data but context_dependencies doesn't list it.
+5. **Type mismatches** — upstream produces JSON, downstream expects CSV; field names don't align.
+6. **Missing validation** — steps that produce context_output but have no validation_schema.
+
+Report severity (CRITICAL / WARNING / INFO) and a one-line fix per issue.
+
+PART 3 — DESIGN RECOMMENDATIONS (the differentiator)
+Apply these best-practice lenses and tell the user what would make the plan better. Each recommendation MUST cite the specific step(s) it applies to. Skip the lens if it doesn't fire.
+
+- **Single responsibility**: each step should do one thing well. Steps that do "classify AND summarize AND route" are usually two or three steps. Smaller steps = easier to debug, easier to selectively re-run, easier to measure.
+- **Step type fit**: regular for one-shot LLM, learn_code for deterministic transformations on stable data shapes (a saved main.py replays without LLM calls), todo_task for agentic loops over a list, routing for branching, human_input for explicit human judgment. Steps that mention "loop over each X and do Y" are often todo_task candidates that were modeled as regular. Steps that do mechanical data shaping are often learn_code candidates that were modeled as regular (and burn LLM tokens every run).
+- **Sequential LLM steps that could collapse**: if steps N and N+1 are both regular LLM steps that share most of their context, ask whether they should be one step with chain-of-thought, or whether the boundary actually buys testability/auditability.
+- **Validation schemas as guard rails**: even if context flow is technically correct today, a validation_schema on every produces-context_output step catches drift the moment it lands — far cheaper than discovering it three steps downstream.
+- **Naming**: "process_data" / "do_step" are generic. Names like "classify_emails_by_buyer_intent" make plans self-documenting and audit logs readable. If you see generic names, suggest specific ones.
+- **Human-input gates**: workflows that make consequential decisions (sending messages, allocating budget, classifying medical/legal items) without a single human_input step are usually under-gated. Ask whether one belongs.
+- **Group separation**: if multiple variable groups exist (e.g. "saurabh" / "anika"), check whether the plan branches on group identity in places where it shouldn't (a step description that says "for Saurabh, do X, for Anika, do Y" indicates a routing step is missing).
+- **Output surface bloat**: a step with 5+ context_outputs is hard for downstream consumers to navigate. Recommend splitting into smaller steps or wrapping outputs into a single structured object.
+- **Mechanical transforms over LLM calls**: 2+ sequential regular steps that just reshape data (filter / aggregate / map fields) usually belong in one learn_code step. The current plan pays an LLM bill on every run for mechanical work.
+- **No-op feedback loop**: workflows with no eval steps and no human_input have no built-in correction signal. Recommend at least one objective check (eval) per major decision.
+
+For each recommendation, give:
+  - **What's there now** (one sentence quoted from plan).
+  - **What to consider** (the better shape, with concrete example).
+  - **Why** (which best-practice it serves).
+
+PART 4 — TOP 3
+Close with a "if you change three things, change these" list — the highest-impact recommendations from PART 3, prioritized.
+
+REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not). Include: what was reviewed, integrity issues by severity, the design recommendations grouped by lens, the top-3 list, items flagged for follow-up. Mark this as REVIEW (recommend; do NOT apply).

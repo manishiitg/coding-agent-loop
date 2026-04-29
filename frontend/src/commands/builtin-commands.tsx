@@ -478,17 +478,20 @@ DISCOVERY
 2. If there are existing candidate schedules, use get_schedule_runs on the most relevant ones to understand whether they are active, useful, stale, too frequent, or missing coverage.
 3. Read soul/soul.md to understand the objective and success criteria.
 4. Read variables/variables.json to identify valid group names and enabled groups.
-5. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no profile and no metrics will optimize nothing concrete. If the profile declares business-context accumulation or a frozen/ratchet plan and metrics.json is empty, also redirect.
+5. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first." A continuous-improvement schedule with no profile and no metrics will optimize nothing concrete. If the profile declares business-context accumulation or a frozen/ratchet plan and planning/metrics.json is empty, also redirect.
+6. **Framework mode.** Read planning/metrics.json. If it has at least one entry, the scheduled improve runs will operate in EXPERIMENT MODE — open at most one experiment per fire, gated through propose_experiment. If empty, scheduled improve runs are in DIRECT MODE — apply changes directly. Note this in the schedule's name/description so the operator knows which mode the schedule is using.
+7. Read planning/experiments/config.json (if it exists) to find default_measurement_runs / target_runs — needed to size the improve cadence correctly (see SCHEDULE STRATEGY below).
 
 SCHEDULE STRATEGY
 1. Prefer updating or reusing good existing schedules instead of creating duplicates.
 2. Only create a new schedule when there is no existing schedule that already serves that purpose.
 3. The improve schedule must be LESS frequent than the run schedule.
-4. If cadence is not obvious:
+4. **Experiment cadence guard (EXPERIMENT MODE only).** The improve schedule MUST fire less often than (target_runs × run_schedule_period). Reason: each experiment needs target_runs of the workflow to conclude, and opening a new experiment before prior ones conclude confounds attribution. Example: run_schedule daily, target_runs=5 → improve schedule no more frequent than weekly. If the desired improve cadence violates this, slow it down or raise the run schedule frequency, not the other way around.
+5. If cadence is not obvious:
    - choose a practical recurring run cadence based on the workflow objective and any existing schedules
-   - choose a larger/slower cadence for optimizer improvement
+   - choose a larger/slower cadence for optimizer improvement (subject to the cadence guard above in EXPERIMENT MODE)
    - stay conservative if the workflow does not appear highly time-sensitive
-5. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
+6. Preserve a good existing timezone if one is already in use. Otherwise use the workflow's local/current timezone.
 
 RUN SCHEDULE
 Create or update a schedule for normal recurring execution with:
@@ -504,18 +507,32 @@ Create or update a schedule for recurring improvement with:
 - a clear name and description that make it obvious this is the slower recurring optimizer schedule
 - a single scheduled message whose purpose is to improve BOTH workflow quality and eval quality over time
 
-The optimizer schedule message should explicitly do the following:
-- read builder/improve.md if it exists and treat it as the prior improvement log / decision history
-- read soul/soul.md, planning/plan.json, evaluation/evaluation_plan.json, and current schedules
-- review the latest meaningful run and evaluation evidence
-- take decisions in continuity with builder/improve.md unless newer evidence clearly contradicts it
-- use the same improvement logic as the improve commands for workflow, eval, and report when relevant
-- automatically APPLY high-confidence, evidence-backed improvements instead of only listing recommendations
-- do not wait for human confirmation during the scheduled improve run; be conservative and bounded instead
-- improve the evaluation plan when objective/success-criteria coverage is weak or misleading
-- improve the report plan when the rendered report is weak, misleading, or clearly behind the workflow's current outputs
-- improve the workflow using existing evidence first; only run verification when genuinely needed
-- update builder/improve.md with timestamp, evidence reviewed, schedule context, workflow changes, eval changes, report changes, what was applied automatically, remaining gaps, and next hypotheses${improveMessageFocus}
+The optimizer schedule message must encode the following behavior. Write it explicitly into the schedule message — the agent that fires has no other context.
+
+OPENING (every fire):
+- read builder/improve.md (prior improvement log + decision history)
+- read soul/soul.md (objective + success criteria — the north star)
+- read planning/metrics.json — branches the rest of this turn:
+   • if metrics.json has at least one entry → **EXPERIMENT MODE**
+   • if empty or missing → **DIRECT MODE**
+- read experiments/active.json — list active experiments and their status (proposed / awaiting-approval / measuring / evaluating)
+
+EXPERIMENT MODE (when metrics.json is non-empty):
+1. **Check active experiments first.** If 3+ experiments are already active, do nothing this fire — log "deferring: too many active experiments" to improve.md and return. Opening experiment #4 while 1–3 are still measuring confounds attribution.
+2. If any active experiment is in 'awaiting-approval' or 'awaiting-conclusion-approval', do nothing this fire — those need human action, not new proposals. Log and return.
+3. **Discover** by reading run outputs first (latest iteration under runs/), eval reports, decisions.jsonl. Compare outputs to soul.md success criteria as a business analyst — what gap is most worth testing? Look for things the user is NOT asking about: tone uniformity that should segment, redundant work that should cache, weak validation that should tighten, content that misses the prospect's pain point. Read enough run output that patterns appear; do not skim.
+4. **Pick exactly ONE candidate** — the highest-impact change defensible by specific run-output evidence. Multi-file bundles are fine if they share ONE underlying belief; if you need an "and" connecting distinct claims, those are separate experiments and you only open one.
+5. **Pick the target metric.** Prefer outcome metrics (linked_success_criteria non-empty) whose criterion is failing or drifting. Telemetry SLOs are last resort. State explicitly: "this experiment targets <metric_id> which operationalizes success criterion: <quoted criterion>."
+6. **Call propose_experiment.** Do NOT call harden_workflow or apply changes directly — the framework gates and reverts on a bad verdict.
+7. If no candidate is strong enough (no clear evidence-backed hypothesis), do nothing this fire. Log "no high-confidence hypothesis surfaced" to improve.md and return. A scheduled fire with no proposal is a valid outcome.
+
+DIRECT MODE (when metrics.json is empty):
+1. Apply the legacy autonomous improvement logic — review evidence, optimize_workflow, harden_workflow / replan_workflow_from_results as needed, improve evaluation_plan / report_plan when their coverage is weak.
+2. Be conservative and bounded — do not loop or run a fresh workflow pass unless verification is genuinely needed.
+
+ALWAYS:
+- improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
+- update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses${improveMessageFocus}
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.
@@ -560,61 +577,70 @@ Summarize:
         ? `Use iteration "${runFolder.split('/')[0]}" as the starting evidence set for structural review.`
         : 'Read runs/ to find the latest iteration and use that as the starting evidence set for structural review.'
       const focusArg = focus ? `, focus="${focus}"` : ''
-      ctx.onSubmit(`Your single goal: improve this workflow end-to-end with the minimum necessary changes, starting from existing run evidence. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end. Review the current iteration first, then replan or harden from that evidence. Only run a fresh verification pass if it is actually needed.${focusText}
+      ctx.onSubmit(`Improve this workflow by surfacing changes the user is NOT thinking about — non-obvious improvements grounded in what the workflow actually produced. /review-* commands are for small fixes the user reviews; this command's job is AI-proposed changes the user wouldn't have asked for. Use builder/improve.md as the shared improvement log: read it first if it exists, create it if it does not, and update it with your decisions at the end.${focusText}
+
+MENTAL MODEL
+Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that matter here are things a domain expert would notice when reading what the workflow produced:
+- "Every reply has the same tone, but success criteria mention engaging different audience segments — segment by follower type and vary voice."
+- "The workflow researches every prospect from scratch, but 40% of last month's runs were repeats — cache and refresh deltas instead."
+- "Outreach copy leads with our product; the high-converting examples in run history all led with the prospect's pain point."
+- "Validation accepts any non-empty reply. Half the replies in run history are 'thanks' — that's not engagement, raise the bar."
+You should be uncomfortable with how obvious-in-retrospect a change feels after you read enough run output. That's the right mode.
 
 SETUP
-1. Read planning/plan.json to extract the objective and success_criteria. These are the north star for every decision.
+1. Read planning/plan.json to extract the objective and success_criteria — north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
 4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
-5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, you will package the intended changes as an experiment via propose_experiment so the change is gated behind measurement and is auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report. The diagnostic phases below run the same way in both modes — only the application step changes.
+5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, package the intended changes as experiments via propose_experiment so they're gated behind measurement and auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report.
 6. ${iterationHint} Treat that iteration as the default evidence set for this command run.
 
-PHASE 1 — STRUCTURAL DIAGNOSIS
-1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
-2. Read the optimize_workflow result carefully and classify the findings:
-   - **Structural**: missing steps, redundant steps, wrong ordering, wrong step type, broken context flow.
-   - **Non-structural**: weak prompts, weak validation, step reliability issues, tool/config issues.
-3. If the findings show a MATERIAL structural problem and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before doing the hardening review.
-4. If the findings are minor or mostly non-structural, skip replanning and keep the current structure.
-5. Do not thrash the plan. At most one structural replan in this command run.
+PHASE 1 — OUTPUT REVIEW (the heart of the discovery)
+This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call.
+1. Open the iteration folder under runs/ for the most recent meaningful iteration. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
+2. Read evaluation reports for the same iteration. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
+3. Compare outputs against the success criteria from soul.md. Where's the gap a domain expert would see?
+4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing failed ideas.
+5. List 3–5 candidate changes ranked by expected business impact. Each must be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning.
 
-PHASE 2 — PER-GROUP EVIDENCE REVIEW → HARDEN
-Repeat the following for each enabled group, sequentially, using the selected/latest iteration as the default evidence set.
+PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
+1. Call optimize_workflow(${focus ? `focus="${focus}"` : ''}).
+2. Read the result and classify findings as Structural (missing steps, wrong ordering, broken context flow, wrong step type) vs Non-structural (weak prompts, weak validation, reliability gaps).
+3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"${focusArg}) ONCE before continuing.
+4. Do not thrash the plan. At most one structural replan per command run.
+5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something optimize_workflow missed (likely, because optimize_workflow looks at code-shape, not outputs), trust the output review.
+
+PHASE 3 — PER-GROUP REVIEW → APPLY CHANGES
+Repeat the following for each enabled group, sequentially.
 
 For group {group}:
-  a. **REVIEW EXISTING EVIDENCE** — inspect this group's existing outputs, logs, validation failures, and evaluation report for "{starting_iter}/{group}".
-     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}") to score the existing outputs. Do NOT execute a fresh workflow run in this phase.
-     - If there is no meaningful run evidence for this group in the chosen iteration, report that gap clearly and continue with the groups that do have evidence.
-  b. **DECIDE** — based on the existing evidence:
+  a. **REVIEW EVIDENCE** — inspect outputs, logs, validation failures, and the evaluation report for "{starting_iter}/{group}".
+     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}"). Do NOT execute a fresh workflow run here.
+     - If there's no meaningful run evidence for this group, report the gap and continue with groups that have evidence.
+  b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
      - **DIRECT MODE (no metrics.json):**
-       • If issues are structural and cannot be fixed by hardening a step, and you have not already replanned in this command run, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue reviewing the remaining groups against the updated plan.
-       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}) and wait for it to finish.
+       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"${focusArg}), then continue.
+       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"${focusArg}).
      - **EXPERIMENT MODE (metrics.json non-empty):**
-       • For non-structural fixes, do NOT call harden_workflow directly. Instead, identify the smallest concrete change you would have made (e.g. a prompt addition, a validation rule, a config flip) and call propose_experiment with: a falsifiable hypothesis tying the change to one or more declared metrics, expected_direction + expected_magnitude, and intervention_changes spelling out the file edits. The framework applies the diff, captures a baseline, and starts the measurement window — do NOT apply the harden tool too. One experiment per group per command run.
-       • For structural problems severe enough to require replan_workflow_from_results, replan is exempt from the experiment gate (it changes the plan shape, not the decisions metrics measure). Replan first, then continue reviewing remaining groups; non-structural fixes after replan still go through propose_experiment.
-       • If a target metric you need does not yet exist, call propose_metric first.
-  c. **BE CONSERVATIVE** — prefer hardening fixes (or, in experiment mode, narrow per-step interventions) over replanning. Use replanning only when the workflow shape is actually wrong.
+       • Pick the highest-impact candidate from Phase 1 for this group. Do NOT call harden_workflow.
+       • Formulate a hypothesis tying the change to ONE belief about the workflow, expressed against ONE target metric. Bundled multi-file changes are fine if they share one underlying belief (example of a coherent bundle: "personalize outreach by reading prospect's last post + raise validation to require pain-point reference + add fallback when no signal" — three files, one belief). Incoherent bundle that should be split: "add personalization AND reduce step 4's temperature AND fix typo in step 7" — three unrelated beliefs, three experiments. Single-belief test: write the hypothesis in one sentence; if you need an "and" connecting distinct claims, split.
+       • Call propose_experiment with: hypothesis (≤200 chars, in form "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run evidence>"), target_metrics, expected_direction (must match the metric's declared direction), expected_magnitude (absolute, > 0), intervention_changes (file edits — paths must be in experiments/config.json::allowed_intervention_paths). The framework applies the diff atomically; do NOT apply the harden tool too. One experiment per group per command run.
+       • For structural problems severe enough to require replan, replan is exempt from the experiment gate (it changes plan shape, not the decisions metrics measure). Replan first, then continue.
+       • If a target metric you need does not yet exist, call propose_metric first (with linked_success_criteria populated from soul.md).
+  c. **THE CHANGE DOES NOT HAVE TO BE SMALL.** The framework auto-reverts on a bad verdict, so blast radius is recoverable. Optimize for "the experiment will tell us something useful" — not for "the change is tiny." Multi-file bundled changes that share one belief are often higher-signal than fragmented small ones.
 
-PHASE 3 — VERIFY THE IMPROVEMENT
-1. After all groups have been reviewed, compare:
-   - structural issues found in Phase 1
-   - per-group existing run outcomes
-   - per-group existing eval results
-   - harden/replan changes applied
-2. If the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification pass on the highest-value group only:
-   - run_full_workflow(enabled_group_names=["{group}"])
-   - run_full_evaluation(target_run_folder="iteration-0/{group}")
-3. Do not loop indefinitely. Maximum one extra verification pass.
-4. Do not run a fresh workflow pass unless verification is genuinely needed to confirm the improvements.
+PHASE 4 — VERIFY (DIRECT MODE only)
+In DIRECT MODE: if the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification on the highest-value group: run_full_workflow + run_full_evaluation. Maximum one extra pass; do not loop.
+In EXPERIMENT MODE: skip this phase. Verification IS the experiment loop — running the workflow now would just be one of the measurement runs, and the framework will compute a verdict deterministically when target_runs is reached. The next workflow runs will populate measurement.values automatically.
 
 FINAL REPORT
 Summarize:
 - Mode used (DIRECT or EXPERIMENT) and why
-- Structural diagnosis from optimize_workflow
+- Output-review findings (Phase 1) — what patterns in run outputs surfaced
+- Structural diagnosis (Phase 2) — what optimize_workflow added or contradicted
 - Whether replan_workflow_from_results was used, and why
-- Per-group: what existing evidence was reviewed, whether eval had to be filled in, harden changes (DIRECT) or experiment ids opened (EXPERIMENT), steps newly marked optimized
-- Which success criteria are now better satisfied than before (DIRECT), or which experiments are now measuring (EXPERIMENT)
+- Per-group: evidence reviewed, harden changes (DIRECT) or experiment_ids opened with their hypotheses (EXPERIMENT)
+- Which success criteria are now better satisfied (DIRECT), or which experiments are now measuring against which criteria (EXPERIMENT)
 - Remaining gaps that still need human attention, if any
 
 Before finishing, update builder/improve.md with:
@@ -992,45 +1018,60 @@ IMPROVE LOG: the Workflow Profile written in Step 2 IS the durable setup record.
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
       const focusText = focus ? `\nFocus / hint from user: ${focus}` : ''
-      ctx.onSubmit(`Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. Skip the broader review-and-harden flow — this command is the focused entry point for "I have a specific change in mind, gate it behind measurement."${focusText}
+      ctx.onSubmit(`Open exactly one experiment that tests a falsifiable hypothesis against a declared metric. The framework's job is to surface non-obvious improvements the user is NOT thinking about — not to incrementally harden what's already there. /review-* commands are for small fixes the user reviews; this command (and the experiment loop) is for AI-proposed changes that move outcomes the user cares about.${focusText}
+
+MENTAL MODEL
+Think like a sharp business analyst auditing this workflow's actual outputs against its success criteria — not like a senior engineer reviewing code. These are business-process workflows, not software systems. The kinds of changes that surface here are things a domain expert would notice when reading what the workflow produced:
+- "Every Twitter reply has the same tone, but the success criteria mention engaging different audience segments — segment by follower type and vary voice."
+- "The workflow researches every prospect from scratch, but 40% of last month's runs were repeats — cache and refresh deltas instead."
+- "Outreach copy leads with our product; the high-converting examples in run history all led with the prospect's pain point."
+- "Validation accepts any non-empty reply. Half the replies in run history are 'thanks' — that's not engagement, raise the bar."
+You should be uncomfortable with how obvious-in-retrospect the change feels after you read enough run output. That's the right mode.
 
 PRECHECKS
 1. Read <workflow>/planning/metrics.json. If empty or missing, stop and redirect: "Run /improve-setup-framework first to bootstrap metrics — propose_experiment requires at least one declared metric to target."
 2. Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first."
-3. Read experiments/active.json. If there are already 3+ active experiments, warn the user and ask whether to proceed (running too many concurrent experiments confounds attribution).
+3. Read experiments/active.json. If 3+ experiments are already active, warn the user and ask whether to proceed (concurrent experiments on related steps confound attribution).
 
-PICK A TARGET
-1. Read soul/soul.md's "## Success Criteria" section — these are the north star. Every experiment exists to push one of these criteria forward (or, for telemetry experiments, to keep cost/runtime under their SLO ceiling without regressing the criteria).
-2. List the metrics in metrics.json with their current trajectory and \`linked_success_criteria\` (call /api/workflow/eval-trajectory if helpful, or just summarize from the file). For each, note: which success criterion it operationalizes, whether it is on target / off target / no recent data.
-3. Pick exactly ONE metric to target. Prefer in this order:
+DISCOVER (this is the heart of the command)
+1. Read soul/soul.md's "## Success Criteria" section — these are the north star.
+2. **Read run outputs first, plan second.** Open the latest meaningful iteration under runs/ and read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Compare those outputs against the success criteria as a domain expert would. Where's the gap?
+3. Read evaluation reports for the same iteration — what scored poorly and why? The eval rationale text is often the richest signal.
+4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing things that already failed.
+5. Only after steps 2–4, look at planning/plan.json and step descriptions. Use the plan to understand structure; do NOT use it as the primary source of "what's wrong." Plans look fine on paper while outputs reveal the rot.
+6. Surface 3–5 candidate hypotheses ranked by expected impact. Each candidate must be defensible by something specific in the run outputs ("in iteration-3/group-a, posts 7, 12, 19 all got <2 engagement and all share <pattern>"), not by abstract reasoning about the plan.
+
+PICK A TARGET METRIC
+1. List metrics from planning/metrics.json with their current trajectory and \`linked_success_criteria\`. For each, note: which success criterion it operationalizes, whether it's on target / off target / no recent data.
+2. Pick exactly ONE metric to target. Prefer in this order:
    a) a metric the user named in their focus hint
    b) an OUTCOME metric (non-empty linked_success_criteria) whose criterion is currently failing
    c) an OUTCOME metric whose recent trajectory is drifting off target
-   d) a TELEMETRY metric (cost_per_run / run_duration_seconds) only if its SLO is being violated AND no outcome metric is failing — explicit cost/runtime experiments are valid but lower priority than experiments that move a success criterion.
-4. If the change you want requires a metric that does not yet exist in metrics.json, call propose_metric first (with linked_success_criteria populated from soul.md), then continue with the new metric as the target.
-5. State explicitly in your reasoning: "this experiment targets metric <id>, which operationalizes success criterion: <quoted criterion>." If you can't fill that sentence in honestly, the hypothesis isn't ready — go back and either pick a different metric or define one.
+   d) a TELEMETRY metric (cost_per_run / run_duration_seconds) only if its SLO is being violated AND no outcome metric is failing.
+3. State explicitly: "this experiment targets metric <id>, which operationalizes success criterion: <quoted criterion>." If you can't fill that sentence in honestly, pick a different metric (or define one via propose_metric — populate linked_success_criteria from soul.md).
 
-FORMULATE THE HYPOTHESIS
-1. Read recent run evidence (latest iteration's logs, eval reports, KB, learnings) to ground the hypothesis in observed behavior, not theory.
-2. Identify the SMALLEST concrete intervention you believe will move the metric — a prompt addition, a validation rule, a config flip, a single step description tightening. NOT a multi-file refactor; experiments work best when the change is small enough to attribute movement.
-3. Write a hypothesis (≤200 chars) in the form: "<change> will <direction> <metric_id> by ≥<magnitude><unit>." Example: "Adding 'never claim X without source Y' to step 3's description will decrease accuracy.hallucination_rate by ≥0.05."
-4. Pick expected_direction (must match the metric's declared direction) and expected_magnitude (absolute, in the metric's unit, > 0).
+PICK ONE HYPOTHESIS FROM THE CANDIDATES
+1. From the candidates surfaced in DISCOVER, pick the one with the highest expected impact on the chosen metric, grounded in the most concrete run-output evidence.
+2. The change does NOT have to be small. Multi-file changes are fine if they share ONE underlying business belief. Examples of a coherent multi-file bundle: "personalize outreach by reading prospect's last post + change validation to require pain-point reference + add a fallback when no signal is available" — three files, one belief ("our outreach is too generic"). Examples of an INCOHERENT bundle that should be split: "add personalization AND reduce step 4's temperature AND fix the typo in step 7's prompt" — three unrelated beliefs, three experiments.
+3. The single-belief test: write the hypothesis in one sentence first. If you need an "and" to connect two distinct claims, those are two experiments.
+4. Bundled changes are recoverable: if the verdict is reverted, the framework restores every byte of \`intervention_changes\` atomically. Bigger blast radius is okay because it's auto-reversible. Optimize for "the experiment will tell us something useful" — not for "the change is tiny."
 
-APPLY THE GATE
-Call propose_experiment with:
-  - hypothesis: the prose from above
-  - target_metrics: [<metric_id>]
-  - expected_direction: increase | decrease | maintain
-  - expected_magnitude: <absolute number>
-  - intervention_changes: array of { path, operation, content } describing the file edits the framework will apply on your behalf
-  - measurement_runs: optional override (default comes from the workflow's experiments config)
+WRITE IT
+1. Hypothesis (≤200 chars) in the form: "<change> will <direction> <metric_id> by ≥<magnitude><unit> because <one-line mechanism rooted in run-output evidence>." Example: "Switching outreach copy to lead with prospect pain point will increase outreach.reply_rate by ≥5pp because run history shows pain-led posts converted 4× more often."
+2. expected_direction must match the metric's declared direction.
+3. expected_magnitude is absolute, in the metric's unit, > 0.
+4. intervention_changes: array of { path, operation, content }. Each path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
 
-Each intervention path must be in experiments/config.json::allowed_intervention_paths. .env, .git/, and workflow.json are forbidden.
+CALL THE TOOL
+Call propose_experiment with the fields above. The framework captures the revertable diff, applies the changes, opens the measurement window, and returns { experiment_id, status, decisions_entry_id, linked_success_criteria, unanchored_metrics }.
 
 REPORT
-- Echo the returned experiment_id and decisions_entry_id.
-- State which metric is being measured and over how many runs.
+- Echo experiment_id, status, target metric, expected direction/magnitude.
+- Restate the one belief the experiment is testing in plain English.
+- Name the linked success criterion the metric operationalizes.
 - Tell the user what to do next: in oversight=manual, run /exp-extend or wait for /improve-approve; in supervised/autonomous, the next workflow runs will populate measurement values automatically.
+
+IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, the one belief tested, the run-output evidence that surfaced it, target metric, expected direction/magnitude. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.
 
 IMPROVE LOG: append a dated entry to builder/improve.md with the experiment_id, hypothesis, target metric, expected direction/magnitude, and a one-line note on why this hypothesis. The framework also records the proposal in decisions.jsonl automatically — improve.md is for the narrative, decisions.jsonl is the audit trail.`)
     }

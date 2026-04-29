@@ -11,9 +11,6 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  StopCircle,
-  Plus,
-  Hand,
   ListChecks,
   ChevronDown,
   ChevronRight,
@@ -460,83 +457,6 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
     }
   }, [isOpen, workspacePath, refresh])
 
-  const handleAbort = useCallback(async (experimentId: string) => {
-    if (!workspacePath) return
-    const reason = window.prompt('Reason for aborting this experiment? (required, will be logged)')
-    if (!reason || !reason.trim()) return
-    setLoading(true)
-    try {
-      const res = await agentApi.abortExperiment(workspacePath, experimentId, reason.trim())
-      if (!res.success) {
-        setError(res.error || 'abort failed')
-      } else {
-        await refresh()
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [workspacePath, refresh])
-
-  const handleExtend = useCallback(async (experimentId: string) => {
-    if (!workspacePath) return
-    const runsStr = window.prompt('How many additional runs?', '5')
-    if (!runsStr) return
-    const additionalRuns = parseInt(runsStr, 10)
-    if (!Number.isFinite(additionalRuns) || additionalRuns <= 0) {
-      setError('additional_runs must be > 0')
-      return
-    }
-    const reason = window.prompt('Reason for extending? (will be logged)') || 'extend window'
-    setLoading(true)
-    try {
-      const res = await agentApi.extendExperiment(workspacePath, experimentId, additionalRuns, reason.trim() || 'extend window')
-      if (!res.success) setError(res.error || 'extend failed')
-      else await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [workspacePath, refresh])
-
-  const handleApprove = useCallback(async (experimentId: string, gate: 'hypothesis' | 'conclusion') => {
-    if (!workspacePath) return
-    setLoading(true)
-    try {
-      const res = await agentApi.approveExperiment(workspacePath, experimentId, gate)
-      if (!res.success) setError(res.error || 'approve failed')
-      else await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [workspacePath, refresh])
-
-  const handleManualConclude = useCallback(async (experimentId: string) => {
-    if (!workspacePath) return
-    const verdict = window.prompt('Verdict? (kept | reverted | inconclusive | extend)', 'kept')
-    if (!verdict || !['kept', 'reverted', 'inconclusive', 'extend'].includes(verdict.trim())) {
-      setError('verdict must be kept | reverted | inconclusive | extend')
-      return
-    }
-    const reason = window.prompt('Override reason? (required, will be flagged in audit)')
-    if (!reason || !reason.trim()) return
-    const rationale = window.prompt('Short rationale for the verdict?') || reason.trim()
-    setLoading(true)
-    try {
-      const res = await agentApi.manualConcludeExperiment(workspacePath, experimentId, verdict.trim(), reason.trim(), rationale.trim())
-      if (!res.success) setError(res.error || 'manual conclude failed')
-      else await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [workspacePath, refresh])
-
   const fetchDoc = useCallback(async (which: 'improve' | 'review') => {
     if (!workspacePath) return
     setDocLoading(which)
@@ -750,48 +670,11 @@ const AutoImprovementPopup: React.FC<AutoImprovementPopupProps> = ({ isOpen, onC
                                     {exp.conclusion.rationale && <span className="ml-2">— {exp.conclusion.rationale}</span>}
                                   </div>
                                 )}
-                                <div className="flex flex-wrap gap-2 pt-2">
-                                  {exp.status === 'awaiting-approval' && (
-                                    <button
-                                      onClick={() => handleApprove(exp.id, 'hypothesis')}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-green-100 text-green-800 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300"
-                                    >
-                                      <CheckCircle className="w-3.5 h-3.5" /> Approve hypothesis
-                                    </button>
-                                  )}
-                                  {exp.status === 'awaiting-conclusion-approval' && (
-                                    <button
-                                      onClick={() => handleApprove(exp.id, 'conclusion')}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-green-100 text-green-800 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300"
-                                    >
-                                      <CheckCircle className="w-3.5 h-3.5" /> Approve conclusion
-                                    </button>
-                                  )}
-                                  {(exp.status === 'measuring' || exp.status === 'evaluating') && (
-                                    <button
-                                      onClick={() => handleExtend(exp.id)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" /> Extend
-                                    </button>
-                                  )}
-                                  {exp.status !== 'concluded' && exp.status !== 'aborted' && (
-                                    <button
-                                      onClick={() => handleManualConclude(exp.id)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300"
-                                    >
-                                      <Hand className="w-3.5 h-3.5" /> Manual conclude
-                                    </button>
-                                  )}
-                                  {exp.status !== 'concluded' && exp.status !== 'aborted' && (
-                                    <button
-                                      onClick={() => handleAbort(exp.id)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300"
-                                    >
-                                      <StopCircle className="w-3.5 h-3.5" /> Abort
-                                    </button>
-                                  )}
-                                </div>
+                                {exp.status !== 'concluded' && exp.status !== 'aborted' && (
+                                  <div className="text-[11px] text-muted-foreground italic pt-1">
+                                    Use the optimizer to act on this experiment: <code>/exp-extend</code>, <code>/exp-conclude</code>, <code>/exp-abort</code>{exp.status === 'awaiting-approval' ? ', or ask the optimizer to approve the hypothesis' : ''}{exp.status === 'awaiting-conclusion-approval' ? ', or ask the optimizer to approve the conclusion' : ''}.
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -900,6 +901,125 @@ type PlanFieldChange struct {
 	NewValue interface{} `json:"new_value"` // New value
 }
 
+// Every plan-mod tool requires a `reason` field — a one-line rationale captured
+// at tool-invocation time so the plan changelog can store the why alongside the
+// diff. The schema fragment is hard-coded in each schema; keep them in sync.
+
+// PlanChangelogEntry is one entry in the per-session plan changelog. Each
+// successful plan-mod tool call appends one entry to the active session file
+// under planning/changelog/.
+type PlanChangelogEntry struct {
+	Timestamp string            `json:"timestamp"`            // ISO 8601 UTC
+	Tool      string            `json:"tool"`                 // tool name (e.g. "update_regular_step")
+	Reason    string            `json:"reason"`               // mandatory rationale supplied by the agent
+	StepIDs   []string          `json:"step_ids,omitempty"`   // affected step IDs
+	Changes   []PlanFieldChange `json:"changes,omitempty"`    // per-field old/new values when known
+	AddedSteps   []json.RawMessage `json:"added_steps,omitempty"`   // full JSON of steps added (for revert)
+	DeletedSteps []json.RawMessage `json:"deleted_steps,omitempty"` // full JSON of steps deleted (for revert)
+}
+
+// PlanChangelog is the per-session changelog file under planning/changelog/.
+type PlanChangelog struct {
+	Entries []PlanChangelogEntry `json:"entries"`
+}
+
+// Session-file tracking — one file per workshop run, rotated after an hour
+// of inactivity.
+var (
+	planChangelogSessionMutex sync.Mutex
+	planChangelogSessionFile  string
+	planChangelogSessionStart time.Time
+)
+
+// asString safely extracts a string from a map[string]interface{} value,
+// returning "" for nil / missing / non-string values.
+func asString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// requireReason extracts and validates the mandatory `reason` argument that
+// every plan-mod tool requires. Returns the trimmed reason or an error if
+// missing/empty.
+func requireReason(args map[string]interface{}) (string, error) {
+	reason := strings.TrimSpace(asString(args["reason"]))
+	if reason == "" {
+		return "", fmt.Errorf("reason is required: provide a one-sentence rationale for this plan change (it will be appended to the plan changelog)")
+	}
+	return reason, nil
+}
+
+// logPlanChange is the non-fatal wrapper every plan-mod executor calls after a
+// successful writePlanToFile. A changelog write failure is logged at warn
+// level but never blocks the actual plan mutation.
+func logPlanChange(
+	ctx context.Context,
+	workspacePath string,
+	entry PlanChangelogEntry,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	logger loggerv2.Logger,
+) {
+	if err := writePlanChangelogEntry(ctx, workspacePath, entry, readFile, writeFile, logger); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Plan changelog write failed (non-fatal): %v", err))
+	}
+}
+
+// writePlanChangelogEntry appends entry to the active session changelog file
+// under planning/changelog/. The file is created if missing; subsequent calls
+// within the same hour append to the same file. Errors are logged at warn
+// level by the caller — a changelog write must never block the actual plan
+// mutation.
+func writePlanChangelogEntry(
+	ctx context.Context,
+	workspacePath string,
+	entry PlanChangelogEntry,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	logger loggerv2.Logger,
+) error {
+	planChangelogSessionMutex.Lock()
+	defer planChangelogSessionMutex.Unlock()
+
+	now := time.Now().UTC()
+	if planChangelogSessionFile == "" || now.Sub(planChangelogSessionStart) > time.Hour {
+		planChangelogSessionStart = now
+		planChangelogSessionFile = fmt.Sprintf("changelog-%s.json", now.Format("2006-01-02-15-04-05"))
+		logger.Info(fmt.Sprintf("📝 Plan changelog: starting new session file %s", planChangelogSessionFile))
+	}
+
+	if entry.Timestamp == "" {
+		entry.Timestamp = now.Format(time.RFC3339)
+	}
+
+	relPath := filepath.Join("planning", "changelog", planChangelogSessionFile)
+	changelogPath := normalizePathForWorkspaceAPI(relPath, workspacePath)
+
+	var clog PlanChangelog
+	if existing, err := readFile(ctx, changelogPath); err == nil && strings.TrimSpace(existing) != "" {
+		if err := json.Unmarshal([]byte(existing), &clog); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Plan changelog: failed to parse existing file, starting fresh: %v", err))
+			clog = PlanChangelog{}
+		}
+	}
+	clog.Entries = append(clog.Entries, entry)
+
+	data, err := json.MarshalIndent(clog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal plan changelog: %w", err)
+	}
+	if err := writeFile(ctx, changelogPath, string(data)); err != nil {
+		return fmt.Errorf("write plan changelog: %w", err)
+	}
+	logger.Info(fmt.Sprintf("📝 Plan changelog: %s — %s", entry.Tool, entry.Reason))
+	return nil
+}
+
 // getUpdateRegularStepSchema returns the JSON schema for update_regular_step tool
 func getUpdateRegularStepSchema() string {
 	return `{
@@ -925,9 +1045,13 @@ func getUpdateRegularStepSchema() string {
 						"context_output": {
 							"type": "string",
 							"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
+						},
+						"reason": {
+							"type": "string",
+							"description": "REQUIRED: One-sentence rationale for why this change is being made. Captured into the plan changelog. Be specific — 'tighten validation' is weak; 'add validation_schema for context_output to catch upstream JSON-shape regressions surfaced in iteration-3' is good."
 						}
 					},
-					"required": ["existing_step_id"]
+					"required": ["existing_step_id", "reason"]
 	}`
 }
 
@@ -940,9 +1064,13 @@ func getDeletePlanStepsSchema() string {
 				"type": "array",
 				"items": { "type": "string" },
 				"description": "IDs of steps to delete from the plan. Use the step's id field from the plan."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why these steps are being removed. Captured into the plan changelog. Be specific — 'cleanup' is weak; 'remove step-3 (intent-classifier) — replaced by step-2 doing the classification inline' is good."
 			}
 		},
-		"required": ["deleted_step_ids"]
+		"required": ["deleted_step_ids", "reason"]
 	}`
 }
 
@@ -1026,8 +1154,13 @@ func getAddRegularStepSchema() string {
 					}
 				}
 			}
+			,
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this step is being added. Captured into the plan changelog. Be specific — 'add new step' is weak; 'add step-4 (verify-payment) — eval iteration-3 showed 30% of records skip payment verification when step-3 fails silently' is good."
+			}
 		},
-		"required": ["id", "title", "description", "context_dependencies", "context_output", "insert_after_step_id", "validation_schema"]
+		"required": ["id", "title", "description", "context_dependencies", "context_output", "insert_after_step_id", "validation_schema", "reason"]
 	}`
 }
 
@@ -1095,9 +1228,13 @@ func getAddRoutingStepSchema() string {
 			"insert_after_step_id": {
 				"type": "string",
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this routing step is being added. Captured into the plan changelog."
 			}
 		},
-		"required": ["id", "title", "routing_question", "routes", "context_dependencies", "insert_after_step_id"]
+		"required": ["id", "title", "routing_question", "routes", "context_dependencies", "insert_after_step_id", "reason"]
 	}`
 }
 
@@ -1149,9 +1286,13 @@ func getUpdateRoutingStepSchema() string {
 			"default_route_id": {
 				"type": "string",
 				"description": "OPTIONAL: Updated default route ID."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this routing step is being updated. Captured into the plan changelog."
 			}
 		},
-		"required": ["existing_step_id"]
+		"required": ["existing_step_id", "reason"]
 	}`
 }
 
@@ -1210,9 +1351,13 @@ func getAddHumanInputStepSchema() string {
 			"insert_after_step_id": {
 				"type": "string",
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this human-input step is being added. Captured into the plan changelog."
 			}
 		},
-		"required": ["id", "title", "question", "next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "question", "next_step_id", "insert_after_step_id", "reason"]
 	}`
 }
 
@@ -1320,9 +1465,13 @@ func getAddTodoTaskStepSchema() string {
 			"insert_after_step_id": {
 				"type": "string",
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this todo-task step is being added. Captured into the plan changelog."
 			}
 		},
-		"required": ["id", "title", "description", "context_dependencies", "context_output", "next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "description", "context_dependencies", "context_output", "next_step_id", "insert_after_step_id", "reason"]
 	}`
 }
 
@@ -1395,9 +1544,13 @@ func getUpdateTodoTaskStepSchema() string {
 			"next_step_id": {
 				"type": "string",
 				"description": "OPTIONAL: ID of step to connect to after all todos are complete, or 'end'"
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this todo-task step is being updated. Captured into the plan changelog."
 			}
 		},
-		"required": ["existing_step_id"]
+		"required": ["existing_step_id", "reason"]
 	}`
 }
 
@@ -1455,9 +1608,13 @@ func getAddTodoTaskRouteSchema() string {
 					}
 				},
 				"required": ["route_id", "route_name", "condition"]
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this todo-task route is being added. Captured into the plan changelog."
 			}
 		},
-		"required": ["parent_step_id", "new_route"]
+		"required": ["parent_step_id", "new_route", "reason"]
 	}`
 }
 
@@ -1505,9 +1662,13 @@ func getUpdateTodoTaskRouteSchema() string {
 			"context_to_pass": {
 				"type": "string",
 				"description": "OPTIONAL: Updated context to pass to the sub-agent."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this todo-task route is being updated. Captured into the plan changelog."
 			}
 		},
-		"required": ["parent_step_id", "existing_route_id"]
+		"required": ["parent_step_id", "existing_route_id", "reason"]
 	}`
 }
 
@@ -1523,9 +1684,13 @@ func getDeleteTodoTaskRouteSchema() string {
 			"deleted_route_id": {
 				"type": "string",
 				"description": "REQUIRED: The route_id of the route to delete. Use the route's route_id field from the plan."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this todo-task route is being deleted. Captured into the plan changelog."
 			}
 		},
-		"required": ["parent_step_id", "deleted_route_id"]
+		"required": ["parent_step_id", "deleted_route_id", "reason"]
 	}`
 }
 
@@ -1580,9 +1745,13 @@ func getUpdateHumanInputStepSchema() string {
 				"type": "object",
 				"additionalProperties": { "type": "string" },
 				"description": "OPTIONAL: Updated option routes. Only include if you want to change them. For 'multiple_choice' response type, maps option index (as string '0', '1', etc.) or option value to next_step_id. If omitted, the existing option routes are preserved."
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this human-input step is being updated. Captured into the plan changelog."
 			}
 		},
-		"required": ["existing_step_id"]
+		"required": ["existing_step_id", "reason"]
 	}`
 }
 
@@ -1634,9 +1803,13 @@ func getUpdateValidationSchemaSchema() string {
 						}
 					}
 				}
+			},
+			"reason": {
+				"type": "string",
+				"description": "REQUIRED: One-sentence rationale for why this validation schema is being updated. Captured into the plan changelog."
 			}
 		},
-		"required": ["existing_step_id", "validation_schema"]
+		"required": ["existing_step_id", "validation_schema", "reason"]
 	}`
 }
 
@@ -2916,6 +3089,11 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 // createUpdateRegularStepExecutor creates an executor function for update_regular_step tool
 func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
@@ -2933,11 +3111,10 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Track changes for changelog
+		// Track per-field changes — passed to the plan changelog after a
+		// successful write.
 		fieldChanges := make([]PlanFieldChange, 0)
 
-		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
@@ -2958,6 +3135,13 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
+
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_regular_step",
+			Reason:  reason,
+			StepIDs: []string{partialUpdate.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3020,6 +3204,11 @@ func extractStringArray(args map[string]interface{}, key string) ([]string, erro
 // Note: For deleted steps, we unlock based on the old plan's step indices before deletion
 func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Extract deleted_step_ids from args
 		deletedIDs, err := extractStringArray(args, "deleted_step_ids")
 		if err != nil {
@@ -3115,6 +3304,13 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:         "delete_plan_steps",
+			Reason:       reason,
+			StepIDs:      deletedIDs,
+			DeletedSteps: deletedSteps,
+		}, readFile, writeFile, logger)
+
 		// Cascade-delete the matching entries from planning/step_config.json so
 		// the step's per-step config doesn't linger as an orphan after its plan
 		// entry is gone. Best-effort: a missing file or write failure is logged
@@ -3129,7 +3325,6 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			}
 		}
 
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for all deleted steps (if unlock function provided)
 		// Use old step indices from before deletion
@@ -3207,7 +3402,11 @@ func createCleanupOrphanStepConfigsExecutor(workspacePath string, logger loggerv
 // createUpdateHumanInputStepExecutor creates an executor function for update_human_input_step tool
 func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to PartialPlanStep
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal step: %w", err)
@@ -3246,11 +3445,8 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 			return "", fmt.Errorf("step with ID '%s' is not a human input step", partialUpdate.ExistingStepID)
 		}
 
-		// Track changes for changelog
 		fieldChanges := make([]PlanFieldChange, 0)
 
-		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 		var stepIndex int
 		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
@@ -3273,7 +3469,12 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_human_input_step",
+			Reason:  reason,
+			StepIDs: []string{partialUpdate.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3292,7 +3493,11 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 // createUpdateTodoTaskStepExecutor creates an executor function for update_todo_task_step tool
 func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to PartialPlanStep
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal step: %w", err)
@@ -3335,7 +3540,6 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 		var stepIndex int
 		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
@@ -3369,6 +3573,13 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
+
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_todo_task_step",
+			Reason:  reason,
+			StepIDs: []string{partialUpdate.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3427,6 +3638,11 @@ func validateRoutingStepFieldsTyped(step *RoutingPlanStep) error {
 // createUpdateRoutingStepExecutor creates an executor function for update_routing_step tool
 func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal step: %w", err)
@@ -3491,6 +3707,13 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
+
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_routing_step",
+			Reason:  reason,
+			StepIDs: []string{partialUpdate.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
 
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
 			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
@@ -3754,6 +3977,11 @@ func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) er
 // unlockLearningsFunc is optional - if provided, it will be called after step addition to unlock learnings
 func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, stepType string, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Ensure step has type field based on stepType parameter
 		args["type"] = stepType
 
@@ -3891,7 +4119,16 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		var addedStepJSON []json.RawMessage
+		if rawAdded, marshalErr := json.Marshal(typedStep); marshalErr == nil {
+			addedStepJSON = []json.RawMessage{rawAdded}
+		}
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:       fmt.Sprintf("add_%s_step", stepType),
+			Reason:     reason,
+			StepIDs:    []string{typedStep.GetID()},
+			AddedSteps: addedStepJSON,
+		}, readFile, writeFile, logger)
 
 		// Unlock learnings for the newly added step (if unlock function provided)
 		if unlockLearningsFunc != nil {
@@ -4230,6 +4467,11 @@ func registerPlanModificationTools(
 // createAddTodoTaskRouteExecutor creates an executor function for add_todo_task_route tool
 func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
@@ -4341,6 +4583,12 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "add_todo_task_route",
+			Reason:  reason,
+			StepIDs: []string{parentStepID, newRoute.RouteID},
+		}, readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title))
 		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title), nil
 	}
@@ -4349,6 +4597,11 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 // createUpdateTodoTaskRouteExecutor creates an executor function for update_todo_task_route tool
 func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
@@ -4369,8 +4622,7 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Find the parent todo task step by ID. Recurses into nested steps
-		// (e.g. a todo_task sitting in another todo_task's predefined_routes.sub_agent_step).
+		// Find the parent todo task step by ID.
 		parentStep, _, _ := findStepByID(plan.Steps, parentStepID)
 		if parentStep == nil {
 			parentStep, _, _ = findStepByID(plan.OrphanSteps, parentStepID)
@@ -4472,6 +4724,12 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_todo_task_route",
+			Reason:  reason,
+			StepIDs: []string{parentStepID, existingRouteID},
+		}, readFile, writeFile, logger)
+
 		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title))
 		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title), nil
 	}
@@ -4480,6 +4738,11 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 // createDeleteTodoTaskRouteExecutor creates an executor function for delete_todo_task_route tool
 func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
 		if !ok || parentStepID == "" {
@@ -4545,10 +4808,23 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			todoTaskStep.PredefinedRoutes[routeIndex+1:]...,
 		)
 
+		// Capture deleted route JSON before writing
+		var deletedRouteJSON []json.RawMessage
+		if rawDeleted, marshalErr := json.Marshal(deletedRoute); marshalErr == nil {
+			deletedRouteJSON = []json.RawMessage{rawDeleted}
+		}
+
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
+
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:         "delete_todo_task_route",
+			Reason:       reason,
+			StepIDs:      []string{parentStepID, deletedRouteID},
+			DeletedSteps: deletedRouteJSON,
+		}, readFile, writeFile, logger)
 
 		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title))
 		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title), nil
@@ -4558,7 +4834,11 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 // createUpdateValidationSchemaExecutor creates an executor function for update_validation_schema tool
 func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to extract validation schema
+		reason, err := requireReason(args)
+		if err != nil {
+			return "", err
+		}
+
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal step: %w", err)
@@ -4610,7 +4890,6 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
@@ -4631,6 +4910,13 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
+
+		logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+			Tool:    "update_validation_schema",
+			Reason:  reason,
+			StepIDs: []string{updateData.ExistingStepID},
+			Changes: fieldChanges,
+		}, readFile, writeFile, logger)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {

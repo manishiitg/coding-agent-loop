@@ -1362,6 +1362,30 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 }
 
 // createInteractiveWorkshopAgent creates the workshop agent following the createExecutionDebuggerAgent pattern
+// workshopWritePaths returns the explicit per-subfolder write allow-list shared
+// by the workshop main agent and every workshop sub-agent (harden_workflow,
+// replan_workflow_from_results, background tasks). Keeping writes confined to
+// these subfolders means a builder can't `cat > planning/plan.json` via shell
+// or `diff_patch_workspace_file` and bypass the plan-mod tools that validate
+// schemas and emit events. Workspace-root config files (workflow.json,
+// mcp_config.json) are mutated through dedicated tools that go via the
+// workspace API and bypass this sandbox altogether, so they don't appear here.
+func workshopWritePaths(workspacePath string) []string {
+	return []string{
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/knowledgebase", workspacePath),
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
+		fmt.Sprintf("%s/reports", workspacePath),
+		fmt.Sprintf("%s/db", workspacePath),
+		fmt.Sprintf("%s/memory", workspacePath),
+		fmt.Sprintf("%s/execution", workspacePath),
+		fmt.Sprintf("%s/variables", workspacePath),
+		fmt.Sprintf("%s/builder", workspacePath),     // improve.md, review.md, decisions.jsonl
+		fmt.Sprintf("%s/experiments", workspacePath), // active.json, history.jsonl (config.json read-only by convention)
+	}
+}
+
 func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx context.Context, workspacePath string) (agents.OrchestratorAgent, error) {
 	// Folder guard paths
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
@@ -1377,24 +1401,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		planningPath,
 		"Chats", // Allow reading chat history for context
 	}
-	// Write-paths are explicit subfolders — NOT the whole workspace — so the builder
-	// can't `cat > planning/plan.json` via shell and bypass the plan-mod tools that
-	// validate schemas and emit events. Workspace-root config files (workflow.json,
-	// mcp_config.json) are mutated through dedicated tools (update_workflow_config,
-	// update_step_config, update_regular_step, etc.) which go via the workspace API
-	// and bypass this sandbox altogether, so they don't need to appear here.
-	writePaths := []string{
-		fmt.Sprintf("%s/learnings", workspacePath),
-		fmt.Sprintf("%s/knowledgebase", workspacePath),
-		fmt.Sprintf("%s/runs", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
-		fmt.Sprintf("%s/reports", workspacePath),
-		fmt.Sprintf("%s/db", workspacePath),
-		fmt.Sprintf("%s/memory", workspacePath),
-		fmt.Sprintf("%s/execution", workspacePath),
-		fmt.Sprintf("%s/variables", workspacePath),
-		"Chats", // background agents append chat transcripts here
-	}
+	writePaths := workshopWritePaths(workspacePath)
 
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	iwm.controller.GetLogger().Info(fmt.Sprintf("🔧 Workshop folder guard - Read: %v, Write: %v", readPaths, writePaths))
@@ -4009,8 +4016,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						},
 					},
 				},
+				"reason": map[string]interface{}{
+					"type":        "string",
+					"description": "REQUIRED: One-sentence rationale for why this step config is being updated. Captured into the plan changelog.",
+				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "reason"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -4020,6 +4031,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			stepID, ok := stepIDRaw.(string)
 			if !ok || stepID == "" {
 				return "step_id must be a non-empty string", nil
+			}
+			reasonRaw, _ := args["reason"].(string)
+			if strings.TrimSpace(reasonRaw) == "" {
+				return "reason is required (one-sentence rationale captured into the plan changelog)", nil
 			}
 
 			// Read existing configs
@@ -4528,6 +4543,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Write updated configs back
 			if err := iwm.controller.WriteStepConfigs(ctx, configs); err != nil {
 				return fmt.Sprintf("Failed to update step config: %v", err), nil
+			}
+
+			workspacePath := iwm.controller.GetWorkspacePath()
+			if err := writePlanChangelogEntry(ctx, workspacePath, PlanChangelogEntry{
+				Tool:    "update_step_config",
+				Reason:  strings.TrimSpace(reasonRaw),
+				StepIDs: []string{stepID},
+			}, iwm.controller.ReadWorkspaceFile, iwm.controller.WriteWorkspaceFile, logger); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Plan changelog write failed (non-fatal): %v", err))
 			}
 
 			logger.Info(fmt.Sprintf("📝 Workshop: step config updated for step %q", stepID))
@@ -11590,9 +11614,7 @@ func (iwm *InteractiveWorkshopManager) runReplanWorkflowFromResultsAgent(ctx con
 		fmt.Sprintf("%s/learnings", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 	}
-	writePaths := []string{
-		workspacePath,
-	}
+	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
@@ -11714,9 +11736,7 @@ func (iwm *InteractiveWorkshopManager) runHardenWorkflowAgent(ctx context.Contex
 		fmt.Sprintf("%s/learnings", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 	}
-	writePaths := []string{
-		workspacePath,
-	}
+	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
@@ -11912,9 +11932,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		knowledgebasePath,
 		"Chats",
 	}
-	writePaths := []string{
-		workspacePath,
-	}
+	writePaths := workshopWritePaths(workspacePath)
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// --- LLM: use phase LLM (same tier as planning/analysis agents) ---

@@ -65,7 +65,6 @@ import { agentApi, workflowManifestApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent, type WorkflowBuilderSessionResponse } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
-import ModalPortal from '../ui/ModalPortal'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
 
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
@@ -271,7 +270,7 @@ interface WorkflowLayoutProps {
   onNewChat: () => void
 }
 
-type WorkflowRestorePrompt =
+type WorkflowRestoreOffer =
   | {
       kind: 'builder-history'
       presetId: string
@@ -412,7 +411,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return 'auto'
     }
   })
-  const [restorePrompt, setRestorePrompt] = useState<WorkflowRestorePrompt | null>(null)
+  const [restoreOffer, setRestoreOffer] = useState<WorkflowRestoreOffer | null>(null)
 
   const createFreshWorkflowBuilderTab = useCallback(async (presetId: string) => {
     const chatStore = useChatStore.getState()
@@ -441,6 +440,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     builderHistory: WorkflowBuilderSessionResponse
   ) => {
     const chatStore = useChatStore.getState()
+    const currentTabs = Object.values(chatStore.chatTabs).filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.presetQueryId === presetId &&
+      !chatStore.getTabStreamingStatus(tab.tabId)
+    )
+    for (const tab of currentTabs) {
+      await chatStore.closeTab(tab.tabId, false)
+    }
+
     const tabId = await chatStore.createChatTab('Workflow Builder', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
@@ -464,7 +472,27 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     presetId: string
   ) => {
     const chatStore = useChatStore.getState()
-    const builderTab = tabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+    const currentTabs = Object.values(chatStore.chatTabs).filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.presetQueryId === presetId &&
+      !chatStore.getTabStreamingStatus(tab.tabId)
+    )
+    for (const tab of currentTabs) {
+      await chatStore.closeTab(tab.tabId, false)
+    }
+
+    const restoredTabs: ChatTab[] = []
+
+    for (const tab of tabs) {
+      const tabId = await chatStore.createChatTab(tab.name, {
+        ...tab.metadata,
+        presetQueryId: presetId
+      }, tab.sessionId || undefined)
+      const restoredTab = chatStore.getTab(tabId)
+      if (restoredTab) restoredTabs.push(restoredTab)
+    }
+
+    const builderTab = restoredTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
 
     if (builderTab?.sessionId && chatStore.getTabEvents(builderTab.sessionId).length === 0) {
       const builderHistory = await loadWorkflowBuilderSession(presetId, activeWorkflowPreset?.selectedFolder?.filepath)
@@ -485,51 +513,40 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
     }
 
-    await rehydrateWorkflowTabs(tabs)
+    await rehydrateWorkflowTabs(restoredTabs)
 
     const activeWorkflowTab = chatStore.activeTabId ? chatStore.chatTabs[chatStore.activeTabId] : null
     const activeMatchesPreset =
       activeWorkflowTab?.metadata?.mode === 'workflow' &&
       activeWorkflowTab.metadata?.presetQueryId === presetId
-    const streamingTab = tabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
+    const streamingTab = restoredTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
     const targetTab = activeMatchesPreset
       ? activeWorkflowTab
-      : (builderTab || streamingTab || tabs[0])
+      : (builderTab || streamingTab || restoredTabs[0])
     chatStore.switchTab(targetTab.tabId)
     setShowChatArea(true)
   }, [activeWorkflowPreset?.selectedFolder?.filepath, rehydrateWorkflowTabs, setShowChatArea])
 
   const handleRestorePreviousWorkflowConversation = useCallback(() => {
-    const prompt = restorePrompt
-    if (!prompt) return
+    const offer = restoreOffer
+    if (!offer) return
 
-    setRestorePrompt(null)
+    setRestoreOffer(null)
     setIsRestoringWorkflowSessions(true)
-    const work = prompt.kind === 'builder-history'
-      ? restoreBuilderHistory(prompt.presetId, prompt.session)
-      : restoreExistingWorkflowTabs(prompt.tabs, prompt.presetId)
+    const work = offer.kind === 'builder-history'
+      ? restoreBuilderHistory(offer.presetId, offer.session)
+      : restoreExistingWorkflowTabs(offer.tabs, offer.presetId)
 
     work.catch(error => {
       console.warn('[WorkflowReconnect] Failed to restore previous workflow conversation:', error)
     }).finally(() => {
       setIsRestoringWorkflowSessions(false)
     })
-  }, [restorePrompt, restoreBuilderHistory, restoreExistingWorkflowTabs, setIsRestoringWorkflowSessions])
+  }, [restoreOffer, restoreBuilderHistory, restoreExistingWorkflowTabs, setIsRestoringWorkflowSessions])
 
-  const handleStartNewWorkflowConversation = useCallback(() => {
-    const prompt = restorePrompt
-    if (!prompt) return
-
-    setRestorePrompt(null)
-    setIsRestoringWorkflowSessions(true)
-    createFreshWorkflowBuilderTab(prompt.presetId)
-      .catch(error => {
-        console.warn('[WorkflowReconnect] Failed to start new workflow conversation:', error)
-      })
-      .finally(() => {
-        setIsRestoringWorkflowSessions(false)
-      })
-  }, [restorePrompt, createFreshWorkflowBuilderTab, setIsRestoringWorkflowSessions])
+  const handleDismissRestoreOffer = useCallback(() => {
+    setRestoreOffer(null)
+  }, [])
 
   useEffect(() => {
     const syncReportPreviewPreference = () => {
@@ -1130,11 +1147,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 return null
               })
             if (builderHistory) {
-              setRestorePrompt({
+              setRestoreOffer({
                 kind: 'builder-history',
                 presetId: activePresetId,
                 session: builderHistory
               })
+              await createFreshWorkflowBuilderTab(activePresetId)
               return
             }
             const defaultTabId = await createChatTab('Workflow Builder', {
@@ -1151,11 +1169,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               switchTab(streamingTab.tabId)
               setShowChatArea(true)
             } else {
-              setRestorePrompt({
+              setRestoreOffer({
                 kind: 'existing-tabs',
                 presetId: activePresetId,
                 tabs: existingWorkflowTabs
               })
+              await createFreshWorkflowBuilderTab(activePresetId)
               return
             }
           }
@@ -1169,7 +1188,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs])
+  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs, createFreshWorkflowBuilderTab])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -1444,6 +1463,30 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
+            {restoreOffer && (
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
+                <span className="min-w-0 truncate text-xs text-muted-foreground">
+                  Previous builder chat available.
+                </span>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleDismissRestoreOffer}
+                    className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    Dismiss
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRestorePreviousWorkflowConversation}
+                    className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    Restore
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="min-h-[320px] flex-1">
               <ChatAreaWithObserverId
                 ref={chatAreaCallbackRef}
@@ -1458,40 +1501,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         {workspacePaneVisible && canvasElement}
       </div>
-      {restorePrompt && (
-        <ModalPortal>
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-sm rounded-lg border border-border bg-background shadow-xl">
-              <div className="border-b border-border px-4 py-3">
-                <h3 className="text-sm font-semibold text-foreground">
-                  Restore previous conversation?
-                </h3>
-              </div>
-              <div className="px-4 py-3">
-                <p className="text-xs leading-5 text-muted-foreground">
-                  Continue from the saved builder chat or start a fresh one for this workflow.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-                <button
-                  type="button"
-                  onClick={handleStartNewWorkflowConversation}
-                  className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-                >
-                  Start new
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRestorePreviousWorkflowConversation}
-                  className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  Restore conversation
-                </button>
-              </div>
-            </div>
-          </div>
-        </ModalPortal>
-      )}
     </div>
   )
 }

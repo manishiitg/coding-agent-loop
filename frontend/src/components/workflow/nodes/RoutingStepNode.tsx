@@ -1,10 +1,6 @@
-import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
+import { memo, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Route } from 'lucide-react'
-import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
-import { useLLMStore } from '../../../stores/useLLMStore'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
-import { NodeConfigFooter } from './NodeConfigFooter'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Route } from 'lucide-react'
 import type { RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -42,77 +38,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) => {
-  const { id, title, routing_question, routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
-
-  // Get preset for config badges
-  const activePreset = useActiveWorkflowPreset()
-
-  const { availableLLMs } = useLLMStore()
-  const stepOverride = useWorkflowStore(state => state.stepOverride)
-  const layoutDirection = useWorkflowStore(state => state.layoutDirection)
-  const isHorizontal = layoutDirection === 'LR'
-  const inputPosition = isHorizontal ? Position.Left : Position.Top
-  const outputPosition = isHorizontal ? Position.Right : Position.Bottom
-
-  type AgentConfigsType = {
-    use_code_execution_mode?: boolean
-    conditional_llm?: { provider?: string; model_id?: string }
-    execution_llm?: { provider?: string; model_id?: string }
-    lock_learnings?: boolean
-    learnings_access?: 'read' | 'read-write' | 'none'
-  }
-  const outerStep = step as { agent_configs?: AgentConfigsType }
-  const stepConfig = outerStep
-
-  // Code execution mode
-  const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
-  const overrideCodeExec = stepOverride?.use_code_execution_mode
-  const stepCodeExecSetting = stepConfig?.agent_configs?.use_code_execution_mode
-  const useCodeExecutionMode = overrideCodeExec !== undefined
-    ? overrideCodeExec === true
-    : stepCodeExecSetting !== undefined
-      ? stepCodeExecSetting === true
-      : presetUseCodeExecutionMode
-
-  // Conditional LLM (for routing evaluation)
-  const conditionalLLM = useMemo(() => {
-    const presetLLMConfig = activePreset?.llmConfig
-    const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
-    const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
-    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
-      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
-
-    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetDefaultLLM
-    if (!llmConfig?.provider || !llmConfig?.model_id) return null
-
-    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
-    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.conditional_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
-
-  // Lock learnings — visible only when learnings aren't fully disabled for the step.
-  const lockLearnings = useMemo(() => {
-    const locked = stepOverride?.lock_learnings !== undefined
-      ? stepOverride.lock_learnings === true
-      : stepConfig?.agent_configs?.lock_learnings === true
-    const learningDisabled = stepConfig?.agent_configs?.learnings_access === 'none'
-    return locked && !learningDisabled
-  }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.learnings_access])
-
-  // Handle run from step
-  const handleRunClick = useCallback((e: MouseEvent) => {
-    e.stopPropagation()
-    if (onRunFromStep && step?.id) {
-      onRunFromStep(stepIndex, step.id)
-    }
-  }, [onRunFromStep, stepIndex, step?.id])
-
-  // Handle settings click
-  const handleSettingsClick = useCallback((e: MouseEvent) => {
-    e.stopPropagation()
-    if (onOpenSidebar) {
-      onOpenSidebar(`step-${id}`)
-    }
-  }, [onOpenSidebar, id])
+  const { title, routing_question, routes, status, stepIndex, changeType, isOrphan } = data
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -129,14 +55,14 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
       {/* Input handle */}
       <Handle
         type="target"
-        position={inputPosition}
+        position={Position.Top}
         className="!w-3 !h-3 !bg-teal-400 dark:!bg-teal-500 !border-2 !border-white dark:!border-gray-900"
       />
 
       {/* Main node */}
       <div
         className={`
-          w-[260px] rounded-xl border-2 ${borderColor}
+          w-[300px] rounded-xl border-2 ${borderColor}
           bg-white dark:bg-gray-900
           shadow-lg overflow-visible transition-all duration-200
           ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
@@ -156,25 +82,8 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
             {statusIcon}
           </div>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {!isOrphan && (
-              <button
-                onClick={handleRunClick}
-                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                title="Run from this step"
-                disabled={isExecuting}
-              >
-                <Play className="w-3 h-3 text-gray-600 dark:text-gray-400" />
-              </button>
-            )}
-            <button
-              onClick={handleSettingsClick}
-              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              title="Step settings"
-            >
-              <Settings className="w-3 h-3 text-gray-600 dark:text-gray-400" />
-            </button>
+          <div className="flex-shrink-0 text-[10px] font-medium text-gray-500 dark:text-gray-400">
+            Step {stepIndex + 1}
           </div>
         </div>
 
@@ -189,35 +98,36 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
           </div>
         )}
 
-        {/* Route count + labels */}
-        <div className="px-3 py-1.5">
-          {routes && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-              {routes.length} routes
-            </span>
-          )}
-        </div>
-
-        {/* Route labels */}
+        {/* Routes */}
         {routes && routes.length > 0 && (
-          <div className="px-3 pb-2 flex flex-wrap gap-1">
-            {routes.map((route) => (
-              <span
+          <div className="px-3 py-2 space-y-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">
+              {routes.length} route{routes.length === 1 ? '' : 's'}
+            </div>
+            {routes.map((route, index) => (
+              <div
                 key={route.route_id}
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-700/80 dark:bg-slate-800/70"
+                title={route.condition || route.route_name || route.route_id}
               >
-                {route.route_name || route.route_id}
-              </span>
+                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-teal-600 text-[9px] font-bold text-white dark:bg-teal-500/80 dark:text-teal-50">
+                  {index + 1}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                    {route.route_name || route.route_id}
+                  </div>
+                  {route.condition && (
+                    <div className="line-clamp-1 text-[10px] text-slate-500 dark:text-slate-400">
+                      {route.condition}
+                    </div>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         )}
 
-        {/* Config footer - only render when selected to reduce DOM nodes */}
-        {selected && <NodeConfigFooter
-          useCodeExecutionMode={useCodeExecutionMode}
-          evalLLM={conditionalLLM}
-          lockLearnings={lockLearnings}
-        />}
       </div>
 
       {/* Output handles - one per route */}
@@ -229,12 +139,10 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
           <Handle
             key={`route-${route.route_id}`}
             type="source"
-            position={outputPosition}
+            position={Position.Bottom}
             id={`route-${route.route_id}`}
             className="!w-3 !h-3 !bg-teal-400 dark:!bg-teal-500 !border-2 !border-white dark:!border-gray-900"
-            style={isHorizontal
-              ? { top: `${handleOffset}%` }
-              : { left: `${handleOffset}%` }}
+            style={{ left: `${handleOffset}%` }}
           />
         )
       })}
@@ -243,7 +151,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
       {(!routes || routes.length === 0) && (
         <Handle
           type="source"
-          position={outputPosition}
+          position={Position.Bottom}
           className="!w-3 !h-3 !bg-teal-400 dark:!bg-teal-500 !border-2 !border-white dark:!border-gray-900"
         />
       )}

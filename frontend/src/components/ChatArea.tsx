@@ -39,6 +39,7 @@ import {
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
 
 function getReadableActiveAgentName(name: string): string {
   const firstLine = name
@@ -79,6 +80,49 @@ function formatAutoNotificationTime(event: PollingEvent): string {
 function isStaleAutoNotificationEvent(event: PollingEvent): boolean {
   const ts = getEventTimestampMs(event)
   return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
+}
+
+function getUserMessageContent(event: PollingEvent): string {
+  const agentEvent = event.data as Record<string, unknown> | undefined
+  const innerData = agentEvent?.data as Record<string, unknown> | undefined
+  const content = innerData?.content ?? agentEvent?.content
+  return typeof content === 'string' ? content : ''
+}
+
+function getDisplaySafeUserMessageContent(content: string): string {
+  const markerIndex = content.indexOf(RESTORED_CONVERSATION_CONTEXT_MARKER)
+  return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
+}
+
+function withDisplaySafeUserMessage(event: PollingEvent): PollingEvent {
+  if (event.type !== 'user_message') return event
+
+  const content = getUserMessageContent(event)
+  const safeContent = getDisplaySafeUserMessageContent(content)
+  if (!content || safeContent === content) return event
+
+  const agentEvent = event.data as Record<string, unknown> | undefined
+  const innerData = agentEvent?.data as Record<string, unknown> | undefined
+  if (innerData) {
+    return {
+      ...event,
+      data: {
+        ...agentEvent,
+        data: {
+          ...innerData,
+          content: safeContent,
+        },
+      } as PollingEvent['data'],
+    }
+  }
+
+  return {
+    ...event,
+    data: {
+      ...agentEvent,
+      content: safeContent,
+    } as PollingEvent['data'],
+  }
 }
 
 function getQueuedAutoNotificationTimestampMs(message: string): number | null {
@@ -140,44 +184,53 @@ const PHASE_CHAT_INFO: Record<string, {
   },
 }
 
-function PhaseChatEmptyState({ phaseId }: { phaseId: string }) {
+function PhaseChatEmptyState({ phaseId, compact = false }: { phaseId: string; compact?: boolean }) {
   const info = PHASE_CHAT_INFO[phaseId]
   if (!info) return null
+  const capabilities = compact ? info.capabilities.slice(0, 3) : info.capabilities
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8 text-center overflow-y-auto">
-      <div className="mb-4 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-        <span className="text-blue-600 dark:text-blue-400 text-lg">💬</span>
-      </div>
-      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+    <div className={`flex min-h-full flex-col items-center overflow-y-auto text-center ${compact ? 'justify-start p-3' : 'justify-center p-8'}`}>
+      {!compact && (
+        <div className="mb-4 h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+          <span className="text-blue-600 dark:text-blue-400 text-lg">💬</span>
+        </div>
+      )}
+      <h3 className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-gray-900 dark:text-white mb-2`}>
         {info.title}
       </h3>
-      <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 max-w-sm">
+      <p className={`text-sm text-gray-600 dark:text-gray-400 ${compact ? 'mb-3 max-w-2xl' : 'mb-6 max-w-sm'}`}>
         {info.description}
       </p>
-      <div className="w-full max-w-md text-left">
-        <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-          What it can do
-        </h4>
-        <div className="space-y-2 mb-5">
-          {info.capabilities.map((cap, i) => (
+      <div className={`${compact ? 'max-w-2xl' : 'max-w-md'} w-full text-left`}>
+        {!compact && (
+          <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+            What it can do
+          </h4>
+        )}
+        <div className={`${compact ? 'grid gap-2 sm:grid-cols-2 mb-0' : 'space-y-2 mb-5'}`}>
+          {capabilities.map((cap, i) => (
             <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1.5 flex-shrink-0" />
               {cap}
             </div>
           ))}
         </div>
-        <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-          What it cannot do
-        </h4>
-        <div className="space-y-2 mb-5">
-          {info.limitations.map((lim, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <div className="w-1.5 h-1.5 bg-red-400 rounded-full mt-1.5 flex-shrink-0" />
-              {lim}
+        {!compact && (
+          <>
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+              What it cannot do
+            </h4>
+            <div className="space-y-2 mb-5">
+              {info.limitations.map((lim, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+                  <div className="w-1.5 h-1.5 bg-red-400 rounded-full mt-1.5 flex-shrink-0" />
+                  {lim}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
         {info.showStepTypes && (
           <>
             <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
@@ -1154,12 +1207,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const frontendUserMessageContents = new Set(
       existingEvents
         .filter(e => e.type === 'user_message' && e.id?.startsWith('user-message-'))
-        .map(e => {
-          const eventData = e.data as Record<string, unknown> | undefined
-          const nestedData = eventData?.data as Record<string, unknown> | undefined
-          const content = nestedData?.content ?? eventData?.content
-          return typeof content === 'string' ? content.trim() : ''
-        })
+        .map(e => getDisplaySafeUserMessageContent(getUserMessageContent(e)))
         .filter(Boolean)
     )
     const hasFrontendUserMessage = frontendUserMessageContents.size > 0
@@ -1176,10 +1224,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // (avoids duplicate user message bubbles in the chat)
       // Exception: [AUTO-NOTIFICATION] synthetic turn messages must always pass through.
       if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
-        const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
+        const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
-          frontendUserMessageContents.has(msgContent.trim())
+          frontendUserMessageContents.has(msgContent)
         ) {
           continue
         }
@@ -1240,10 +1288,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Allow backend user_message events through when there's no frontend-created one
       // (this renders synthetic turn messages like [AUTO-NOTIFICATION] in the chat)
       if (event.type === 'user_message' && hasFrontendUserMessage) {
-        const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
+        const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
-          !frontendUserMessageContents.has(msgContent.trim())
+          !frontendUserMessageContents.has(msgContent)
         ) {
           // This is a distinct backend user_message (for example a steer message
           // picked up mid-run), so keep it visible in the timeline.
@@ -1431,7 +1479,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         })
       }
 
-      newEvents.push(event)
+      newEvents.push(withDisplaySafeUserMessage(event))
     }
     // PERF FIX: Mark workspace as stale instead of auto-fetching.
     //
@@ -2126,17 +2174,34 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const freshWorkflowPreset = (selectedModeCategory === 'workflow')
       ? useGlobalPresetStore.getState().getActivePreset('workflow')
       : null
-    // Only include user-added file context (from multi-agent tab config).
-    // Workflow mode passes the workspace folder via workflow_context_paths in execution options,
-    // so it should NOT auto-append the folder to the query text.
+    // Only include visible/removable file context from tab config. Workflow execution
+    // folders still travel through workflow_context_paths; restored conversation files
+    // are attached only while their chip remains in fileContext.
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if (selectedModeCategory === 'multi-agent' && currentTab?.config) {
+    if ((selectedModeCategory === 'multi-agent' || selectedModeCategory === 'workflow') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     }
 
-    const queryWithContext = effectiveFileContext.length > 0
+    const shouldAttachRestoredConversation =
+      selectedModeCategory === 'workflow' &&
+      !!currentTab?.metadata?.phaseId &&
+      isChatCompatiblePhase(currentTab.metadata.phaseId)
+    const storedRestoredConversationPath = shouldAttachRestoredConversation
+      ? currentTab?.config?.restoredConversationPath?.trim()
+      : ''
+    const restoredConversationPath = storedRestoredConversationPath &&
+      effectiveFileContext.some((file) => file.path === storedRestoredConversationPath)
+      ? storedRestoredConversationPath
+      : ''
+    const restoredConversationContext = restoredConversationPath
+      ? `\n\nPrevious workflow-builder conversation file: ${restoredConversationPath}\nIf the user refers to earlier messages or asks what was discussed before, read this file first and use it as conversation context.`
+      : ''
+
+    const queryBaseWithContext = effectiveFileContext.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
+    const displayQueryWithContext = queryBaseWithContext
+    const queryWithContext = `${displayQueryWithContext}${restoredConversationContext}`
 
     // Decrypt selected secrets for payload (passed separately, never in query text)
       // Merge secrets from tab config (multi-agent) and workflow preset
@@ -2167,7 +2232,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
     if (selectedModeCategory === 'workflow') {
-      useAppStore.getState().setCurrentQuery(queryWithContext)
+      useAppStore.getState().setCurrentQuery(displayQueryWithContext)
     }
 
     // Restored chats should resume naturally in the same session.
@@ -2185,11 +2250,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }, 0)
     const optimisticTimestampMs = Math.max(Date.now(), latestExistingTimestampMs + 1)
     const optimisticUserMessage = createUserMessageEvent(
-      query.trim(),
+      displayQueryWithContext,
       nextEventIndex,
       new Date(optimisticTimestampMs).toISOString()
     )
     chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
+
+    // File context is one-shot: it belongs to the message being submitted, not
+    // the whole conversation. The request payload below already captured it.
+    if (effectiveFileContext.length > 0) {
+      chatStore.setTabConfig(currentTab.tabId, {
+        fileContext: [],
+        restoredConversationPath: undefined,
+      })
+    }
 
     // Enable auto-scroll and scroll to bottom
     chatStore.setAutoScroll(true)
@@ -2335,6 +2409,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         agent_mode: requestPayload.agent_mode,
         preset_query_id: requestPayload.preset_query_id,
         phase_id: (requestPayload as any).phase_id,
+        has_files_in_context: requestPayload.query.includes('📁 Files in context:'),
+        restored_conversation_path: restoredConversationPath || undefined,
         enable_browser_access: requestPayload.enable_browser_access,
         browser_mode: requestPayload.browser_mode,
         cdp_port: requestPayload.cdp_port,
@@ -2612,7 +2688,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
-        <div className={`min-w-0 ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
+        <div className={`min-h-full min-w-0 ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
           {/* Loading indicator for historical events */}
           {isLoadingHistory && (
             <div className={`flex items-center justify-center ${compact ? 'py-4' : 'py-8'}`}>
@@ -2684,7 +2760,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             )}
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
             {!isRestoringWorkflowSessions && !showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
-              <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
+              <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} compact={compact} />
             )}
 
             {activeTab?.sessionId && tabEvents.some(e => e.type === 'conversation_resumed') && (

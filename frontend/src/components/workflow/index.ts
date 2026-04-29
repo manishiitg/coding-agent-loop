@@ -4,7 +4,7 @@ export type { default as WorkflowLayoutType } from './WorkflowLayout'
 export { EventViewer } from './EventViewer'
 
 // Canvas components
-export { WorkflowCanvas, WorkflowToolbar, NodeDetailPanel } from './canvas'
+export { WorkflowCanvas, WorkflowToolbar } from './canvas'
 
 // Custom nodes
 export { StepNode, ConditionalNode, StartNode, EndNode, nodeTypes } from './nodes'

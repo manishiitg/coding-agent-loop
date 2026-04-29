@@ -204,6 +204,7 @@ export interface ChatTabConfig {
     label: string
     workspacePath: string
   }>  // Workflow presets selected via # in chat input
+  restoredConversationPath?: string  // Durable conversation file for UI-restored tabs
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
@@ -343,6 +344,7 @@ interface ChatState extends StoreActions {
   
   // Chat UI state
   autoScroll: boolean
+  eventViewModePreference: EventViewMode
   
   // Response state
   finalResponse: string
@@ -425,6 +427,7 @@ interface ChatState extends StoreActions {
   
   // UI actions
   setAutoScroll: (autoScroll: boolean) => void
+  setEventViewModePreference: (viewMode: EventViewMode) => void
   
   // Response actions
   setFinalResponse: (response: string) => void
@@ -517,6 +520,7 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       hasActiveChat: false,
       autoScroll: true,
+      eventViewModePreference: 'tree',
       finalResponse: '',
       isCompleted: false,
       isLoadingHistory: false,
@@ -964,6 +968,10 @@ export const useChatStore = create<ChatState>()(
         set({ autoScroll })
       },
 
+      setEventViewModePreference: (viewMode) => {
+        set({ eventViewModePreference: normalizeEventViewMode(viewMode) })
+      },
+
       // Response actions
       setFinalResponse: (response) => {
         set({ finalResponse: response })
@@ -1387,7 +1395,7 @@ export const useChatStore = create<ChatState>()(
           isSyntheticTurn: false,
           canSteer: false,
           hideToolCalls: true,
-          viewMode: 'tree',
+          viewMode: normalizeEventViewMode(get().eventViewModePreference),
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
@@ -1703,12 +1711,18 @@ export const useChatStore = create<ChatState>()(
             }
           }
 
-          // For non-workflow tabs: migrate events from old to new sessionId
-          // For workflow tabs: discard old events (re-runs should start fresh)
+          // For non-workflow tabs: migrate events to preserve chat history.
+          // For restored workflow-builder chat tabs, also migrate because the
+          // optimistic user message contains the restored conversation file context.
+          // Other workflow tabs still discard old events because re-runs should start fresh.
           if (oldSessionId && state.tabEvents[oldSessionId]) {
             const isWorkflowTab = tab.metadata?.mode === 'workflow'
+            const shouldMigrateEvents =
+              !isWorkflowTab ||
+              tab.metadata?.phaseId === 'workflow-builder' ||
+              !!tab.config?.restoredConversationPath
 
-            if (!isWorkflowTab) {
+            if (shouldMigrateEvents) {
               // Migrate events to preserve conversation history for chat/multi-agent
               const oldEvents = state.tabEvents[oldSessionId]
               const oldEventIndex = state.tabEventIndices[oldSessionId]
@@ -1775,6 +1789,7 @@ export const useChatStore = create<ChatState>()(
         if (!tab) return
 
         set((state) => ({
+          eventViewModePreference: normalizeEventViewMode(viewMode),
           chatTabs: {
             ...state.chatTabs,
             [tabId]: {
@@ -2156,7 +2171,8 @@ export const useChatStore = create<ChatState>()(
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
             return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
-          })()
+          })(),
+          eventViewModePreference: normalizeEventViewMode(state.eventViewModePreference)
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),
         onRehydrateStorage: () => (state) => {

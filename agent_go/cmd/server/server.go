@@ -1161,6 +1161,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
 	apiRouter.HandleFunc("/workflow/active-executions", api.handleGetActiveExecutions).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/builder-session", api.handleGetWorkflowBuilderSession).Methods("GET", "OPTIONS")
 
 	// Employee API routes (in employee_routes.go)
 	EmployeeRoutes(apiRouter)
@@ -2178,6 +2179,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Scheduler/cron sets selected_folder directly — no DB lookup needed
 			resolvedWPath = req.SelectedFolder
 			logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using selected_folder as workspace path: %s", resolvedWPath)
+		}
+		if resolvedWPath != "" {
+			api.activeSessionsMux.Lock()
+			if sess, ok := api.activeSessions[sessionID]; ok {
+				workflowName := workflowNameFromWorkspacePath(resolvedWPath)
+				sess.PresetQueryID = req.PresetQueryID
+				sess.WorkspacePath = resolvedWPath
+				sess.WorkflowName = workflowName
+				sess.WorkflowLabel = workflowName
+				sess.PresetName = workflowName
+				if workflowPhaseID != "" {
+					sess.CurrentExecutionName = workflowPhaseID
+				}
+			}
+			api.activeSessionsMux.Unlock()
 		}
 		if resolvedWPath != "" {
 			manifest, found, mErr := ReadWorkflowManifest(context.Background(), resolvedWPath)

@@ -481,6 +481,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		writePaths = append(writePaths, notesPath)
 	}
 
+	// Auto-improvement framework: business rules live under knowledgebase/rules/
+	// — read access is granted by the same kbAccess check above (recursive
+	// subtree). No separate flag. The optimizer's reorganize/consolidate passes
+	// are responsible for skipping knowledgebase/rules/ so user-supplied content
+	// is never silently rewritten.
+
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
 	// This allows evaluation agents to read the artifacts of the run they are evaluating.
 	// Also grant the parent run folder so evals can reach sibling logs (e.g. logs/<step>/execution/

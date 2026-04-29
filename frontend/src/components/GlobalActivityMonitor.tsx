@@ -253,35 +253,6 @@ function executionKindLabel(kind: string): string {
   }
 }
 
-function workflowDetailParts(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo, execution?: RuntimeExecutionDetail): string[] {
-  const parts: string[] = []
-
-  if (execution?.label) {
-    parts.push(`${executionKindLabel(execution.kind)}: ${execution.label}`)
-  } else if (workflow?.current_step_title) {
-    parts.push(`step: ${workflow.current_step_title}`)
-  } else if (workflow?.current_step_id) {
-    parts.push(`step: ${workflow.current_step_id}`)
-  } else if (session.current_execution_name) {
-    parts.push(`active: ${session.current_execution_name}`)
-  }
-
-  if (workflow?.run_folder) {
-    parts.push(workflow.run_folder)
-  }
-
-  if (workflow?.triggered_by) {
-    parts.push(workflow.triggered_by === 'cron' ? 'schedule' : workflow.triggered_by)
-  }
-
-  const workspacePath = workflow?.workspace_path || session.workspace_path
-  if (workspacePath) {
-    parts.push(workspacePath)
-  }
-
-  return parts
-}
-
 function currentWorkLabel(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo, execution?: RuntimeExecutionDetail): string {
   if (execution?.label) {
     return `${executionKindLabel(execution.kind)}: ${execution.label}`
@@ -294,6 +265,10 @@ function currentWorkLabel(session: ActiveSessionInfo, workflow?: RunningWorkflow
 
 function currentWorkStatus(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo, execution?: RuntimeExecutionDetail): string {
   return normalizedStatus(execution?.status || workflow?.status || session.status) || 'running'
+}
+
+function joinCompactParts(parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(' · ')
 }
 
 function isGenericWorkflowTitle(title: string): boolean {
@@ -424,26 +399,32 @@ export const GlobalActivityMonitor: React.FC = () => {
     return Array.from(bySession.values()).filter(isActiveSession)
   }, [activeSessionsCache, runningWorkflowsBySession])
 
+  const currentSessionId = activeTabId ? chatTabs[activeTabId]?.sessionId ?? null : null
+  const visibleSessions = useMemo(
+    () => activeSessions.filter(session => session.session_id !== currentSessionId),
+    [activeSessions, currentSessionId],
+  )
+
   const inputCount = useMemo(
-    () => activeSessions.filter(session => session.needs_user_input).length,
-    [activeSessions],
+    () => visibleSessions.filter(session => session.needs_user_input).length,
+    [visibleSessions],
   )
 
   const workflowCount = useMemo(
-    () => activeSessions.filter(isWorkflowSession).length,
-    [activeSessions],
+    () => visibleSessions.filter(isWorkflowSession).length,
+    [visibleSessions],
   )
-  const chatCount = Math.max(0, activeSessions.length - workflowCount)
+  const chatCount = Math.max(0, visibleSessions.length - workflowCount)
   const missingWorkflowIdentityCount = useMemo(
-    () => activeSessions.filter(session => {
+    () => visibleSessions.filter(session => {
       const workflow = runningWorkflowsBySession[session.session_id]
       return isWorkflowSession(session) && !hasWorkflowIdentity(session, workflow)
     }).length,
-    [activeSessions, runningWorkflowsBySession],
+    [visibleSessions, runningWorkflowsBySession],
   )
 
   const sortedSessions = useMemo(() => {
-    return [...activeSessions].sort((a, b) => {
+    return [...visibleSessions].sort((a, b) => {
       if (!!a.needs_user_input !== !!b.needs_user_input) {
         return a.needs_user_input ? -1 : 1
       }
@@ -452,7 +433,7 @@ export const GlobalActivityMonitor: React.FC = () => {
       }
       return new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime()
     })
-  }, [activeSessions])
+  }, [visibleSessions])
 
   const primarySession = sortedSessions[0]
 
@@ -469,10 +450,10 @@ export const GlobalActivityMonitor: React.FC = () => {
     : null
   const primaryTone = primarySession ? statusTone(primarySession, primaryWorkflow) : 'running'
   const headerLabel = inputCount > 0
-    ? `${countLabel(inputCount, 'needs input', 'need input')} · ${countLabel(activeSessions.length, 'active')}`
+    ? `${countLabel(inputCount, 'needs input', 'need input')} · ${countLabel(visibleSessions.length, 'active')}`
     : workflowCount > 0
       ? `${countLabel(workflowCount, 'workflow')}${chatCount > 0 ? ` · ${countLabel(chatCount, 'chat')}` : ''}`
-      : countLabel(activeSessions.length, 'active')
+      : countLabel(visibleSessions.length, 'active')
 
   const handleOpenSession = useCallback(async (session: ActiveSessionInfo) => {
     const chatStore = useChatStore.getState()
@@ -502,7 +483,7 @@ export const GlobalActivityMonitor: React.FC = () => {
     setOpen(false)
   }, [currentWorkflowPresetName, runningWorkflowsBySession])
 
-  if (activeSessions.length === 0) {
+  if (visibleSessions.length === 0) {
     return null
   }
 
@@ -523,7 +504,7 @@ export const GlobalActivityMonitor: React.FC = () => {
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
         )}
         <span className="whitespace-nowrap">
-          {activeSessions.length === 1 && primarySession
+          {visibleSessions.length === 1 && primarySession
             ? compactHeaderLabel(primarySession, primaryTab, primaryWorkflow, primaryWorkflowFallbackName)
             : headerLabel}
         </span>
@@ -557,7 +538,6 @@ export const GlobalActivityMonitor: React.FC = () => {
               const age = relativeTime(session.waiting_since || session.last_activity)
               const tone = statusTone(session, workflowInfo)
               const executionInfo = currentExecutionBySession[session.session_id]
-              const detailParts = workflowDetailParts(session, workflowInfo, executionInfo)
               const activeWork = currentWorkLabel(session, workflowInfo, executionInfo)
               const activeWorkStatus = currentWorkStatus(session, workflowInfo, executionInfo)
               const title = displaySessionTitle(session, tab, workflowInfo, fallbackWorkflowName)
@@ -566,6 +546,12 @@ export const GlobalActivityMonitor: React.FC = () => {
                 ? workflowDisplayName(session, workflowInfo, fallbackWorkflowName)
                 : title
               const showActiveWork = activeWork && activeWorkName !== primaryTitle
+              const secondaryLine = joinCompactParts([
+                showActiveWork ? activeWorkName : null,
+                activeWorkStatus,
+                bgCount > 0 ? `${bgCount} bg agent${bgCount === 1 ? '' : 's'}` : null,
+                session.waiting_message ? shortText(session.waiting_message, 64) : null,
+              ])
 
               return (
                 <button
@@ -597,38 +583,12 @@ export const GlobalActivityMonitor: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      {showActiveWork && (
-                        <div className="mt-1 flex items-center gap-2 min-w-0">
-                          <div className="truncate text-[11px] font-medium text-gray-800 dark:text-gray-200" title={activeWork}>
-                            {shortText(activeWorkName, 82)}
-                          </div>
-                        </div>
-                      )}
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                        <span className={statusTextClasses(tone)}>{activeWorkStatus}</span>
-                        {bgCount > 0 && (
-                          <>
-                            <span>·</span>
-                            <span>{bgCount} bg agent{bgCount === 1 ? '' : 's'}</span>
-                          </>
-                        )}
-                        {!activeWork && (
-                          <>
-                            <span>·</span>
-                            <span>{headerStatusLabel(session, workflowInfo)}</span>
-                          </>
-                        )}
-                      </div>
-                      {detailParts.length > 1 && (
-                        <div className="mt-1 space-y-0.5">
-                          <div className="truncate text-[10px] text-gray-400 dark:text-gray-500" title={detailParts.slice(1).join(' · ')}>
-                            {shortText(detailParts.slice(1).join(' · '), 86)}
-                          </div>
-                        </div>
-                      )}
-                      {session.waiting_message && (
-                        <div className="mt-1 truncate text-[11px] text-amber-700 dark:text-amber-200">
-                          {shortText(session.waiting_message, 96)}
+                      {secondaryLine && (
+                        <div
+                          className={`mt-0.5 truncate text-[11px] ${session.needs_user_input ? 'text-amber-700 dark:text-amber-200' : statusTextClasses(tone)}`}
+                          title={joinCompactParts([activeWork || headerStatusLabel(session, workflowInfo), activeWorkStatus, bgCount > 0 ? `${bgCount} background agent${bgCount === 1 ? '' : 's'}` : null, session.waiting_message])}
+                        >
+                          {shortText(secondaryLine, 100)}
                         </div>
                       )}
                     </div>

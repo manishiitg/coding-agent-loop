@@ -431,7 +431,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
    * 
    * ❌ DO NOT USE THIS METHOD FOR:
    *   - Normal step config updates (use updateStepConfig API instead)
-   *   - Updates from WorkflowCanvas or StepSidebar (use updateStep() instead)
+   *   - Updates from WorkflowCanvas (use updateStep() instead)
    *   - Bulk operations (use batchUpdateSteps API instead)
    *   - Any operation that should be validated by the backend
    * 

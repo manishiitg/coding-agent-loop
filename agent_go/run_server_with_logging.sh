@@ -40,6 +40,31 @@ for arg in "$@"; do
     esac
 done
 
+FRONTEND_PORT_EXPLICIT="${FRONTEND_PORT:-}"
+
+port_in_use() {
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN > /dev/null 2>&1
+}
+
+choose_frontend_port() {
+    local preferred="${1:-5173}"
+    local port="$preferred"
+
+    if [ -n "$FRONTEND_PORT_EXPLICIT" ]; then
+        echo "$preferred"
+        return 0
+    fi
+
+    while port_in_use "$port"; do
+        port=$((port + 1))
+        if [ "$port" -gt 5299 ]; then
+            return 1
+        fi
+    done
+
+    echo "$port"
+}
+
 if [ "$TEST_CONNECTIONS" = true ]; then
     TEST_CONNECTIONS=true
     echo "🔌 Testing MCP Server Connections"
@@ -90,7 +115,13 @@ if [ "$ONLY_FRONTEND" = true ]; then
         exit 1
     }
 
-    FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+    FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-5173}")" || {
+        echo "❌ Error: No free frontend port available in range 5173-5299"
+        exit 1
+    }
+    if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
+        echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
+    fi
     FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
     DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
     FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
@@ -153,8 +184,13 @@ EOF
         echo "❌ Error: frontend package.json not found: ${FRONTEND_DIR}/package.json"
         exit 1
     fi
-    if lsof -ti:"$FRONTEND_PORT" > /dev/null 2>&1; then
-        echo "❌ Error: Port $FRONTEND_PORT is already in use. Set FRONTEND_PORT to another value."
+    if port_in_use "$FRONTEND_PORT"; then
+        echo "❌ Error: Port $FRONTEND_PORT is already in use."
+        if [ -n "$FRONTEND_PORT_EXPLICIT" ]; then
+            echo "   FRONTEND_PORT was explicitly set; choose another value or stop the existing process."
+        else
+            echo "   Port became busy after selection; retry the command."
+        fi
         exit 1
     fi
 
@@ -283,14 +319,14 @@ find_random_free_port_in_range() {
 
     for attempt in $(seq 1 "$attempts"); do
         port=$((start + RANDOM % range_size))
-        if ! is_port_excluded "$port" && ! lsof -ti:"$port" > /dev/null 2>&1; then
+        if ! is_port_excluded "$port" && ! port_in_use "$port"; then
             echo "$port"
             return 0
         fi
     done
 
     for port in $(seq "$start" "$end"); do
-        if ! is_port_excluded "$port" && ! lsof -ti:"$port" > /dev/null 2>&1; then
+        if ! is_port_excluded "$port" && ! port_in_use "$port"; then
             echo "$port"
             return 0
         fi
@@ -301,7 +337,7 @@ find_random_free_port_in_range() {
 
 if [ -n "${AGENT_PORT:-}" ]; then
     echo "🔎 Using requested agent server port: $AGENT_PORT"
-    if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
+    if port_in_use "$AGENT_PORT"; then
         echo "❌ Error: Requested AGENT_PORT $AGENT_PORT is already in use"
         exit 1
     fi
@@ -364,7 +400,13 @@ FRONTEND_LOG_PATH=""
 ELECTRON_LOG_PATH=""
 FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
 DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-5173}")" || {
+    echo "❌ Error: No free frontend port available in range 5173-5299"
+    exit 1
+}
+if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
+    echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
+fi
 
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
@@ -382,7 +424,7 @@ fi
 if [ "$WITH_WORKSPACE" = true ]; then
     if [ -n "${WORKSPACE_PORT:-}" ]; then
         echo "🔎 Using requested workspace server port: $WORKSPACE_PORT"
-        if lsof -ti:"$WORKSPACE_PORT" > /dev/null 2>&1; then
+        if port_in_use "$WORKSPACE_PORT"; then
             echo "❌ Error: Requested WORKSPACE_PORT $WORKSPACE_PORT is already in use"
             exit 1
         fi
@@ -690,7 +732,7 @@ start_native_workspace() {
         return 0
     fi
 
-    if lsof -ti:"$WORKSPACE_PORT" > /dev/null 2>&1; then
+    if port_in_use "$WORKSPACE_PORT"; then
         echo "❌ Error: Port $WORKSPACE_PORT is already in use."
         echo "   Stop the existing process or set WORKSPACE_PORT to another value."
         return 1
@@ -752,9 +794,13 @@ start_frontend_dev() {
         return 1
     fi
 
-    if lsof -ti:"$FRONTEND_PORT" > /dev/null 2>&1; then
+    if port_in_use "$FRONTEND_PORT"; then
         echo "❌ Error: Port $FRONTEND_PORT is already in use."
-        echo "   Stop the existing process or set FRONTEND_PORT to another value."
+        if [ -n "$FRONTEND_PORT_EXPLICIT" ]; then
+            echo "   FRONTEND_PORT was explicitly set; choose another value or stop the existing process."
+        else
+            echo "   Port became busy after selection; retry the command."
+        fi
         return 1
     fi
 
@@ -1020,7 +1066,7 @@ if [ "$BACKGROUND_MODE" = true ]; then
             fi
             exit 1
         fi
-        if lsof -ti:"$AGENT_PORT" > /dev/null 2>&1; then
+        if port_in_use "$AGENT_PORT"; then
             echo "✅ Server is running and listening on port $AGENT_PORT"
         else
             echo "⚠️  Warning: Server process is running but not listening on port $AGENT_PORT yet"

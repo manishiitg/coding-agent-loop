@@ -4,7 +4,6 @@ import {
   Square,
   BookOpen,
   Settings,
-  CheckSquare,
   FileText,
   BarChart3,
   DollarSign,
@@ -30,18 +29,14 @@ import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import AutoImprovementPopup from '../AutoImprovementPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
-import type { PlanStep } from '../../../utils/stepConfigMatching'
 import {
-  extractIterationFolder,
   extractGroupNameFromFolder,
-  sanitizeDisplayNameForFolder,
   resolveGroupFolderPath
 } from '../../../utils/workflowUtils'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
-const REPORT_EXECUTION_PHASE_ID = 'report-execution'
 
 
 interface WorkflowToolbarProps {
@@ -59,77 +54,12 @@ interface WorkflowToolbarProps {
   onCreatePlan: () => void
   showChatArea?: boolean
   onToggleChatArea?: () => void
-  onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
   onRefresh?: () => Promise<void>  // Refresh plan and variables
-  onSaveLayout?: () => Promise<void>  // Save workflow layout
-  onDeleteLayout?: () => Promise<void>  // Delete workflow layout and reset to default
-  hasUnsavedLayoutChanges?: boolean  // Whether there are unsaved layout changes
-  isSavingLayout?: boolean  // Whether layout is currently being saved
-  isDeletingLayout?: boolean  // Whether layout is currently being deleted
-  selectedStepIds?: string[]  // IDs of currently selected steps (shows indicator when 2+ selected)
   className?: string
 }
 
-interface ToolbarToggleProps {
-  label: string
-  checked: boolean
-  onClick: () => void
-  disabled?: boolean
-  tooltip: React.ReactNode
-}
-
-const ToolbarToggle: React.FC<ToolbarToggleProps> = ({
-  label,
-  checked,
-  onClick,
-  disabled = false,
-  tooltip
-}) => (
-  <TooltipProvider delayDuration={150}>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          disabled={disabled}
-          role="switch"
-          aria-checked={checked}
-          className={`
-            inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs transition-colors
-            ${checked
-              ? 'border-primary/30 bg-primary/10 text-primary'
-              : 'border-border bg-muted/40 text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }
-            ${disabled ? 'cursor-not-allowed opacity-70 hover:bg-primary/10 hover:text-primary' : ''}
-          `}
-        >
-          <span className="font-medium whitespace-nowrap">{label}</span>
-          <span
-            aria-hidden="true"
-            className={`
-              relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors
-              ${checked ? 'bg-primary/80' : 'bg-muted-foreground/30'}
-            `}
-          >
-            <span
-              className={`
-                inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform
-                ${checked ? 'translate-x-3.5' : 'translate-x-0.5'}
-              `}
-            />
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {tooltip}
-      </TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
-)
-
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
-  hasPlan,
   plan,
   workspacePath,
   presetQueryId,
@@ -137,16 +67,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   variablesManifest,
   isLoadingWorkspaceState = false,
   onStartPhase,
-  onCreatePlan,
   showChatArea = false,
-  onBulkUpdateSteps,
   onRefresh,
-  onSaveLayout,
-  onDeleteLayout,
-  hasUnsavedLayoutChanges = false,
-  isSavingLayout = false,
-  isDeletingLayout = false,
-  selectedStepIds,
   className = ''
 }) => {
   // Normalize runFolders to avoid repeated null checks throughout the component
@@ -168,8 +90,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     showWorkspacePane,
     workflowWorkspaceView,
     canvasViewMode,
-    setCanvasViewMode,
-    setWorkflowWorkspaceView,
   } = useWorkflowStore(useShallow(state => ({
     selectedRunFolder: state.selectedRunFolder,
     selectedGroupIds: state.selectedGroupIds,
@@ -181,8 +101,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     showWorkspacePane: state.showWorkspacePane,
     workflowWorkspaceView: state.workflowWorkspaceView,
     canvasViewMode: state.canvasViewMode,
-    setCanvasViewMode: state.setCanvasViewMode,
-    setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
   })))
 
   // Reset start point when switching away from plan mode
@@ -281,7 +199,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   const {
     activeWorkflowTab,
-    isActiveWorkflowTabStreaming,
     setTabStreaming,
     setTabHasRunningBgAgents,
   } = useChatStore(useShallow(state => {
@@ -294,7 +211,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     return {
       activeWorkflowTab,
-      isActiveWorkflowTabStreaming: activeWorkflowTab ? state.getTabStreamingStatus(activeWorkflowTab.tabId) : false,
       setTabStreaming: state.setTabStreaming,
       setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
     }
@@ -365,184 +281,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // - variables_manifest (via setVariablesManifest)
   // This eliminates duplicate API calls on initial page load.
 
-  // Build merged list of iterations and groups
-  // Groups from variablesManifest are PRIMARY - runFolders only indicate if groups have run
-  const iterationGroups = useMemo(() => {
-    interface GroupItem {
-      id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
-      name: string  // Display name like "group-5" or "iteration-1"
-      iteration: string  // e.g., "iteration-1"
-      groupName: string | null  // e.g., "group-5" or null if no group
-      exists: boolean  // Whether folder exists (from runFolders)
-      enabled: boolean  // Whether group is enabled
-    }
-
-    const items: GroupItem[] = []
-    const iterationMap = new Map<string, GroupItem[]>()
-
-    // Helper function to sanitize display names for matching (used for comparing folder names)
-    const sanitizeForMatch = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-    
-    // Use utility function for sanitizing display names for folder paths
-    const sanitizeDisplayName = sanitizeDisplayNameForFolder
-
-    // Helper function to find matching runFolder for a group
-    const findMatchingFolder = (iteration: string, group: { name: string }): RunFolder | null => {
-      return folders.find(folder => {
-        const parts = folder.name.split('/')
-        if (parts.length !== 2 || parts[0] !== iteration) return false
-
-        const folderName = parts[1]
-
-        // Check if folder name matches group name
-        if (folderName === group.name) return true
-
-        // Check if folder name matches sanitized group name
-        const sanitizedGroupName = sanitizeForMatch(group.name)
-        const folderNameSanitized = sanitizeForMatch(folderName)
-        if (sanitizedGroupName === folderNameSanitized) return true
-
-        return false
-      }) || null
-    }
-
-    // Get all iterations from runFolders
-    const existingIterations = new Set<string>()
-    folders.forEach((folder) => {
-      const match = folder.name.match(/^(iteration-\d+)/)
-      if (match) {
-        existingIterations.add(match[1])
-      }
-    })
-
-    // If no iterations exist but we have groups in manifest, default to iteration-1
-    // This ensures groups are shown even before the first run
-    if (existingIterations.size === 0 && variablesManifest?.groups && variablesManifest.groups.length > 0) {
-      existingIterations.add('iteration-1')
-    }
-
-    // PRIMARY: Start with groups from variablesManifest
-    if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
-      // For each group in manifest, add it to all iterations
-      variablesManifest.groups.forEach((group) => {
-        existingIterations.forEach((iteration) => {
-          // Check if matching folder exists in runFolders
-          const matchingFolder = findMatchingFolder(iteration, group)
-          
-          // Determine folder name for the path (use sanitized name)
-          const folderName = sanitizeDisplayName(group.name) || group.name
-
-          const item: GroupItem = {
-            id: `${iteration}/${folderName}`,
-            name: group.name,
-            iteration,
-            groupName: group.name,
-            exists: matchingFolder !== null, // Only true if matching folder found
-            enabled: group.enabled
-          }
-          
-          items.push(item)
-          if (!iterationMap.has(iteration)) {
-            iterationMap.set(iteration, [])
-          }
-          iterationMap.get(iteration)!.push(item)
-        })
-      })
-    }
-
-    // Also add folders from runFolders that aren't in the manifest
-    // This handles both top-level iteration folders and group folders
-    folders.forEach((folder) => {
-      const parts = folder.name.split('/')
-
-      if (parts.length === 1 && parts[0].startsWith('iteration-')) {
-        // Top-level iteration folder (no groups - backward compatibility)
-        const iteration = parts[0]
-
-        // Only add if this iteration doesn't already have groups
-        if (!iterationMap.has(iteration)) {
-          const item: GroupItem = {
-            id: folder.name,
-            name: iteration,
-            iteration,
-            groupName: null,
-            exists: true,
-            enabled: true
-          }
-          items.push(item)
-          iterationMap.set(iteration, [item])
-        }
-      } else if (parts.length === 2 && parts[0].startsWith('iteration-')) {
-        // Group folder (iteration-X/group-name)
-        const iteration = parts[0]
-        const groupName = parts[1]
-
-        // Check if this group is already in the map (from variablesManifest)
-        const existingGroups = iterationMap.get(iteration) || []
-        const alreadyExists = existingGroups.some(g => {
-          // Check if folder path matches exactly
-          if (g.id === folder.name) return true
-
-          // Check if groupName matches
-          if (g.groupName === groupName) return true
-
-          // Check if folder name matches sanitized group name
-          if (g.name) {
-            const sanitizedName = sanitizeForMatch(g.name)
-            const folderNameSanitized = sanitizeForMatch(groupName)
-            if (sanitizedName === folderNameSanitized) return true
-          }
-
-          return false
-        })
-
-        if (!alreadyExists) {
-          // Folder exists on disk but doesn't match any group in manifest
-          // Try to find a matching group in manifest by folder name
-          let matchingManifestGroup = null
-          if (variablesManifest?.groups) {
-            matchingManifestGroup = variablesManifest.groups.find(g => {
-              // Check if folder name matches group name
-              if (g.name === groupName) return true
-
-              // Check if folder name matches sanitized group name
-              const sanitizedName = sanitizeForMatch(g.name)
-              const folderNameSanitized = sanitizeForMatch(groupName)
-              if (sanitizedName === folderNameSanitized) return true
-
-              return false
-            })
-          }
-
-          // If we found a matching group in manifest, use its name
-          // Otherwise, use folder name as group name (for backward compatibility)
-          const item: GroupItem = {
-            id: folder.name,
-            name: matchingManifestGroup?.name || groupName,
-            iteration,
-            groupName: matchingManifestGroup?.name || groupName,
-            exists: true,
-            enabled: matchingManifestGroup?.enabled ?? true
-          }
-          items.push(item)
-          if (!iterationMap.has(iteration)) {
-            iterationMap.set(iteration, [])
-          }
-          iterationMap.get(iteration)!.push(item)
-        }
-      }
-    })
-
-    // Sort iterations by number (descending)
-    const sortedIterations = Array.from(iterationMap.keys()).sort((a, b) => {
-      const numA = parseInt(a.replace('iteration-', '')) || 0
-      const numB = parseInt(b.replace('iteration-', '')) || 0
-      return numB - numA
-    })
-
-    return { sortedIterations, iterationMap, items }
-  }, [folders, variablesManifest])
-
   // View selection should follow the actual canvas/report renderer, not the
   // higher-level workspace mode.
   const isBuilderPaneVisible = showChatArea === true && !showWorkspacePane
@@ -610,15 +348,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   return (
     <>
     <div className={`
-      flex items-center justify-between gap-2 px-3 py-1.5 
+      flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5
       bg-background border-b border-border
       relative z-10
       ${className}
     `}>
       {/* Left side - workflow context */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-x-3 gap-y-1.5 flex-wrap">
+        <div className="flex min-w-0 items-center gap-x-3 gap-y-1.5 flex-wrap">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Mode
           </span>
@@ -647,7 +385,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             View
           </span>
@@ -712,9 +450,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </div>
         </div>
 
-        <div className="h-5 w-px bg-border" />
+        <div className="hidden h-5 w-px shrink-0 bg-border sm:block" />
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Status
           </span>
@@ -738,7 +476,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </div>
 
       {/* Center - Status indicator */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         {status === 'waiting_feedback' && (
           <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-md text-xs">
             <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
@@ -754,7 +492,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       </div>
 
       {/* Right side - View controls */}
-      <div className="flex items-center gap-1">
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
         {/* Show Costs - opens popup with cost analysis across all iterations */}
         {workspacePath && (
@@ -859,19 +597,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom"><p>Versions</p></TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Multi-Select Indicator - appears when 2+ steps are selected */}
-        {!isExecutionRunning && selectedStepIds && selectedStepIds.length >= 2 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary border border-primary/30">
-                <CheckSquare className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium">{selectedStepIds.length} Selected</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom"><p>{selectedStepIds.length} steps selected - configure in sidebar</p></TooltipContent>
           </Tooltip>
         )}
 

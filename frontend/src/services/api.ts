@@ -1,5 +1,6 @@
 console.log('Cache bust: 2026-02-08-150000');
 import axios from 'axios'
+import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import type {
@@ -59,6 +60,7 @@ import type {
   UpdateRunningWorkflowRequest,
   CostSummary,
   NotificationPreference,
+  WorkflowBuilderSessionResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -94,17 +96,84 @@ export type {
   EvaluationStepScore,
 } from './api-types'
 
+type RuntimeConfig = {
+  apiBaseUrl?: string
+  workspaceApiBaseUrl?: string
+}
+
+type AppWindow = Window & {
+  __APP_RUNTIME_CONFIG__?: RuntimeConfig
+  __logged_apiBaseUrl?: boolean
+  __logged_workspaceApiBaseUrl?: boolean
+  electronAPI?: {
+    getApiBaseUrl?: () => string
+    getWorkspaceApiBaseUrl?: () => string
+  }
+}
+
+type RuntimeRetriableRequestConfig = InternalAxiosRequestConfig & {
+  __runtimeConfigRetried?: boolean
+}
+
 // Resolve API base URL: use build-time env if set; otherwise fallback based on mode
-function getRuntimeConfig(): { apiBaseUrl?: string; workspaceApiBaseUrl?: string } {
+function getRuntimeConfig(): RuntimeConfig {
   if (typeof window === 'undefined') return {}
-  return (window as any).__APP_RUNTIME_CONFIG__ || {}
+  return (window as AppWindow).__APP_RUNTIME_CONFIG__ || {}
+}
+
+let runtimeConfigRefreshPromise: Promise<boolean> | null = null
+
+async function refreshRuntimeConfigFromScript(): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  if (runtimeConfigRefreshPromise) return runtimeConfigRefreshPromise
+
+  runtimeConfigRefreshPromise = (async () => {
+    try {
+      const response = await fetch(`/runtime-config.js?t=${Date.now()}`, { cache: 'no-store' })
+      if (!response.ok) return false
+
+      const text = await response.text()
+      const apiBaseUrl = text.match(/apiBaseUrl:\s*["']([^"']+)["']/)?.[1]
+      const workspaceApiBaseUrl = text.match(/workspaceApiBaseUrl:\s*["']([^"']+)["']/)?.[1]
+      if (!apiBaseUrl && !workspaceApiBaseUrl) return false
+
+      const previous = getRuntimeConfig()
+      const next: RuntimeConfig = {
+        ...previous,
+        ...(apiBaseUrl ? { apiBaseUrl } : {}),
+        ...(workspaceApiBaseUrl ? { workspaceApiBaseUrl } : {}),
+      }
+      const changed =
+        next.apiBaseUrl !== previous.apiBaseUrl ||
+        next.workspaceApiBaseUrl !== previous.workspaceApiBaseUrl
+
+      ;(window as AppWindow).__APP_RUNTIME_CONFIG__ = next
+      if (changed) {
+        ;(window as AppWindow).__logged_apiBaseUrl = false
+        ;(window as AppWindow).__logged_workspaceApiBaseUrl = false
+        console.info('[api-config] runtime-config refreshed', { previous, next })
+      }
+      return changed
+    } catch {
+      return false
+    } finally {
+      runtimeConfigRefreshPromise = null
+    }
+  })()
+
+  return runtimeConfigRefreshPromise
 }
 
 function logResolvedUrlOnce(key: string, payload: Record<string, unknown>) {
   if (typeof window === 'undefined') return
-  const marker = `__logged_${key}`
-  if ((window as any)[marker]) return
-  ;(window as any)[marker] = true
+  const appWindow = window as AppWindow
+  if (key === 'workspaceApiBaseUrl') {
+    if (appWindow.__logged_workspaceApiBaseUrl) return
+    appWindow.__logged_workspaceApiBaseUrl = true
+  } else {
+    if (appWindow.__logged_apiBaseUrl) return
+    appWindow.__logged_apiBaseUrl = true
+  }
   console.info(`[api-config] ${key}`, payload)
 }
 
@@ -116,8 +185,8 @@ export function getApiBaseUrl(): string {
   }
 
   // Use Electron API if available
-  if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiBaseUrl) {
-    const resolved = (window as any).electronAPI.getApiBaseUrl()
+  if (typeof window !== 'undefined' && (window as AppWindow).electronAPI?.getApiBaseUrl) {
+    const resolved = (window as AppWindow).electronAPI!.getApiBaseUrl!()
     logResolvedUrlOnce('apiBaseUrl', { source: 'electron', resolved, runtime })
     return resolved
   }
@@ -146,8 +215,8 @@ function getWorkspaceApiBaseUrl(): string {
   }
 
   // Use Electron API if available
-  if (typeof window !== 'undefined' && (window as any).electronAPI?.getWorkspaceApiBaseUrl) {
-    const resolved = (window as any).electronAPI.getWorkspaceApiBaseUrl()
+  if (typeof window !== 'undefined' && (window as AppWindow).electronAPI?.getWorkspaceApiBaseUrl) {
+    const resolved = (window as AppWindow).electronAPI!.getWorkspaceApiBaseUrl!()
     logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'electron', resolved, runtime })
     return resolved
   }
@@ -184,6 +253,38 @@ export const workspaceApi = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+function shouldRefreshRuntimeConfig(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false
+  if (error.response) return false
+  return error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED' || error.request
+}
+
+async function retryWithFreshRuntimeConfig(
+  instance: AxiosInstance,
+  error: unknown,
+  resolveBaseUrl: () => string
+) {
+  if (!shouldRefreshRuntimeConfig(error) || !axios.isAxiosError(error) || !error.config) {
+    return Promise.reject(error)
+  }
+
+  const config = error.config as RuntimeRetriableRequestConfig
+  if (config.__runtimeConfigRetried) {
+    return Promise.reject(error)
+  }
+
+  const oldBaseUrl = String(config.baseURL || '')
+  const changed = await refreshRuntimeConfigFromScript()
+  const nextBaseUrl = resolveBaseUrl()
+  if (!changed || !nextBaseUrl || nextBaseUrl === oldBaseUrl) {
+    return Promise.reject(error)
+  }
+
+  config.__runtimeConfigRetried = true
+  config.baseURL = nextBaseUrl
+  return instance(config)
+}
 
 // --- Session ID Management ---
 // Session IDs are now stored per-tab in useChatStore, not globally
@@ -257,6 +358,7 @@ export function clearAuthToken(): void {
 // --- Axios request interceptor to inject session ID and auth token ---
 // Only adds session ID if not already provided in headers
 api.interceptors.request.use((config) => {
+  config.baseURL = getApiBaseUrl()
   config.headers = config.headers || {}
 
   // Only add session ID if not already provided
@@ -289,9 +391,14 @@ function is401DueToBadToken(error: unknown): boolean {
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (is401DueToBadToken(error)) {
       clearAuthToken()
+    }
+    try {
+      return await retryWithFreshRuntimeConfig(api, error, getApiBaseUrl)
+    } catch {
+      // Fall through to the original rejection so callers keep the real error.
     }
     return Promise.reject(error)
   }
@@ -314,6 +421,7 @@ function getUserIdFromToken(token: string): string | null {
 
 // --- Workspace API interceptors for auth ---
 workspaceApi.interceptors.request.use((config) => {
+  config.baseURL = getWorkspaceApiBaseUrl()
   config.headers = config.headers || {}
 
   // Add auth token if available
@@ -334,9 +442,14 @@ workspaceApi.interceptors.request.use((config) => {
 
 workspaceApi.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (is401DueToBadToken(error)) {
       clearAuthToken()
+    }
+    try {
+      return await retryWithFreshRuntimeConfig(workspaceApi, error, getWorkspaceApiBaseUrl)
+    } catch {
+      // Fall through to the original rejection so callers keep the real error.
     }
     return Promise.reject(error)
   }
@@ -427,6 +540,17 @@ export const agentApi = {
 
   getSessionExecutionTree: async (sessionId: string): Promise<SessionExecutionTreeResponse> => {
     const response = await api.get(`/api/sessions/${sessionId}/execution-tree`)
+    return response.data
+  },
+
+  getWorkflowBuilderSession: async (
+    presetQueryId?: string,
+    workspacePath?: string
+  ): Promise<WorkflowBuilderSessionResponse> => {
+    const params: Record<string, string> = {}
+    if (presetQueryId) params.preset_query_id = presetQueryId
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.get('/api/workflow/builder-session', { params })
     return response.data
   },
 
@@ -1211,6 +1335,30 @@ export const agentApi = {
   getAutoImprovementEvalTrajectory: async (workspacePath: string): Promise<{ success: boolean; series: any[]; error?: string }> => {
     const response = await api.get('/api/workflow/eval-trajectory', { params: { workspace_path: workspacePath } })
     return { ...response.data, series: Array.isArray(response.data?.series) ? response.data.series : [] }
+  },
+  abortExperiment: async (workspacePath: string, experimentId: string, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/abort', {
+      workspace_path: workspacePath, experiment_id: experimentId, reason, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  extendExperiment: async (workspacePath: string, experimentId: string, additionalRuns: number, reason: string, actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/extend', {
+      workspace_path: workspacePath, experiment_id: experimentId, additional_runs: additionalRuns, reason, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  manualConcludeExperiment: async (workspacePath: string, experimentId: string, verdict: string, reason: string, rationale: string, actorUser?: string): Promise<{ success: boolean; final_verdict?: string; archived?: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/manual-conclude', {
+      workspace_path: workspacePath, experiment_id: experimentId, verdict, reason, rationale, actor_user: actorUser || ''
+    })
+    return response.data
+  },
+  approveExperiment: async (workspacePath: string, experimentId: string, gate: 'hypothesis' | 'conclusion', actorUser?: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await api.post('/api/workflow/experiments/approve', {
+      workspace_path: workspacePath, experiment_id: experimentId, gate, actor_user: actorUser || ''
+    })
+    return response.data
   },
   getBuilderDoc: async (workspacePath: string, doc: 'improve' | 'review'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {
     const response = await api.get('/api/workflow/builder-doc', { params: { workspace_path: workspacePath, doc } })

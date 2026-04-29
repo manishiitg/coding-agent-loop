@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect, useState } from 'react'
+import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -7,20 +7,16 @@ import {
   useReactFlow,
   BackgroundVariant,
   ReactFlowProvider,
-  type NodeChange,
-  type OnSelectionChangeParams,
-  SelectionMode
+  type NodeChange
 } from '@xyflow/react'
-import { ArrowRight, ArrowDown, Save, RotateCcw, RefreshCw, Loader2 as Loader2Icon } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
 import { WorkflowToolbar } from './WorkflowToolbar'
-import { StepSidebar } from './StepSidebar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
-import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { PlanOutlineView } from './PlanOutlineView'
 import { ReportView } from '../ReportViewer'
@@ -32,12 +28,10 @@ import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
-import { useAppStore } from '../../../stores/useAppStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
-import type { PlanStep, PlanningResponse } from '../../../utils/stepConfigMatching'
-import { isConditionalStep } from '../../../utils/stepConfigMatching'
-import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
+import type { PlanningResponse } from '../../../utils/stepConfigMatching'
+import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 
 // Duration to show highlights before clearing (in ms)
@@ -58,9 +52,6 @@ interface WorkflowCanvasProps {
   paneClassName?: string
   className?: string
 }
-
-// Adapter for StepSidebar which uses stepId or ExecutionOptions
-type StepSidebarStartPhase = (phaseId: string, stepIdOrOptions?: string | ExecutionOptions) => void
 
 // Ref interface for external control of the canvas
 export interface WorkflowCanvasRef {
@@ -84,7 +75,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const { setViewport, getNode, updateNode } = useReactFlow()
+  const { setViewport, getNode, updateNode, fitView, getViewport } = useReactFlow()
   const hasInitializedView = React.useRef(false)
 
   // --- Performance diagnostics for workflow switching ---
@@ -105,8 +96,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const viewportSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get workflow mode, layout direction, and canvas view mode
-  const layoutDirection = useWorkflowStore(state => state.layoutDirection)
-  const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
+  // Flow view is vertical-only.
+  const layoutDirection = 'TB' as const
   const canvasViewMode = useWorkflowStore(state => state.canvasViewMode)
   const setCanvasViewMode = useWorkflowStore(state => state.setCanvasViewMode)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
@@ -164,7 +155,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           Object.entries(layout.nodePositions).forEach(([nodeId, pos]: [string, unknown]) => {
             // CRITICAL: Never load saved positions for header nodes
             // They must always use the enforced horizontal layout from usePlanToFlow
-            if (nodeId === 'start' || nodeId === 'execution-settings' || nodeId === 'variables') {
+            if (nodeId === 'start' || nodeId === 'variables') {
               return // Skip header nodes
             }
             if (pos && typeof pos === 'object' && 'x' in pos && 'y' in pos) {
@@ -201,162 +192,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     return null
   }, [getLayoutFilePath])
 
-  // Save node positions to workspace
-  const saveLayout = React.useCallback(async (): Promise<void> => {
-    const layoutPath = getLayoutFilePath()
-    if (!layoutPath || !workspacePath) {
-      console.warn('[WorkflowCanvas] Cannot save layout: no workspace path')
-      alert('Cannot save layout: no workspace path')
-      return
-    }
-
-    console.log('[WorkflowCanvas] Saving layout...', { layoutPath, workspacePath })
-
-    // Only save parent node positions (children are calculated from offsets)
-    // Save positions for main parent nodes, sub-agents, and validation/learning/evaluation nodes
-    // (all of these are now independently draggable)
-    const parentPositions: Record<string, { x: number; y: number }> = {}
-    nodesRef.current.forEach(node => {
-      // CRITICAL: Never save header node positions - they must always use enforced horizontal layout
-      if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
-        return // Skip header nodes
-      }
-      
-      // Allow sub-agents to be saved as parent positions (they're independently draggable)
-      const isSubAgent = node.id.includes('-sub-agent-')
-      if (isSubAgent) {
-        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
-        return
-      }
-      
-      // Allow validation, learning, and evaluation nodes to be saved as parent positions
-      // (they're independently draggable)
-      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact') {
-        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
-        return
-      }
-      
-      // Skip if this is a child node (has a parent) - these should not be saved
-      if (childToParentRef.current.has(node.id)) {
-        return
-      }
-      
-      // Only save positions for main parent nodes (step, conditional, loop, orchestrator, human_input, start, end)
-      if (node.type === 'step' ||
-          node.type === 'conditional' ||
-          node.type === 'human_input' ||
-          node.type === 'start' ||
-          node.type === 'end') {
-        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
-      }
-    })
-
-    // Also save offsets for child nodes relative to their parents
-    // Note: Sub-agents, validation, learning, and evaluation nodes are now saved as parent positions, not as offsets
-    // This ensures we can restore the exact layout the user had
-    const childOffsets: Record<string, { parentId: string; dx: number; dy: number }> = {}
-    nodesRef.current.forEach(node => {
-      // Skip sub-agents, validation, learning, and evaluation nodes (they're saved as parent positions now)
-      if (node.id.includes('-sub-agent-') || 
-          node.type === 'validation' || 
-          node.type === 'learning' || 
-          node.type === 'evaluation' ||
-          node.type === 'workflow-artifact') {
-        return
-      }
-      
-      const parentId = childToParentRef.current.get(node.id)
-      if (parentId) {
-        const parentNode = nodesRef.current.find(n => n.id === parentId)
-        if (parentNode) {
-          const offset = childOffsetsRef.current.get(node.id)
-          if (offset) {
-            childOffsets[node.id] = {
-              parentId,
-              dx: offset.dx,
-              dy: offset.dy
-            }
-          }
-        }
-      }
-    })
-
-    console.log('[WorkflowCanvas] Parent positions to save:', Object.keys(parentPositions).length, parentPositions)
-    console.log('[WorkflowCanvas] Child offsets to save:', Object.keys(childOffsets).length, childOffsets)
-    console.log('[WorkflowCanvas] Layout direction to save:', layoutDirection)
-
-    const layoutData = {
-      nodePositions: parentPositions,
-      childOffsets: childOffsets,
-      layoutDirection: layoutDirection,
-      version: '1.2',
-      savedAt: new Date().toISOString()
-    }
-
-    setIsSavingLayout(true)
-    try {
-      console.log('[WorkflowCanvas] Calling updatePlannerFile...', { layoutPath, dataSize: JSON.stringify(layoutData).length })
-      const response = await agentApi.updatePlannerFile(layoutPath, JSON.stringify(layoutData, null, 2), 'Save workflow layout')
-      console.log('[WorkflowCanvas] Save response:', response)
-      setHasUnsavedLayoutChanges(false)
-      console.log('[WorkflowCanvas] ✅ Saved layout to workspace:', Object.keys(parentPositions).length, 'node positions')
-    } catch (error) {
-      console.error('[WorkflowCanvas] ❌ Failed to save layout:', error)
-      alert(`Failed to save layout: ${error instanceof Error ? error.message : String(error)}`)
-      throw error
-    } finally {
-      setIsSavingLayout(false)
-    }
-  }, [getLayoutFilePath, workspacePath, layoutDirection])
-
-  // Delete layout file and reset to default (auto-layout)
-  const deleteLayout = React.useCallback(async (): Promise<void> => {
-    const layoutPath = getLayoutFilePath()
-    if (!layoutPath || !workspacePath) {
-      console.warn('[WorkflowCanvas] Cannot delete layout: no workspace path')
-      alert('Cannot delete layout: no workspace path')
-      return
-    }
-
-    console.log('[WorkflowCanvas] Deleting layout file...', { layoutPath, workspacePath })
-
-    setIsDeletingLayout(true)
-    try {
-      // Delete the layout file
-      await agentApi.deletePlannerFile(layoutPath, 'Reset workflow layout to default')
-      console.log('[WorkflowCanvas] ✅ Deleted layout file')
-      
-      // Clear unsaved changes flag
-      setHasUnsavedLayoutChanges(false)
-      
-      // Clear any saved layout state
-      // The layout will automatically use auto-layout on next refresh since the file is gone
-      
-      // Trigger a refresh to re-apply auto-layout
-      // This will happen naturally when the component re-renders or when nodes are updated
-      // We can force a refresh by clearing current positions and triggering a node update
-      currentPositionsRef.current.clear()
-      currentOffsetsRef.current.clear()
-      
-      // Force a re-layout by updating nodes (this will trigger auto-layout since no saved layout exists)
-      // The existing layout restoration logic will handle this automatically
-      console.log('[WorkflowCanvas] Layout reset - will use auto-layout on next render')
-    } catch (error: any) {
-      // 404 = file doesn't exist, which is fine (already reset)
-      if (error?.response?.status === 404 || error?.status === 404) {
-        console.log('[WorkflowCanvas] Layout file not found (already reset)')
-        setHasUnsavedLayoutChanges(false)
-        currentPositionsRef.current.clear()
-        currentOffsetsRef.current.clear()
-      } else {
-        console.error('[WorkflowCanvas] ❌ Failed to delete layout:', error)
-        throw error
-      }
-    } finally {
-      setIsDeletingLayout(false)
-    }
-  }, [getLayoutFilePath, workspacePath])
-
   // Variables state
   const [variablesManifest, setVariablesManifest] = React.useState<VariablesManifest | null>(null)
   const [isLoadingVariables, setIsLoadingVariables] = React.useState(false)
@@ -365,13 +200,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  // Get workspace minimized state to determine if StepSidebar should be compact
-  const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
-  
-  // Calculate if StepSidebar should be in compact mode (when both ChatArea and Workspace are open)
-  const isStepSidebarCompact = showChatArea && !workspaceMinimized
-  
-
   // Highlight execution folder in workspace when selectedRunFolder changes
   // This ensures workspace shows the correct group folder during multi-group execution
   const { highlightFile } = useWorkspaceStore()
@@ -412,7 +240,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         highlightFile(executionPath)
       })
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunFolder, workspacePath, highlightFile])
 
   // Load workflow data for the main canvas and append eval/output artifacts to it.
@@ -530,7 +357,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Callback for opening variables sidebar
   const handleOpenVariablesSidebar = useCallback(() => {
     setShowVariablesSidebar(true)
-    setSelectedNode(null) // Close step sidebar if open
   }, [])
 
   // Callback for when variables are updated
@@ -583,45 +409,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const currentStepId = useWorkflowStore(state => state.currentStepId)
   const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
 
-  const isExecuting = status === 'running'
-
-  // Refs for callbacks that need to be defined early
-  const handleRunFromStepRef = React.useRef<((stepIndex: number, stepId: string) => void) | null>(null)
-  const handleOpenSidebarRef = React.useRef<((nodeId: string) => void) | null>(null)
-  
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
-  const [selectedNode, setSelectedNode] = React.useState<WorkflowNode | null>(null)
-
-  // Multi-selection state for configuring multiple steps at once
-  const [selectedNodes, setSelectedNodes] = useState<WorkflowNode[]>([])
-
-  // Track Shift key for toggling between pan (default) and selection mode
-  const [isShiftPressed, setIsShiftPressed] = useState(false)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Shift') setIsShiftPressed(true) }
-    const handleKeyUp = (e: KeyboardEvent) => { if (e.key === 'Shift') setIsShiftPressed(false) }
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-    }
-  }, [])
-
   // Store latest nodes in ref to avoid dependency issues
   const nodesRef = React.useRef(nodes)
   React.useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
 
-  // Track unsaved layout changes
-  const [hasUnsavedLayoutChanges, setHasUnsavedLayoutChanges] = React.useState(false)
-  const [isSavingLayout, setIsSavingLayout] = React.useState(false)
-  const [isDeletingLayout, setIsDeletingLayout] = React.useState(false)
-  const saveLayoutTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
-  
   // Map of parent node ID to child node IDs (for grouped movement)
   const nodeGroupsRef = React.useRef<Map<string, string[]>>(new Map())
   
@@ -753,7 +549,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     })
 
     // Apply filtered changes
-    onNodesChangeBase(filteredChanges)
+    onNodesChangeBase(filteredChanges as NodeChange<WorkflowNode>[])
 
     // Check if any parent node position changed (including sub-agents, validation, learning, evaluation)
     const parentPositionChanges = new Map<string, { x: number; y: number }>()
@@ -847,17 +643,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       })
     }
 
-    // Mark as unsaved if ANY node moved (including standalone nodes)
-    // We already filtered out invalid moves in filteredChanges
-    const hasPositionChanges = filteredChanges.some(c => c.type === 'position')
-    if (hasPositionChanges) {
-      setHasUnsavedLayoutChanges(true)
-      
-      // Debounce save (will be saved manually via button, but track changes)
-      if (saveLayoutTimeoutRef.current) {
-        clearTimeout(saveLayoutTimeoutRef.current)
-      }
-    }
   }, [onNodesChangeBase, setNodes])
 
   // Single reusable function to focus/position a node at the top-left of the screen
@@ -865,13 +650,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     nodeId: string,
     options?: {
       topPadding?: number  // Vertical padding from top (default: 50)
-      selectNode?: boolean  // Whether to select the node (default: false)
       delay?: number  // Delay before positioning (default: 100ms)
     }
   ) => {
     const {
       topPadding = 50,
-      selectNode = false,
       delay = 100
     } = options || {}
 
@@ -888,97 +671,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           { duration: 500 }
         )
 
-        // Optionally select the node (opens sidebar)
-        // Use nodesRef.current to get the latest node data (updated when nodes change)
-        if (selectNode) {
-          // Use a function to get the latest node from current state
-          setSelectedNode(prev => {
-            const latestNode = nodesRef.current.find(n => n.id === nodeId) as WorkflowNode | undefined
-            // Only update if we found a node and it's different from current
-            if (latestNode && (!prev || prev.id !== latestNode.id)) {
-              return latestNode
-            }
-            // If node not found but we had a previous selection, keep it (might be a timing issue)
-            return prev || latestNode || null
-          })
-        }
       }
     }, delay)
   }, [getNode, setViewport])
 
-  // Handle opening sidebar for a node
-  const handleOpenSidebar = useCallback(async (nodeId: string) => {
-    setShowVariablesSidebar(false) // Close variables sidebar if open
-    
-    // First, try to find and select the node immediately (before refresh)
-    const currentNode = nodesRef.current.find(n => n.id === nodeId)
-    if (currentNode) {
-      setSelectedNode(currentNode)
-    }
-    
-    // For sub-agent nodes, extract the step ID to find the node after refresh
-    let stepIdToFind: string | undefined
-    if (currentNode && currentNode.type === 'step') {
-      const stepData = currentNode.data as StepNodeData
-      stepIdToFind = stepData?.step?.id
-    }
-    
-    // Refresh plan.json from API to ensure we have the latest data before opening sidebar
-    try {
-      await loadPlanRefresh()
-    } catch (error) {
-      console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
-    }
-    
-    // After refresh, ensure the node is still selected
-    setTimeout(() => {
-      // Try to find by node ID first
-      let updatedNode = nodesRef.current.find(n => n.id === nodeId)
-      
-      // If not found and we have a step ID, try finding by step ID (for sub-agents)
-      if (!updatedNode && stepIdToFind) {
-        updatedNode = nodesRef.current.find(n => {
-          if (n.type === 'step') {
-            const stepData = n.data as StepNodeData
-            return stepData?.step?.id === stepIdToFind
-          }
-          return false
-        }) as WorkflowNode | undefined
-      }
-      
-      if (updatedNode) {
-        setSelectedNode(updatedNode)
-        focusNode(updatedNode.id, { topPadding: 150, selectNode: false, delay: 0 })
-      } else {
-        // Fallback: try to focus on original nodeId anyway
-        focusNode(nodeId, { topPadding: 150, selectNode: false, delay: 0 })
-      }
-    }, 200)
-  }, [focusNode, loadPlanRefresh])
-
   // Handle navigating to a step from legend (without opening sidebar)
   const handleNavigateToStep = useCallback((nodeId: string) => {
-    focusNode(nodeId, { topPadding: 150, selectNode: false, delay: 100 })
+    focusNode(nodeId, { topPadding: 150, delay: 100 })
     console.log('[WorkflowCanvas] Navigated to step from legend:', nodeId)
   }, [focusNode])
-
-  // Store handleOpenSidebar in ref for early access
-  React.useEffect(() => {
-    handleOpenSidebarRef.current = handleOpenSidebar
-  }, [handleOpenSidebar])
-
-  // Memoize callbacks to prevent usePlanToFlow from recalculating on every render
-  const handleRunFromStepCallback = useCallback((stepIndex: number, stepId: string) => {
-    if (handleRunFromStepRef.current) {
-      handleRunFromStepRef.current(stepIndex, stepId)
-    }
-  }, [])
-
-  const handleOpenSidebarCallback = useCallback((nodeId: string) => {
-    if (handleOpenSidebarRef.current) {
-      handleOpenSidebarRef.current(nodeId)
-    }
-  }, [])
 
   // Stabilize stepStatusMap by serializing it - Maps are compared by reference, so we need to serialize
   // to detect actual content changes. This prevents unnecessary recalculations in usePlanToFlow.
@@ -994,9 +695,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const planFlow = usePlanToFlow(plan, {
     changes,  // Pass changes to highlight modified nodes
-    onRunFromStep: handleRunFromStepCallback,
-    onOpenSidebar: handleOpenSidebarCallback,
-    isExecuting,
     stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder: selectedRunFolder ?? undefined,  // Pass selected run folder for file opening (convert null to undefined)
@@ -1041,13 +739,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
     ]
 
-    const artifactBaseX = layoutDirection === 'LR' ? endNode.position.x + 220 : endNode.position.x
-    const artifactBaseY = layoutDirection === 'TB' ? endNode.position.y + 170 : endNode.position.y
+    const artifactBaseX = endNode.position.x
+    const artifactBaseY = endNode.position.y + 170
 
     addonConfigs.forEach((config, index) => {
-      const position = layoutDirection === 'LR'
-        ? { x: artifactBaseX, y: artifactBaseY + (index * 150) - 75 }
-        : { x: artifactBaseX + (index * 260) - 130, y: artifactBaseY }
+      const position = { x: artifactBaseX + (index * 260) - 130, y: artifactBaseY }
 
       nodes.push({
         id: config.id,
@@ -1071,7 +767,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     })
 
     return { nodes, edges }
-  }, [planFlow, evaluationPlan, outputPlan, layoutDirection])
+  }, [planFlow, evaluationPlan, outputPlan])
 
   const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
 
@@ -1093,7 +789,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       console.log('[WorkflowCanvas] highlightStepNode found node:', nodeToFocus.id)
       // Focus viewport on the node but don't select it (don't open sidebar)
       // User can manually open sidebar if needed
-      focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
+      focusNode(nodeToFocus.id, { topPadding: 150, delay: 100 })
     } else {
       console.log('[WorkflowCanvas] highlightStepNode - no node found for stepId:', stepId)
     }
@@ -1101,46 +797,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Auto-focus disabled - running step name is now shown in StepLegend instead
   // This prevents the canvas from jumping around during workflow execution
-
-  // Handle "run from step" button click on nodes - runs only the single step
-  // Uses workflow store directly for execution options (single source of truth)
-  const handleRunFromStep = useCallback((stepIndex: number, stepId: string) => {
-    // Find the node that matches this stepId
-    // The node ID might be stepId, or it might be step-${stepIndex} if stepId doesn't exist
-    // We need to find the node by matching step.id in the node data
-    const nodeToFocus = nodesRef.current.find(node => {
-      if (node.type === 'step' || node.type === 'conditional') {
-        const nodeData = node.data as StepNodeData | ConditionalNodeData
-        const nodeStepId = nodeData?.step?.id || node.id
-        // Match by stepId or by stepIndex if stepId matches
-        return nodeStepId === stepId || (nodeData?.stepIndex === stepIndex && node.id === stepId)
-      }
-      return false
-    })
-
-    if (nodeToFocus) {
-      // Position viewport to show step at top-left (but don't open sidebar)
-      focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
-    }
-
-    if (onStartPhase) {
-      // Create execution options to run only this single step
-      // Use buildExecutionOptions so execution starts with the current workflow store settings.
-      const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
-      const baseOptions = buildExecutionOptions()
-      const executionOptions: ExecutionOptions = {
-        ...baseOptions,  // Include all flags from buildExecutionOptions
-        execution_strategy: 'run_single_step',
-        resume_from_step: stepIndex + 1  // 1-based step number (target step)
-      }
-      onStartPhase('execution', executionOptions)
-    }
-  }, [onStartPhase, focusNode])
-
-  // Store handleRunFromStep in ref for early access
-  React.useEffect(() => {
-    handleRunFromStepRef.current = handleRunFromStep
-  }, [handleRunFromStep])
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -1214,32 +870,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Track previous nodes/edges to detect actual changes
   const prevNodesRef = React.useRef<typeof initialNodes>([])
   const prevEdgesRef = React.useRef<typeof initialEdges>([])
-  // Track previous layout direction to skip position restoration when direction changes
-  const prevLayoutDirectionRef = React.useRef(layoutDirection)
-  
   // CRITICAL: Force header nodes to correct positions after nodes update
   // Ensure header nodes maintain correct positions (safety net in case something tries to override them)
   React.useEffect(() => {
     if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
     if (nodes.length === 0 || initialNodes.length === 0) return
     
-    const execNode = initialNodes.find(n => n.id === 'execution-settings')
     const varsNode = initialNodes.find(n => n.id === 'variables')
     const startNode = initialNodes.find(n => n.id === 'start')
     
-    if (!execNode && !varsNode && !startNode) return
+    if (!varsNode && !startNode) return
     
     // Check if any header node position has been overridden
-    const currentExec = nodes.find(n => n.id === 'execution-settings')
     const currentVars = nodes.find(n => n.id === 'variables')
     const currentStart = nodes.find(n => n.id === 'start')
     
     let needsFix = false
     
-    if (execNode && currentExec && 
-        (currentExec.position.x !== execNode.position.x || currentExec.position.y !== execNode.position.y)) {
-      needsFix = true
-    }
     if (varsNode && currentVars && 
         (currentVars.position.x !== varsNode.position.x || currentVars.position.y !== varsNode.position.y)) {
       needsFix = true
@@ -1251,19 +898,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     if (needsFix) {
       // Use updateNode API to restore correct positions
-      if (execNode) updateNode('execution-settings', { position: execNode.position })
       if (varsNode) updateNode('variables', { position: varsNode.position })
       if (startNode) updateNode('start', { position: startNode.position })
     }
-  }, [nodes, initialNodes, updateNode])
+  }, [nodes, initialNodes, updateNode, toolbarOnly, canvasViewMode])
 
   // Rebuild node groups when nodes change
+  React.useEffect(() => {
+    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    hasInitializedView.current = false
+  }, [canvasViewMode, toolbarOnly])
+
   React.useEffect(() => {
     if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
     if (nodes.length > 0) {
       buildNodeGroups(nodes)
     }
-  }, [nodes, buildNodeGroups, toolbarOnly])
+  }, [nodes, buildNodeGroups, toolbarOnly, canvasViewMode])
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
@@ -1339,34 +990,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Nodes changed - will apply positions from usePlanToFlow
       console.log(`%c[WorkflowCanvas] setNodes: ${initialNodes.length} nodes (preset: ${presetQueryId?.slice(0,8)})`, 'color: #4CAF50')
       console.time(`[WorkflowCanvas] setNodes-${presetQueryId?.slice(0,8)}`)
-
-      // Check if we have a selected node - if so, preserve focus on it instead of resetting to start
-      const currentSelectedId = selectedNodeIdRef.current
-      const hasSelectedNode = currentSelectedId !== null &&
-        initialNodes.some(n => n.id === currentSelectedId)
-
       setNodes(initialNodes)
-
-      // Check if layout direction changed - if so, skip position restoration
-      // to allow the new auto-layout to take effect
-      const layoutDirectionChanged = prevLayoutDirectionRef.current !== layoutDirection
-      if (layoutDirectionChanged) {
-        prevLayoutDirectionRef.current = layoutDirection
-        // Clear saved positions so the new layout is used
-        currentPositionsRef.current.clear()
-        currentOffsetsRef.current.clear()
-        // Mark as having unsaved changes since positions changed
-        setHasUnsavedLayoutChanges(true)
-      }
 
       // Always try to restore positions after nodes regenerate (unless layout direction changed)
       // Priority: 1) Saved layout from file, 2) Current positions (captured before refresh), 3) Auto-layout
-      if (initialNodes.length > 0 && !layoutDirectionChanged) {
+      if (initialNodes.length > 0) {
         // Extract header node positions from initialNodes BEFORE any restoration
         // These positions are calculated by usePlanToFlow and MUST be preserved
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+          if (node.id === 'start' || node.id === 'variables') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -1374,13 +1007,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         
         // First try to load saved layout from file
         loadSavedLayout().then(savedLayout => {
-          // If saved layout has a different direction, update store and bail out to let re-render handle it
-          if (savedLayout?.layoutDirection && savedLayout.layoutDirection !== layoutDirection) {
-            console.log('[WorkflowCanvas] 🔄 Restoring saved layout direction:', savedLayout.layoutDirection)
-            setLayoutDirection(savedLayout.layoutDirection)
-            return
-          }
-
           // Use saved layout if available, otherwise use current positions (captured before refresh)
           const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0
             ? savedLayout.positions
@@ -1397,9 +1023,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 
                 // Header nodes are skipped from restoration (will be forced to correct positions later)
 
-                // Apply saved position unless it's a header node (start, execution-settings, variables)
+                // Apply saved position unless it's a header node (start, variables)
                 // Header nodes MUST always use the enforced horizontal layout from usePlanToFlow
-                if (savedPos && node.id !== 'start' && node.id !== 'execution-settings' && node.id !== 'variables') {
+                if (savedPos && node.id !== 'start' && node.id !== 'variables') {
                   return { ...node, position: savedPos }
                 }
                 return node
@@ -1531,8 +1157,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 
                 // Header nodes are skipped from restoration (will be forced to correct positions later)
 
-                // Apply saved position unless it's a header node (start, execution-settings, variables)
-                if (savedPos && node.id !== 'start' && node.id !== 'execution-settings' && node.id !== 'variables') {
+                // Apply saved position unless it's a header node (start, variables)
+                if (savedPos && node.id !== 'start' && node.id !== 'variables') {
                   return { ...node, position: savedPos }
                 }
                 return node
@@ -1558,7 +1184,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // No saved layout or layout direction changed - ensure header nodes have correct positions from usePlanToFlow
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+          if (node.id === 'start' || node.id === 'variables') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -1580,11 +1206,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         }
       }
       
-      // Only reset view initialization flag if we don't have a selected node
-      // If we have a selected node, we'll re-focus on it after nodes update
-      if (!hasSelectedNode) {
-        hasInitializedView.current = false
-      }
+      hasInitializedView.current = false
       
       prevNodesRef.current = initialNodes
       
@@ -1619,7 +1241,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           
           if (nodeToFocus) {
             // Focus on the changed step (position viewport, but don't open sidebar)
-            focusNodeFn(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 0 })
+            focusNodeFn(nodeToFocus.id, { topPadding: 150, delay: 0 })
             const nodeData = nodeToFocus.data as StepNodeData | ConditionalNodeData
             console.log('[WorkflowCanvas] Auto-focused on step that was changed by backend:', {
               stepId: stepIdToFocus,
@@ -1658,150 +1280,26 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       prevEdgesRef.current = initialEdges
     }
 
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, setLayoutDirection, updateNode, presetQueryId])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, updateNode, presetQueryId, toolbarOnly, canvasViewMode])
 
-  // Store selected node ID in ref to track which node is selected
-  const selectedNodeIdRef = React.useRef<string | null>(null)
+  // Fit the full plan on first render so the workflow shape is visible by default.
   React.useEffect(() => {
-    if (selectedNode) {
-      selectedNodeIdRef.current = selectedNode.id
-    } else {
-      selectedNodeIdRef.current = null
-    }
-  }, [selectedNode])
-
-  // Update selectedNode when nodes change (e.g., when plan is refreshed from backend)
-  // This ensures the side panel shows updated step data when plan changes
-  // Also re-focuses on the selected node after nodes update (e.g., after saving step config)
-  React.useEffect(() => {
-    const selectedId = selectedNodeIdRef.current
-
-    if (!selectedId || nodes.length === 0) {
-      return
-    }
-
-    // Find the corresponding node in the new nodes array by ID
-    const updatedNode = nodes.find(n => n.id === selectedId) as WorkflowNode | undefined
-    if (!updatedNode) {
-      // Selected node no longer exists (was deleted)
-      setSelectedNode(null)
-      // Reset view initialization since selected node is gone
-      hasInitializedView.current = false
-      return
-    }
-
-    // Check if we need to update selectedNode by comparing with current selection
-    // Use a ref to get the current selectedNode without causing dependency issues
-    const currentSelected = selectedNode
-    if (!currentSelected || currentSelected.id !== selectedId) {
-      // Selection changed or was cleared - don't update
-      return
-    }
-
-    // Compare step data to see if it changed
-    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | undefined
-    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | undefined
-    const oldStep = oldData?.step
-    const newStep = newData?.step
-
-    let shouldUpdate = false
-    if (oldStep && newStep) {
-      // Compare by JSON stringify to detect any changes
-      const oldStepStr = JSON.stringify(oldStep)
-      const newStepStr = JSON.stringify(newStep)
-      if (oldStepStr !== newStepStr) {
-        shouldUpdate = true
-      }
-    } else if (updatedNode !== currentSelected) {
-      // Node structure changed (e.g., type changed)
-      shouldUpdate = true
-    }
-
-    if (shouldUpdate) {
-      setSelectedNode(updatedNode)
-      // Re-focus on the selected node after update (e.g., after saving step config)
-      // This ensures the view stays focused on the same step when the sidebar is closed
-      setTimeout(() => {
-        focusNode(selectedId, { topPadding: 150, selectNode: false, delay: 0 })
-      }, 100)
-    }
-  }, [nodes, selectedNode, focusNode]) // Include focusNode in dependencies
-
-  // Load saved viewport from localStorage
-  const savedViewportRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
-  React.useEffect(() => {
-    try {
-      const storageKey = getViewportStorageKey()
-      const saved = localStorage.getItem(storageKey)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' && typeof parsed.zoom === 'number') {
-          savedViewportRef.current = { x: parsed.x, y: parsed.y, zoom: parsed.zoom }
-        }
-      }
-    } catch (error) {
-      console.error('[WorkflowCanvas] Failed to load viewport from localStorage:', error)
-    }
-  }, [getViewportStorageKey])
-
-  // Set initial view to show start node (left side) on first load, or restore saved viewport
-  React.useEffect(() => {
-    if (toolbarOnly || canvasViewMode === 'plan') return // Skip when canvas is hidden
+    if (toolbarOnly || canvasViewMode === 'plan') return
     if (!hasInitializedView.current && nodes.length > 0) {
-      // If we have a saved viewport, use it instead of positioning on start node
-      if (savedViewportRef.current) {
-        setTimeout(() => {
-          setViewport({
-            x: savedViewportRef.current!.x,
-            y: savedViewportRef.current!.y,
-            zoom: savedViewportRef.current!.zoom
+      const fitTimer = window.setTimeout(() => {
+        window.requestAnimationFrame(() => {
+          Promise.resolve(
+            fitView({ padding: 0.18, duration: 350, minZoom: 0.15, maxZoom: 1.1 })
+          ).finally(() => {
+            viewportStateRef.current = getViewport()
+            hasInitializedView.current = true
           })
-          viewportStateRef.current = savedViewportRef.current
-          hasInitializedView.current = true
-        }, 200)
-        return
-      }
+        })
+      }, 220)
 
-      // Otherwise, position on start node (default behavior)
-      const startNode = nodes.find(node => node.id === 'start')
-      if (startNode) {
-        // Use a small timeout to ensure React Flow has rendered and layout is complete
-        setTimeout(() => {
-          // Get the actual node position from React Flow (includes layout calculations)
-          const flowNode = getNode('start')
-          if (flowNode) {
-            // Calculate viewport to show start node on the left side
-            // In React Flow, viewport x/y are offsets from the origin
-            // To show the start node on the left with padding:
-            // - x: negative of node's x position + padding (moves viewport left to show node)
-            // - y: center vertically on the start node
-            const padding = 150 // Padding from left edge
-            const canvasHeight = window.innerHeight || 800
-            const viewportX = padding - flowNode.position.x
-            const viewportY = (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 36) / 2)
-            setViewport({ x: viewportX, y: viewportY, zoom: 0.9 })
-            // Update viewport ref to match
-            viewportStateRef.current = { x: viewportX, y: viewportY, zoom: 0.9 }
-            hasInitializedView.current = true
-            console.log('[WorkflowCanvas] Initial viewport set to show start node:', { viewportX, viewportY, nodePosition: flowNode.position })
-          } else {
-            // Fallback: use node position directly with simple calculation
-            const padding = 150
-            const canvasHeight = window.innerHeight || 800
-            const viewportX = padding - startNode.position.x
-            const viewportY = (canvasHeight / 2) - startNode.position.y
-            setViewport({ x: viewportX, y: viewportY, zoom: 0.9 })
-            // Update viewport ref to match
-            viewportStateRef.current = { x: viewportX, y: viewportY, zoom: 0.9 }
-            hasInitializedView.current = true
-            console.log('[WorkflowCanvas] Initial viewport set (fallback) to show start node:', { viewportX, viewportY, nodePosition: startNode.position })
-          }
-        }, 200) // Slightly longer timeout to ensure layout is complete
-      } else {
-        console.warn('[WorkflowCanvas] Start node not found in nodes:', nodes.map(n => n.id))
-      }
+      return () => window.clearTimeout(fitTimer)
     }
-  }, [nodes, setViewport, getNode])
+  }, [nodes, fitView, getViewport, toolbarOnly, canvasViewMode])
 
   // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
@@ -1862,48 +1360,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     // Update previous status map (for tracking changes)
     prevStepStatusMapRef.current = new Map(stepStatusMap)
-  }, [stepStatusMap, setNodes])
+  }, [stepStatusMap, setNodes, toolbarOnly, canvasViewMode])
 
 
-  // Handle node selection - disabled: nodes no longer open sidebar on click
-  // Sidebar is now opened via settings icon button on nodes
-  const onNodeClick = useCallback(() => {
-    // Do nothing - clicking nodes no longer opens sidebar
-    // Sidebar is opened via settings icon button instead
-  }, [])
-
-  // Handle node deselection
-  const onPaneClick = useCallback(() => {
-    setSelectedNode(null)
-    setSelectedNodes([])
-  }, [])
-
-  // Handle multi-selection changes from React Flow
-  const onSelectionChange = useCallback(({ nodes: selectedFlowNodes }: OnSelectionChangeParams) => {
-    // Filter to only include configurable step nodes
-    const configurableTypes = ['step', 'conditional', 'todo_task', 'human_input']
-    const stepNodes = selectedFlowNodes.filter(n =>
-      configurableTypes.includes(n.type || '')
-    ) as WorkflowNode[]
-    setSelectedNodes(stepNodes)
-
-    // If exactly one node is selected, also update selectedNode for sidebar compatibility
-    if (stepNodes.length === 1) {
-      setSelectedNode(stepNodes[0])
-    } else {
-      // Non-configurable or multiple selection - clear single selection
-      setSelectedNode(null)
-    }
-  }, [])
-
-  // Extract step IDs from selected nodes for multi-step configuration
-  const selectedStepIds = React.useMemo(() => {
-    return selectedNodes.map(node => {
-      // Get step ID from node data if available, otherwise use node ID
-      const data = node.data as StepNodeData | ConditionalNodeData | undefined
-      return data?.step?.id || node.id
-    })
-  }, [selectedNodes])
+  const onNodeClick = useCallback(() => {}, [])
+  const onPaneClick = useCallback(() => {}, [])
 
   // Handle start phase with execution options (for toolbar)
   const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
@@ -1911,200 +1372,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       onStartPhase(phaseId, executionOptions)
     }
   }, [onStartPhase])
-
-  // Handle start phase with stepId or ExecutionOptions (for StepSidebar) - adapter function
-  // Note: stepId is already stored in workflow status by StepSidebar before calling this
-  const handleStartPhaseForStep: StepSidebarStartPhase = useCallback((phaseId: string, stepIdOrOptions?: string | ExecutionOptions) => {
-    // If ExecutionOptions is provided, pass it directly
-    if (stepIdOrOptions && typeof stepIdOrOptions === 'object' && 'execution_strategy' in stepIdOrOptions) {
-      const options = stepIdOrOptions as ExecutionOptions
-      // If running a single step, try to highlight the node
-      if (options.resume_from_step && selectedNode) {
-        // Highlight the currently selected node (which is the step being run)
-        highlightStepNode(selectedNode.id)
-      }
-      if (onStartPhase) {
-        onStartPhase(phaseId, options)
-      }
-      return
-    }
-    
-    // Otherwise, handle as stepId (string)
-    const stepId = stepIdOrOptions as string | undefined
-    // Highlight the step node if stepId is provided
-    if (stepId) {
-      highlightStepNode(stepId)
-    }
-    
-    // Just trigger the phase start without execution options
-    if (onStartPhase) {
-      onStartPhase(phaseId, undefined)
-    }
-  }, [onStartPhase, highlightStepNode, selectedNode])
-
-  // Get total step count
-  const totalSteps = plan?.steps?.length || 0
-
-
-  // Handle edit step
-  const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep> | Partial<EvaluationStep>) => {
-    if (!plan) return
-    
-    // Capture current node positions before refresh to preserve layout
-    const positions = new Map<string, { x: number; y: number }>()
-    const offsets = new Map<string, { parentId: string; dx: number; dy: number }>()
-    nodesRef.current.forEach(node => {
-      // Save parent node positions
-      if (!childToParentRef.current.has(node.id)) {
-        positions.set(node.id, { x: node.position.x, y: node.position.y })
-      } else {
-        // Save child offsets
-        const parentId = childToParentRef.current.get(node.id)
-        const offset = childOffsetsRef.current.get(node.id)
-        if (parentId && offset) {
-          offsets.set(node.id, {
-            parentId,
-            dx: offset.dx,
-            dy: offset.dy
-          })
-        }
-      }
-    })
-    currentPositionsRef.current = positions
-    currentOffsetsRef.current = offsets
-    console.log('[WorkflowCanvas] Captured current positions before save:', positions.size, 'positions', offsets.size, 'offsets')
-    
-    // First try to find in top-level steps (for backward compatibility)
-    const stepIndex = plan.steps.findIndex(s => s.id === stepId)
-    
-    console.log('[WorkflowCanvas] handleEditStep:', {
-      stepId,
-      stepIndex,
-      foundStep: stepIndex >= 0,
-      stepTitle: stepIndex >= 0 ? plan.steps[stepIndex]?.title : 'N/A',
-      stepHasCondition: stepIndex >= 0 ? (plan.steps[stepIndex] ? isConditionalStep(plan.steps[stepIndex]) : false) : false,
-      hasAgentConfigs: 'agent_configs' in updates,
-      updatesKeys: Object.keys(updates),
-      isBranchStep: stepIndex < 0
-    })
-    
-    if (stepIndex >= 0) {
-      // Top-level step - use existing updateStep function
-      const foundStep = plan.steps[stepIndex]
-      if (foundStep.id !== stepId) {
-        console.error('[WorkflowCanvas] Step ID mismatch!', {
-          requestedStepId: stepId,
-          foundStepId: foundStep.id,
-          stepIndex,
-          foundStepTitle: foundStep.title,
-          foundStepHasCondition: isConditionalStep(foundStep)
-        })
-        throw new Error(`Step ID mismatch: requested ${stepId} but found ${foundStep.id} at index ${stepIndex}`)
-      }
-      
-      await planData.updateStep(stepIndex, updates)
-      
-      // Highlight the step node after saving config
-      highlightStepNode(stepId)
-    } else {
-      // Branch step - use backend API (handles nested steps recursively)
-      if (!workspacePath) {
-        throw new Error('Workspace path is required')
-      }
-
-      // Separate plan updates and config updates
-      const { agent_configs, ...planUpdates } = updates
-
-      // Send update instructions to backend
-      const promises: Promise<{ success: boolean; message: string; data?: unknown }>[] = []
-
-      // Update plan if there are plan-related fields
-      if (Object.keys(planUpdates).length > 0) {
-        promises.push(
-          agentApi.updatePlanStep(workspacePath, stepId, planUpdates)
-        )
-      }
-
-      // Update config if agent_configs is provided
-      if (agent_configs !== undefined) {
-        promises.push(
-          agentApi.updateStepConfig(workspacePath, stepId, agent_configs)
-        )
-      }
-
-      // Wait for all updates to complete
-      await Promise.all(promises)
-
-      // Refresh plan from backend
-      await loadPlanRefresh()
-
-      // Highlight the step node after saving
-      highlightStepNode(stepId)
-    }
-  }, [plan, workspacePath, planData, highlightStepNode, loadPlanRefresh])
-
-  // Handle delete step
-  const handleDeleteStep = useCallback(async (stepId: string) => {
-    if (!plan) return
-    
-    const stepIndex = plan.steps.findIndex(s => s.id === stepId)
-    if (stepIndex >= 0) {
-      await planData.deleteStep(stepIndex)
-      setSelectedNode(null)
-    }
-  }, [plan, planData])
-
-  // Handle bulk update steps
-  const handleBulkUpdateSteps = useCallback(async (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => {
-    if (!plan || !workspacePath) {
-      throw new Error('No plan loaded or workspace path missing')
-    }
-
-    console.log('[WorkflowCanvas] handleBulkUpdateSteps:', {
-      updateCount: updates.length,
-      stepIds: updates.map(u => u.stepId)
-    })
-
-    // Prepare batch update request
-    const batchUpdates = updates.map(({ stepId, updates: stepUpdates }) => {
-      const { agent_configs, ...planUpdates } = stepUpdates
-      return {
-        stepId,
-        planUpdates: Object.keys(planUpdates).length > 0 ? planUpdates : undefined,
-        configUpdates: agent_configs !== undefined ? agent_configs : undefined
-      }
-    }).filter(u => u.planUpdates !== undefined || u.configUpdates !== undefined)
-
-    if (batchUpdates.length === 0) {
-      console.log('[WorkflowCanvas] No updates to apply in bulk update')
-      return
-    }
-
-    // Call backend batch update API
-    const result = await agentApi.batchUpdateSteps(workspacePath, batchUpdates)
-
-    // Log errors if any occurred
-    if (result.data?.errors && result.data.errors.length > 0) {
-      console.warn('[WorkflowCanvas] Batch update completed with errors:', {
-        updatedSteps: result.data.updated_steps,
-        updatedConfigs: result.data.updated_configs,
-        errors: result.data.errors
-      })
-      // Optionally show error notification to user
-      // You could add a toast notification here if needed
-    } else {
-      console.log('[WorkflowCanvas] Bulk update completed:', {
-        updatedSteps: result.data?.updated_steps || 0,
-        updatedConfigs: result.data?.updated_configs || 0
-      })
-    }
-
-    // Refresh plan from backend
-    await loadPlanRefresh()
-  }, [plan, workspacePath, loadPlanRefresh])
-
-
-  // Handle toggle dependency edges
 
   // Unified loading state - wait for ALL data before showing canvas
   // This ensures consistent state: plan, step_config, run folders, variables, phases, progress
@@ -2183,8 +1450,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
-      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'xl:contents' : ''}`}>
-        <div className={sharedToolbar && showChatArea ? 'xl:col-span-2 xl:row-start-1' : ''}>
+      <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`}>
+        <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
           <WorkflowToolbar
             status={status}
             hasPlan={false}
@@ -2201,7 +1468,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             onRefresh={handleRefresh}
           />
         </div>
-        <div className={`${sharedToolbar && showChatArea ? 'flex-1 xl:col-start-2 xl:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
+        <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 items-center justify-center`}>
           <div className="flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
               <span className="text-3xl">📋</span>
@@ -2229,8 +1496,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   return (
-    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'xl:contents' : ''}`} ref={reactFlowWrapper}>
-      <div className={sharedToolbar && showChatArea ? 'xl:col-span-2 xl:row-start-1' : ''}>
+    <div className={`flex flex-col h-full ${className} ${sharedToolbar && showChatArea ? 'md:contents' : ''}`} ref={reactFlowWrapper}>
+      <div className={sharedToolbar && showChatArea ? 'md:col-span-2 md:row-start-1' : ''}>
         <WorkflowToolbar
           status={status}
           hasPlan={true}
@@ -2242,21 +1509,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           variablesManifest={variablesManifest}
           isLoadingWorkspaceState={isLoadingWorkspaceState}
           onStartPhase={handleStartPhase}
-          onBulkUpdateSteps={handleBulkUpdateSteps}
           onCreatePlan={onCreatePlan || (() => {})}
           showChatArea={showChatArea}
           onToggleChatArea={onToggleChatArea}
           onRefresh={handleRefresh}
-          onSaveLayout={saveLayout}
-          onDeleteLayout={deleteLayout}
-          hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
-          isSavingLayout={isSavingLayout}
-          isDeletingLayout={isDeletingLayout}
-          selectedStepIds={selectedStepIds}
         />
       </div>
 
-      <div className={`${sharedToolbar && showChatArea ? 'flex-1 xl:col-start-2 xl:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
+      <div className={`${sharedToolbar && showChatArea ? 'flex-1 md:col-start-2 md:row-start-2' : 'flex-1'} ${paneClassName} min-h-0`}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : canvasViewMode === 'plan' ? (
           <div className="h-full min-h-0 relative">
@@ -2277,15 +1537,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             {workspacePath && <ReportView workspacePath={workspacePath} mobilePreview={showChatArea} />}
           </div>
         ) : <div className="h-full min-h-0 relative flex">
-          <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
-            selectedNode
-              ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]')
-              : selectedStepIds.length >= 2
-                ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[500px]')
-                : showVariablesSidebar
-                  ? 'mr-[450px]'
-                  : ''
-          }`}>
+          <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''}`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"
           style={{ width: '100%', height: '100%' }}
@@ -2295,20 +1547,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
-          onSelectionChange={onSelectionChange}
-          multiSelectionKeyCode={["Shift", "Control", "Meta"]}
-          selectionOnDrag={isShiftPressed}
-          panOnDrag={!isShiftPressed}
+          panOnDrag
           panOnScroll
-          selectionKeyCode="Shift"
-          selectionMode={SelectionMode.Partial}
-          // PERF: Only render nodes visible in the viewport (React Flow virtualization).
-          // Reduces SVG node count significantly for large workflows.
-          onlyRenderVisibleElements
+          nodesDraggable={false}
+          nodesConnectable={false}
+          nodesFocusable={false}
+          elementsSelectable={false}
+          edgesFocusable={false}
+          onlyRenderVisibleElements={false}
           onViewportChange={onViewportChange}
           nodeTypes={nodeTypes}
           fitView={false}
-          fitViewOptions={{ padding: 0.1, minZoom: 1.0, maxZoom: 1.5 }}
+          fitViewOptions={{ padding: 0.18, minZoom: 0.15, maxZoom: 1.1 }}
           minZoom={0.1}
           maxZoom={2}
           defaultViewport={{ x: 100, y: 0, zoom: 0.9 }}
@@ -2331,7 +1581,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           <StepLegend
             plan={plan}
             nodes={nodes}
-            selectedNodeId={selectedNode?.id || null}
+            selectedNodeId={null}
             onStepClick={handleNavigateToStep}
             workspacePath={workspacePath}
             currentStepId={currentStepId}
@@ -2348,78 +1598,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           >
             <RefreshCw className="w-3 h-3" />
           </button>
-          {/* Layout direction */}
-          <button
-            onClick={() => {
-              const next = layoutDirection === 'LR' ? 'TB' : 'LR'
-              setLayoutDirection(next)
-            }}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title={layoutDirection === 'LR' ? 'Horizontal (click for vertical)' : 'Vertical (click for horizontal)'}
-          >
-            {layoutDirection === 'LR' ? <ArrowRight className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-          </button>
-          {/* Save layout */}
-          <button
-            onClick={() => saveLayout()}
-            disabled={isSavingLayout}
-            className={`p-1 rounded transition-colors ${
-              isSavingLayout ? 'text-muted-foreground cursor-not-allowed'
-                : hasUnsavedLayoutChanges ? 'text-blue-500 hover:bg-blue-500/10 animate-pulse'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            }`}
-            title={isSavingLayout ? 'Saving...' : hasUnsavedLayoutChanges ? 'Save layout (unsaved)' : 'Save layout'}
-          >
-            {isSavingLayout ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-          </button>
-          {/* Reset layout */}
-          <button
-            onClick={() => {
-              if (window.confirm('Reset layout to default? This cannot be undone.')) {
-                deleteLayout()
-              }
-            }}
-            disabled={isDeletingLayout}
-            className={`p-1 rounded transition-colors ${
-              isDeletingLayout ? 'text-muted-foreground cursor-not-allowed'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            }`}
-            title={isDeletingLayout ? 'Resetting...' : 'Reset layout'}
-          >
-            {isDeletingLayout ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-          </button>
         </div>
         </div>
-
-        {/* Step Sidebar - Single step selected */}
-        {selectedNode && (
-          <StepSidebar
-            node={selectedNode}
-            onClose={() => setSelectedNode(null)}
-            onEditStep={handleEditStep}
-            onDeleteStep={handleDeleteStep}
-            isRunning={status === 'running'}
-            stepIndex={'stepIndex' in selectedNode.data && typeof selectedNode.data.stepIndex === 'number' ? selectedNode.data.stepIndex : 0}
-            workspacePath={workspacePath}
-            presetQueryId={presetQueryId}
-            onStartPhase={handleStartPhaseForStep}
-            plan={plan}
-            isCompact={isStepSidebarCompact}
-            showChatArea={showChatArea}
-          />
-        )}
-
-        {/* Multi-Step Sidebar - Multiple steps selected */}
-        {!selectedNode && selectedStepIds.length >= 2 && handleBulkUpdateSteps && (
-          <MultiStepSidebar
-            selectedStepIds={selectedStepIds}
-            plan={plan || null}
-            onClose={() => setSelectedNodes([])}
-            onBulkUpdate={handleBulkUpdateSteps}
-            isCompact={isStepSidebarCompact}
-            showChatArea={showChatArea}
-          />
-        )}
 
         {/* Variables Sidebar */}
         {showVariablesSidebar && (

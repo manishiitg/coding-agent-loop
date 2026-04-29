@@ -1,20 +1,17 @@
 import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
-import type { ExecutionSettingsNodeData } from '../nodes/ExecutionSettingsNode'
 import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
 
-// Callback type for running from a specific step
-export type OnRunFromStepCallback = (stepIndex: number, stepId: string) => void
-
-// Callback type for opening the sidebar for a specific node
-export type OnOpenSidebarCallback = (nodeId: string) => void
+const ROUTE_EDGE_LABEL_STYLE = { fill: 'hsl(var(--muted-foreground))', fontWeight: 500, fontSize: 10 }
+const COMPLETION_EDGE_LABEL_STYLE = { fill: 'hsl(var(--primary))', fontWeight: 600, fontSize: 11 }
+const EDGE_LABEL_BG_STYLE = { fill: 'hsl(var(--popover))', fillOpacity: 0.92 }
 
 // Node data types for our custom nodes
 export interface StepNodeData extends Record<string, unknown> {
@@ -26,9 +23,6 @@ export interface StepNodeData extends Record<string, unknown> {
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
@@ -49,10 +43,6 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
@@ -69,10 +59,6 @@ export interface TodoTaskNodeData extends Record<string, unknown> {
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json (now flat on step)
@@ -92,10 +78,6 @@ export interface HumanInputNodeData extends Record<string, unknown> {
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
@@ -110,10 +92,6 @@ export interface RoutingStepNodeData extends Record<string, unknown> {
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType
-  onRunFromStep?: OnRunFromStepCallback
-  onOpenSidebar?: OnOpenSidebarCallback
-  isExecuting?: boolean
-  canRun?: boolean
   workspacePath?: string | null
   selectedRunFolder?: string
   validation_schema?: ValidationSchema
@@ -156,9 +134,6 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   status: 'pending' | 'running' | 'completed' | 'failed'
   stepIndex: number
   step: EvaluationStep
-  onRunFromStep?: OnRunFromStepCallback
-  onOpenSidebar?: OnOpenSidebarCallback
-  isExecuting?: boolean
   workspacePath?: string | null
   selectedRunFolder?: string
   isEvaluationStep: boolean
@@ -173,7 +148,7 @@ export interface WorkflowArtifactNodeData extends Record<string, unknown> {
   detail?: string
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -187,9 +162,6 @@ interface UsePlanToFlowResult {
 interface UsePlanToFlowOptions {
   showDependencyEdges?: boolean // Default: false (hide dependency edges for cleaner view)
   changes?: PlanChanges | null  // Optional: highlight changes on nodes
-  onRunFromStep?: OnRunFromStepCallback  // Callback for "run from step" button
-  onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
-  isExecuting?: boolean  // Whether execution is currently in progress
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'> | Record<string, 'pending' | 'running' | 'completed' | 'failed'> | null  // Step status from events (Map or serialized object for stable comparison)
   workspacePath?: string | null  // Workspace path for file opening
@@ -223,7 +195,6 @@ const NODE_DIMENSIONS = {
   start: { width: 80, height: 36 },
   end: { width: 80, height: 36 },
   variables: { width: 220, height: 120 },
-  'execution-settings': { width: 200, height: 100 },
   'workflow-artifact': { width: 220, height: 120 }
 }
 
@@ -656,7 +627,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
 
   // Exclude SUB-AGENT nodes and HEADER nodes from Dagre
   // Sub-agents are positioned manually below todo_task nodes
-  // Header nodes (start, execution-settings, variables) are positioned manually in a horizontal row
+  // Header nodes (start, variables) are positioned manually in a horizontal row
   // Branch nodes MUST be in Dagre to maintain graph connectivity
   const excludedNodeIds = new Set<string>()
 
@@ -665,14 +636,14 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
       excludedNodeIds.add(node.id)
     }
     // Exclude header nodes - they're positioned manually before Dagre runs
-    if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+    if (node.id === 'start' || node.id === 'variables') {
       excludedNodeIds.add(node.id)
     }
   })
 
   // Log excluded nodes for debugging
   if (excludedNodeIds.size > 0) {
-    const headerNodes = Array.from(excludedNodeIds).filter(id => id === 'start' || id === 'execution-settings' || id === 'variables')
+    const headerNodes = Array.from(excludedNodeIds).filter(id => id === 'start' || id === 'variables')
     if (headerNodes.length > 0) {
       // console.log('[LAYOUT BUG] Excluding header nodes from Dagre:', headerNodes.join(', '))
     }
@@ -981,35 +952,6 @@ function stepToNode(
 }
 
 /**
- * Get provider and model separately for an LLM config
- */
-function getLLMProviderAndModel(
-  llmConfig: AgentLLMConfig | undefined,
-  presetLLMConfig: AgentLLMConfig | undefined,
-  availableLLMs: Array<{ provider: string; model: string; label: string }>
-): { provider?: string; model?: string } {
-  const effectiveLLM = llmConfig || presetLLMConfig
-  if (!effectiveLLM) return {}
-
-  const llm = availableLLMs.find(l =>
-    l.provider === effectiveLLM.provider &&
-    l.model === effectiveLLM.model_id
-  )
-
-  if (llm) {
-    return {
-      provider: llm.provider,
-      model: llm.model
-    }
-  }
-
-  return {
-    provider: effectiveLLM.provider,
-    model: effectiveLLM.model_id
-  }
-}
-
-/**
  * Create validation and learning nodes for a step
  * DISABLED: Validation and learning nodes are no longer displayed in the workflow canvas
  * Returns empty nodes and edges, with the step itself as the exit node
@@ -1158,8 +1100,6 @@ function processSteps(
           todoTaskSubAgentNodes.push(subAgentNode)
         }
 
-        const subAgentExitNodeId = subAgentNodeId
-
         todoTaskEdges.push({
           id: `${todoTaskNodeId}-route-${route.route_id}-to-sub-agent`,
           source: todoTaskNodeId,
@@ -1168,20 +1108,6 @@ function processSteps(
           targetHandle: 'top',
           type: 'smoothstep',
           style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' },
-          animated: false
-        })
-
-        todoTaskEdges.push({
-          id: `${subAgentExitNodeId}-return-to-${todoTaskNodeId}`,
-          source: subAgentExitNodeId,
-          target: todoTaskNodeId,
-          type: 'smoothstep',
-          label: 'Return',
-          labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
-          labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
-          labelBgPadding: [2, 2] as [number, number],
-          labelBgBorderRadius: 3,
-          style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
           animated: false
         })
       })
@@ -1236,20 +1162,6 @@ function processSteps(
         style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' },
         animated: false
       })
-
-      todoTaskEdges.push({
-        id: `${subAgentNodeId}-return-to-${todoTaskNodeId}`,
-        source: subAgentNodeId,
-        target: todoTaskNodeId,
-        type: 'smoothstep',
-        label: 'Return',
-        labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
-        labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
-        labelBgPadding: [2, 2] as [number, number],
-        labelBgBorderRadius: 3,
-        style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
-        animated: false
-      })
     }
 
     if (includeCompletionEdge && isTodoTaskStep(todoTaskStep) && todoTaskStep.next_step_id) {
@@ -1270,8 +1182,8 @@ function processSteps(
           target: 'end',
           type: 'smoothstep',
           label: 'Complete',
-          labelStyle: { fill: '#8b5cf6', fontWeight: 600, fontSize: 11 },
-          labelBgStyle: { fill: '#f5f3ff', fillOpacity: 0.9 },
+          labelStyle: COMPLETION_EDGE_LABEL_STYLE,
+          labelBgStyle: EDGE_LABEL_BG_STYLE,
           labelBgPadding: [4, 4] as [number, number],
           labelBgBorderRadius: 4,
           style: { stroke: '#8b5cf6', strokeWidth: 2 },
@@ -1612,8 +1524,8 @@ function processSteps(
               target: targetNodeId,
               type: 'smoothstep',
               label: route.route_name || route.route_id,
-              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 10 },
-              labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+              labelStyle: ROUTE_EDGE_LABEL_STYLE,
+              labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
               style: { stroke: '#14b8a6', strokeWidth: 1.5 },
@@ -1627,8 +1539,8 @@ function processSteps(
               target: 'end',
               type: 'smoothstep',
               label: route.route_name || route.route_id,
-              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 10 },
-              labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+              labelStyle: ROUTE_EDGE_LABEL_STYLE,
+              labelBgStyle: EDGE_LABEL_BG_STYLE,
               labelBgPadding: [3, 3] as [number, number],
               labelBgBorderRadius: 4,
               style: { stroke: '#14b8a6', strokeWidth: 1.5 },
@@ -1878,15 +1790,12 @@ export function usePlanToFlow(
   const {
     showDependencyEdges = false,
     changes = null,
-    onRunFromStep,
-    onOpenSidebar,
-    isExecuting = false,
     completedStepIndices = [],
     stepStatusMap,
     variablesManifest = null,
     onOpenVariablesSidebar,
     isLoadingVariables = false,
-    layoutDirection = 'LR',
+    layoutDirection = 'TB',
     disabled = false
   } = options
 
@@ -2033,13 +1942,12 @@ export function usePlanToFlow(
       )
 
       // Mark all orphan nodes and remap IDs with 'orphan-' prefix
-      orphanNodes = orphanProcessedNodes.map((node, index) => ({
+      orphanNodes = orphanProcessedNodes.map((node) => ({
         ...node,
         id: `orphan-${node.id}`,
         data: {
           ...node.data,
           isOrphan: true,
-          onRunFromStep: undefined,  // No "Run from here" for orphan steps
         }
       }))
     }
@@ -2075,15 +1983,7 @@ export function usePlanToFlow(
       }
     }
 
-    // Add execution settings node (between start and variables)
-    const executionSettingsNode: WorkflowNode = {
-      id: 'execution-settings',
-      type: 'execution-settings',
-      position: { x: 0, y: 0 },
-      data: {} as ExecutionSettingsNodeData
-    }
-
-    // Add variables node (between execution-settings and first step)
+    // Add variables node (between start and first step)
     const variablesNode: WorkflowNode = {
       id: 'variables',
       type: 'variables',
@@ -2110,24 +2010,14 @@ export function usePlanToFlow(
     }
 
     // Node order: Start -> Execution Settings -> Variables -> Steps -> End (+ orphan nodes)
-    const nodes = [startNode, executionSettingsNode, variablesNode, ...processedNodes, endNode, ...orphanNodes]
+    const nodes = [startNode, variablesNode, ...processedNodes, endNode, ...orphanNodes]
 
     // Create edges: Start -> Execution Settings -> Variables -> First step (or End if no steps)
     const edges: WorkflowEdge[] = []
 
-    // Start to Execution Settings
     edges.push({
-      id: 'start-to-execution-settings',
+      id: 'start-to-variables',
       source: 'start',
-      target: 'execution-settings',
-      type: 'smoothstep',
-      style: { stroke: '#6b7280', strokeWidth: 2 }
-    })
-
-    // Execution Settings to Variables
-    edges.push({
-      id: 'execution-settings-to-variables',
-      source: 'execution-settings',
       target: 'variables',
       type: 'smoothstep',
       style: { stroke: '#6b7280', strokeWidth: 2 }
@@ -2302,15 +2192,9 @@ export function usePlanToFlow(
       if (node.id === 'start') {
         return { ...node, position: { x: HEADER_START_X, y: HEADER_Y } }
       }
-      if (node.id === 'execution-settings') {
-        const startDims = NODE_DIMENSIONS.start
-        const execX = HEADER_START_X + startDims.width + HEADER_GAP
-        return { ...node, position: { x: execX, y: HEADER_Y } }
-      }
       if (node.id === 'variables') {
         const startDims = NODE_DIMENSIONS.start
-        const execDims = NODE_DIMENSIONS['execution-settings']
-        const varsX = HEADER_START_X + startDims.width + HEADER_GAP + execDims.width + HEADER_GAP
+        const varsX = HEADER_START_X + startDims.width + HEADER_GAP
         return { ...node, position: { x: varsX, y: HEADER_Y } }
       }
       return node
@@ -2323,33 +2207,26 @@ export function usePlanToFlow(
     const HEADER_TO_WORKFLOW_GAP = 150 // Increased further to prevent overlap with step1
 
     const startNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'start')
-    const execSettingsNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'execution-settings')
     const variablesNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'variables')
 
-    if (startNodeIndex !== -1 && execSettingsNodeIndex !== -1 && variablesNodeIndex !== -1) {
+    if (startNodeIndex !== -1 && variablesNodeIndex !== -1) {
       const startDims = NODE_DIMENSIONS.start
-      const execSettingsDims = NODE_DIMENSIONS['execution-settings']
       const variablesDims = NODE_DIMENSIONS.variables
 
       // Calculate max height for vertical centering
-      const maxHeaderHeight = Math.max(startDims.height, execSettingsDims.height, variablesDims.height)
+      const maxHeaderHeight = Math.max(startDims.height, variablesDims.height)
 
       // CRITICAL: Enforce header node positions (they were set before Dagre, but ensure they're still correct)
       // Since header nodes are excluded from Dagre, they should already have correct positions
       // But we enforce them here to be absolutely sure
       // TEST: Using same large gaps as above
       const startPos = { x: HEADER_START_X, y: HEADER_Y }
-      const execPos = { x: HEADER_START_X + startDims.width + HEADER_GAP, y: HEADER_Y }
-      const varsPos = { x: HEADER_START_X + startDims.width + HEADER_GAP + execSettingsDims.width + HEADER_GAP, y: HEADER_Y }
+      const varsPos = { x: HEADER_START_X + startDims.width + HEADER_GAP, y: HEADER_Y }
 
       // Enforce positions (even though they should already be correct since header nodes are excluded from Dagre)
       layoutedResult.nodes[startNodeIndex] = {
         ...layoutedResult.nodes[startNodeIndex],
         position: startPos
-      }
-      layoutedResult.nodes[execSettingsNodeIndex] = {
-        ...layoutedResult.nodes[execSettingsNodeIndex],
-        position: execPos
       }
       layoutedResult.nodes[variablesNodeIndex] = {
         ...layoutedResult.nodes[variablesNodeIndex],
@@ -2402,10 +2279,10 @@ export function usePlanToFlow(
           // Shift all non-header nodes by this offset
           layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
             // CRITICAL: Never shift header nodes - check by ID, not just index
-            if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+            if (node.id === 'start' || node.id === 'variables') {
               return node // Keep header nodes in place
             }
-            if (index === startNodeIndex || index === execSettingsNodeIndex || index === variablesNodeIndex) {
+            if (index === startNodeIndex || index === variablesNodeIndex) {
               return node // Also check by index as backup
             }
             if (node.type === 'end') {
@@ -2434,10 +2311,10 @@ export function usePlanToFlow(
           // Shift all non-header nodes by this offset
           layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
             // CRITICAL: Never shift header nodes - check by ID, not just index
-            if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+            if (node.id === 'start' || node.id === 'variables') {
               return node // Keep header nodes in place
             }
-            if (index === startNodeIndex || index === execSettingsNodeIndex || index === variablesNodeIndex) {
+            if (index === startNodeIndex || index === variablesNodeIndex) {
               return node // Also check by index as backup
             }
             if (node.type === 'end') {
@@ -2709,7 +2586,7 @@ export function usePlanToFlow(
       const endDims = NODE_DIMENSIONS.end
       // Find all workflow nodes (exclude header and end nodes)
       const workflowNodes = layoutedResult.nodes.filter(n =>
-        n.id !== 'start' && n.id !== 'execution-settings' && n.id !== 'variables' && n.id !== 'end'
+        n.id !== 'start' && n.id !== 'variables' && n.id !== 'end'
       )
 
       if (workflowNodes.length > 0) {
@@ -2766,28 +2643,14 @@ export function usePlanToFlow(
       // Node count changed during collision detection (log removed to reduce console noise)
     }
 
-    // Helper to determine if a step can run
-    // All steps can run regardless of previous step completion
-    const canStepRun = (): boolean => {
-      return true
-    }
-
-    // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
+    // Inject read-only context into step-type nodes.
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
       if (node.type === 'step' || node.type === 'conditional' || node.type === 'human_input' || node.type === 'todo_task') {
-        const canRun = canStepRun()
-        // Sub-agents cannot be run independently (they are part of routing steps)
-        // We pass onRunFromStep even for sub-agents so the UI shows a disabled button instead of a warning icon
-        // The node component (StepNode) handles disabling the button via isSubAgent check (node.id.includes('-sub-agent-'))
         return {
           ...node,
           data: {
             ...node.data,
-            onRunFromStep,
-            onOpenSidebar,
-            isExecuting,
-            canRun,
             workspacePath: options.workspacePath,
             selectedRunFolder: options.selectedRunFolder
           }
@@ -2841,7 +2704,7 @@ export function usePlanToFlow(
   // Status updates are handled by the fast-path effect in WorkflowCanvas (surgical node updates),
   // so we avoid recalculating the entire node/edge layout on every status change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
+  }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }
 
 export default usePlanToFlow

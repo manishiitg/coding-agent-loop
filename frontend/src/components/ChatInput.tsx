@@ -723,13 +723,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const removeFileFromContext = useCallback((path: string) => {
     if (activeTabId && activeTab) {
       const newFileContext = chatFileContext.filter(f => f.path !== path)
-      setTabConfig(activeTabId, { fileContext: newFileContext })
+      const configUpdate = activeTab.config?.restoredConversationPath === path
+        ? { fileContext: newFileContext, restoredConversationPath: undefined }
+        : { fileContext: newFileContext }
+      setTabConfig(activeTabId, configUpdate)
     }
   }, [activeTabId, activeTab, chatFileContext, setTabConfig])
   
   const clearFileContext = useCallback(() => {
     if (activeTabId) {
-      setTabConfig(activeTabId, { fileContext: [] })
+      setTabConfig(activeTabId, { fileContext: [], restoredConversationPath: undefined })
     }
   }, [activeTabId, setTabConfig])
   

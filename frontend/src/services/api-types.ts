@@ -739,6 +739,23 @@ export interface GetSessionEventsResponse {
   offset: number;
 }
 
+export interface WorkflowBuilderSessionResponse {
+  success: boolean;
+  source: 'live' | 'workspace' | 'none';
+  session_id?: string;
+  phase_id?: string;
+  status: 'running' | 'completed' | 'idle' | 'error' | 'stopped' | string;
+  display_status?: string;
+  preset_query_id?: string;
+  workspace_path?: string;
+  workflow_name?: string;
+  updated_at?: string;
+  conversation_path?: string;
+  events: PollingEvent[];
+  total?: number;
+  last_processed_index?: number;
+}
+
 // SSE message types (match backend sseEventMessage / sseStatusMessage)
 export interface SSEEventMessage {
   events: PollingEvent[]

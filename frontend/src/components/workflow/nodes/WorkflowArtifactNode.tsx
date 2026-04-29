@@ -41,7 +41,7 @@ export const WorkflowArtifactNode = memo(({ data, selected }: WorkflowArtifactNo
     >
       <Handle
         type="target"
-        position={Position.Left}
+        position={Position.Top}
         className="!w-2.5 !h-2.5 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
       />
 
@@ -76,7 +76,7 @@ export const WorkflowArtifactNode = memo(({ data, selected }: WorkflowArtifactNo
 
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         className="!w-2.5 !h-2.5 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
       />
     </div>

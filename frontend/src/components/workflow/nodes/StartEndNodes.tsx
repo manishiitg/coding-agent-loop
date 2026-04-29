@@ -19,7 +19,7 @@ export const StartNode = memo(() => {
       {/* Output handle */}
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         className="!w-3 !h-3 !bg-green-500 !border-2 !border-white dark:!border-gray-800"
       />
     </div>
@@ -41,7 +41,7 @@ export const EndNode = memo(({ data }: StartEndNodeProps) => {
       {/* Input handle */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={Position.Top}
         className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
       />
       
@@ -54,7 +54,7 @@ export const EndNode = memo(({ data }: StartEndNodeProps) => {
 
       <Handle
         type="source"
-        position={Position.Right}
+        position={Position.Bottom}
         className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
       />
     </div>

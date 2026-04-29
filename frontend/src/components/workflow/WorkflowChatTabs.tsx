@@ -50,7 +50,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       role="button"
       tabIndex={0}
       className={`
-        flex items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
+        flex min-w-0 items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
         ${isActive
           ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
           : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
@@ -66,7 +66,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       )}
 
       {/* Tab Name */}
-      <span className="whitespace-nowrap">{tab.name}</span>
+      <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{tab.name}</span>
 
       {/* Close Button */}
       <button
@@ -166,92 +166,96 @@ export const WorkflowChatTabs: React.FC = () => {
   }
 
   return (
-    <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">
-      {activeWorkflowTabs.map((tab) => (
-        <WorkflowTabItem
-          key={tab.tabId}
-          tab={tab}
-          isActive={tab.tabId === activeTabId}
-          sessionStatus={tabSessionStatus[tab.tabId]}
-          onTabClick={handleTabClick}
-          onTabClose={handleTabClose}
-        />
-      ))}
-
-      {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
-      {activeWorkflowTabs.length > 0 && (
-        <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              const newAutoScrollState = !autoScroll
-              setAutoScroll(newAutoScrollState)
-
-              if (newAutoScrollState) {
-                setTimeout(() => {
-                  const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
-                  if (chatAreaContainer) {
-                    const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
-                    if (scrollableElement) {
-                      scrollableElement.scrollTo({
-                        top: scrollableElement.scrollHeight,
-                        behavior: 'smooth'
-                      })
-                    }
-                  }
-                }, 50)
-              }
-            }}
-            className={`
-              flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
-              ${autoScroll
-                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-              }
-              hover:bg-gray-200 dark:hover:bg-gray-700
-            `}
-          >
-            <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
-            <span className="hidden sm:inline">
-              {autoScroll ? 'Auto-scroll' : 'Manual'}
-            </span>
-          </button>
-
-          {/* Layout Toggle — switch between tree hierarchy and the old flat feed */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (activeTabId) {
-                    setTabViewMode(activeTabId, activeViewMode === 'tree' ? 'flat' : 'tree')
-                  }
-                }}
-                className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
-                  ${activeViewMode === 'tree'
-                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                  }
-                  hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
-                `}
-              >
-                {activeViewMode === 'tree' ? (
-                  <ListTree className="w-3.5 h-3.5" />
-                ) : (
-                  <List className="w-3.5 h-3.5" />
-                )}
-                <span className="hidden sm:inline">
-                  {activeViewMode === 'tree' ? 'Tree' : 'Flat'}
-                </span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{activeViewMode === 'tree' ? 'Tree view — group events by workflow and agent' : 'Flat view — show events in chronological order'}</p>
-            </TooltipContent>
-          </Tooltip>
-
+    <div className="shrink-0 border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex min-w-0 items-center gap-1 px-2 py-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {activeWorkflowTabs.map((tab) => (
+            <WorkflowTabItem
+              key={tab.tabId}
+              tab={tab}
+              isActive={tab.tabId === activeTabId}
+              sessionStatus={tabSessionStatus[tab.tabId]}
+              onTabClick={handleTabClick}
+              onTabClose={handleTabClose}
+            />
+          ))}
         </div>
-      )}
+
+        {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
+        {activeWorkflowTabs.length > 0 && (
+          <div className="flex shrink-0 items-center gap-1 border-l border-gray-200 pl-2 dark:border-gray-700">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const newAutoScrollState = !autoScroll
+                setAutoScroll(newAutoScrollState)
+
+                if (newAutoScrollState) {
+                  setTimeout(() => {
+                    const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
+                    if (chatAreaContainer) {
+                      const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
+                      if (scrollableElement) {
+                        scrollableElement.scrollTo({
+                          top: scrollableElement.scrollHeight,
+                          behavior: 'smooth'
+                        })
+                      }
+                    }
+                  }, 50)
+                }
+              }}
+              className={`
+                flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
+                ${autoScroll
+                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                }
+                hover:bg-gray-200 dark:hover:bg-gray-700
+              `}
+            >
+              <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
+              <span className="hidden sm:inline">
+                {autoScroll ? 'Auto-scroll' : 'Manual'}
+              </span>
+            </button>
+
+            {/* Layout Toggle — switch between tree hierarchy and the old flat feed */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (activeTabId) {
+                      setTabViewMode(activeTabId, activeViewMode === 'tree' ? 'flat' : 'tree')
+                    }
+                  }}
+                  className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
+                    ${activeViewMode === 'tree'
+                      ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                    }
+                    hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
+                  `}
+                >
+                  {activeViewMode === 'tree' ? (
+                    <ListTree className="w-3.5 h-3.5" />
+                  ) : (
+                    <List className="w-3.5 h-3.5" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {activeViewMode === 'tree' ? 'Tree' : 'Flat'}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{activeViewMode === 'tree' ? 'Tree view — group events by workflow and agent' : 'Flat view — show events in chronological order'}</p>
+              </TooltipContent>
+            </Tooltip>
+
+          </div>
+        )}
+      </div>
     </div>
   )
 }

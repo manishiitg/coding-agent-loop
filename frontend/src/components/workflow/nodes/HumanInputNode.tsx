@@ -1,6 +1,6 @@
 import { memo, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, User, Play, Settings } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, User } from 'lucide-react'
 import type { HumanInputNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -34,7 +34,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => {
-  const { id, title, question, response_type, options, status, stepIndex, changeType, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
+  const { title, question, response_type, options, status, stepIndex, changeType, isOrphan } = data
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -81,7 +81,7 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
             Human Input
           </span>
         </div>
-        {statusIcon && <div className="flex-shrink-0">{statusIcon}</div>}
+        <div />
       </div>
 
       {/* Content */}
@@ -96,37 +96,12 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
         </div>
       </div>
 
-      {/* Footer with actions */}
+      {/* Footer metadata */}
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-900/50">
         <div className="text-xs text-gray-500 dark:text-gray-400">
           Step {stepIndex + 1}
         </div>
-        <div className="flex items-center gap-1">
-          {onRunFromStep && !isExecuting && !isOrphan && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onRunFromStep(stepIndex, id)
-              }}
-              className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-              title="Run from this step"
-            >
-              <Play className="w-3 h-3 text-gray-600 dark:text-gray-400" />
-            </button>
-          )}
-          {onOpenSidebar && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenSidebar(id)
-              }}
-              className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-              title="Configure step"
-            >
-              <Settings className="w-3 h-3 text-gray-600 dark:text-gray-400" />
-            </button>
-          )}
-        </div>
+        {statusIcon && <div className="flex-shrink-0">{statusIcon}</div>}
       </div>
 
       {/* Bottom handles - multiple for conditional routing */}
@@ -167,4 +142,3 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
 })
 
 HumanInputNode.displayName = 'HumanInputNode'
-

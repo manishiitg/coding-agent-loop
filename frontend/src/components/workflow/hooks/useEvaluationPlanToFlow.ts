@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { EvaluationPlan, EvaluationStep } from '../../../services/api-types'
-import type { OnRunFromStepCallback, OnOpenSidebarCallback } from './usePlanToFlow'
 
 export interface EvaluationStepNodeData extends Record<string, unknown> {
   id: string
@@ -12,9 +11,6 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   status: 'pending' | 'running' | 'completed' | 'failed'
   stepIndex: number
   step: EvaluationStep
-  onRunFromStep?: OnRunFromStepCallback
-  onOpenSidebar?: OnOpenSidebarCallback
-  isExecuting?: boolean
   workspacePath?: string | null
   selectedRunFolder?: string
   // Mark as evaluation step for StepNode styling
@@ -30,9 +26,6 @@ interface UseEvaluationPlanToFlowResult {
 }
 
 interface UseEvaluationPlanToFlowOptions {
-  onRunFromStep?: OnRunFromStepCallback
-  onOpenSidebar?: OnOpenSidebarCallback
-  isExecuting?: boolean
   completedStepIndices?: number[] // 0-based
   workspacePath?: string | null
   selectedRunFolder?: string
@@ -89,9 +82,6 @@ export function useEvaluationPlanToFlow(
   options: UseEvaluationPlanToFlowOptions = {}
 ): UseEvaluationPlanToFlowResult {
   const {
-    onRunFromStep,
-    onOpenSidebar,
-    isExecuting = false,
     completedStepIndices = [],
     workspacePath,
     selectedRunFolder
@@ -138,9 +128,6 @@ export function useEvaluationPlanToFlow(
           status,
           stepIndex: index,
           step,
-          onRunFromStep,
-          onOpenSidebar,
-          isExecuting,
           workspacePath,
           selectedRunFolder,
           isEvaluationStep: true
@@ -209,5 +196,5 @@ export function useEvaluationPlanToFlow(
     }
 
     return layoutWithDagre(nodes, edges)
-  }, [plan, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, workspacePath, selectedRunFolder])
+  }, [plan, completedStepIndices, workspacePath, selectedRunFolder])
 }

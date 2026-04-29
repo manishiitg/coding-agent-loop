@@ -62,15 +62,13 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi, workflowManifestApi } from '../../services/api'
-import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
+import { type ExecutionOptions, type PollingEvent, type WorkflowBuilderSessionResponse } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
-import { usePlanData } from './hooks/usePlanData'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
 
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
-
 
 /**
  * Helper function to restore workflow state from loaded events
@@ -229,6 +227,41 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
   } catch (error) {
     logger.warn('WorkflowLayout', 'Failed to restore batch progress:', error)
   }
+}
+
+async function loadWorkflowBuilderSession(
+  presetQueryId?: string,
+  workspacePath?: string
+): Promise<WorkflowBuilderSessionResponse | null> {
+  if (!presetQueryId && !workspacePath) return null
+
+  const session = await agentApi.getWorkflowBuilderSession(presetQueryId, workspacePath)
+  if (!session?.session_id || session.source === 'none') return null
+  return session
+}
+
+function applyRestoredConversationContext(tabId: string, conversationPath?: string): void {
+  const path = conversationPath?.trim()
+  if (!path) return
+
+  const store = useChatStore.getState()
+  const config = store.getTabConfig(tabId)
+  const existingFileContext = config?.fileContext || []
+  const fileContext = existingFileContext.some(item => item.path === path)
+    ? existingFileContext
+    : [
+        ...existingFileContext,
+        {
+          name: path.split('/').pop() || 'previous-conversation.json',
+          path,
+          type: 'file' as const,
+        },
+      ]
+
+  store.setTabConfig(tabId, {
+    restoredConversationPath: path,
+    fileContext,
+  })
 }
 
 interface WorkflowLayoutProps {
@@ -410,26 +443,34 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Backward-compat alias kept for downstream readers — mobile pane behaviour
   // is unchanged.
   const shouldUseMobileReportPane = reportPaneTier === 'mobile'
+  const isWorkspaceViewActive =
+    workflowWorkspaceView === 'flow' ||
+    workflowWorkspaceView === 'plan' ||
+    workflowWorkspaceView === 'report'
+  const chatPaneVisibilityClass =
+    workspacePaneVisible && isWorkspaceViewActive
+      ? 'hidden md:flex'
+      : 'flex'
   const splitLayoutClassName = !showChatArea
     ? 'flex-1 min-h-0 flex flex-col'
     : !workspacePaneVisible
       ? 'flex-1 min-h-0 flex flex-col'
       : reportPaneTier === 'mobile'
-        ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_480px] xl:grid-rows-[auto_minmax(0,1fr)]'
+        ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px] md:grid-rows-[auto_minmax(0,1fr)]'
         : reportPaneTier === 'tablet'
-          ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_880px] xl:grid-rows-[auto_minmax(0,1fr)]'
+          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(520px,880px)] md:grid-rows-[auto_minmax(0,1fr)]'
           : reportPaneTier === 'laptop'
-            ? 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-[360px_minmax(0,1fr)] xl:grid-rows-[auto_minmax(0,1fr)]'
-            : 'flex-1 min-h-0 flex flex-col xl:grid xl:grid-cols-2 xl:grid-rows-[auto_minmax(0,1fr)]'
+            ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
+            : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0 transition-all duration-300'
     : !workspacePaneVisible
       ? 'hidden'
       : reportPaneTier === 'mobile'
-        ? 'min-h-0 min-w-0 transition-all duration-300 w-full xl:col-start-2 xl:row-start-2 xl:w-[480px] xl:flex-none'
+        ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-[480px] md:flex-none'
         : reportPaneTier === 'tablet'
-          ? 'min-h-0 min-w-0 transition-all duration-300 w-full xl:col-start-2 xl:row-start-2 xl:w-[880px] xl:flex-none'
-          : 'min-h-0 min-w-0 transition-all duration-300 xl:col-start-2 xl:row-start-2'
+          ? 'min-h-0 min-w-0 transition-all duration-300 w-full md:col-start-2 md:row-start-2 md:w-full md:flex-none'
+          : 'min-h-0 min-w-0 transition-all duration-300 md:col-start-2 md:row-start-2'
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -594,9 +635,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [])
 
-  // Get plan data to map step indices to step IDs
-  const { plan } = usePlanData(workspacePath)
-
   // When switching to a session we haven't seen yet, initialize its high-water mark to the
   // current event count — skipping all historical events. The canvas initializes via usePlanData
   // independently; replaying old todo_steps_extracted events would fire multiple canvas.refresh()
@@ -760,7 +798,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
       await waitForChatStoreHydration()
       try {
-        const { createChatTab, switchTab, getTabEvents, setTabStreaming } = useChatStore.getState()
+        const { createChatTab, switchTab, getTabEvents, setTabStreaming, setTabCompleted, setTabEvents, setTabLastEventIndex, updateTabSessionId } = useChatStore.getState()
         const { getPhaseById } = useWorkflowStore.getState()
         const getExistingWorkflowTabsForPreset = () =>
           Object.values(useChatStore.getState().chatTabs)
@@ -843,12 +881,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           .filter(s => !activeSessionIds.has(s.session_id) && s.status !== 'dismissed' && s.status !== 'inactive')
           .slice(0, 1)
         for (const s of recentDbSessions) {
-          const wfMeta = (s.config as any)?.workflow_metadata
+          const config = s.config && typeof s.config === 'object'
+            ? s.config as Record<string, unknown>
+            : {}
+          const wfMeta = config.workflow_metadata && typeof config.workflow_metadata === 'object'
+            ? config.workflow_metadata as Record<string, unknown>
+            : {}
           // Try to extract phaseId from metadata, config, or agent_mode
-          let phaseId = wfMeta?.phase_id as string | undefined
+          let phaseId = typeof wfMeta.phase_id === 'string' ? wfMeta.phase_id : undefined
           if (!phaseId && s.agent_mode === 'workflow_phase') {
             // workflow_phase sessions store phase_id in config
-            phaseId = (s.config as any)?.phase_id
+            phaseId = typeof config.phase_id === 'string' ? config.phase_id : undefined
           }
           if (!phaseId && s.title) {
             // Fallback: try to extract from title
@@ -862,7 +905,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             status: s.status,
             isActive: false,
             phaseId,
-            phaseName: wfMeta?.phase_name
+            phaseName: typeof wfMeta.phase_name === 'string' ? wfMeta.phase_name : undefined
           })
         }
 
@@ -948,22 +991,52 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         if (!lastTabId) {
           const store = useChatStore.getState()
           if (existingWorkflowTabs.length === 0) {
+            const builderHistory = await loadWorkflowBuilderSession(activePresetId, activeWorkflowPreset?.selectedFolder?.filepath)
+              .catch(err => {
+                console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
+                return null
+              })
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
               phaseName: 'Workflow Builder',
               presetQueryId: activePresetId
-            })
+            }, builderHistory?.session_id)
+            if (builderHistory) {
+              setTabEvents(builderHistory.session_id!, builderHistory.events || [])
+              setTabLastEventIndex(builderHistory.session_id!, builderHistory.last_processed_index ?? (builderHistory.events?.length || 0) - 1)
+              setTabCompleted(defaultTabId, builderHistory.status !== 'running')
+              setTabStreaming(defaultTabId, builderHistory.status === 'running')
+              applyRestoredConversationContext(defaultTabId, builderHistory.conversation_path)
+            }
             switchTab(defaultTabId)
             setShowChatArea(true)
           } else {
+            const builderTab = existingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
+            if (builderTab?.sessionId && getTabEvents(builderTab.sessionId).length === 0) {
+              const builderHistory = await loadWorkflowBuilderSession(activePresetId, activeWorkflowPreset?.selectedFolder?.filepath)
+                .catch(err => {
+                  console.warn('[WorkflowReconnect] Failed to load workflow builder session', err)
+                  return null
+                })
+              if (builderHistory) {
+                if (builderHistory.session_id && builderHistory.session_id !== builderTab.sessionId) {
+                  updateTabSessionId(builderTab.tabId, builderHistory.session_id)
+                }
+                const sessionId = builderHistory.session_id || builderTab.sessionId
+                setTabEvents(sessionId, builderHistory.events || [])
+                setTabLastEventIndex(sessionId, builderHistory.last_processed_index ?? (builderHistory.events?.length || 0) - 1)
+                setTabCompleted(builderTab.tabId, builderHistory.status !== 'running')
+                setTabStreaming(builderTab.tabId, builderHistory.status === 'running')
+                applyRestoredConversationContext(builderTab.tabId, builderHistory.conversation_path)
+              }
+            }
             // Tabs exist (from localStorage). Prefer the already-active tab when it belongs to
             // this preset; otherwise prefer builder, then a streaming tab, then newest.
             const activeWorkflowTab = store.activeTabId ? store.chatTabs[store.activeTabId] : null
             const activeMatchesPreset =
               activeWorkflowTab?.metadata?.mode === 'workflow' &&
               activeWorkflowTab.metadata?.presetQueryId === activePresetId
-            const builderTab = existingWorkflowTabs.find(t => t.metadata?.phaseId === 'workflow-builder')
             const streamingTab = existingWorkflowTabs.find(t => t.isStreaming)
             const targetTab = activeMatchesPreset
               ? activeWorkflowTab
@@ -981,7 +1054,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [activePresetId, setShowChatArea, rehydrateWorkflowTabs])
+  }, [activePresetId, activeWorkflowPreset?.selectedFolder?.filepath, setShowChatArea, setIsRestoringWorkflowSessions, rehydrateWorkflowTabs])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -1229,7 +1302,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         }
         setShowChatArea(newShow)
       }}
-      className="h-full"
+      className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
     />
   )
 
@@ -1240,9 +1313,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {showChatArea && !workspacePaneVisible && canvasElement}
 
         {showChatArea && (
-          <div className={`flex min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
+          <div className={`${chatPaneVisibilityClass} min-h-0 min-w-0 flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
-              ? `border-b border-border xl:col-start-1 xl:row-start-2 xl:border-b-0 xl:border-r ${shouldUseMobileReportPane ? 'flex-1 xl:flex-[1.35]' : 'flex-1 basis-1/2'}`
+              ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'
           }`}>
             <div className="flex-shrink-0">

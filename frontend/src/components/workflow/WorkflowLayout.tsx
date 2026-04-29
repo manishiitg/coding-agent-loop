@@ -1461,29 +1461,29 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       {restorePrompt && (
         <ModalPortal>
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-md rounded-lg border border-border bg-background shadow-xl">
-              <div className="border-b border-border px-5 py-4">
-                <h3 className="text-base font-semibold text-foreground">
+            <div className="w-full max-w-sm rounded-lg border border-border bg-background shadow-xl">
+              <div className="border-b border-border px-4 py-3">
+                <h3 className="text-sm font-semibold text-foreground">
                   Restore previous conversation?
                 </h3>
               </div>
-              <div className="px-5 py-4">
-                <p className="text-sm text-muted-foreground">
-                  This workflow has a previous builder conversation. Restore it to continue from the saved context, or start a fresh builder chat for this workflow.
+              <div className="px-4 py-3">
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Continue from the saved builder chat or start a fresh one for this workflow.
                 </p>
               </div>
-              <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+              <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
                 <button
                   type="button"
                   onClick={handleStartNewWorkflowConversation}
-                  className="rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                  className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                 >
                   Start new
                 </button>
                 <button
                   type="button"
                   onClick={handleRestorePreviousWorkflowConversation}
-                  className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 >
                   Restore conversation
                 </button>

@@ -111,10 +111,14 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 
 // RegisterProposeMetricTool exposes propose_metric to the proposer LLM.
 func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	desc := "Define a new metric or amend an existing one in <workflow>/planning/metrics.json. " +
-		"On amend, the prior definition is archived (so the existing trajectory series is preserved and chart renderers break the line at the version transition). " +
+	desc := "Privileged write path for <workflow>/planning/metrics.json (which is folder-guarded against shell writes). " +
+		"Three modes:\n" +
+		"  1. Define a new metric — supply id + unit + direction + mode + source.\n" +
+		"  2. Amend an existing metric — supply the new definition + amend_existing={id, reason}; the prior definition archives, version bumps, the trajectory line breaks at the transition.\n" +
+		"  3. Set active_mode only — supply just `active_mode` (omit the metric fields). For dual-mode workflows declared in improve.md (e.g. explore/exploit cycles); the value lives at the top of metrics.json so steps can branch on it via the variable resolver.\n" +
+		"You may also pass `active_mode` alongside a metric definition to do both in one call. " +
 		"Use this BEFORE proposing experiments that target a metric that does not yet exist. " +
-		"Returns { metric_id, version, status }."
+		"Returns { metric_id, version, status, active_mode }."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -158,8 +162,14 @@ func RegisterProposeMetricTool(agent *mcpagent.Agent, workspacePath, triggerSour
 				},
 				"required": []string{"id", "reason"},
 			},
+			"active_mode": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional. For dual-mode workflows (declared in improve.md as explore/exploit, train/serve, etc.) — sets the runtime mode. Steps can read this via the variable resolver to branch behavior. Pass alone (without metric fields) to update only the mode; pass alongside a metric definition to do both in one write.",
+			},
 		},
-		"required": []string{"id", "unit", "direction", "mode", "source"},
+		// No top-level required: either supply a metric definition (id+unit+direction+mode+source)
+		// OR active_mode alone. The handler enforces the choice and reports a clear error if neither
+		// is supplied.
 	}
 
 	handler := func(ctx context.Context, args map[string]interface{}) (string, error) {

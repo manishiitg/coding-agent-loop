@@ -24,27 +24,41 @@ type AmendRequest struct {
 }
 
 // ProposeMetricInput is the LLM-supplied portion of a metric proposal.
+//
+// Two modes of operation:
+//
+//  1. Define / amend a metric — supply id + unit + direction + mode + source
+//     (and optionally amend_existing for in-place version bumps).
+//  2. Update active_mode only — supply only `active_mode` (omit the metric
+//     fields). Used for dual-mode workflows (e.g. explore/exploit cycles)
+//     declared in improve.md. The active value lives at the top of
+//     metrics.json so steps can branch on it via the variable resolver.
+//
+// A single call may also do both at once: define/amend a metric AND set
+// active_mode in the same write.
 type ProposeMetricInput struct {
-	ID                    string          `json:"id"`
+	ID                    string          `json:"id,omitempty"`
 	Label                 string          `json:"label,omitempty"`
-	Unit                  string          `json:"unit"`
-	Direction             MetricDirection `json:"direction"`
-	Mode                  MetricMode      `json:"mode"`
+	Unit                  string          `json:"unit,omitempty"`
+	Direction             MetricDirection `json:"direction,omitempty"`
+	Mode                  MetricMode      `json:"mode,omitempty"`
 	Target                *float64        `json:"target,omitempty"`
 	Floor                 *float64        `json:"floor,omitempty"`
 	Ceiling               *float64        `json:"ceiling,omitempty"`
-	Source                MetricSource    `json:"source"`
+	Source                MetricSource    `json:"source,omitempty"`
 	EvaluableAtLag        string          `json:"evaluable_at_lag,omitempty"`
 	Parent                string          `json:"parent,omitempty"`
 	LinkedSuccessCriteria []string        `json:"linked_success_criteria,omitempty"`
 	AmendExisting         *AmendRequest   `json:"amend_existing,omitempty"`
+	ActiveMode            string          `json:"active_mode,omitempty"`
 }
 
 // ProposeMetricOutput is what the tool returns to the proposer LLM.
 type ProposeMetricOutput struct {
-	MetricID string `json:"metric_id"`
-	Version  int    `json:"version"`
-	Status   string `json:"status"`
+	MetricID   string `json:"metric_id,omitempty"`
+	Version    int    `json:"version,omitempty"`
+	Status     string `json:"status"`
+	ActiveMode string `json:"active_mode,omitempty"`
 }
 
 // ProposeMetric is the system entrypoint for adding or amending a metric.
@@ -60,6 +74,47 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	// arbitrary and the framework has no north star to verdict against.
 	if err := RequireSoulPreconditions(ctx, workspacePath); err != nil {
 		return nil, err
+	}
+
+	activeMode := strings.TrimSpace(input.ActiveMode)
+	hasMetricFields := strings.TrimSpace(input.ID) != "" ||
+		input.AmendExisting != nil ||
+		strings.TrimSpace(input.Unit) != "" ||
+		input.Direction != "" ||
+		input.Mode != "" ||
+		input.Source.Type != ""
+
+	// Active-mode-only update path: caller supplies only `active_mode`. Touch
+	// MetricsFile.ActiveMode without proposing or amending any metric.
+	if !hasMetricFields {
+		if activeMode == "" {
+			return nil, fmt.Errorf("propose_metric: provide either metric definition fields (id+unit+direction+mode+source or amend_existing) or active_mode")
+		}
+		file, exists, err := ReadMetricsFile(ctx, workspacePath)
+		if err != nil {
+			return nil, err
+		}
+		if !exists || file == nil {
+			file = &MetricsFile{Metrics: []Metric{}, Archive: []MetricArchiveEntry{}}
+		}
+		prior := file.ActiveMode
+		file.ActiveMode = activeMode
+		if err := ValidateMetricsFile(file); err != nil {
+			return nil, fmt.Errorf("metrics.json validation: %w", err)
+		}
+		if err := WriteMetricsFile(ctx, workspacePath, file); err != nil {
+			return nil, fmt.Errorf("write metrics.json: %w", err)
+		}
+		dec := DecisionEntry{
+			Source:         DecisionSourceAgent,
+			Trigger:        trigger,
+			Rationale:      fmt.Sprintf("active_mode %q → %q", prior, activeMode),
+			AppliedChanges: []string{"planning/metrics.json"},
+		}
+		if _, err := AppendDecisionEntry(ctx, workspacePath, dec); err != nil {
+			return nil, fmt.Errorf("append decision: %w", err)
+		}
+		return &ProposeMetricOutput{Status: "active_mode_updated", ActiveMode: activeMode}, nil
 	}
 
 	// Build the candidate metric.
@@ -131,6 +186,13 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 		file.Metrics = append(file.Metrics, candidate)
 	}
 
+	// Optional: caller can flip active_mode in the same call.
+	rationaleMode := ""
+	if activeMode != "" && activeMode != file.ActiveMode {
+		rationaleMode = fmt.Sprintf(" + active_mode %q→%q", file.ActiveMode, activeMode)
+		file.ActiveMode = activeMode
+	}
+
 	// Validate full file (catches parent-link issues).
 	if err := ValidateMetricsFile(file); err != nil {
 		return nil, fmt.Errorf("metrics.json validation: %w", err)
@@ -144,7 +206,7 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	dec := DecisionEntry{
 		Source:         DecisionSourceAgent,
 		Trigger:        trigger,
-		Rationale:      fmt.Sprintf("metric %s: %s", status, candidate.ID),
+		Rationale:      fmt.Sprintf("metric %s: %s%s", status, candidate.ID, rationaleMode),
 		AppliedChanges: []string{"planning/metrics.json"},
 		TargetMetrics:  []string{candidate.ID},
 	}
@@ -153,9 +215,10 @@ func ProposeMetric(ctx context.Context, workspacePath, trigger string, input Pro
 	}
 
 	return &ProposeMetricOutput{
-		MetricID: candidate.ID,
-		Version:  candidate.Version,
-		Status:   status,
+		MetricID:   candidate.ID,
+		Version:    candidate.Version,
+		Status:     status,
+		ActiveMode: file.ActiveMode,
 	}, nil
 }
 

@@ -120,7 +120,7 @@ Improving an existing workflow. Same tool set as Builder; the differences are in
 | `/review-config` | Review per-step KB / db / lock recommendations (also in builder, run) |
 | `/review-descriptions` | Review plan descriptions for confusion, hardcoding, etc. (also in builder, run) |
 | `/review-orchestrators` | Review `todo_task` orchestrator descriptions (also in builder, run) |
-| `/review-goal` | Check whether a real run is achieving the goal and whether eval measures it properly |
+| `/review-goal-alignment` | Goal-vs-outcome alignment: does a real run achieve the objective, are success_criteria met, does eval measure them |
 | `/review-speed` | Analyze workflow latency and recommend safe speedups |
 | `/review-cost` | Analyze workflow cost and recommend safe reductions |
 | `/review-code` | Review saved `main.py` scripts against step descriptions |
@@ -217,7 +217,7 @@ The framework's design (soul preconditions, metric→success_criteria trace, pro
 
 ```
 kind: "design-flow" | "ready-to-optimize" |
-      "review-plan" | "review-goal" | "review-speed" | "review-cost" |
+      "review-plan" | "review-goal-alignment" | "review-speed" | "review-cost" |
       "review-config" | "review-descriptions" | "review-code" | "review-orchestrators" |
       "improve-setup-framework" | "improve-workflow" | "improve-eval" |
       "improve-continuously" | "improve-report" |
@@ -256,7 +256,7 @@ The popup (Beaker icon) is read-only and consumes only GET endpoints. All experi
 If you are trying to:
 
 - **Review the design** (recommend, don't apply): `/review-plan` or `review_plan`
-- **Review whether a real run actually achieved the goal**: `/review-goal` or `review_workflow_results`
+- **Review whether a real run actually achieved the goal**: `/review-goal-alignment` or `review_workflow_results`
 - **Review where runtime is being spent**: `/review-speed` or `review_workflow_timing`
 - **Review where cost is being spent**: `/review-cost` or `review_workflow_costs`
 - **Bootstrap the auto-improvement framework on a workflow**: `/improve-setup-framework` (one-time)
@@ -378,7 +378,7 @@ This is a plan/design review. Use review_workflow_results() when the question is
 REVIEW LOG: append a dated entry to builder/review.md (read it first if it exists, create it if it does not) with what was reviewed, the main findings ordered by severity, the recommendations (REVIEW = recommend; do NOT apply), and items flagged for follow-up.
 ````
 
-#### `review-goal` (`review/review-goal.md`)
+#### `review-goal-alignment` (`review/review-goal-alignment.md`)
 
 ````text
 Run review_workflow_results() to judge actual workflow outcomes, not just the plan.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}

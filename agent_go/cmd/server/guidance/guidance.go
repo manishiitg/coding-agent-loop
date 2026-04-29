@@ -58,7 +58,7 @@ var allKinds = map[string]kindMeta{
 
 	// Reviews — recommend, don't apply; appends to builder/review.md
 	"review-plan":           {Group: "review", Description: "Critical review of workflow design decisions", Modes: []string{"builder", "optimizer", "run"}},
-	"review-goal":           {Group: "review", Description: "Did a real run achieve the goal; eval coverage check", Modes: []string{"optimizer"}},
+	"review-goal-alignment": {Group: "review", Description: "Goal-vs-outcome alignment: is the workflow achieving the objective; are success_criteria met; does eval measure them properly", Modes: []string{"optimizer"}},
 	"review-speed":          {Group: "review", Description: "Latency analysis with safe-speedup recommendations", Modes: []string{"optimizer"}},
 	"review-cost":           {Group: "review", Description: "Cost analysis with safe-reduction recommendations", Modes: []string{"optimizer"}},
 	"review-config":         {Group: "review", Description: "Per-step KB / db / lock_learnings / lock_code recommendations", Modes: []string{"builder", "optimizer", "run"}},
@@ -169,7 +169,7 @@ func kindEnumWithDescriptions() string {
 func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /improve-workflow or /review-goal (the slash command will name the kind to pass), (2) the user describes " +
+		"like /improve-workflow or /review-goal-alignment (the slash command will name the kind to pass), (2) the user describes " +
 		"the same intent in plain chat (\"help me improve this workflow\", \"review whether the goal is being met\", " +
 		"\"abort the active experiment\") — recognize the intent and pick the matching kind, or (3) you're running on a " +
 		"schedule and the message names a kind. The returned text is your instructions for this turn — do not paraphrase " +
@@ -195,7 +195,7 @@ func RegisterGuidanceTool(agent *mcpagent.Agent, currentMode string, logger logg
 			},
 			"run_folder": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional. Full run folder path (e.g. \"iteration-3/group-a\"). Used by review-goal / review-speed / review-cost / improve-eval-style flows that anchor on a specific run.",
+				"description": "Optional. Full run folder path (e.g. \"iteration-3/group-a\"). Used by review-goal-alignment / review-speed / review-cost / improve-eval-style flows that anchor on a specific run.",
 			},
 		},
 		"required": []string{"kind"},

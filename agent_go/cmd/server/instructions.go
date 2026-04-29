@@ -68,7 +68,7 @@ func GetWorkspaceMap(docsRoot, chatsFolder, memoryFolder string) string {
 	return `
 ## Workspace
 
-**Always use absolute paths** in shell commands. Root: ` + "`" + p.DocsRoot + "`" + `
+**Always use absolute paths in shell commands.** The workspace docs root is: ` + "`" + p.DocsRoot + "`" + `. Every absolute path you reference in a shell command MUST start with this exact prefix. The path guard rejects absolute paths under any other host root (` + "`" + "/Users/..." + "`" + `, ` + "`" + "/home/..." + "`" + `) that are not under the docs root. Do NOT prepend the project root, your home directory, or anything else — always use ` + "`" + p.DocsRoot + "`" + ` as the prefix. When tool descriptions show paths like ` + "`" + "Workflow/<name>/" + "`" + ` or ` + "`" + "Chats/<folder>/" + "`" + `, those are RELATIVE to the docs root; the absolute equivalent is the docs root + that suffix.
 
 | Path | Access | Purpose |
 |------|--------|---------|
@@ -118,7 +118,9 @@ func GetWorkflowPhaseWorkspaceMap(docsRoot, workflowFolder, memoryFolder string)
 	return `
 ## Workspace
 
-**Always use absolute paths** in shell commands. Root: ` + "`" + docsRoot + "`" + `
+**Always use absolute paths in shell commands.** The workspace docs root is: ` + "`" + docsRoot + "`" + `. Every absolute path you reference in a shell command MUST start with this exact prefix. The path guard rejects absolute paths under any other host root (` + "`" + "/Users/..." + "`" + `, ` + "`" + "/home/..." + "`" + `, etc.) that are not under the docs root — even if the path "looks right." Do NOT construct absolute paths by prepending the project root, your home directory, or anything else; always use ` + "`" + docsRoot + "`" + ` as the prefix.
+
+Common mistake to avoid: seeing a path like ` + "`" + "Workflow/<name>/" + "`" + ` mentioned in tool descriptions and prepending an arbitrary host prefix. The correct absolute form is ` + "`" + docsRoot + "/Workflow/<name>/" + "`" + ` — always use the docs root above. Tool descriptions that show ` + "`" + "Workflow/<name>/" + "`" + ` are referring to a path RELATIVE to the docs root; the absolute equivalent is the docs root + that suffix.
 
 **Current writable workflow folder:** ` + "`" + absWorkflowFolder + "/`" + `
 
@@ -502,9 +504,9 @@ Workflows have **two** separate name-like values, and it matters which one you'r
 **Rule of thumb**: ` + "`folder_name`" + ` is the machine-readable identifier, ` + "`label`" + ` is the human-readable title. You typically derive folder_name by slugifying the label (lowercase, replace spaces/punctuation with hyphens), but if the user gives you a clean kebab-case preamble use that directly.
 
 ### Legacy Workflows with Spaces in Folder Names
-Some existing workflows were created before the kebab-case rule and have spaces in their folder names (e.g. ` + "`Workflow/AWS Cost Analysis/`" + `, ` + "`Workflow/Portfolio Detailed/`" + `). When you reference these in shell commands, **always quote the path** to avoid word-splitting errors:
-- Correct: ` + "`execute_shell_command(command: \"ls 'Workflow/AWS Cost Analysis/'\")`" + `
-- Wrong: ` + "`execute_shell_command(command: \"ls Workflow/AWS Cost Analysis/\")`" + ` (the shell splits on the space and runs ` + "`ls Workflow/AWS Cost Analysis/`" + ` as multiple args)
+Some existing workflows were created before the kebab-case rule and have spaces in their folder names (e.g. ` + "`Workflow/AWS Cost Analysis/`" + `, ` + "`Workflow/Portfolio Detailed/`" + `). When you reference these in shell commands, use the absolute path AND **always quote it** to avoid word-splitting:
+- Correct: ` + "`execute_shell_command(command: \"ls '" + absWorkflow + "/AWS Cost Analysis/'\")`" + `
+- Wrong: ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/AWS Cost Analysis/\")`" + ` (the shell splits on the space)
 
 New workflows you create via ` + "`create_workflow`" + ` will always have shell-safe folder names, so this only affects legacy workflows.
 

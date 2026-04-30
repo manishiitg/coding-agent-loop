@@ -110,7 +110,7 @@ function FloatingWorkflowViewControls({
         >
           {([
             { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
-            { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (≈880px)' },
+            { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (50/50 split)' },
             { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
           ] as const).map(({ mode, Icon, label }) => {
             const active = previewMode === mode

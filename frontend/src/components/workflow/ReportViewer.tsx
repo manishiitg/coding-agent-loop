@@ -17,20 +17,14 @@ import { RunsWidget } from './reportWidgets/RunsWidget'
 import {
   StandaloneWidgetNotice,
   WidgetError,
-  WidgetHeader,
   WidgetShell,
   WidgetVisibilityButton,
-  normalizeSingularWidgetPath,
   resolveSingularWidgetSource,
   type SingularWidgetSourceResolution,
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
-import {
-  parseTimestamp,
-  type RunCostSummary,
-  summariseRunCosts,
-} from './reportWidgets/costSummaries'
-import { BarChart3, ChevronDown, Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
+import { parseTimestamp } from './reportWidgets/costSummaries'
+import { BarChart3, Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import {
   applyWidgetFilter,
@@ -869,7 +863,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
           >
             {([
               { mode: 'mobile', Icon: Smartphone, label: 'Mobile preview (≈480px)' },
-              { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (≈880px)' },
+              { mode: 'tablet', Icon: TabletSmartphone, label: 'Tablet preview (50/50 split)' },
               { mode: 'desktop', Icon: Laptop, label: 'Laptop preview (full width)' },
             ] as const).map(({ mode, Icon, label }) => {
               const active = previewMode === mode

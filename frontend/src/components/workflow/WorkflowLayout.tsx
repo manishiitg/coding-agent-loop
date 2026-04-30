@@ -574,7 +574,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // pane stayed pinned at 50% of the screen.
   //
   //   mobile  → report 480px column, chat takes the rest (review-style)
-  //   tablet  → report 880px column, chat takes the rest
+  //   tablet  → 50/50 split between builder/chat and the workflow view
   //   laptop  → chat collapses to ~360px, report fills the remaining width
   //   default → 50/50 split (no preview pref, or running in non-report views)
   const isPreviewableWorkspaceCanvas =
@@ -607,7 +607,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       : previewPaneTier === 'mobile'
         ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_480px] md:grid-rows-[auto_minmax(0,1fr)]'
         : previewPaneTier === 'tablet'
-          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(520px,880px)] md:grid-rows-[auto_minmax(0,1fr)]'
+          ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
           : previewPaneTier === 'laptop'
             ? 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]'
             : 'flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(320px,0.9fr)_minmax(360px,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]'

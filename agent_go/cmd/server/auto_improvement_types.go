@@ -67,19 +67,21 @@ const (
 // audit log, one place to read. Agents append these directly via
 // diff_patch_workspace_file when the user states a rule in chat.
 type DecisionEntry struct {
-	Ts                 string         `json:"ts"`
-	ID                 string         `json:"id"`
-	Source             DecisionSource `json:"source"`
-	Trigger            string         `json:"trigger"`
-	Rationale          string         `json:"rationale,omitempty"`
-	AppliedChanges     []string       `json:"applied_changes"`
-	TargetMetrics      []string       `json:"target_metrics,omitempty"`
-	LinkedExperimentID string         `json:"linked_experiment_id,omitempty"`
-	RegulationRef      string         `json:"regulation_ref,omitempty"`
-	EvidencePaths      []string       `json:"evidence_paths,omitempty"`
-	Supersedes         string         `json:"supersedes,omitempty"`
-	EditedAt           string         `json:"edited_at,omitempty"`
-	EditedBy           string         `json:"edited_by,omitempty"`
+	Ts                  string         `json:"ts"`
+	ID                  string         `json:"id"`
+	Source              DecisionSource `json:"source"`
+	Trigger             string         `json:"trigger"`
+	Rationale           string         `json:"rationale,omitempty"`
+	AppliedChanges      []string       `json:"applied_changes"`
+	TargetMetrics       []string       `json:"target_metrics,omitempty"`
+	LinkedExperimentID  string         `json:"linked_experiment_id,omitempty"`
+	LinkedReviewFinding []string       `json:"linked_review_finding,omitempty"`
+	LinkedImproveEntry  []string       `json:"linked_improve_entry,omitempty"`
+	RegulationRef       string         `json:"regulation_ref,omitempty"`
+	EvidencePaths       []string       `json:"evidence_paths,omitempty"`
+	Supersedes          string         `json:"supersedes,omitempty"`
+	EditedAt            string         `json:"edited_at,omitempty"`
+	EditedBy            string         `json:"edited_by,omitempty"`
 	// Rule-capture fields. Populated when Source=user + Trigger=rule-captured.
 	RuleAdded    string   `json:"rule_added,omitempty"`
 	RuleSection  string   `json:"rule_section,omitempty"`
@@ -106,12 +108,12 @@ const (
 type MetricSourceType string
 
 const (
-	MetricSourceEvalStep            MetricSourceType = "eval_step"
-	MetricSourceTelemetry           MetricSourceType = "telemetry"
-	MetricSourceExternal            MetricSourceType = "external"
-	MetricSourceDelayedGroundTruth  MetricSourceType = "delayed_ground_truth"
-	MetricSourceLineage             MetricSourceType = "lineage"
-	MetricSourceSchemaCheck         MetricSourceType = "schema_check"
+	MetricSourceEvalStep           MetricSourceType = "eval_step"
+	MetricSourceTelemetry          MetricSourceType = "telemetry"
+	MetricSourceExternal           MetricSourceType = "external"
+	MetricSourceDelayedGroundTruth MetricSourceType = "delayed_ground_truth"
+	MetricSourceLineage            MetricSourceType = "lineage"
+	MetricSourceSchemaCheck        MetricSourceType = "schema_check"
 )
 
 // MetricSource describes how a metric's value is resolved per run.
@@ -124,18 +126,18 @@ type MetricSource struct {
 
 // Metric is one entry in metrics.json::metrics[].
 type Metric struct {
-	ID              string          `json:"id"`
-	Label           string          `json:"label,omitempty"`
-	Unit            string          `json:"unit"`
-	Direction       MetricDirection `json:"direction"`
-	Mode            MetricMode      `json:"mode"`
-	Target          *float64        `json:"target,omitempty"`
-	Floor           *float64        `json:"floor,omitempty"`
-	Ceiling         *float64        `json:"ceiling,omitempty"`
-	Source          MetricSource    `json:"source"`
-	EvaluableAtLag  string          `json:"evaluable_at_lag,omitempty"`
-	Parent          string          `json:"parent,omitempty"`
-	Version         int             `json:"version,omitempty"`
+	ID             string          `json:"id"`
+	Label          string          `json:"label,omitempty"`
+	Unit           string          `json:"unit"`
+	Direction      MetricDirection `json:"direction"`
+	Mode           MetricMode      `json:"mode"`
+	Target         *float64        `json:"target,omitempty"`
+	Floor          *float64        `json:"floor,omitempty"`
+	Ceiling        *float64        `json:"ceiling,omitempty"`
+	Source         MetricSource    `json:"source"`
+	EvaluableAtLag string          `json:"evaluable_at_lag,omitempty"`
+	Parent         string          `json:"parent,omitempty"`
+	Version        int             `json:"version,omitempty"`
 	// LinkedSuccessCriteria traces this metric to one or more entries in the
 	// plan's success_criteria. Closes the Goodhart loop: an experiment moves a
 	// metric, the metric operationalizes a criterion, the criterion is the
@@ -147,11 +149,11 @@ type Metric struct {
 
 // MetricArchiveEntry preserves prior versions of amended metrics.
 type MetricArchiveEntry struct {
-	ID             string    `json:"id"`
-	Version        int       `json:"version"`
-	ArchivedAt     string    `json:"archived_at"`
-	ArchivedReason string    `json:"archived_reason"`
-	Definition     Metric    `json:"definition"`
+	ID             string `json:"id"`
+	Version        int    `json:"version"`
+	ArchivedAt     string `json:"archived_at"`
+	ArchivedReason string `json:"archived_reason"`
+	Definition     Metric `json:"definition"`
 }
 
 // MetricsFile is the shape of <workflow>/planning/metrics.json.
@@ -170,13 +172,13 @@ type MetricsFile struct {
 type ExperimentStatus string
 
 const (
-	ExpStatusProposed                  ExperimentStatus = "proposed"
-	ExpStatusAwaitingApproval          ExperimentStatus = "awaiting-approval"
-	ExpStatusMeasuring                 ExperimentStatus = "measuring"
-	ExpStatusEvaluating                ExperimentStatus = "evaluating"
+	ExpStatusProposed                   ExperimentStatus = "proposed"
+	ExpStatusAwaitingApproval           ExperimentStatus = "awaiting-approval"
+	ExpStatusMeasuring                  ExperimentStatus = "measuring"
+	ExpStatusEvaluating                 ExperimentStatus = "evaluating"
 	ExpStatusAwaitingConclusionApproval ExperimentStatus = "awaiting-conclusion-approval"
-	ExpStatusConcluded                 ExperimentStatus = "concluded"
-	ExpStatusAborted                   ExperimentStatus = "aborted"
+	ExpStatusConcluded                  ExperimentStatus = "concluded"
+	ExpStatusAborted                    ExperimentStatus = "aborted"
 )
 
 // Verdict — outcome of an experiment.
@@ -225,18 +227,18 @@ type WorldStateSnapshot struct {
 
 // ExperimentBaseline is the pre-intervention reference window.
 type ExperimentBaseline struct {
-	Window       string                 `json:"window"`
-	Values       map[string][]float64   `json:"values"`
-	Mean         map[string]float64     `json:"mean"`
-	Std          map[string]float64     `json:"std,omitempty"`
-	Insufficient bool                   `json:"insufficient,omitempty"`
+	Window       string               `json:"window"`
+	Values       map[string][]float64 `json:"values"`
+	Mean         map[string]float64   `json:"mean"`
+	Std          map[string]float64   `json:"std,omitempty"`
+	Insufficient bool                 `json:"insufficient,omitempty"`
 }
 
 // ExperimentIntervention captures what was changed and how to revert.
 type ExperimentIntervention struct {
-	Trigger             string   `json:"trigger"`
-	AppliedChanges      []string `json:"applied_changes"`
-	RevertableDiffPath  string   `json:"revertable_diff_path"`
+	Trigger            string   `json:"trigger"`
+	AppliedChanges     []string `json:"applied_changes"`
+	RevertableDiffPath string   `json:"revertable_diff_path"`
 }
 
 // ExperimentMeasurement holds the post-intervention data window.
@@ -254,8 +256,8 @@ type ExperimentMeasurement struct {
 
 // ExperimentWorldState pairs the start/end snapshots.
 type ExperimentWorldState struct {
-	StartedAt    *WorldStateSnapshot `json:"started_at,omitempty"`
-	ConcludedAt  *WorldStateSnapshot `json:"concluded_at,omitempty"`
+	StartedAt   *WorldStateSnapshot `json:"started_at,omitempty"`
+	ConcludedAt *WorldStateSnapshot `json:"concluded_at,omitempty"`
 }
 
 // ExperimentEvidence is the numeric evidence produced by compute_verdict.
@@ -290,29 +292,29 @@ type ExperimentConclusion struct {
 
 // ExperimentApprovals tracks who approved which gate.
 type ExperimentApprovals struct {
-	HypothesisApprovedBy  string `json:"hypothesis_approved_by,omitempty"`
-	HypothesisApprovedAt  string `json:"hypothesis_approved_at,omitempty"`
-	ConclusionApprovedBy  string `json:"conclusion_approved_by,omitempty"`
-	ConclusionApprovedAt  string `json:"conclusion_approved_at,omitempty"`
+	HypothesisApprovedBy string `json:"hypothesis_approved_by,omitempty"`
+	HypothesisApprovedAt string `json:"hypothesis_approved_at,omitempty"`
+	ConclusionApprovedBy string `json:"conclusion_approved_by,omitempty"`
+	ConclusionApprovedAt string `json:"conclusion_approved_at,omitempty"`
 }
 
 // ExperimentRecord is the durable record stored in active.json (in progress) or history.jsonl (concluded).
 type ExperimentRecord struct {
-	ID                 string                  `json:"id"`
-	Status             ExperimentStatus        `json:"status"`
-	Hypothesis         string                  `json:"hypothesis"`
-	TargetMetrics      []string                `json:"target_metrics"`
-	ExpectedDirection  ExpectedDirection       `json:"expected_direction"`
-	ExpectedMagnitude  float64                 `json:"expected_magnitude"`
-	Baseline           ExperimentBaseline      `json:"baseline"`
-	Intervention       ExperimentIntervention  `json:"intervention"`
-	Measurement        ExperimentMeasurement   `json:"measurement"`
-	WorldState         ExperimentWorldState    `json:"world_state"`
-	StartedAt          string                  `json:"started_at"`
-	ConcludedAt        string                  `json:"concluded_at,omitempty"`
-	Conclusion         *ExperimentConclusion   `json:"conclusion"`
-	Approvals          ExperimentApprovals     `json:"approvals"`
-	LinkedDecisions    []string                `json:"linked_decisions,omitempty"`
+	ID                string                 `json:"id"`
+	Status            ExperimentStatus       `json:"status"`
+	Hypothesis        string                 `json:"hypothesis"`
+	TargetMetrics     []string               `json:"target_metrics"`
+	ExpectedDirection ExpectedDirection      `json:"expected_direction"`
+	ExpectedMagnitude float64                `json:"expected_magnitude"`
+	Baseline          ExperimentBaseline     `json:"baseline"`
+	Intervention      ExperimentIntervention `json:"intervention"`
+	Measurement       ExperimentMeasurement  `json:"measurement"`
+	WorldState        ExperimentWorldState   `json:"world_state"`
+	StartedAt         string                 `json:"started_at"`
+	ConcludedAt       string                 `json:"concluded_at,omitempty"`
+	Conclusion        *ExperimentConclusion  `json:"conclusion"`
+	Approvals         ExperimentApprovals    `json:"approvals"`
+	LinkedDecisions   []string               `json:"linked_decisions,omitempty"`
 }
 
 // ExperimentsActiveFile is the shape of experiments/active.json (a list of in-flight experiments).
@@ -323,10 +325,10 @@ type ExperimentsActiveFile struct {
 
 // VerdictThresholds are the heuristics used by compute_verdict.
 type VerdictThresholds struct {
-	KeptMagnitudePct        float64 `json:"kept_magnitude_pct,omitempty"`
-	KeptPerRunBeatPct       float64 `json:"kept_per_run_beat_pct,omitempty"`
-	RevertedPerRunBeatPct   float64 `json:"reverted_per_run_beat_pct,omitempty"`
-	NoiseBandStdMultiplier  float64 `json:"noise_band_std_multiplier,omitempty"`
+	KeptMagnitudePct       float64 `json:"kept_magnitude_pct,omitempty"`
+	KeptPerRunBeatPct      float64 `json:"kept_per_run_beat_pct,omitempty"`
+	RevertedPerRunBeatPct  float64 `json:"reverted_per_run_beat_pct,omitempty"`
+	NoiseBandStdMultiplier float64 `json:"noise_band_std_multiplier,omitempty"`
 }
 
 // PinnedHypothesis records hypotheses the optimizer must not retry.
@@ -339,18 +341,18 @@ type PinnedHypothesis struct {
 
 // ExperimentsConfig is experiments/config.json.
 type ExperimentsConfig struct {
-	DefaultMeasurementRuns      int                `json:"default_measurement_runs"`
-	MinRuns                     int                `json:"min_runs,omitempty"`
-	MaxRuns                     int                `json:"max_runs,omitempty"`
-	BaselineWindow              int                `json:"baseline_window"`
-	AllowedInterventionPaths    []string           `json:"allowed_intervention_paths"`
-	ForbiddenInterventionPaths  []string           `json:"forbidden_intervention_paths,omitempty"`
-	VerdictThresholds           *VerdictThresholds `json:"verdict_thresholds,omitempty"`
-	CooldownHours               float64            `json:"cooldown_hours,omitempty"`
-	MaxConcurrentExperiments    int                `json:"max_concurrent_experiments,omitempty"`
-	HighRiskPaths               []string           `json:"high_risk_paths,omitempty"`
-	PinnedHypotheses            []PinnedHypothesis `json:"pinned_hypotheses,omitempty"`
-	FocusMetrics                []string           `json:"focus_metrics,omitempty"`
+	DefaultMeasurementRuns     int                `json:"default_measurement_runs"`
+	MinRuns                    int                `json:"min_runs,omitempty"`
+	MaxRuns                    int                `json:"max_runs,omitempty"`
+	BaselineWindow             int                `json:"baseline_window"`
+	AllowedInterventionPaths   []string           `json:"allowed_intervention_paths"`
+	ForbiddenInterventionPaths []string           `json:"forbidden_intervention_paths,omitempty"`
+	VerdictThresholds          *VerdictThresholds `json:"verdict_thresholds,omitempty"`
+	CooldownHours              float64            `json:"cooldown_hours,omitempty"`
+	MaxConcurrentExperiments   int                `json:"max_concurrent_experiments,omitempty"`
+	HighRiskPaths              []string           `json:"high_risk_paths,omitempty"`
+	PinnedHypotheses           []PinnedHypothesis `json:"pinned_hypotheses,omitempty"`
+	FocusMetrics               []string           `json:"focus_metrics,omitempty"`
 }
 
 // DefaultExperimentsConfig returns sensible defaults for a new workflow.

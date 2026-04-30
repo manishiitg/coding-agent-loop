@@ -55,7 +55,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Build command arguments
 	var cmdArgs []string
 
-	// Headless mode: add stealth options to avoid bot detection (not needed for CDP/user's real Chrome)
+	// Headless mode: add anti-detection launch options (not needed for CDP/user's real Chrome)
 	// CDP mode: agent passes --cdp in args (prompt instructs it to use --cdp http://host.docker.internal:9222)
 	// The args processing below resolves host.docker.internal to an IP for Chrome compatibility.
 	isCdpMode := e.CdpPort > 0

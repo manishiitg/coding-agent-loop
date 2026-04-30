@@ -1,7 +1,5 @@
 4. chain builder? / 34. workspace builder -> expose via api and explore something like temporal but much simpler
 
-41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS... i think for now just remove camoflux
-
 59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not  -- PROGRESS
 
 62. add cli for workflows management and org manemengt? so this can be done via claude code etc directly?

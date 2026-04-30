@@ -47,6 +47,12 @@ func CreateWorkspaceBrowserToolExecutorsWithSession(sessionID string, cdpPort ..
 		if isolatedID, ok := ctx.Value(SubAgentIsolatedSessionIDKey).(string); ok && isolatedID != "" {
 			ctx = context.WithValue(ctx, common.ChatSessionIDKey, isolatedID)
 			log.Printf("[BROWSER_TOOLS] Using isolated agent session: %s (parent workflow: %s)", isolatedID, sessionID)
+		} else if existingID, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && existingID != "" {
+			// Preserve the session injected by /s/{session_id}/tools/... routes.
+			// For share_browser=false code-exec sub-agents this is the isolated
+			// sub-agent session; overwriting it with the parent would collapse
+			// browser isolation.
+			log.Printf("[BROWSER_TOOLS] Preserving context agent session: %s (parent workflow: %s)", existingID, sessionID)
 		} else if sessionID != "" {
 			ctx = context.WithValue(ctx, common.ChatSessionIDKey, sessionID)
 		}

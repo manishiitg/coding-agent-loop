@@ -67,7 +67,7 @@ type SessionShellConfig struct {
 	WritePaths         []string // Folder guard write paths for Isolator
 	BlockedWritePaths  []string // Deny writes; reads allowed (flows to FolderGuardConfig.BlockedWritePaths)
 	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
-	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", "stealth", ""
+	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", ""
 	BrowserSessionID   string   // Shared browser identity for browser tools when "default" session is used
 }
 

@@ -49,37 +49,6 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     }
   }
 
-  const isError = event.status === 'error' || event.error
-
-  // Error case: keep the original compact error display
-  if (isError) {
-    return (
-      <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm font-medium text-red-700 dark:text-red-300">
-            Error
-            <span className="text-xs font-normal text-red-600 dark:text-red-400 ml-2">
-              {event.duration && `${formatDuration(event.duration)}`}
-              {event.turns && ` | ${event.turns} turns`}
-            </span>
-          </div>
-          {event.timestamp && (
-            <div className="text-xs flex-shrink-0 text-red-600 dark:text-red-400">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-        {event.error && (
-          <div className="mt-2 bg-red-100 dark:bg-red-800 border border-red-200 dark:border-red-700 rounded-md p-2">
-            <div className="text-sm text-red-900 dark:text-red-100 whitespace-pre-wrap break-words">
-              {event.error}
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
   // Copy handler
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback(() => {
@@ -90,7 +59,11 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     })
   }, [event.final_result])
 
-  // Success case: render final_result as assistant chat bubble
+  const isError = event.status === 'error' || event.error
+
+  // Render restored step errors and other completions with content as normal
+  // assistant messages. Otherwise an event with status=error and final_result
+  // collapses to a generic "Error" box and hides the useful restored summary.
   if (event.final_result) {
     // Detect JSON
     let isJSON = false
@@ -131,6 +104,35 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
             {event.timestamp && <span>{new Date(event.timestamp).toLocaleTimeString()}</span>}
           </div>
         </div>
+      </div>
+    )
+  }
+
+  // Error case without final_result: keep the original compact error display
+  if (isError) {
+    return (
+      <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-medium text-red-700 dark:text-red-300">
+            Error
+            <span className="text-xs font-normal text-red-600 dark:text-red-400 ml-2">
+              {event.duration && `${formatDuration(event.duration)}`}
+              {event.turns && ` | ${event.turns} turns`}
+            </span>
+          </div>
+          {event.timestamp && (
+            <div className="text-xs flex-shrink-0 text-red-600 dark:text-red-400">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+        {event.error && (
+          <div className="mt-2 bg-red-100 dark:bg-red-800 border border-red-200 dark:border-red-700 rounded-md p-2">
+            <div className="text-sm text-red-900 dark:text-red-100 whitespace-pre-wrap break-words">
+              {event.error}
+            </div>
+          </div>
+        )}
       </div>
     )
   }

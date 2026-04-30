@@ -11,7 +11,7 @@ Draw a dependency graph from plan.json so the user can see their workflow at a g
         ↓ classified
   step-3: route_by_intent  (routing: → step-4a, step-4b, step-4c)
 
-Use ASCII or a markdown table — whichever fits the plan size. Annotate each step with its execution_mode (regular / learn_code / todo_task / human_input / routing / conditional) and which group(s) of variables it runs in.
+Use ASCII or a markdown table — whichever fits the plan size. Annotate each step with its step type (regular / todo_task / human_input / routing / orphan) and declared execution mode. In Builder mode, new executable steps should stay on code_exec; learn_code promotion belongs to Optimizer after real run evidence.
 
 PART 2 — INTEGRITY CHECKS
 Flag the strict structural issues:
@@ -29,15 +29,15 @@ PART 3 — DESIGN RECOMMENDATIONS (the differentiator)
 Apply these best-practice lenses and tell the user what would make the plan better. Each recommendation MUST cite the specific step(s) it applies to. Skip the lens if it doesn't fire.
 
 - **Single responsibility**: each step should do one thing well. Steps that do "classify AND summarize AND route" are usually two or three steps. Smaller steps = easier to debug, easier to selectively re-run, easier to measure.
-- **Step type fit**: regular for one-shot LLM, learn_code for deterministic transformations on stable data shapes (a saved main.py replays without LLM calls), todo_task for agentic loops over a list, routing for branching, human_input for explicit human judgment. Steps that mention "loop over each X and do Y" are often todo_task candidates that were modeled as regular. Steps that do mechanical data shaping are often learn_code candidates that were modeled as regular (and burn LLM tokens every run).
+- **Step type fit**: regular for one-shot work, todo_task for agentic loops over a list, routing for branching, human_input for explicit human judgment, orphan for reusable manual utility agents. Steps that mention "loop over each X and do Y" are often todo_task candidates that were modeled as regular. Steps that do mechanical data shaping should still be built and debugged as code_exec here; note them as possible future Optimizer candidates for learn_code only after run evidence proves the shape is stable.
 - **Sequential LLM steps that could collapse**: if steps N and N+1 are both regular LLM steps that share most of their context, ask whether they should be one step with chain-of-thought, or whether the boundary actually buys testability/auditability.
 - **Validation schemas as guard rails**: even if context flow is technically correct today, a validation_schema on every produces-context_output step catches drift the moment it lands — far cheaper than discovering it three steps downstream.
 - **Naming**: "process_data" / "do_step" are generic. Names like "classify_emails_by_buyer_intent" make plans self-documenting and audit logs readable. If you see generic names, suggest specific ones.
 - **Human-input gates**: workflows that make consequential decisions (sending messages, allocating budget, classifying medical/legal items) without a single human_input step are usually under-gated. Ask whether one belongs.
 - **Group separation**: if multiple variable groups exist (e.g. "saurabh" / "anika"), check whether the plan branches on group identity in places where it shouldn't (a step description that says "for Saurabh, do X, for Anika, do Y" indicates a routing step is missing).
 - **Output surface bloat**: a step with 5+ context_outputs is hard for downstream consumers to navigate. Recommend splitting into smaller steps or wrapping outputs into a single structured object.
-- **Mechanical transforms over LLM calls**: 2+ sequential regular steps that just reshape data (filter / aggregate / map fields) usually belong in one learn_code step. The current plan pays an LLM bill on every run for mechanical work.
-- **No-op feedback loop**: workflows with no eval steps and no human_input have no built-in correction signal. Recommend at least one objective check (eval) per major decision.
+- **Mechanical transforms over LLM calls**: 2+ sequential regular steps that just reshape data (filter / aggregate / map fields) may deserve a clearer single code_exec transform step now. If they keep passing across real runs, Optimizer can later decide whether to promote that stable transform to learn_code.
+- **No-op feedback loop**: workflows with consequential decisions and no human_input may be under-gated. If outcome measurement is missing or weak, flag it as an Optimizer follow-up; Builder should not draft evaluation_plan.json in this command.
 
 For each recommendation, give:
   - **What's there now** (one sentence quoted from plan).

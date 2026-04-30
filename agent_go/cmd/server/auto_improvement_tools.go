@@ -81,6 +81,16 @@ func RegisterProposeExperimentTool(agent *mcpagent.Agent, workspacePath, trigger
 				"type":        "integer",
 				"description": "Override the workflow's default sample size. Optional.",
 			},
+			"linked_review_finding": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional builder/review.md finding ids (F-YYYY-MM-DD-NNN) this experiment is intended to resolve. Stored on the builder/decisions.jsonl entry for audit linkage.",
+			},
+			"linked_improve_entry": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "Optional builder/improve.md proposal ids (I-YYYY-MM-DD-NNN) this experiment is intended to resolve. Stored on the builder/decisions.jsonl entry for audit linkage.",
+			},
 		},
 		"required": []string{"hypothesis", "target_metrics", "expected_direction", "expected_magnitude", "intervention_changes"},
 	}

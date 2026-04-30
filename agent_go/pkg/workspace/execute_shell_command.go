@@ -113,11 +113,8 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		if sessionCfg != nil {
 			browserMode = sessionCfg.BrowserMode
 		}
-		if browserMode == "playwright" || browserMode == "stealth" {
+		if browserMode == "playwright" {
 			toolName := "Playwright browser_* tools (browser_snapshot, browser_click, browser_type, etc.)"
-			if browserMode == "stealth" {
-				toolName = "Camofox MCP tools (snapshot, click, type_text, navigate, etc.)"
-			}
 			return ShellCommandResult{
 				Stderr:   "ERROR: Do not call agent-browser via execute_shell_command. Use the " + toolName + " for browser automation.\n\nThe agent-browser CLI is not the correct tool for this workflow. Start with browser_snapshot to see the current page state, then use the appropriate browser_* tool for interactions.",
 				ExitCode: 1,

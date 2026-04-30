@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { Checkbox } from './ui/checkbox';
 import { Check, Loader2 } from 'lucide-react';
 import { useToolSelectionStore } from '../stores/useToolSelectionStore';
 import { useMCPStore } from '../stores';
-import { agentApi } from '../services/api';
 
 interface ToolSelectionSectionProps {
   availableServers: string[];
@@ -62,31 +61,6 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     });
     return map;
   }, [mcpToolList]);
-
-  // Camofox browser connection status (mirrors chat input behaviour)
-  const [camofoxConnected, setCamofoxConnected] = useState<boolean | null>(null)
-  const [camofoxStarting, setCamofoxStarting] = useState(false)
-  const camofoxCheckRef = useRef(false)
-  const hasCamofox = availableServers.includes('camofox')
-
-  useEffect(() => {
-    if (!hasCamofox || camofoxCheckRef.current) return
-    camofoxCheckRef.current = true
-    let cancelled = false
-    const check = async () => {
-      setCamofoxStarting(true)
-      try {
-        const result = await agentApi.startCamofox(true)
-        if (!cancelled) setCamofoxConnected(result.connected)
-      } catch {
-        if (!cancelled) setCamofoxConnected(false)
-      } finally {
-        if (!cancelled) setCamofoxStarting(false)
-      }
-    }
-    const t = setTimeout(check, 300)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [hasCamofox])
 
   // Use fallback instance to avoid null checks everywhere
   // Create a stable default instance that won't change
@@ -382,29 +356,6 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                   )}
                 </label>
                 </div>
-                {/* Camofox browser status — mirrors chat input */}
-                {serverName === 'camofox' && (
-                  <div className="ml-6 mt-1">
-                    {camofoxStarting && (
-                      <div className="text-xs text-yellow-500 flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Checking camofox-browser...
-                      </div>
-                    )}
-                    {!camofoxStarting && camofoxConnected === true && (
-                      <div className="text-xs text-green-500 flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                        camofox-browser connected
-                      </div>
-                    )}
-                    {!camofoxStarting && camofoxConnected === false && (
-                      <div className="text-xs text-red-400 flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                        camofox-browser not running
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Tool Mode Selection and Tool List (when expanded) */}

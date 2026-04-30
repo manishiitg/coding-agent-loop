@@ -29,6 +29,8 @@ type ProposeExperimentInput struct {
 	ExpectedMagnitude   float64              `json:"expected_magnitude"`
 	InterventionChanges []InterventionChange `json:"intervention_changes"`
 	MeasurementRuns     int                  `json:"measurement_runs,omitempty"`
+	LinkedReviewFinding []string             `json:"linked_review_finding,omitempty"`
+	LinkedImproveEntry  []string             `json:"linked_improve_entry,omitempty"`
 }
 
 // ProposeExperimentOutput is what the tool returns to the proposer LLM.
@@ -212,12 +214,14 @@ func ProposeExperiment(ctx context.Context, workspacePath, trigger string, input
 
 	// 9. Audit. Append a decision record cross-linking the experiment.
 	dec := DecisionEntry{
-		Source:             DecisionSourceAgent,
-		Trigger:            trigger,
-		Rationale:          fmt.Sprintf("opened experiment: %s", truncate(input.Hypothesis, 120)),
-		AppliedChanges:     appliedPaths,
-		TargetMetrics:      input.TargetMetrics,
-		LinkedExperimentID: experimentID,
+		Source:              DecisionSourceAgent,
+		Trigger:             trigger,
+		Rationale:           fmt.Sprintf("opened experiment: %s", truncate(input.Hypothesis, 120)),
+		AppliedChanges:      appliedPaths,
+		TargetMetrics:       input.TargetMetrics,
+		LinkedExperimentID:  experimentID,
+		LinkedReviewFinding: input.LinkedReviewFinding,
+		LinkedImproveEntry:  input.LinkedImproveEntry,
 	}
 	persistedDec, err := AppendDecisionEntry(ctx, workspacePath, dec)
 	if err != nil {
@@ -495,9 +499,9 @@ type RevertableDiff struct {
 }
 
 type RevertableDiffEntry struct {
-	Path        string `json:"path"`
-	HadBefore   bool   `json:"had_before"`
-	BeforeBody  string `json:"before_body,omitempty"`
+	Path       string `json:"path"`
+	HadBefore  bool   `json:"had_before"`
+	BeforeBody string `json:"before_body,omitempty"`
 }
 
 func captureRevertableDiff(ctx context.Context, workspacePath string, changes []InterventionChange) (RevertableDiff, error) {

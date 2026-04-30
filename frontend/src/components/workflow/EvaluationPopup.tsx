@@ -516,7 +516,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                               {report.step_scores.map((step, idx) => {
                                 const stepKey = `${entry.run_folder}-${step.step_id}`
                                 const isStepExpanded = expandedSteps.has(stepKey)
-                                const stepPercentage = (step.score / step.max_score) * 100
+                                const stepPercentage = step.max_score > 0 ? (step.score / step.max_score) * 100 : 0
 
                                 return (
                                   <div
@@ -541,6 +541,11 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                                           <span className="text-sm font-medium text-foreground truncate">
                                             {step.step_id}
                                           </span>
+                                          {step.skipped && (
+                                            <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                                              Skipped
+                                            </span>
+                                          )}
                                         </div>
 
                                         {/* Progress Bar */}
@@ -552,7 +557,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                                             />
                                           </div>
                                           <span className={`text-xs font-medium ${getScoreColor(stepPercentage)}`}>
-                                            {step.score}/{step.max_score}
+                                            {step.skipped ? 'N/A' : `${step.score}/${step.max_score}`}
                                           </span>
                                         </div>
                                       </div>

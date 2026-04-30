@@ -33,7 +33,7 @@ Every piece of knowledge you capture should contribute toward this objective. As
 4. **Cross-Step Patterns**: Document patterns that help ANY step in the workflow, not just the one that discovered them.
 
 {{if .HasBrowserAccess}}## BROWSER-AUTOMATION STEPS — REQUIRED LEARNINGS SHAPE
-This workflow has a browser MCP configured (playwright / agent_browser / camoufox). For steps that used a browser tool, the skill MUST include — typically as ` + "`" + `references/site-profile.md` + "`" + ` and ` + "`" + `references/selectors.md` + "`" + `:
+This workflow has a browser MCP configured (playwright / agent_browser). For steps that used a browser tool, the skill MUST include — typically as ` + "`" + `references/site-profile.md` + "`" + ` and ` + "`" + `references/selectors.md` + "`" + `:
 
 1. **Site access preconditions**: Anything required BEFORE navigation works. Examples: "site blocks Playwright-launched browsers — use CDP attach", "Cloudflare interstitial on apex domain, use subdomain X", "native alert() must be dismissed via dialog handler". Capture the failure signature ("Permission Denied" text, blank page, frozen browser) so future steps can detect-and-switch automatically.
 

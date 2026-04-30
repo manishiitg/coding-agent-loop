@@ -306,15 +306,20 @@ const EnhancedContentRenderer: React.FC<{
       const data = parsedContent.metadata?.originalData as {
         images?: Array<{ data: string; mime_type: string }>
         model: string
-        cost_per_image: number
+        cost_per_image?: number | null
+        cost_note?: string
         prompt: string
         saved_paths?: string[]
         count: number
       }
+      const imageCost =
+        typeof data.cost_per_image === 'number'
+          ? `$${data.cost_per_image.toFixed(2)}/image`
+          : data.cost_note || 'Cost unavailable'
       return (
         <div className="space-y-3">
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Generated {data.count} image{data.count !== 1 ? 's' : ''} · {data.model} · ${data.cost_per_image.toFixed(2)}/image
+            Generated {data.count} image{data.count !== 1 ? 's' : ''} · {data.model} · {imageCost}
           </p>
           {data.images && data.images.length > 0 && (
             <div className="flex flex-wrap gap-3">

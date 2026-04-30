@@ -9,13 +9,6 @@
         "--isolated"
       ],
       "working_dir": "/app/workspace-docs/Downloads"
-    },
-    "camofox": {
-      "command": "camofox-mcp",
-      "args": [],
-      "env": {
-        "CAMOFOX_URL": "http://host.docker.internal:9377"
-      }
     }
   }
 }

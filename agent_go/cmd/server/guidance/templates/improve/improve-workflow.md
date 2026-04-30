@@ -9,29 +9,29 @@ Think like a sharp business analyst auditing this workflow's actual outputs agai
 You should be uncomfortable with how obvious-in-retrospect a change feels after you read enough run output. That's the right mode.
 
 SETUP
-1. Read planning/plan.json to extract the objective and success_criteria — north star for every decision.
+1. Read soul/soul.md to extract the objective and success criteria — north star for every decision.
 2. Read evaluation/evaluation_plan.json so you understand what the eval is measuring.
 3. Read variables.json to get the enabled group names.
 4. **Framework precheck.** Read builder/improve.md. If there is no "## Workflow Profile" section, stop and redirect: "Run /improve-setup-framework first to write the Workflow Profile and bootstrap metrics." If the profile declares business-context accumulation or a frozen/ratchet plan and <workflow>/planning/metrics.json is empty, also redirect. Plain mutable+exploratory workflows may proceed without metrics.
 5. **Framework mode.** Read <workflow>/planning/metrics.json. If it has at least one entry, you are in **EXPERIMENT MODE** for this command run: instead of applying changes directly via harden_workflow / replan_workflow_from_results, package the intended changes as experiments via propose_experiment so they're gated behind measurement and auto-revertible. If metrics.json is empty (or missing), you are in **DIRECT MODE**: harden / replan apply changes immediately. Note this choice in the final report.
-6. {{if .Iteration}}Use iteration "{{.Iteration}}" as the starting evidence set for structural review.{{else}}Read runs/ to find the latest iteration and use that as the starting evidence set for structural review.{{end}} Treat that iteration as the default evidence set for this command run.
+6. Use `iteration-0` as the starting evidence set for this command run. Optimizer tools operate on `iteration-0`; do not inspect an older selected iteration as the basis for fixes.
 
 PHASE 1 — OUTPUT REVIEW (the heart of the discovery)
 This is the primary signal in EXPERIMENT MODE and the most undervalued one in DIRECT MODE. Do it first, before any tool call. The discovery looks across plan, knowledgebase, and learnings as one surface — not as separate concerns. A single proposed change may span all three when they share one belief.
-1. Open the iteration folder under runs/ for the most recent meaningful iteration. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
-2. Read evaluation reports for the same iteration. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
+1. Open runs/iteration-0 for each enabled group with run evidence. Read what the workflow actually PRODUCED — generated copy, sent messages, written reports, scored decisions. Read enough of it that patterns start to appear. Don't skim.
+2. Read evaluation reports from runs/iteration-0 for the same groups. The eval rationale text is often the richest signal — pay attention to WHY something scored low, not just the score.
 3. Compare outputs against the success criteria from soul.md. Where's the gap a domain expert would see?
-4. Skim decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing failed ideas.
+4. Skim builder/decisions.jsonl — what has the user been asking for? What's been tried before? Avoid re-proposing failed ideas.
 5. **When output patterns suggest the issue isn't in the plan itself**, also inspect:
    - **knowledgebase/notes/_index.json + topic files** — outputs that contradict each other, leak stale facts, or miss context the workflow should have known often trace to KB drift (duplicate or overlapping topics, stale narrative, missing step contributions).
    - **learnings/_global/SKILL.md and references/*.md** — outputs that repeat known mistakes, or that reveal step rationale contradicting established guidance, often trace to learnings gaps (duplicated lessons, missing guidance for declared learning_objectives, repeated run fixes that should have become durable lessons, step-specific learnings that belong in _global).
    - **knowledgebase/rules/rules.md** — when outputs violate user-stated business rules, the rule may be missing or out of date (note: rule additions are user-authoritative and don't go through the experiment gate; this command flags them for the user, doesn't add them).
-6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in run outputs ("posts 7, 12, 19 in iteration-3/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
+6. List 3–5 candidate changes ranked by expected business impact. Each candidate must name the FILES it would touch (plan/step descriptions, knowledgebase/notes/, learnings/, validation rules, prompts) and be defensible by something specific in iteration-0 run outputs ("posts 7, 12, 19 in iteration-0/group-a all scored <0.3 and all share <pattern>"), not by abstract reasoning. A single candidate may span multiple file kinds — that's fine if they share one underlying belief.
 
 PHASE 2 — STRUCTURAL DIAGNOSIS (complement, not primary)
 1. Call optimize_workflow({{if .Focus}}focus="{{.Focus}}"{{end}}).
 2. Read the result and classify findings as Structural (missing steps, wrong ordering, broken context flow, wrong step type) vs Non-structural (weak prompts, weak validation, reliability gaps).
-3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results(iteration="{starting_iter}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) ONCE before continuing.
+3. If a MATERIAL structural problem appears and you have real run evidence, call replan_workflow_from_results({{if .Focus}}focus="{{.Focus}}"{{end}}) ONCE before continuing. This tool always reads iteration-0; do not pass an iteration.
 4. Do not thrash the plan. At most one structural replan per command run.
 5. **Reconcile Phase 1 and Phase 2.** If output review surfaced something optimize_workflow missed (likely, because optimize_workflow looks at code-shape, not outputs), trust the output review.
 
@@ -39,13 +39,13 @@ PHASE 3 — PER-GROUP REVIEW → APPLY CHANGES
 Repeat the following for each enabled group, sequentially.
 
 For group {group}:
-  a. **REVIEW EVIDENCE** — inspect outputs, logs, validation failures, and the evaluation report for "{starting_iter}/{group}".
-     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(target_run_folder="{starting_iter}/{group}"). Do NOT execute a fresh workflow run here.
+  a. **REVIEW EVIDENCE** — inspect outputs, logs, validation failures, and the evaluation report for "iteration-0/{group}".
+     - If the workflow run exists but the evaluation report is missing, you MAY call run_full_evaluation(group_name="{group}"). Evaluation always targets iteration-0; do NOT pass any run-folder argument or execute a fresh workflow run here.
      - If there's no meaningful run evidence for this group, report the gap and continue with groups that have evidence.
   b. **DECIDE** based on the candidate changes from Phase 1 + the structural findings from Phase 2:
      - **DIRECT MODE (no metrics.json):**
-       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(iteration="{starting_iter}", group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}), then continue.
-       • Otherwise call harden_workflow(iteration="{starting_iter}", group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) for plan/prompt/validation fixes.
+       • If issues are structural and you haven't replanned yet, call replan_workflow_from_results(group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}), then continue.
+       • Otherwise call harden_workflow(group_name="{group}"{{if .Focus}}, focus="{{.Focus}}"{{end}}) for plan/prompt/validation fixes.
        • If the candidate's primary lever is KB cleanup, call reorganize_knowledgebase or consolidate_knowledgebase as appropriate.
        • If the candidate's primary lever is learnings cleanup or promotion, call organize_global_learnings.
        • These tools may run in sequence within a single group's review.
@@ -60,7 +60,7 @@ For group {group}:
   c. **THE CHANGE DOES NOT HAVE TO BE SMALL.** The framework auto-reverts on a bad verdict, so blast radius is recoverable. Optimize for "the experiment will tell us something useful" — not for "the change is tiny." Multi-file bundled changes that share one belief are often higher-signal than fragmented small ones.
 
 PHASE 4 — VERIFY (DIRECT MODE only)
-In DIRECT MODE: if the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification on the highest-value group: run_full_workflow + run_full_evaluation. Maximum one extra pass; do not loop.
+In DIRECT MODE: if the workflow still misses key success criteria and the cause is clearly fixable within one more pass, do ONE targeted verification on the highest-value group: run_full_workflow(group_name="{group}"). This already runs evaluation by default, so do not call run_full_evaluation again unless run_full_workflow was explicitly called with disable_eval=true. Maximum one extra pass; do not loop.
 In EXPERIMENT MODE: skip this phase. Verification IS the experiment loop — running the workflow now would just be one of the measurement runs, and the framework will compute a verdict deterministically when target_runs is reached. The next workflow runs will populate measurement.values automatically.
 
 FINAL REPORT
@@ -77,7 +77,7 @@ Before finishing, update builder/improve.md with:
 - evidence reviewed
 - mode (direct vs experiment) and any experiment ids opened
 - workflow changes applied (or, in experiment mode, queued behind experiments)
-- eval/report changes touched if any
+- eval changes touched and report follow-ups deferred to Reporting mode, if any
 - what improved
 - remaining gaps
 - next hypotheses
@@ -96,7 +96,7 @@ After each change is applied (DIRECT mode) or queued as an experiment (EXPERIMEN
    ```
    Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; explain what's still open. Use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong on closer inspection. Never delete or rewrite the original finding; the marker preserves audit history.
 
-2. **In EXPERIMENT MODE**, when you call `propose_experiment`, include `linked_review_finding` in the experiment payload with the array of matched `F-...` ids — so when the experiment is later concluded, the resulting decisions.jsonl entry inherits the linkage and the audit trail is searchable from both ends.
+2. **In EXPERIMENT MODE**, when you call `propose_experiment`, include `linked_review_finding` in the experiment payload with the array of matched `F-...` ids — so when the experiment is later concluded, the resulting builder/decisions.jsonl entry inherits the linkage and the audit trail is searchable from both ends.
 
 3. **In DIRECT MODE**, when the underlying primitive (harden_workflow / replan_workflow_from_results / reorganize_knowledgebase / consolidate_knowledgebase / organize_global_learnings) writes a `builder/decisions.jsonl` entry, also append `linked_review_finding=[F-...]` to that entry. If the primitive does not write the decision itself, you append the JSONL line via `diff_patch_workspace_file` — same shape as the rule-capture flow in the system prompt — with `linked_review_finding` populated.
 

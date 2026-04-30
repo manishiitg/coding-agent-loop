@@ -17,6 +17,8 @@ export type LLMProvider =
   | 'codex-cli'
   | 'minimax'
   | 'minimax-coding-plan'
+  | 'elevenlabs'
+  | 'deepgram'
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
@@ -78,6 +80,10 @@ export interface LLMConfiguration {
     anthropic?: string
     vertex?: string
     kimi?: string
+    minimax?: string
+    minimax_coding_plan?: string
+    elevenlabs?: string
+    deepgram?: string
     azure?: {
       endpoint: string
       api_key: string
@@ -126,7 +132,7 @@ export interface AgentQueryRequest {
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Explicit browser mode for prompt/runtime selection
-  browser_mode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+  browser_mode?: 'none' | 'headless' | 'cdp' | 'playwright'
   // Google Workspace access configuration
   enable_gws_access?: boolean // Enable/disable Google Workspace CLI access
   // CDP port for connecting to an existing Chrome browser (local mode only)
@@ -199,6 +205,8 @@ export interface LLMDefaultsResponse {
   kimi_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
   minimax_coding_plan_config?: ExtendedLLMConfiguration
+  elevenlabs_config?: ExtendedLLMConfiguration
+  deepgram_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
@@ -210,7 +218,10 @@ export interface LLMDefaultsResponse {
     kimi?: string[]
     minimax?: string[]
     'minimax-coding-plan'?: string[]
+    elevenlabs?: string[]
+    deepgram?: string[]
   }
+  provider_capabilities?: Partial<Record<LLMProvider, string[]>>
   supported_providers?: LLMProvider[]
   /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
   llm_config_locked?: boolean
@@ -725,6 +736,29 @@ export interface ChatHistorySummary {
   last_activity?: string;
 }
 
+export interface ChatHistoryMessagePart {
+  Text?: string;
+  text?: string;
+  Type?: string;
+  type?: string;
+  Content?: string;
+  content?: string;
+}
+
+export interface ChatHistoryMessage {
+  Role?: string;
+  role?: string;
+  Parts?: ChatHistoryMessagePart[];
+  parts?: ChatHistoryMessagePart[];
+}
+
+export interface ChatHistoryConversation {
+  session_id: string;
+  agent_mode?: string;
+  conversation_history: ChatHistoryMessage[];
+  updated_at?: string;
+}
+
 export interface ListChatSessionsResponse {
   sessions: ChatHistorySummary[]; // Backend returns ChatHistorySummary with total_events
   total: number;
@@ -1024,6 +1058,10 @@ export interface EvaluationStep {
   pre_validation?: ValidationSchema
   success_criteria: string
   agent_configs?: AgentConfigs
+  applies_to_routes?: Array<{
+    routing_step_id: string
+    route_ids: string[]
+  }>
 }
 
 export interface EvaluationPlan {
@@ -1323,6 +1361,7 @@ export interface EvaluationStepScore {
   max_score: number;
   reasoning: string;
   evidence: string;
+  skipped?: boolean;
   context_output?: string;
   output_content?: StepOutputContent;
 }

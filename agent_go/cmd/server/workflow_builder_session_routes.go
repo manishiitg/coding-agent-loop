@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +15,9 @@ import (
 	storeEvents "mcp-agent-builder-go/agent_go/internal/events"
 )
 
-const restoredBuilderConversationMessageLimit = 50
+const restoredBuilderConversationMessageLimit = 12
+const restoredBuilderStepSummaryLimit = 1600
+const workflowBuilderConversationDateLayout = "2006-01-02"
 
 type workflowBuilderSessionResponse struct {
 	Success            bool              `json:"success"`
@@ -47,6 +50,29 @@ type builderConversationMessage struct {
 
 type builderConversationPart struct {
 	Text string `json:"Text"`
+}
+
+type stepExecutionConversationLog struct {
+	ConversationHistory []builderConversationMessage `json:"conversation_history"`
+	ToolCalls           []stepExecutionToolCall      `json:"tool_calls"`
+}
+
+type stepExecutionToolCall struct {
+	ToolName    string `json:"tool_name"`
+	Args        string `json:"args"`
+	Result      string `json:"result"`
+	StepID      string `json:"step_id"`
+	Timestamp   string `json:"timestamp"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+}
+
+type restoredStepSummary struct {
+	Path      string
+	StepID    string
+	Status    string
+	Message   string
+	UpdatedAt time.Time
 }
 
 // handleGetWorkflowBuilderSession is the backend source of truth for restoring
@@ -172,23 +198,33 @@ func workflowBuilderSessionMatches(session *ActiveSessionInfo, presetQueryID, wo
 	return false
 }
 
+func workflowBuilderConversationLogPath(workspacePath, sessionID string, timestamp time.Time) string {
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	cleanWorkspacePath := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	return filepath.ToSlash(filepath.Join(
+		cleanWorkspacePath,
+		"builder",
+		"conversation",
+		timestamp.Format(workflowBuilderConversationDateLayout),
+		fmt.Sprintf("session-%s-conversation.json", sessionID),
+	))
+}
+
 func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, presetQueryID, workspacePath string) (*workflowBuilderSessionResponse, error) {
 	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
 	if workspacePath == "" {
 		return nil, nil
 	}
 
-	builderFolder := workspacePath + "/builder"
-	listing, exists, err := listWorkspaceFolder(ctx, builderFolder, 1)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, nil
-	}
-
 	paths := []string{}
-	collectWorkspaceFilePaths(listing, &paths)
+	conversationFolder := workspacePath + "/builder/conversation"
+	if listing, exists, err := listWorkspaceFolder(ctx, conversationFolder, 3); err != nil {
+		return nil, err
+	} else if exists {
+		collectWorkspaceFilePaths(listing, &paths)
+	}
 
 	type candidate struct {
 		path      string
@@ -197,7 +233,7 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 	}
 	candidates := []candidate{}
 	for _, path := range paths {
-		if !strings.HasPrefix(path, builderFolder+"/session-") || !strings.HasSuffix(path, "-conversation.json") {
+		if !isWorkflowBuilderConversationLogPath(workspacePath, path) {
 			continue
 		}
 
@@ -240,6 +276,15 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 		updatedAt = latest.updatedAt.Format(time.RFC3339Nano)
 	}
 
+	if stepSummary, err := api.restoreLatestWorkflowStepSummary(ctx, workspacePath); err == nil && stepSummary != nil {
+		if raw := stepSummaryToRawEvent(sessionID, len(rawEvents), *stepSummary); raw != nil {
+			rawEvents = append(rawEvents, raw)
+			if latest.updatedAt.IsZero() || stepSummary.UpdatedAt.After(latest.updatedAt) {
+				updatedAt = stepSummary.UpdatedAt.Format(time.RFC3339Nano)
+			}
+		}
+	}
+
 	return &workflowBuilderSessionResponse{
 		Success:            true,
 		Source:             "workspace",
@@ -256,6 +301,265 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 		Total:              len(rawEvents),
 		LastProcessedIndex: len(rawEvents) - 1,
 	}, nil
+}
+
+func isWorkflowBuilderConversationLogPath(workspacePath, candidatePath string) bool {
+	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
+	candidatePath = strings.Trim(strings.TrimSpace(candidatePath), "/")
+	if workspacePath == "" || candidatePath == "" || !strings.HasSuffix(candidatePath, "-conversation.json") {
+		return false
+	}
+
+	newPrefix := workspacePath + "/builder/conversation/"
+	if !strings.HasPrefix(candidatePath, newPrefix) {
+		return false
+	}
+	relative := strings.TrimPrefix(candidatePath, newPrefix)
+	parts := strings.Split(relative, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	if _, err := time.Parse(workflowBuilderConversationDateLayout, parts[0]); err != nil {
+		return false
+	}
+	return strings.HasPrefix(parts[1], "session-")
+}
+
+func (api *StreamingAPI) restoreLatestWorkflowStepSummary(ctx context.Context, workspacePath string) (*restoredStepSummary, error) {
+	runsFolder := strings.Trim(strings.TrimSpace(workspacePath), "/") + "/runs"
+	listing, exists, err := listWorkspaceFolder(ctx, runsFolder, 8)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	paths := []string{}
+	collectWorkspaceFilePaths(listing, &paths)
+
+	var latest *restoredStepSummary
+	for _, path := range paths {
+		if !strings.Contains(path, "/logs/") || !strings.Contains(path, "/execution/") || !strings.HasSuffix(path, "-conversation.json") {
+			continue
+		}
+
+		content, exists, err := readFileFromWorkspace(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		if !exists || strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		summary := summarizeStepExecutionConversation(path, content)
+		if summary == nil {
+			continue
+		}
+		if latest == nil || summary.UpdatedAt.After(latest.UpdatedAt) || (summary.UpdatedAt.Equal(latest.UpdatedAt) && summary.Path > latest.Path) {
+			copySummary := *summary
+			latest = &copySummary
+		}
+	}
+
+	return latest, nil
+}
+
+func summarizeStepExecutionConversation(path, content string) *restoredStepSummary {
+	var log stepExecutionConversationLog
+	if err := json.Unmarshal([]byte(content), &log); err != nil {
+		return nil
+	}
+
+	stepID := stepIDFromExecutionConversationPath(path)
+	var latestError *restoredStepSummary
+	var latestStatus *restoredStepSummary
+	latestObservedAt := time.Time{}
+
+	for _, call := range log.ToolCalls {
+		ts := latestToolCallTime(call)
+		if ts.IsZero() {
+			continue
+		}
+		if ts.After(latestObservedAt) {
+			latestObservedAt = ts
+		}
+		if strings.TrimSpace(call.StepID) != "" {
+			stepID = strings.TrimSpace(call.StepID)
+		}
+		message := summarizeToolCallResult(call)
+		if message == "" {
+			continue
+		}
+
+		summary := &restoredStepSummary{
+			Path:      path,
+			StepID:    stepID,
+			Status:    "error",
+			Message:   message,
+			UpdatedAt: ts,
+		}
+		if latestError == nil || summary.UpdatedAt.After(latestError.UpdatedAt) {
+			latestError = summary
+		}
+	}
+
+	for _, message := range log.ConversationHistory {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role != "ai" && role != "assistant" {
+			continue
+		}
+		text := builderConversationMessageText(message)
+		status := executionStatusFromText(text)
+		if status == "" {
+			continue
+		}
+		summary := &restoredStepSummary{
+			Path:      path,
+			StepID:    stepID,
+			Status:    status,
+			Message:   truncateRestoredStepMessage(text),
+			UpdatedAt: latestObservedAt,
+		}
+		latestStatus = summary
+	}
+
+	if latestError != nil {
+		return latestError
+	}
+	if latestStatus != nil && !latestStatus.UpdatedAt.IsZero() {
+		return latestStatus
+	}
+	return nil
+}
+
+func latestToolCallTime(call stepExecutionToolCall) time.Time {
+	for _, value := range []string{call.CompletedAt, call.Timestamp, call.StartedAt} {
+		if parsed := parseBuilderConversationUpdatedAt(value); !parsed.IsZero() {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func summarizeToolCallResult(call stepExecutionToolCall) string {
+	result := strings.TrimSpace(call.Result)
+	if result == "" {
+		return ""
+	}
+
+	var decoded struct {
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		Error    string `json:"error"`
+		ExitCode *int   `json:"exit_code"`
+	}
+	if err := json.Unmarshal([]byte(result), &decoded); err == nil {
+		for _, text := range []string{decoded.Error, decoded.Stderr, decoded.Stdout} {
+			text = strings.TrimSpace(text)
+			if looksLikeExecutionError(text) {
+				return formatStepToolError(call.ToolName, text)
+			}
+		}
+		if decoded.ExitCode != nil && *decoded.ExitCode != 0 {
+			text := strings.TrimSpace(coalesceString(decoded.Stderr, decoded.Stdout, result))
+			return formatStepToolError(call.ToolName, text)
+		}
+		return ""
+	}
+
+	if looksLikeExecutionError(result) {
+		return formatStepToolError(call.ToolName, result)
+	}
+	return ""
+}
+
+func looksLikeExecutionError(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "error:") ||
+		strings.Contains(lower, "failed") ||
+		strings.Contains(lower, "traceback") ||
+		strings.Contains(lower, "exception") ||
+		strings.Contains(lower, "status: failed")
+}
+
+func formatStepToolError(toolName, message string) string {
+	message = truncateRestoredStepMessage(message)
+	if strings.TrimSpace(toolName) == "" {
+		return message
+	}
+	return fmt.Sprintf("%s: %s", strings.TrimSpace(toolName), message)
+}
+
+func truncateRestoredStepMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= restoredBuilderStepSummaryLimit {
+		return message
+	}
+	return strings.TrimSpace(message[:restoredBuilderStepSummaryLimit]) + "..."
+}
+
+func executionStatusFromText(text string) string {
+	upper := strings.ToUpper(text)
+	switch {
+	case strings.Contains(upper, "STATUS: FAILED"):
+		return "error"
+	case strings.Contains(upper, "STATUS: COMPLETED"):
+		return "completed"
+	default:
+		return ""
+	}
+}
+
+func stepIDFromExecutionConversationPath(path string) string {
+	parts := strings.Split(path, "/")
+	for index, part := range parts {
+		if part == "logs" && index+1 < len(parts) {
+			return parts[index+1]
+		}
+	}
+	return ""
+}
+
+func stepSummaryToRawEvent(sessionID string, eventIndex int, summary restoredStepSummary) json.RawMessage {
+	timestamp := summary.UpdatedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	stepName := coalesceString(summary.StepID, "workflow step")
+	stepStatus := coalesceString(summary.Status, "completed")
+	finalResult := fmt.Sprintf("Restored latest workflow step update from `%s`.\n\n%s", stepName, summary.Message)
+	if stepStatus == "error" {
+		finalResult = fmt.Sprintf("Restored latest workflow step error from `%s`.\n\n%s", stepName, summary.Message)
+	}
+
+	raw, err := json.Marshal(map[string]interface{}{
+		"id":          fmt.Sprintf("builder-history-%s-step-summary-%d", sessionID, eventIndex),
+		"type":        "unified_completion",
+		"timestamp":   timestamp,
+		"session_id":  sessionID,
+		"event_index": eventIndex,
+		"data": map[string]interface{}{
+			"type":      "unified_completion",
+			"timestamp": timestamp,
+			"data": map[string]interface{}{
+				"status":                   "completed",
+				"final_result":             finalResult,
+				"timestamp":                timestamp.Format(time.RFC3339Nano),
+				"restored_from":            "workflow_step_execution_log",
+				"restored_step_status":     stepStatus,
+				"step_id":                  summary.StepID,
+				"source_conversation_path": summary.Path,
+			},
+		},
+	})
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func parseBuilderConversationUpdatedAt(value string) time.Time {

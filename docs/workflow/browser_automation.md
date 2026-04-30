@@ -1,6 +1,6 @@
 # Browser Automation: Durable Selectors & Discovery
 
-This doc describes the browser-specific rules injected into execution, learning, harden, and review prompts when a workflow has a browser MCP available (`playwright`, `camofox`, `agent-browser` skill, or a CDP port).
+This doc describes the browser-specific rules injected into execution, learning, harden, and review prompts when a workflow has a browser MCP available (`playwright`, `agent-browser` skill, or a CDP port).
 
 ## The problem
 
@@ -23,7 +23,7 @@ Refs (`@e1`, `e68`, `"ref": "abc123"`) are session-local identifiers the browser
 Two equally valid paths to a deterministic selector:
 
 - **Path A — snapshot + act.** `browser_snapshot` gives you role + accessible name + widget state. Pick a locator from the priority list, then act via individual tool calls (`browser_click`, `browser_type`, `browser_select`, `browser_navigate`) OR via Playwright code (`browser_run_code` with `page.getByRole(...)`, `page.locator(...)`). Tool-call style is a debugability preference, not a durability dimension.
-- **Path B — DOM probe via eval.** Run the canonical read-only probe below via `browser_evaluate` (Playwright/Camoufox) or `agent-browser eval` to get a structured inventory. Use when the a11y snapshot misses elements (custom `<div>` buttons, portal/popover children, form inputs the tree skips).
+- **Path B — DOM probe via eval.** Run the canonical read-only probe below via `browser_evaluate` (Playwright) or `agent-browser eval` to get a structured inventory. Use when the a11y snapshot misses elements (custom `<div>` buttons, portal/popover children, form inputs the tree skips).
 
 Both paths terminate in a durable locator expressed in the persisted script. `browser_run_code` using Playwright's locator API (`page.getByRole('button', { name: 'Continue' }).click()`) is durable and is the right shape for chained multi-step interactions. `browser_evaluate` for inspection is allowed; `browser_evaluate` that hand-rolls `document.querySelector` for an action and then writes that selector into the script is fine IF the selector is in the durability tier below — avoid structural CSS chains that break on DOM rearrangement.
 
@@ -95,7 +95,6 @@ The probe JS body is identical across backends. Only the wrapper differs:
 | Backend | Invocation |
 |---|---|
 | Playwright MCP | `call_mcp('playwright', 'browser_evaluate', {'function': '<JS>'})` |
-| Camoufox MCP | same as Playwright — `browser_evaluate` tool with `function` param |
 | agent-browser CLI | `agent-browser eval "<JS>"` — returns JSON on stdout; pipe to a file if large |
 
 ## Site-access resilience
@@ -160,7 +159,7 @@ Non-browser workflows (workflow config has no browser server/skill/CDP) skip the
 - **`prompt_sections.go:BuildBrowserAuthoringRules()`** — the full browser-rules block including the canonical DOM probe JS. Single source of truth.
 - **`prompt_sections.go:browserAuthoringRulesIfBrowserEnabled()`** — helper for call sites that have direct access to the orchestrator (workshop manager).
 - **`prompt_sections.go:BrowserAuthoringRulesFromTemplateVars()`** — helper for call sites that only have templateVars (harden, review, execution-only).
-- **`controller.go:HasBrowserCapability()`** — the gate. Checks explicit non-`none` browserMode, CDP port, registered servers (`playwright`/`camofox`), `agent-browser` skill. Never use `GetBrowserMode() != ""` as a proxy — empty means auto-detect, not disabled.
+- **`controller.go:HasBrowserCapability()`** — the gate. Checks explicit non-`none` browserMode, CDP port, registered servers (`playwright`), `agent-browser` skill. Never use `GetBrowserMode() != ""` as a proxy — empty means auto-detect, not disabled.
 - **`execution_only_agent.go`** — template has `{{.BrowserAuthoringRules}}` slot; populated by `BrowserAuthoringRulesFromTemplateVars(templateVars)`.
 - **`interactive_workshop_manager.go`** — workshop/harden/review call sites set `HasBrowserAccess` from `iwm.controller.HasBrowserCapability()`.
 - **`learning_agent.go`** — `{{if .HasBrowserAccess}}...{{end}}` block describes the required learnings shape for browser steps.

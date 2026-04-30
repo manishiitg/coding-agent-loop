@@ -61,7 +61,7 @@ export function EvalsWidget({
     const totals = selectedReports.reduce((acc, entry) => {
       acc.totalScore += entry.report.total_score
       acc.totalMaxScore += entry.report.max_possible_score
-      acc.totalSteps += entry.report.step_scores.length
+      acc.totalSteps += entry.report.step_scores.filter(step => !step.skipped).length
       return acc
     }, {
       totalScore: 0,
@@ -101,7 +101,7 @@ export function EvalsWidget({
 
   const stepRows = useMemo(() => {
     return selectedReports.flatMap(entry =>
-      entry.report.step_scores.map(step => ({
+      entry.report.step_scores.filter(step => !step.skipped).map(step => ({
         run_folder: entry.run_folder,
         generated_at: entry.report.generated_at,
         step_id: step.step_id,

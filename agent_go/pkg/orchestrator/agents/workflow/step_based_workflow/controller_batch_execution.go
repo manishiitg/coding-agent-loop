@@ -413,7 +413,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.emitBatchGroupEndEvent(ctx, group.Name, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
-		if !hcpo.isEvaluationMode {
+		disableEval := hcpo.executionOptions != nil && hcpo.executionOptions.DisableEval
+		if disableEval {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Auto-evaluation disabled for group %s by execution option", group.Name))
+		}
+		if !hcpo.isEvaluationMode && !disableEval {
 			// Save selectedRunFolder before auto-evaluation: ExecuteEvaluationOnly overwrites it
 			// to "../evaluation/runs/..." and we need the original value restored afterward.
 			savedRunFolder := hcpo.selectedRunFolder

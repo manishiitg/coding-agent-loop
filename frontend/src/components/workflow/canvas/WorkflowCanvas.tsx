@@ -9,7 +9,7 @@ import {
   ReactFlowProvider,
   type NodeChange
 } from '@xyflow/react'
-import { Braces, FileText, GitBranch, Laptop, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
+import { Braces, Download, FileText, GitBranch, Laptop, Loader2, RefreshCw, Route, Settings, Smartphone, TabletSmartphone, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -32,6 +32,7 @@ import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useChatStore } from '../../../stores/useChatStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
@@ -40,10 +41,13 @@ import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
+const SVG_EXPORT_SCALE = 3
+const PNG_EXPORT_SCALE = 2
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
 type WorkflowPreviewMode = 'desktop' | 'tablet' | 'mobile'
+type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
 
 interface WorkflowCanvasProps {
   workspacePath: string | null
@@ -63,10 +67,14 @@ function FloatingWorkflowViewControls({
   viewLabel,
   showPreviewControls,
   onRefresh,
+  onExportImage,
+  isExportingImage,
 }: {
   viewLabel: string
   showPreviewControls: boolean
   onRefresh: () => void
+  onExportImage?: (format: WorkflowImageExportFormat) => void
+  isExportingImage?: boolean
 }) {
   const [previewPreference, setPreviewPreference] = React.useState<'auto' | WorkflowPreviewMode>(() => {
     try {
@@ -77,6 +85,7 @@ function FloatingWorkflowViewControls({
     }
   })
   const [previewControlsExpanded, setPreviewControlsExpanded] = React.useState(false)
+  const [exportControlsExpanded, setExportControlsExpanded] = React.useState(false)
 
   const previewMode: WorkflowPreviewMode = previewPreference === 'auto' ? 'desktop' : previewPreference
 
@@ -93,6 +102,60 @@ function FloatingWorkflowViewControls({
   }
 
   return (
+    <>
+      {onExportImage && (
+        <div
+          role="group"
+          aria-label="Export flow image"
+          onMouseEnter={() => setExportControlsExpanded(true)}
+          onMouseLeave={() => setExportControlsExpanded(false)}
+          onFocus={() => setExportControlsExpanded(true)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setExportControlsExpanded(false)
+            }
+          }}
+          className="absolute right-3 top-3 z-20 inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring sm:right-4 sm:top-4"
+        >
+          <button
+            onClick={() => onExportImage('svg')}
+            disabled={isExportingImage}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            title="Export flow as SVG"
+            aria-label="Export flow as SVG"
+          >
+            {isExportingImage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+          </button>
+          <button
+            onClick={() => onExportImage('svg')}
+            disabled={isExportingImage}
+            className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              width: exportControlsExpanded ? 30 : 0,
+              opacity: exportControlsExpanded ? 1 : 0,
+              pointerEvents: exportControlsExpanded ? 'auto' : 'none',
+            }}
+            title="Export flow as SVG"
+            aria-label="Export flow as SVG"
+          >
+            SVG
+          </button>
+          <button
+            onClick={() => onExportImage('png')}
+            disabled={isExportingImage}
+            className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              width: exportControlsExpanded ? 34 : 0,
+              opacity: exportControlsExpanded ? 1 : 0,
+              pointerEvents: exportControlsExpanded ? 'auto' : 'none',
+            }}
+            title="Export flow as PNG"
+            aria-label="Export flow as PNG"
+          >
+            PNG
+          </button>
+        </div>
+      )}
     <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">
       {showPreviewControls && (
         <div
@@ -148,11 +211,515 @@ function FloatingWorkflowViewControls({
         <RefreshCw className="h-3.5 w-3.5" />
       </button>
     </div>
+    </>
   )
 }
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2)
+}
+
+function waitForAnimationFrames(count = 2): Promise<void> {
+  return new Promise(resolve => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) {
+        resolve()
+        return
+      }
+      window.requestAnimationFrame(() => step(remaining - 1))
+    }
+    step(count)
+  })
+}
+
+function triggerImageDownload(dataUrl: string, filename: string): void {
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
+function dataUrlPayload(dataUrl: string): string {
+  const commaIndex = dataUrl.indexOf(',')
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl
+}
+
+function utf8ToBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  const chunkSize = 8192
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.slice(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+async function saveWorkflowImage(dataUrl: string, filename: string, format: WorkflowImageExportFormat): Promise<{ canceled?: boolean; filePath?: string } | null> {
+  const electronAPI = (window as unknown as {
+    electronAPI?: {
+      saveFlowImage?: (payload: { filename: string; dataUrl: string; format: WorkflowImageExportFormat }) => Promise<{ canceled?: boolean; filePath?: string }>
+    }
+  }).electronAPI
+
+  if (electronAPI?.saveFlowImage) {
+    return electronAPI.saveFlowImage({
+      filename,
+      dataUrl: dataUrlPayload(dataUrl),
+      format,
+    })
+  }
+
+  triggerImageDownload(dataUrl, filename)
+  return null
+}
+
+async function captureWorkflowImage(filename: string, format: WorkflowImageExportFormat, rect: DOMRect): Promise<{ canceled?: boolean; filePath?: string } | null> {
+  const electronAPI = (window as unknown as {
+    electronAPI?: {
+      captureFlowImage?: (payload: {
+        filename: string
+        format: WorkflowImageExportFormat
+        rect: { x: number; y: number; width: number; height: number }
+      }) => Promise<{ canceled?: boolean; filePath?: string }>
+    }
+  }).electronAPI
+
+  if (electronAPI && !electronAPI.captureFlowImage) {
+    throw new Error('Quit and reopen Electron to load the updated flow export capture support.')
+  }
+  if (!electronAPI?.captureFlowImage) return null
+  try {
+    return await electronAPI.captureFlowImage({
+      filename,
+      format,
+      rect: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('No handler registered') || message.includes('capture-flow-image')) {
+      throw new Error('Quit and reopen Electron to load the updated flow export capture support.')
+    }
+    throw error
+  }
+}
+
+function inlineComputedStyles(source: Element, target: Element): void {
+  if (target instanceof HTMLElement || target instanceof SVGElement) {
+    const computed = window.getComputedStyle(source)
+    for (const property of Array.from(computed)) {
+      target.style.setProperty(property, computed.getPropertyValue(property), computed.getPropertyPriority(property))
+    }
+  }
+
+  const sourceChildren = Array.from(source.children)
+  const targetChildren = Array.from(target.children)
+  sourceChildren.forEach((sourceChild, index) => {
+    const targetChild = targetChildren[index]
+    if (targetChild) inlineComputedStyles(sourceChild, targetChild)
+  })
+}
+
+function renderFlowElementToSvg(flowElement: HTMLElement): string {
+  const rect = flowElement.getBoundingClientRect()
+  const width = Math.max(1, Math.ceil(rect.width))
+  const height = Math.max(1, Math.ceil(rect.height))
+  const exportWidth = width * SVG_EXPORT_SCALE
+  const exportHeight = height * SVG_EXPORT_SCALE
+  const clone = flowElement.cloneNode(true) as HTMLElement
+  inlineComputedStyles(flowElement, clone)
+  clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+  clone.style.width = `${width}px`
+  clone.style.height = `${height}px`
+  clone.style.margin = '0'
+  clone.style.position = 'relative'
+  clone.querySelectorAll('[data-flow-exporting]').forEach(element => element.removeAttribute('data-flow-exporting'))
+
+  const html = new XMLSerializer().serializeToString(clone)
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%">${html}</foreignObject>`,
+    '</svg>',
+  ].join('')
+  return `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+}
+
+function svgDataUrlToPngDataUrl(svgDataUrl: string, scale = PNG_EXPORT_SCALE): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      const sourceWidth = Math.max(1, image.naturalWidth || image.width)
+      const sourceHeight = Math.max(1, image.naturalHeight || image.height)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.ceil(sourceWidth * scale)
+      canvas.height = Math.ceil(sourceHeight * scale)
+      const context = canvas.getContext('2d')
+      if (!context) {
+        reject(new Error('Could not create PNG export canvas'))
+        return
+      }
+      context.scale(scale, scale)
+      context.drawImage(image, 0, 0, sourceWidth, sourceHeight)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    image.onerror = () => reject(new Error('Failed to render SVG export as PNG'))
+    image.src = svgDataUrl
+  })
+}
+
+function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+  const safeRadius = Math.min(radius, width / 2, height / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + safeRadius, y)
+  ctx.lineTo(x + width - safeRadius, y)
+  ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
+  ctx.lineTo(x + width, y + height - safeRadius)
+  ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height)
+  ctx.lineTo(x + safeRadius, y + height)
+  ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius)
+  ctx.lineTo(x, y + safeRadius)
+  ctx.quadraticCurveTo(x, y, x + safeRadius, y)
+  ctx.closePath()
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word
+    if (ctx.measureText(next).width <= maxWidth) {
+      current = next
+      continue
+    }
+    if (current) lines.push(current)
+    current = word
+    if (lines.length >= maxLines) break
+  }
+  if (current && lines.length < maxLines) lines.push(current)
+  if (lines.length === maxLines && words.length > 0) {
+    const last = lines[maxLines - 1]
+    if (ctx.measureText(last).width > maxWidth || words.join(' ') !== lines.join(' ')) {
+      let truncated = last
+      while (truncated.length > 0 && ctx.measureText(`${truncated}...`).width > maxWidth) {
+        truncated = truncated.slice(0, -1)
+      }
+      lines[maxLines - 1] = `${truncated.trim()}...`
+    }
+  }
+  return lines.length > 0 ? lines : ['Workflow step']
+}
+
+function getNodeRenderRect(node: WorkflowNode, nodeMap: Map<string, WorkflowNode>): { x: number; y: number; width: number; height: number } {
+  let x = node.position?.x || 0
+  let y = node.position?.y || 0
+  const parentId = (node as { parentId?: string; parentNode?: string }).parentId || (node as { parentNode?: string }).parentNode
+  if (parentId) {
+    const parent = nodeMap.get(parentId)
+    if (parent) {
+      const parentRect = getNodeRenderRect(parent, nodeMap)
+      x += parentRect.x
+      y += parentRect.y
+    }
+  }
+
+  const measured = (node as { measured?: { width?: number; height?: number }; width?: number; height?: number }).measured
+  const width = measured?.width || (node as { width?: number }).width || (node.type === 'start' || node.type === 'end' ? 96 : 280)
+  const height = measured?.height || (node as { height?: number }).height || (node.type === 'start' || node.type === 'end' ? 40 : 104)
+  return { x, y, width, height }
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, fromX: number, fromY: number, toX: number, toY: number): void {
+  const angle = Math.atan2(toY - fromY, toX - fromX)
+  const size = 10
+  ctx.beginPath()
+  ctx.moveTo(toX, toY)
+  ctx.lineTo(toX - size * Math.cos(angle - Math.PI / 6), toY - size * Math.sin(angle - Math.PI / 6))
+  ctx.lineTo(toX - size * Math.cos(angle + Math.PI / 6), toY - size * Math.sin(angle + Math.PI / 6))
+  ctx.closePath()
+  ctx.fill()
+}
+
+function drawWorkflowNode(ctx: CanvasRenderingContext2D, node: WorkflowNode, rect: { x: number; y: number; width: number; height: number }, offsetX: number, offsetY: number): void {
+  const x = rect.x + offsetX
+  const y = rect.y + offsetY
+  const width = rect.width
+  const height = rect.height
+  const data = node.data as WorkflowNodeData
+  const title = typeof data.title === 'string' && data.title ? data.title : node.id
+  const status = typeof data.status === 'string' ? data.status : 'pending'
+  const isStart = node.type === 'start'
+  const isEnd = node.type === 'end'
+  const isSpecial = isStart || isEnd
+  const borderColor =
+    status === 'completed' ? '#22c55e' :
+    status === 'failed' ? '#ef4444' :
+    status === 'running' ? '#3b82f6' :
+    isStart ? '#10b981' :
+    '#64748b'
+
+  ctx.save()
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.14)'
+  ctx.shadowBlur = 14
+  ctx.shadowOffsetY = 5
+  roundedRectPath(ctx, x, y, width, height, isSpecial ? 20 : 10)
+  ctx.fillStyle = isSpecial ? (isStart ? '#dcfce7' : '#f1f5f9') : '#ffffff'
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.lineWidth = 2
+  ctx.strokeStyle = borderColor
+  ctx.stroke()
+
+  if (!isSpecial) {
+    roundedRectPath(ctx, x, y, width, Math.min(58, height), 10)
+    ctx.clip()
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillRect(x, y, width, Math.min(58, height))
+    ctx.restore()
+    ctx.save()
+  }
+
+  ctx.fillStyle = isStart ? '#047857' : isEnd ? '#475569' : '#0f172a'
+  ctx.font = isSpecial ? '600 16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : '600 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  ctx.textBaseline = 'top'
+
+  if (isSpecial) {
+    ctx.textAlign = 'center'
+    ctx.fillText(isStart ? 'Start' : 'End', x + width / 2, y + 11)
+  } else {
+    const stepIndex = typeof (data as StepNodeData).stepIndex === 'number' ? (data as StepNodeData).stepIndex : null
+    ctx.fillStyle = '#dbeafe'
+    roundedRectPath(ctx, x + 14, y + 14, 32, 32, 7)
+    ctx.fill()
+    ctx.fillStyle = '#1d4ed8'
+    ctx.font = '700 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(stepIndex === null ? '#' : String(stepIndex + 1), x + 30, y + 22)
+
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#0f172a'
+    ctx.font = '600 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    const lines = wrapCanvasText(ctx, title, width - 66, 2)
+    lines.forEach((line, index) => ctx.fillText(line, x + 56, y + 14 + index * 18))
+
+    ctx.fillStyle = '#64748b'
+    ctx.font = '500 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.fillText(stepIndex === null ? node.type || 'node' : `Step ${stepIndex + 1}`, x + 16, y + height - 24)
+
+    if (status !== 'pending') {
+      ctx.fillStyle = borderColor
+      ctx.font = '700 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      ctx.textAlign = 'right'
+      ctx.fillText(status.toUpperCase(), x + width - 16, y + height - 24)
+    }
+  }
+  ctx.restore()
+}
+
+function escapeSvgText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function wrapSvgText(text: string, maxChars: number, maxLines: number): string[] {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+  words.forEach(word => {
+    const next = current ? `${current} ${word}` : word
+    if (next.length <= maxChars) {
+      current = next
+      return
+    }
+    if (current) lines.push(current)
+    current = word
+  })
+  if (current) lines.push(current)
+  const limited = lines.slice(0, maxLines)
+  if (lines.length > maxLines && limited.length > 0) {
+    limited[limited.length - 1] = `${limited[limited.length - 1].slice(0, Math.max(0, maxChars - 3)).trim()}...`
+  }
+  return limited.length > 0 ? limited : ['Workflow step']
+}
+
+function renderFlowToSvg(nodes: WorkflowNode[], edges: WorkflowEdge[]): string {
+  if (nodes.length === 0) throw new Error('No workflow nodes to export')
+
+  const nodeMap = new Map(nodes.map(node => [node.id, node]))
+  const rects = new Map(nodes.map(node => [node.id, getNodeRenderRect(node, nodeMap)]))
+  const padding = 96
+  const bounds = Array.from(rects.values()).reduce((acc, rect) => ({
+    minX: Math.min(acc.minX, rect.x),
+    minY: Math.min(acc.minY, rect.y),
+    maxX: Math.max(acc.maxX, rect.x + rect.width),
+    maxY: Math.max(acc.maxY, rect.y + rect.height),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+  const width = Math.ceil(bounds.maxX - bounds.minX + padding * 2)
+  const height = Math.ceil(bounds.maxY - bounds.minY + padding * 2)
+  const offsetX = padding - bounds.minX
+  const offsetY = padding - bounds.minY
+  const isDark = document.documentElement.classList.contains('dark')
+  const background = isDark ? '#111827' : '#f8fafc'
+  const dot = isDark ? '#374151' : '#e2e8f0'
+  const text = isDark ? '#f8fafc' : '#0f172a'
+  const muted = isDark ? '#94a3b8' : '#64748b'
+  const nodeFill = isDark ? '#1f2937' : '#ffffff'
+  const nodeHeader = isDark ? '#111827' : '#f8fafc'
+
+  const parts: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow flow">`,
+    `<defs><pattern id="flow-grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="${dot}"/></pattern><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker></defs>`,
+    `<rect width="100%" height="100%" fill="${background}"/>`,
+    `<rect width="100%" height="100%" fill="url(#flow-grid)"/>`,
+  ]
+
+  edges.forEach(edge => {
+    const source = rects.get(edge.source)
+    const target = rects.get(edge.target)
+    if (!source || !target) return
+    const fromX = source.x + source.width / 2 + offsetX
+    const fromY = source.y + source.height + offsetY
+    const toX = target.x + target.width / 2 + offsetX
+    const toY = target.y + offsetY
+    const midY = fromY + Math.max(24, (toY - fromY) / 2)
+    parts.push(`<path d="M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>`)
+  })
+
+  nodes.forEach(node => {
+    const rect = rects.get(node.id)
+    if (!rect) return
+    const x = rect.x + offsetX
+    const y = rect.y + offsetY
+    const data = node.data as WorkflowNodeData
+    const title = typeof data.title === 'string' && data.title ? data.title : node.id
+    const status = typeof data.status === 'string' ? data.status : 'pending'
+    const isStart = node.type === 'start'
+    const isEnd = node.type === 'end'
+    const isSpecial = isStart || isEnd
+    const borderColor =
+      status === 'completed' ? '#22c55e' :
+      status === 'failed' ? '#ef4444' :
+      status === 'running' ? '#3b82f6' :
+      isStart ? '#10b981' :
+      '#64748b'
+    const fill = isSpecial ? (isStart ? (isDark ? '#064e3b' : '#dcfce7') : (isDark ? '#1f2937' : '#f1f5f9')) : nodeFill
+    parts.push(`<g filter="drop-shadow(0 5px 10px rgba(15,23,42,0.18))">`)
+    parts.push(`<rect x="${x}" y="${y}" width="${rect.width}" height="${rect.height}" rx="${isSpecial ? 20 : 10}" fill="${fill}" stroke="${borderColor}" stroke-width="2"/>`)
+    if (isSpecial) {
+      parts.push(`<text x="${x + rect.width / 2}" y="${y + 25}" text-anchor="middle" fill="${isStart ? '#10b981' : muted}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="700">${isStart ? 'Start' : 'End'}</text>`)
+    } else {
+      parts.push(`<path d="M ${x + 10} ${y} H ${x + rect.width - 10} Q ${x + rect.width} ${y} ${x + rect.width} ${y + 10} V ${y + 58} H ${x} V ${y + 10} Q ${x} ${y} ${x + 10} ${y}" fill="${nodeHeader}"/>`)
+      const stepIndex = typeof (data as StepNodeData).stepIndex === 'number' ? (data as StepNodeData).stepIndex : null
+      parts.push(`<rect x="${x + 14}" y="${y + 14}" width="32" height="32" rx="7" fill="${isDark ? '#1e3a8a' : '#dbeafe'}"/>`)
+      parts.push(`<text x="${x + 30}" y="${y + 35}" text-anchor="middle" fill="${isDark ? '#bfdbfe' : '#1d4ed8'}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="800">${stepIndex === null ? '#' : String(stepIndex + 1)}</text>`)
+      wrapSvgText(title, Math.max(14, Math.floor((rect.width - 70) / 8)), 2).forEach((line, index) => {
+        parts.push(`<text x="${x + 56}" y="${y + 28 + index * 18}" fill="${text}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700">${escapeSvgText(line)}</text>`)
+      })
+      parts.push(`<text x="${x + 16}" y="${y + rect.height - 17}" fill="${muted}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="600">${stepIndex === null ? escapeSvgText(node.type || 'node') : `Step ${stepIndex + 1}`}</text>`)
+      if (status !== 'pending') {
+        parts.push(`<text x="${x + rect.width - 16}" y="${y + rect.height - 17}" text-anchor="end" fill="${borderColor}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="800">${escapeSvgText(status.toUpperCase())}</text>`)
+      }
+    }
+    parts.push(`</g>`)
+  })
+
+  parts.push(`<text x="${padding}" y="${height - 32}" fill="${muted}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700">Workflow flow - ${nodes.length} steps</text>`)
+  parts.push('</svg>')
+  const svg = parts.join('')
+  return `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+}
+
+function renderFlowToImage(nodes: WorkflowNode[], edges: WorkflowEdge[], format: WorkflowImageExportFormat): string {
+  if (format === 'svg') return renderFlowToSvg(nodes, edges)
+  if (nodes.length === 0) throw new Error('No workflow nodes to export')
+
+  const nodeMap = new Map(nodes.map(node => [node.id, node]))
+  const rects = new Map(nodes.map(node => [node.id, getNodeRenderRect(node, nodeMap)]))
+  const padding = 80
+  const bounds = Array.from(rects.values()).reduce((acc, rect) => ({
+    minX: Math.min(acc.minX, rect.x),
+    minY: Math.min(acc.minY, rect.y),
+    maxX: Math.max(acc.maxX, rect.x + rect.width),
+    maxY: Math.max(acc.maxY, rect.y + rect.height),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+
+  const width = Math.ceil(bounds.maxX - bounds.minX + padding * 2)
+  const height = Math.ceil(bounds.maxY - bounds.minY + padding * 2)
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(width * pixelRatio))
+  canvas.height = Math.max(1, Math.round(height * pixelRatio))
+
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Could not create image export canvas')
+
+  context.scale(pixelRatio, pixelRatio)
+  context.fillStyle = format === 'jpeg' ? '#ffffff' : '#f8fafc'
+  context.fillRect(0, 0, width, height)
+
+  context.fillStyle = '#e2e8f0'
+  for (let x = 0; x < width; x += 24) {
+    for (let y = 0; y < height; y += 24) {
+      context.beginPath()
+      context.arc(x, y, 1, 0, Math.PI * 2)
+      context.fill()
+    }
+  }
+
+  const offsetX = padding - bounds.minX
+  const offsetY = padding - bounds.minY
+
+  context.strokeStyle = '#94a3b8'
+  context.fillStyle = '#94a3b8'
+  context.lineWidth = 2
+  edges.forEach(edge => {
+    const source = rects.get(edge.source)
+    const target = rects.get(edge.target)
+    if (!source || !target) return
+    const fromX = source.x + source.width / 2 + offsetX
+    const fromY = source.y + source.height + offsetY
+    const toX = target.x + target.width / 2 + offsetX
+    const toY = target.y + offsetY
+    const midY = fromY + Math.max(24, (toY - fromY) / 2)
+    context.beginPath()
+    context.moveTo(fromX, fromY)
+    context.bezierCurveTo(fromX, midY, toX, midY, toX, toY)
+    context.stroke()
+    drawArrow(context, fromX, fromY, toX, toY)
+  })
+
+  nodes.forEach(node => {
+    const rect = rects.get(node.id)
+    if (rect) drawWorkflowNode(context, node, rect, offsetX, offsetY)
+  })
+
+  context.fillStyle = '#475569'
+  context.font = '600 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  context.textAlign = 'left'
+  context.fillText(`Workflow flow • ${nodes.length} steps`, padding, height - 32)
+
+  return canvas.toDataURL(format === 'jpeg' ? 'image/jpeg' : 'image/png', 0.95)
+}
+
+function workflowExportFilename(workspacePath: string | null, format: WorkflowImageExportFormat): string {
+  const workflowName = (workspacePath || 'workflow')
+    .split('/')
+    .filter(Boolean)
+    .pop() || 'workflow'
+  const safeName = workflowName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `${safeName}-flow-${timestamp}.${format === 'jpeg' ? 'jpg' : format}`
 }
 
 function DetailSection({
@@ -648,11 +1215,60 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
+  const [isExportingImage, setIsExportingImage] = React.useState(false)
   // Store latest nodes in ref to avoid dependency issues
   const nodesRef = React.useRef(nodes)
   React.useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
+  const edgesRef = React.useRef(edges)
+  React.useEffect(() => {
+    edgesRef.current = edges
+  }, [edges])
+
+  const handleExportImage = useCallback(async (format: WorkflowImageExportFormat) => {
+    if (toolbarOnly || canvasViewMode !== 'flow') return
+    setIsExportingImage(true)
+    const previousViewport = getViewport()
+    try {
+      const filename = workflowExportFilename(workspacePath, format)
+      const flowElement = reactFlowWrapper.current?.querySelector<HTMLElement>('.react-flow')
+      let result: { canceled?: boolean; filePath?: string } | null = null
+
+      if (flowElement) {
+        flowElement.setAttribute('data-flow-exporting', 'true')
+        try {
+          await fitView({ padding: 0.18, duration: 0, minZoom: 0.15, maxZoom: 1.1 })
+          await waitForAnimationFrames(3)
+          if (format === 'svg' || format === 'png') {
+            const svgDataUrl = renderFlowElementToSvg(flowElement)
+            const dataUrl = format === 'png' ? await svgDataUrlToPngDataUrl(svgDataUrl) : svgDataUrl
+            result = await saveWorkflowImage(dataUrl, filename, format)
+          } else {
+            result = await captureWorkflowImage(filename, format, flowElement.getBoundingClientRect())
+          }
+        } finally {
+          flowElement.removeAttribute('data-flow-exporting')
+        }
+      }
+
+      if (!result) {
+        const dataUrl = renderFlowToImage(nodesRef.current, edgesRef.current, format)
+        result = await saveWorkflowImage(dataUrl, filename, format)
+      }
+
+      if (result?.canceled) return
+      const location = result?.filePath ? ` to ${result.filePath}` : ''
+      const formatLabel = format === 'jpeg' ? 'JPG' : format.toUpperCase()
+      useChatStore.getState().addToast(`Exported flow as ${formatLabel}${location}`, 'success')
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to export flow image:', error)
+      useChatStore.getState().addToast(error instanceof Error ? error.message : 'Failed to export flow image', 'error')
+    } finally {
+      setViewport(previousViewport, { duration: 0 })
+      setIsExportingImage(false)
+    }
+  }, [canvasViewMode, fitView, getViewport, setViewport, toolbarOnly, workspacePath])
 
   // Map of parent node ID to child node IDs (for grouped movement)
   const nodeGroupsRef = React.useRef<Map<string, string[]>>(new Map())
@@ -1823,6 +2439,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           viewLabel="flow"
           showPreviewControls={showChatArea}
           onRefresh={() => { void handleRefresh() }}
+          onExportImage={(format) => { void handleExportImage(format) }}
+          isExportingImage={isExportingImage}
         />
         </div>
 

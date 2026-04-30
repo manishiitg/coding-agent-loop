@@ -9,6 +9,7 @@ import type {
   GetEventsResponse,
   MCPServerConfig,
   ChatSession,
+  ChatHistoryConversation,
   ListChatSessionsResponse,
   GetSessionEventsResponse,
   CreateChatSessionRequest,
@@ -526,6 +527,11 @@ export const agentApi = {
     return response.data
   },
 
+  getChatHistoryConversation: async (sessionId: string): Promise<ChatHistoryConversation> => {
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}`)
+    return response.data
+  },
+
   // Reconnect to an active session
   reconnectSession: async (sessionId: string): Promise<ReconnectSessionResponse> => {
     const response = await api.post(`/api/sessions/${sessionId}/reconnect`)
@@ -658,13 +664,6 @@ export const agentApi = {
   }> => {
     const response = await workspaceApi.get('/api/gws-auth-status', { timeout: 10000 });
     return response.data;
-  },
-
-  // Camofox Browser — starts camofox-browser on host if not already running.
-  // Returns { connected: boolean, started: boolean, error?: string, message?: string }
-  startCamofox: async (headed: boolean = true): Promise<{ connected: boolean; started: boolean; error?: string; message?: string }> => {
-    const response = await api.post('/api/camofox-start', { headed }, { timeout: 25000 })
-    return response.data
   },
 
   // LLM Guidance Management

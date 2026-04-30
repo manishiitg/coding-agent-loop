@@ -80,6 +80,10 @@ func getStoredProviderAPIKey(keys *StoredProviderKeys, provider string) string {
 		return strings.TrimSpace(keys.MiniMax)
 	case "minimax-coding-plan":
 		return strings.TrimSpace(keys.MiniMaxCodingPlan)
+	case "elevenlabs":
+		return strings.TrimSpace(keys.ElevenLabs)
+	case "deepgram":
+		return strings.TrimSpace(keys.Deepgram)
 	default:
 		return ""
 	}
@@ -108,6 +112,10 @@ func setStoredProviderAPIKey(keys *StoredProviderKeys, provider, apiKey string) 
 		keys.MiniMax = value
 	case "minimax-coding-plan":
 		keys.MiniMaxCodingPlan = value
+	case "elevenlabs":
+		keys.ElevenLabs = value
+	case "deepgram":
+		keys.Deepgram = value
 	default:
 		return false
 	}
@@ -128,6 +136,130 @@ type llmCapabilityProvider struct {
 	Usable            bool                   `json:"usable"`
 	Notes             []string               `json:"notes,omitempty"`
 	Extra             map[string]interface{} `json:"extra,omitempty"`
+}
+
+type llmPricingRule struct {
+	Unit         string  `json:"unit"`
+	USD          float64 `json:"usd"`
+	Description  string  `json:"description,omitempty"`
+	EstimateOnly bool    `json:"estimate_only,omitempty"`
+	Source       string  `json:"source,omitempty"`
+}
+
+type llmPricingCatalogEntry struct {
+	Capability string           `json:"capability"`
+	Provider   string           `json:"provider"`
+	Models     []string         `json:"models,omitempty"`
+	Default    bool             `json:"default,omitempty"`
+	Rules      []llmPricingRule `json:"rules"`
+	Notes      []string         `json:"notes,omitempty"`
+}
+
+const (
+	pricingSourceGoogleVertex = "Google Cloud Vertex AI Generative AI pricing, checked 2026-04-30"
+	pricingSourceGeminiAPI    = "Google AI Gemini API pricing, checked 2026-04-30"
+	pricingSourceElevenLabs   = "ElevenLabs API pricing, checked 2026-04-30"
+	pricingSourceDeepgram     = "Deepgram pricing, checked 2026-04-30"
+	pricingSourceMiniMax      = "MiniMax pay-as-you-go pricing, checked 2026-04-30"
+)
+
+var llmPricingCatalog = []llmPricingCatalogEntry{
+	{
+		Capability: "generate_video",
+		Provider:   string(llm.ProviderVertex),
+		Models:     []string{"veo-3.1-generate-preview", "veo-3.1-generate-001"},
+		Rules: []llmPricingRule{
+			{Unit: "video_second", USD: 0.40, Description: "Veo 3.1 standard video with audio", Source: pricingSourceGoogleVertex},
+			{Unit: "video_second_no_audio", USD: 0.20, Description: "Veo 3.1 standard video without audio", Source: pricingSourceGoogleVertex},
+		},
+	},
+	{
+		Capability: "generate_video",
+		Provider:   string(llm.ProviderVertex),
+		Models:     []string{"veo-3.1-fast-generate-preview", "veo-3.1-fast-generate-001"},
+		Rules: []llmPricingRule{
+			{Unit: "video_second", USD: 0.15, Description: "Veo 3.1 Fast video with audio", Source: pricingSourceGoogleVertex},
+			{Unit: "video_second_no_audio", USD: 0.10, Description: "Veo 3.1 Fast video without audio", Source: pricingSourceGoogleVertex},
+		},
+	},
+	{
+		Capability: "generate_video",
+		Provider:   string(llm.ProviderVertex),
+		Models:     []string{"veo-3.1-lite-generate-001"},
+		Rules: []llmPricingRule{
+			{Unit: "video_second", USD: 0.15, Description: "Veo 3.1 Fast/Lite-class video with audio. Verify SKU before high-volume use.", EstimateOnly: true, Source: pricingSourceGoogleVertex},
+			{Unit: "video_second_no_audio", USD: 0.10, Description: "Veo 3.1 Fast/Lite-class video without audio. Verify SKU before high-volume use.", EstimateOnly: true, Source: pricingSourceGoogleVertex},
+		},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderVertex),
+		Models:     []string{"gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"},
+		Rules: []llmPricingRule{
+			{Unit: "input_text_1m_tokens", USD: 0.50, Description: "Gemini Flash Preview TTS text input. Exact Gemini 3.1 TTS SKU was not published when checked.", EstimateOnly: true, Source: pricingSourceGeminiAPI},
+			{Unit: "output_audio_1m_tokens", USD: 10.00, Description: "Gemini Flash Preview TTS audio output. Exact Gemini 3.1 TTS SKU was not published when checked.", EstimateOnly: true, Source: pricingSourceGeminiAPI},
+		},
+		Notes: []string{"For Gemini TTS, pass input_tokens and output_audio_tokens for the closest estimate. characters are converted to input tokens at roughly 4 chars/token."},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderElevenLabs),
+		Models:     []string{"eleven_multilingual_v2", "eleven_v3"},
+		Rules:      []llmPricingRule{{Unit: "1k_characters", USD: 0.10, Description: "ElevenLabs Multilingual v2/v3 TTS", Source: pricingSourceElevenLabs}},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderElevenLabs),
+		Models:     []string{"eleven_turbo_v2_5", "eleven_flash_v2_5"},
+		Rules:      []llmPricingRule{{Unit: "1k_characters", USD: 0.05, Description: "ElevenLabs Flash/Turbo TTS", Source: pricingSourceElevenLabs}},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderDeepgram),
+		Models:     []string{"aura-2-thalia-en", "aura-2-luna-en", "aura-2-asteria-en", "aura-2-apollo-en"},
+		Rules:      []llmPricingRule{{Unit: "1k_characters", USD: 0.030, Description: "Deepgram Aura-2 TTS", Source: pricingSourceDeepgram}},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderMiniMax),
+		Models:     []string{"speech-2.8-turbo", "speech-2.6-turbo", "speech-02-turbo"},
+		Rules:      []llmPricingRule{{Unit: "1k_characters", USD: 0.060, Description: "MiniMax speech turbo TTS", Source: pricingSourceMiniMax}},
+	},
+	{
+		Capability: "text_to_speech",
+		Provider:   string(llm.ProviderMiniMax),
+		Models:     []string{"speech-2.8-hd", "speech-2.6-hd", "speech-02-hd"},
+		Rules:      []llmPricingRule{{Unit: "1k_characters", USD: 0.10, Description: "MiniMax speech HD TTS", Source: pricingSourceMiniMax}},
+	},
+	{
+		Capability: "speech_to_text",
+		Provider:   string(llm.ProviderDeepgram),
+		Models:     []string{"nova-3"},
+		Default:    true,
+		Rules:      []llmPricingRule{{Unit: "audio_minute", USD: 0.0048, Description: "Deepgram Nova-3 monolingual STT", Source: pricingSourceDeepgram}},
+		Notes:      []string{"Nova-3 multilingual is $0.0058/min; use model_id nova-3-multilingual to estimate that rate."},
+	},
+	{
+		Capability: "speech_to_text",
+		Provider:   string(llm.ProviderDeepgram),
+		Models:     []string{"nova-3-multilingual"},
+		Rules:      []llmPricingRule{{Unit: "audio_minute", USD: 0.0058, Description: "Deepgram Nova-3 multilingual STT", Source: pricingSourceDeepgram}},
+	},
+	{
+		Capability: "generate_music",
+		Provider:   string(llm.ProviderElevenLabs),
+		Models:     []string{"music_v1"},
+		Default:    true,
+		Rules:      []llmPricingRule{{Unit: "audio_minute", USD: 0.30, Description: "ElevenLabs Music API", Source: pricingSourceElevenLabs}},
+		Notes:      []string{"Paid users only; API supports 3 seconds to 10 minutes per request."},
+	},
+	{
+		Capability: "generate_music",
+		Provider:   string(llm.ProviderMiniMax),
+		Models:     []string{"music-2.6", "music-2.6-free", "music-cover", "music-cover-free"},
+		Rules:      []llmPricingRule{{Unit: "song_up_to_5_min", USD: 0.15, Description: "MiniMax Music 2.5/2.6-style song generation up to 5 minutes. MiniMax 2.6 pay-as-you-go SKU should be verified before high-volume use.", EstimateOnly: true, Source: pricingSourceMiniMax}},
+		Notes:      []string{"MiniMax official pay-as-you-go page listed music generation by song/up-to-5-min pricing when checked; 2.6-specific pricing may be plan/quota based."},
+	},
 }
 
 func runtimeAvailable(command string) *bool {
@@ -181,6 +313,10 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return keys.MiniMax != nil && strings.TrimSpace(*keys.MiniMax) != "", "MINIMAX_API_KEY or workspace provider auth"
 	case string(llm.ProviderMiniMaxCodingPlan):
 		return keys.MiniMaxCodingPlan != nil && strings.TrimSpace(*keys.MiniMaxCodingPlan) != "", "MINIMAX_CODING_PLAN_API_KEY or workspace provider auth"
+	case string(llm.ProviderElevenLabs):
+		return keys.ElevenLabs != nil && strings.TrimSpace(*keys.ElevenLabs) != "", "ELEVENLABS_API_KEY or workspace provider auth"
+	case string(llm.ProviderDeepgram):
+		return keys.Deepgram != nil && strings.TrimSpace(*keys.Deepgram) != "", "DEEPGRAM_API_KEY or workspace provider auth"
 	case string(llm.ProviderBedrock):
 		return keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "", "BEDROCK_REGION or workspace provider auth"
 	case string(llm.ProviderAzure):
@@ -243,12 +379,15 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 	result := make([]llmCapabilityProvider, 0, len(providerModels))
 	for _, provider := range []string{
 		string(llm.ProviderVertex),
+		string(llm.ProviderMiniMax),
 		string(llm.ProviderMiniMaxCodingPlan),
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderZAI),
 		string(llm.ProviderKimi),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderGeminiCLI),
+		string(llm.ProviderElevenLabs),
+		string(llm.ProviderDeepgram),
 	} {
 		models, ok := providerModels[provider]
 		if !ok {
@@ -273,6 +412,32 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, configFile string,
 	return result
 }
 
+func pricingForProvider(capability, provider string) []llmPricingCatalogEntry {
+	capability = normalizeManagedProvider(capability)
+	provider = normalizeManagedProvider(provider)
+	var matches []llmPricingCatalogEntry
+	for _, entry := range llmPricingCatalog {
+		if normalizeManagedProvider(entry.Capability) == capability && normalizeManagedProvider(entry.Provider) == provider {
+			matches = append(matches, entry)
+		}
+	}
+	return matches
+}
+
+func attachPricing(capability string, providers []llmCapabilityProvider) []llmCapabilityProvider {
+	for i := range providers {
+		pricing := pricingForProvider(capability, providers[i].Provider)
+		if len(pricing) == 0 {
+			continue
+		}
+		if providers[i].Extra == nil {
+			providers[i].Extra = map[string]interface{}{}
+		}
+		providers[i].Extra["pricing"] = pricing
+	}
+	return providers
+}
+
 func buildLLMCapabilities(ctx context.Context, capability string, includeModels bool) map[string]interface{} {
 	keys := MergedProviderAPIKeys(ctx)
 	capability = normalizeManagedProvider(capability)
@@ -285,6 +450,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 		"notes": []string{
 			"usable means required workspace/env auth is configured and any required CLI runtime is installed.",
 			"Provider auth is managed in config/provider-api-keys.json; do not hand-edit that encrypted file.",
+			"Pricing is a static snapshot and should be treated as an estimate; verify provider pricing pages before high-volume runs.",
 		},
 	}
 
@@ -406,7 +572,315 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 		}
 	}
 
+	if capability == "all" || capability == "generate_video" || capability == "video_generation" {
+		all["generate_video"] = map[string]interface{}{
+			"description": "Providers usable by generate_video.",
+			"providers": attachPricing("generate_video", buildFixedCapabilityProviders(
+				keys,
+				"",
+				map[string][]string{
+					string(llm.ProviderVertex): {"veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"},
+				},
+				map[string]string{
+					string(llm.ProviderVertex): "veo-3.1-generate-preview",
+				},
+				map[string][]string{
+					string(llm.ProviderVertex): {"Uses Gemini API-key auth for preview models or Vertex AI project auth/ADC for GA models."},
+				},
+			)),
+		}
+	}
+
+	if capability == "all" || capability == "text_to_speech" || capability == "audio_generation" {
+		all["text_to_speech"] = map[string]interface{}{
+			"description": "Providers usable by text_to_speech.",
+			"providers": attachPricing("text_to_speech", buildFixedCapabilityProviders(
+				keys,
+				"",
+				map[string][]string{
+					string(llm.ProviderVertex):     {"gemini-3.1-flash-tts-preview"},
+					string(llm.ProviderMiniMax):    {"speech-2.8-turbo", "speech-2.8-hd", "speech-2.6-turbo", "speech-2.6-hd", "speech-02-turbo", "speech-02-hd"},
+					string(llm.ProviderElevenLabs): {"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3"},
+					string(llm.ProviderDeepgram):   {"aura-2-thalia-en", "aura-2-luna-en", "aura-2-asteria-en", "aura-2-apollo-en"},
+				},
+				map[string]string{
+					string(llm.ProviderVertex):     "gemini-3.1-flash-tts-preview",
+					string(llm.ProviderMiniMax):    "speech-2.8-turbo",
+					string(llm.ProviderElevenLabs): "eleven_multilingual_v2",
+					string(llm.ProviderDeepgram):   "aura-2-thalia-en",
+				},
+				map[string][]string{
+					string(llm.ProviderVertex):     {"Uses Gemini API-key auth via provider-api-keys vertex/GEMINI_API_KEY and returns WAV audio."},
+					string(llm.ProviderMiniMax):    {"Uses MiniMax API-key auth via provider-api-keys minimax/MINIMAX_API_KEY and returns MP3 audio by default."},
+					string(llm.ProviderElevenLabs): {"Uses ElevenLabs API-key auth via provider-api-keys elevenlabs/ELEVENLABS_API_KEY and returns MP3 audio by default."},
+					string(llm.ProviderDeepgram):   {"Uses Deepgram API-key auth via provider-api-keys deepgram/DEEPGRAM_API_KEY and returns MP3 audio by default."},
+				},
+			)),
+		}
+	}
+
+	if capability == "all" || capability == "speech_to_text" || capability == "audio_transcription" {
+		all["speech_to_text"] = map[string]interface{}{
+			"description": "Providers usable by speech_to_text.",
+			"providers": attachPricing("speech_to_text", buildFixedCapabilityProviders(
+				keys,
+				"",
+				map[string][]string{
+					string(llm.ProviderDeepgram): {"nova-3", "nova-3-multilingual", "nova-2", "base"},
+				},
+				map[string]string{
+					string(llm.ProviderDeepgram): "nova-3",
+				},
+				map[string][]string{
+					string(llm.ProviderDeepgram): {"Uses Deepgram API-key auth via provider-api-keys deepgram/DEEPGRAM_API_KEY."},
+				},
+			)),
+		}
+	}
+
+	if capability == "all" || capability == "generate_music" || capability == "music_generation" {
+		all["generate_music"] = map[string]interface{}{
+			"description": "Providers usable by generate_music.",
+			"providers": attachPricing("generate_music", buildFixedCapabilityProviders(
+				keys,
+				"",
+				map[string][]string{
+					string(llm.ProviderElevenLabs): {"music_v1"},
+					string(llm.ProviderMiniMax):    {"music-2.6", "music-2.6-free", "music-cover", "music-cover-free"},
+				},
+				map[string]string{
+					string(llm.ProviderElevenLabs): "music_v1",
+					string(llm.ProviderMiniMax):    "music-2.6",
+				},
+				map[string][]string{
+					string(llm.ProviderElevenLabs): {"Uses ElevenLabs API-key auth via provider-api-keys elevenlabs/ELEVENLABS_API_KEY and returns audio directly."},
+					string(llm.ProviderMiniMax):    {"Uses MiniMax API-key auth via provider-api-keys minimax/MINIMAX_API_KEY and returns MP3 audio decoded from hex output."},
+				},
+			)),
+		}
+	}
+
 	return all
+}
+
+func normalizePricingCapability(capability string) string {
+	switch normalizeManagedProvider(capability) {
+	case "video", "video_generation":
+		return "generate_video"
+	case "tts", "audio_generation":
+		return "text_to_speech"
+	case "stt", "audio_transcription":
+		return "speech_to_text"
+	case "music", "music_generation":
+		return "generate_music"
+	default:
+		return normalizeManagedProvider(capability)
+	}
+}
+
+func pricingEntryFor(capability, provider, modelID string) *llmPricingCatalogEntry {
+	capability = normalizePricingCapability(capability)
+	provider = normalizeManagedProvider(provider)
+	modelID = strings.TrimSpace(modelID)
+
+	var providerFallback *llmPricingCatalogEntry
+	var defaultFallback *llmPricingCatalogEntry
+	for i := range llmPricingCatalog {
+		entry := &llmPricingCatalog[i]
+		if normalizePricingCapability(entry.Capability) != capability || normalizeManagedProvider(entry.Provider) != provider {
+			continue
+		}
+		if providerFallback == nil {
+			providerFallback = entry
+		}
+		if entry.Default {
+			defaultFallback = entry
+		}
+		for _, model := range entry.Models {
+			if strings.EqualFold(strings.TrimSpace(model), modelID) {
+				return entry
+			}
+		}
+	}
+	if modelID == "" && defaultFallback != nil {
+		return defaultFallback
+	}
+	return providerFallback
+}
+
+func firstPricingRule(entry *llmPricingCatalogEntry, unit string) *llmPricingRule {
+	if entry == nil {
+		return nil
+	}
+	unit = strings.TrimSpace(unit)
+	for i := range entry.Rules {
+		if entry.Rules[i].Unit == unit {
+			return &entry.Rules[i]
+		}
+	}
+	if len(entry.Rules) == 0 {
+		return nil
+	}
+	return &entry.Rules[0]
+}
+
+func numberArg(args map[string]interface{}, name string) float64 {
+	switch v := args[name].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
+func estimateLLMCost(args map[string]interface{}) (map[string]interface{}, error) {
+	capabilityRaw, _ := args["capability"].(string)
+	providerRaw, _ := args["provider"].(string)
+	capability := normalizePricingCapability(capabilityRaw)
+	provider := normalizeManagedProvider(providerRaw)
+	modelID, _ := args["model_id"].(string)
+	if capability == "" || provider == "" {
+		return nil, fmt.Errorf("capability and provider are required")
+	}
+
+	entry := pricingEntryFor(capability, provider, modelID)
+	if entry == nil {
+		return nil, fmt.Errorf("no pricing metadata found for capability %q provider %q model %q", capability, provider, modelID)
+	}
+
+	count := numberArg(args, "count")
+	if count <= 0 {
+		count = 1
+	}
+	characters := numberArg(args, "characters")
+	seconds := numberArg(args, "seconds")
+	minutes := numberArg(args, "minutes")
+	inputTokens := numberArg(args, "input_tokens")
+	outputAudioTokens := numberArg(args, "output_audio_tokens")
+	withAudio, hasWithAudio := args["with_audio"].(bool)
+	if !hasWithAudio {
+		withAudio = true
+	}
+
+	var usage float64
+	var unit string
+	var cost float64
+	var rulesUsed []llmPricingRule
+
+	switch capability {
+	case "generate_video":
+		if seconds <= 0 {
+			return nil, fmt.Errorf("seconds is required for generate_video cost estimates")
+		}
+		unit = "video_second"
+		if !withAudio {
+			unit = "video_second_no_audio"
+		}
+		rule := firstPricingRule(entry, unit)
+		if rule == nil {
+			return nil, fmt.Errorf("no %s pricing rule found", unit)
+		}
+		usage = seconds * count
+		cost = usage * rule.USD
+		rulesUsed = append(rulesUsed, *rule)
+	case "text_to_speech":
+		if provider == string(llm.ProviderVertex) {
+			if inputTokens <= 0 && characters > 0 {
+				inputTokens = characters / 4
+			}
+			inputRule := firstPricingRule(entry, "input_text_1m_tokens")
+			outputRule := firstPricingRule(entry, "output_audio_1m_tokens")
+			if inputRule != nil && inputTokens > 0 {
+				cost += (inputTokens / 1_000_000) * inputRule.USD * count
+				rulesUsed = append(rulesUsed, *inputRule)
+			}
+			if outputRule != nil && outputAudioTokens > 0 {
+				cost += (outputAudioTokens / 1_000_000) * outputRule.USD * count
+				rulesUsed = append(rulesUsed, *outputRule)
+			}
+			if cost == 0 {
+				return nil, fmt.Errorf("Gemini TTS estimates require characters/input_tokens and ideally output_audio_tokens")
+			}
+			unit = "tokens"
+			usage = inputTokens + outputAudioTokens
+		} else {
+			if characters <= 0 {
+				return nil, fmt.Errorf("characters is required for text_to_speech cost estimates for provider %q", provider)
+			}
+			rule := firstPricingRule(entry, "1k_characters")
+			if rule == nil {
+				return nil, fmt.Errorf("no character pricing rule found")
+			}
+			usage = (characters / 1000) * count
+			unit = "1k_characters"
+			cost = usage * rule.USD
+			rulesUsed = append(rulesUsed, *rule)
+		}
+	case "speech_to_text":
+		if minutes <= 0 && seconds > 0 {
+			minutes = seconds / 60
+		}
+		if minutes <= 0 {
+			return nil, fmt.Errorf("minutes or seconds is required for speech_to_text cost estimates")
+		}
+		rule := firstPricingRule(entry, "audio_minute")
+		if rule == nil {
+			return nil, fmt.Errorf("no audio minute pricing rule found")
+		}
+		usage = minutes * count
+		unit = "audio_minute"
+		cost = usage * rule.USD
+		rulesUsed = append(rulesUsed, *rule)
+	case "generate_music":
+		if provider == string(llm.ProviderElevenLabs) {
+			if minutes <= 0 && seconds > 0 {
+				minutes = seconds / 60
+			}
+			if minutes <= 0 {
+				return nil, fmt.Errorf("minutes or seconds is required for ElevenLabs generate_music cost estimates")
+			}
+			rule := firstPricingRule(entry, "audio_minute")
+			if rule == nil {
+				return nil, fmt.Errorf("no audio minute pricing rule found")
+			}
+			usage = minutes * count
+			unit = "audio_minute"
+			cost = usage * rule.USD
+			rulesUsed = append(rulesUsed, *rule)
+		} else {
+			rule := firstPricingRule(entry, "song_up_to_5_min")
+			if rule == nil {
+				return nil, fmt.Errorf("no song pricing rule found")
+			}
+			usage = count
+			unit = "song_up_to_5_min"
+			cost = usage * rule.USD
+			rulesUsed = append(rulesUsed, *rule)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported priced capability %q", capability)
+	}
+
+	return map[string]interface{}{
+		"capability":       capability,
+		"provider":         provider,
+		"model_id":         strings.TrimSpace(modelID),
+		"estimated_cost":   cost,
+		"currency":         "USD",
+		"usage":            usage,
+		"usage_unit":       unit,
+		"count":            count,
+		"pricing":          entry,
+		"rules_used":       rulesUsed,
+		"estimate_warning": "Static pricing snapshot; verify provider pricing before high-volume runs.",
+	}, nil
 }
 
 func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Agent) error {
@@ -420,13 +894,13 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 
 	if err := registerTool(
 		"list_llm_capabilities",
-		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, and generate_image. Includes config files, auth requirements, and CLI runtime availability.",
+		"List supported and currently usable LLM providers/models by capability: chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, and generate_music. Includes config files, auth requirements, CLI runtime availability, and static pricing metadata where available.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"capability": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image.",
+					"description": "Optional filter. Supported values: all, chat, search_web, read_image, read_video, generate_image, generate_video, text_to_speech, speech_to_text, generate_music.",
 				},
 				"include_models": map[string]interface{}{
 					"type":        "boolean",
@@ -438,6 +912,66 @@ func (api *StreamingAPI) registerMultiAgentLLMTools(underlyingAgent *mcpagent.Ag
 			capability, _ := args["capability"].(string)
 			includeModels, _ := args["include_models"].(bool)
 			return prettyJSON(buildLLMCapabilities(ctx, capability, includeModels)), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"estimate_llm_cost",
+		"Estimate cost for priced generation/transcription capabilities using static pricing metadata. Supports generate_video, text_to_speech, speech_to_text, and generate_music.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"capability": map[string]interface{}{
+					"type":        "string",
+					"description": "Required. Supported values: generate_video, text_to_speech, speech_to_text, generate_music. Aliases: video, tts, stt, music.",
+				},
+				"provider": map[string]interface{}{
+					"type":        "string",
+					"description": "Required provider id, e.g. vertex, minimax, elevenlabs, deepgram.",
+				},
+				"model_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional model id. If omitted, provider default pricing is used where available.",
+				},
+				"characters": map[string]interface{}{
+					"type":        "number",
+					"description": "Text characters for character-metered TTS providers. For Gemini TTS this is converted to input tokens at roughly 4 chars/token.",
+				},
+				"seconds": map[string]interface{}{
+					"type":        "number",
+					"description": "Video seconds for generate_video, audio seconds for speech_to_text, or music seconds for ElevenLabs generate_music.",
+				},
+				"minutes": map[string]interface{}{
+					"type":        "number",
+					"description": "Audio minutes for speech_to_text or ElevenLabs generate_music.",
+				},
+				"count": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of generated items/files. Defaults to 1.",
+				},
+				"with_audio": map[string]interface{}{
+					"type":        "boolean",
+					"description": "For video estimates. Defaults to true.",
+				},
+				"input_tokens": map[string]interface{}{
+					"type":        "number",
+					"description": "Input text token count for token-metered providers such as Gemini TTS.",
+				},
+				"output_audio_tokens": map[string]interface{}{
+					"type":        "number",
+					"description": "Output audio token count for token-metered providers such as Gemini TTS.",
+				},
+			},
+			"required": []string{"capability", "provider"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			estimate, err := estimateLLMCost(args)
+			if err != nil {
+				return "", err
+			}
+			return prettyJSON(estimate), nil
 		},
 	); err != nil {
 		return err

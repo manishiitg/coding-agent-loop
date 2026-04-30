@@ -59,8 +59,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	browserCfg.IsIsolated = isolatedSessionID != ""
 	if browserPrompt := browserinstructions.BuildBrowserInstructions(browserCfg); browserPrompt != "" {
 		mcpAgent.AppendSystemPrompt(browserPrompt)
-		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
-			browserCfg.HasPlaywright, browserCfg.HasCamofox, browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
+		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (playwright=%v, agent-browser=%v, cdp=%v)",
+			browserCfg.HasPlaywright, browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
 	}
 
 	// 4b. Workflow-specific browser downloads guidance.
@@ -96,8 +96,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 		switch s {
 		case "playwright":
 			cfg.HasPlaywright = true
-		case "camofox":
-			cfg.HasCamofox = true
 		case "workspace_browser":
 			cfg.HasAgentBrowser = true
 		}
@@ -114,8 +112,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 		cfg.Mode = mode
 	} else if cfg.HasPlaywright {
 		cfg.Mode = "playwright"
-	} else if cfg.HasCamofox {
-		cfg.Mode = "stealth"
 	} else if cfg.CdpPort > 0 {
 		cfg.Mode = "cdp"
 	} else if cfg.HasAgentBrowser {
@@ -126,9 +122,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 	// suppress agent_browser to prevent LLM tool confusion.
 	if cfg.HasPlaywright {
 		cfg.Mode = "playwright"
-		cfg.HasAgentBrowser = false
-	} else if cfg.HasCamofox {
-		cfg.Mode = "stealth"
 		cfg.HasAgentBrowser = false
 	}
 

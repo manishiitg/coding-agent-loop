@@ -90,8 +90,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     enableContextSummarization?: boolean,
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
-    _selectedGlobalSecretNames?: string[] | null,
-    _camofoxHeaded?: boolean
+    _selectedGlobalSecretNames?: string[] | null
   ) => {
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'

@@ -41,6 +41,9 @@ for arg in "$@"; do
 done
 
 FRONTEND_PORT_EXPLICIT="${FRONTEND_PORT:-}"
+LOCALHOST_BASE_URL="${LOCALHOST_BASE_URL:-http://localhost}"
+FRONTEND_HOST="${FRONTEND_HOST:-}"
+FRONTEND_URL_HOST="${FRONTEND_URL_HOST:-localhost}"
 
 port_in_use() {
     lsof -nP -iTCP:"$1" -sTCP:LISTEN > /dev/null 2>&1
@@ -122,6 +125,7 @@ if [ "$ONLY_FRONTEND" = true ]; then
     if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
         echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
     fi
+    FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
     FRONTEND_DIR="${SCRIPT_DIR}/../frontend"
     DESKTOP_DIR="${SCRIPT_DIR}/../desktop"
     FRONTEND_RUNTIME_CONFIG_PATH="${SCRIPT_DIR}/../frontend/public/runtime-config.js"
@@ -152,8 +156,8 @@ if [ "$ONLY_FRONTEND" = true ]; then
 
     WORKSPACE_PORT="${WORKSPACE_PORT:-8081}"
 
-    export MCP_AGENT_SERVER_URL="http://127.0.0.1:${AGENT_PORT}"
-    export WORKSPACE_API_URL="http://127.0.0.1:${WORKSPACE_PORT}"
+    export MCP_AGENT_SERVER_URL="${LOCALHOST_BASE_URL}:${AGENT_PORT}"
+    export WORKSPACE_API_URL="${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}"
 
     # Sanity-check the backend is actually reachable on that port.
     if ! curl -fsS "${MCP_AGENT_SERVER_URL}/api/health" >/dev/null 2>&1; then
@@ -163,7 +167,7 @@ if [ "$ONLY_FRONTEND" = true ]; then
 
     echo "🔧 Backend (expected running): $MCP_AGENT_SERVER_URL"
     echo "🔧 Workspace (expected running): $WORKSPACE_API_URL"
-    echo "🔧 Vite port: $FRONTEND_PORT"
+    echo "🔧 Vite URL: $FRONTEND_URL"
 
     mkdir -p logs
     mkdir -p "$(dirname "$FRONTEND_RUNTIME_CONFIG_PATH")"
@@ -196,19 +200,27 @@ EOF
 
     echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        if [ -n "$FRONTEND_HOST" ]; then
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        else
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        fi
     else
         (
             cd "$FRONTEND_DIR" || exit 1
-            exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+            if [ -n "$FRONTEND_HOST" ]; then
+                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
+            else
+                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+            fi
         ) >> "$FRONTEND_LOG_PATH" 2>&1 &
     fi
     FRONTEND_PID=$!
-    echo "✅ Vite dev server started (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+    echo "✅ Vite dev server started (PID: $FRONTEND_PID) — $FRONTEND_URL"
 
     frontend_ready=false
     for attempt in $(seq 1 60); do
-        if curl -fsS "http://127.0.0.1:${FRONTEND_PORT}" >/dev/null 2>&1; then
+        if curl -fsS "$FRONTEND_URL" >/dev/null 2>&1; then
             frontend_ready=true
             break
         fi
@@ -234,11 +246,11 @@ EOF
 
     echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"http://127.0.0.1:${FRONTEND_PORT}\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
+        nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$FRONTEND_URL\" exec npm start" >> "$ELECTRON_LOG_PATH" 2>&1 &
     else
         (
             cd "$DESKTOP_DIR" || exit 1
-            DEV_URL="http://127.0.0.1:${FRONTEND_PORT}" exec npm start
+            DEV_URL="$FRONTEND_URL" exec npm start
         ) >> "$ELECTRON_LOG_PATH" 2>&1 &
     fi
     ELECTRON_PID=$!
@@ -264,7 +276,7 @@ EOF
     if [ "$BACKGROUND_MODE" = true ]; then
         echo ""
         echo "✅ Frontend services running in background:"
-        echo "   - Vite (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+        echo "   - Vite (PID: $FRONTEND_PID) — $FRONTEND_URL"
         echo "   - Electron (PID: $ELECTRON_PID)"
         echo "   Logs: $FRONTEND_LOG_PATH (vite), $ELECTRON_LOG_PATH (electron)"
         echo "🛑 To stop: kill $FRONTEND_PID $ELECTRON_PID"
@@ -273,7 +285,7 @@ EOF
 
     echo ""
     echo "✅ Frontend services running (foreground):"
-    echo "   - Vite (PID: $FRONTEND_PID) — http://127.0.0.1:${FRONTEND_PORT}"
+    echo "   - Vite (PID: $FRONTEND_PID) — $FRONTEND_URL"
     echo "   - Electron (PID: $ELECTRON_PID)"
     echo "   Backend expected at: $MCP_AGENT_SERVER_URL"
     echo "   Press Ctrl+C to stop."
@@ -335,6 +347,43 @@ find_random_free_port_in_range() {
     return 1
 }
 
+DEFAULT_AGENT_PORT=18743
+DEFAULT_WORKSPACE_PORT=18744
+
+choose_default_then_random_port() {
+    local preferred="$1"
+    local start="$2"
+    local end="$3"
+    local exclude_csv="${4:-}"
+
+    if [ -z "$exclude_csv" ]; then
+        if ! port_in_use "$preferred"; then
+            echo "$preferred"
+            return 0
+        fi
+    elif ! is_csv_value "$preferred" "$exclude_csv" && ! port_in_use "$preferred"; then
+        echo "$preferred"
+        return 0
+    fi
+
+    find_random_free_port_in_range "$start" "$end" "$exclude_csv"
+}
+
+is_csv_value() {
+    local candidate="$1"
+    local csv="$2"
+    local old_ifs="$IFS"
+    IFS=','
+    for value in $csv; do
+        if [ "$candidate" = "$value" ]; then
+            IFS="$old_ifs"
+            return 0
+        fi
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
 if [ -n "${AGENT_PORT:-}" ]; then
     echo "🔎 Using requested agent server port: $AGENT_PORT"
     if port_in_use "$AGENT_PORT"; then
@@ -342,15 +391,15 @@ if [ -n "${AGENT_PORT:-}" ]; then
         exit 1
     fi
 else
-    echo "🔎 Selecting random agent server port in range 18000-19000..."
-    AGENT_PORT="$(find_random_free_port_in_range 18000 19000)"
+    echo "🔎 Selecting agent server port: default ${DEFAULT_AGENT_PORT}, random fallback in range 18000-19000..."
+    AGENT_PORT="$(choose_default_then_random_port "$DEFAULT_AGENT_PORT" 18000 19000)"
     if [ -z "$AGENT_PORT" ]; then
         echo "❌ Error: No free port available in range 18000-19000"
         exit 1
     fi
 fi
 export AGENT_PORT
-export MCP_AGENT_SERVER_URL="http://127.0.0.1:${AGENT_PORT}"
+export MCP_AGENT_SERVER_URL="${LOCALHOST_BASE_URL}:${AGENT_PORT}"
 echo "✅ Using agent server port: $AGENT_PORT"
 
 # Source environment variables from .env file if it exists
@@ -407,6 +456,7 @@ FRONTEND_PORT="$(choose_frontend_port "${FRONTEND_PORT:-5173}")" || {
 if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "5173" ]; then
     echo "🔎 Frontend port 5173 is busy; using $FRONTEND_PORT"
 fi
+FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
 
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
@@ -429,8 +479,8 @@ if [ "$WITH_WORKSPACE" = true ]; then
             exit 1
         fi
     else
-        echo "🔎 Selecting random workspace server port in range 18000-19000..."
-        WORKSPACE_PORT="$(find_random_free_port_in_range 18000 19000 "$AGENT_PORT")"
+        echo "🔎 Selecting workspace server port: default ${DEFAULT_WORKSPACE_PORT}, random fallback in range 18000-19000..."
+        WORKSPACE_PORT="$(choose_default_then_random_port "$DEFAULT_WORKSPACE_PORT" 18000 19000 "$AGENT_PORT")"
         if [ -z "$WORKSPACE_PORT" ]; then
             echo "❌ Error: No free workspace port available in range 18000-19000"
             exit 1
@@ -452,7 +502,7 @@ if [ "$WITH_WORKSPACE" = true ]; then
     mkdir -p "$WORKSPACE_DOCS_PATH"
     WORKSPACE_DOCS_PATH="$(cd "$WORKSPACE_DOCS_PATH" && pwd)"
     export WORKSPACE_DOCS_PATH
-    export WORKSPACE_API_URL="http://127.0.0.1:${WORKSPACE_PORT}"
+    export WORKSPACE_API_URL="${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}"
 
     export NATIVE_WORKSPACE="true"
     echo "🧩 Native workspace start enabled"
@@ -465,7 +515,7 @@ write_frontend_runtime_config() {
     cat > "$FRONTEND_RUNTIME_CONFIG_PATH" <<EOF
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
-  workspaceApiBaseUrl: "${WORKSPACE_API_URL:-http://127.0.0.1:${WORKSPACE_PORT}}"
+  workspaceApiBaseUrl: "${WORKSPACE_API_URL:-${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}}"
 };
 EOF
     echo "📝 Frontend runtime config written to: $FRONTEND_RUNTIME_CONFIG_PATH"
@@ -764,7 +814,7 @@ start_native_workspace() {
 }
 
 wait_for_frontend_health() {
-    local health_url="http://127.0.0.1:${FRONTEND_PORT}"
+    local health_url="$FRONTEND_URL"
     local attempt
     for attempt in $(seq 1 60); do
         if curl -fsS "$health_url" >/dev/null 2>&1; then
@@ -806,19 +856,28 @@ start_frontend_dev() {
 
     echo "🚀 Starting Vite dev server..."
     echo "📝 Frontend log file: $FRONTEND_LOG_PATH"
-    echo "🌐 Vite URL: http://127.0.0.1:${FRONTEND_PORT}"
+    echo "🌐 Vite URL: $FRONTEND_URL"
 
     echo "🚀 Vite Dev Session Started: $(date)" > "$FRONTEND_LOG_PATH"
     echo "=========================================" >> "$FRONTEND_LOG_PATH"
     echo "- Port: $FRONTEND_PORT" >> "$FRONTEND_LOG_PATH"
+    echo "- URL: $FRONTEND_URL" >> "$FRONTEND_LOG_PATH"
     echo "=========================================" >> "$FRONTEND_LOG_PATH"
 
     if [ "$BACKGROUND_MODE" = true ]; then
-        nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        if [ -n "$FRONTEND_HOST" ]; then
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        else
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+        fi
     else
         (
             cd "$FRONTEND_DIR" || exit 1
-            exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+            if [ -n "$FRONTEND_HOST" ]; then
+                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
+            else
+                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+            fi
         ) >> "$FRONTEND_LOG_PATH" 2>&1 &
     fi
 
@@ -828,7 +887,7 @@ start_frontend_dev() {
 }
 
 wait_for_agent_health() {
-    local url="http://127.0.0.1:${AGENT_PORT}/api/health"
+    local url="${MCP_AGENT_SERVER_URL%/}/api/health"
     local attempt
     for attempt in $(seq 1 180); do
         if curl -fsS "$url" >/dev/null 2>&1; then
@@ -858,7 +917,7 @@ start_electron() {
         return 1
     fi
 
-    local dev_url="http://127.0.0.1:${FRONTEND_PORT}"
+    local dev_url="$FRONTEND_URL"
     echo "🚀 Starting Electron (DEV_URL=$dev_url)..."
     echo "📝 Electron log file: $ELECTRON_LOG_PATH"
 
@@ -947,22 +1006,6 @@ update_mmx_cli_if_requested() {
 }
 
 update_mmx_cli_if_requested || exit 1
-
-# Pre-install camofox packages globally (skips if already installed — avoids slow npx -y each time)
-if ! command -v camofox-browser &> /dev/null; then
-    echo "📦 Installing camofox-browser globally (first time only)..."
-    npm install -g camofox-browser@latest 2>&1 | tail -1
-    echo "✅ camofox-browser installed"
-else
-    echo "✅ camofox-browser already installed"
-fi
-if ! command -v camofox-mcp &> /dev/null; then
-    echo "📦 Installing camofox-mcp globally (first time only)..."
-    npm install -g camofox-mcp@latest 2>&1 | tail -1
-    echo "✅ camofox-mcp installed"
-else
-    echo "✅ camofox-mcp already installed"
-fi
 
 # Always update agent-browser to latest on startup so browser automation stays current.
 echo "📦 Updating agent-browser to latest..."

@@ -873,7 +873,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedLearnCodeScript(
 	inputArgs := hcpo.buildLearnCodeInputArgs(ctx, step, stepIndex, stepPath, allSteps, executionWorkspacePath, docsRoot, hcpo.variableValues)
 
 	// Saved-script fast path bypasses execution-agent startup, so prime browser-capable
-	// MCP server configs here to preserve the same Playwright/Camofox session + override
+	// MCP server configs here to preserve the same Playwright session + override
 	// behavior as a normal workflow run.
 	// Without this, the first browser tool call can fall through to default mcpcache
 	// creation and lose run-specific settings like Downloads/output-dir.

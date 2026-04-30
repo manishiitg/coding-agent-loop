@@ -31,13 +31,13 @@ type OrchestrationRoute struct {
 
 // StepProgress tracks which steps have been completed
 type StepProgress struct {
-	CompletedStepIndices     []int                      `json:"completed_step_indices"` // 0-based indices
-	TotalSteps               int                        `json:"total_steps"`
-	LastUpdated              time.Time                  `json:"last_updated"`
-	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
-	ValidationFailures       map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
-	RoutingEvaluationCounts  RoutingEvaluationCount     `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
-	ArchivalCounts           map[int]int                `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
+	CompletedStepIndices    []int                      `json:"completed_step_indices"` // 0-based indices
+	TotalSteps              int                        `json:"total_steps"`
+	LastUpdated             time.Time                  `json:"last_updated"`
+	BranchSteps             map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
+	ValidationFailures      map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
+	RoutingEvaluationCounts RoutingEvaluationCount     `json:"-"`                             // in-memory only: tracks routing step evaluations to prevent infinite loops (not persisted)
+	ArchivalCounts          map[int]int                `json:"archival_counts,omitempty"`     // key is stepNumber (1-based), value is archive run count
 }
 
 // BranchStepResumeTarget represents a branch step to resume from
@@ -63,6 +63,9 @@ type ExecutionOptions struct {
 	// Human input overrides: per-step responses for human_input steps (keyed by step ID).
 	// When SkipHumanInput is true, these take priority over variableValues fallback.
 	HumanInputs map[string]string `json:"human_inputs,omitempty"`
+
+	// DisableEval skips the automatic evaluation pass after a successful full workflow run.
+	DisableEval bool `json:"disable_eval,omitempty"`
 }
 
 // BatchExecutionProgress tracks execution progress across multiple variable groups

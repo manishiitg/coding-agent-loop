@@ -41,7 +41,7 @@ interface AppState {
   // Last-used tab settings — inherited by new tabs
   lastSelectedSkills: string[]
   lastSelectedSubAgents: string[]
-  lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+  lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright'
   lastEnableImageGeneration: boolean
   lastGWSAccess: boolean
   syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastSelectedSubAgents' | 'lastBrowserMode' | 'lastEnableImageGeneration' | 'lastGWSAccess'>>) => void

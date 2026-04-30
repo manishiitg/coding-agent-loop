@@ -26,16 +26,52 @@ interface LLMConfigurationModalProps {
 }
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
-type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan'
-
-// Tab type for the modal
-type TabType = 'library' | ProviderType
+type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan' | 'elevenlabs' | 'deepgram'
 
 type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 
 type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
 
 type APIKeyError = Record<APIKeyProviderType, string | null>
+
+type AudioProviderTab = 'audio-gemini' | 'audio-minimax'
+
+type TabType = 'library' | ProviderType | AudioProviderTab
+
+const CHAT_CAPABILITIES = new Set(['chat', 'text'])
+const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generate_music', 'audio_generation', 'audio_transcription', 'music_generation'])
+
+const FALLBACK_AUDIO_PROVIDER_ITEMS: Array<{
+  tab: ProviderType | AudioProviderTab
+  provider: APIKeyProviderType
+  name: string
+  placeholder: string
+}> = [
+  {
+    tab: 'audio-gemini',
+    provider: 'vertex',
+    name: 'Gemini',
+    placeholder: 'Select a Gemini audio model',
+  },
+  {
+    tab: 'audio-minimax',
+    provider: 'minimax',
+    name: 'MiniMax',
+    placeholder: 'Select a MiniMax audio model',
+  },
+  {
+    tab: 'elevenlabs',
+    provider: 'elevenlabs',
+    name: 'ElevenLabs',
+    placeholder: 'Select an ElevenLabs media model',
+  },
+  {
+    tab: 'deepgram',
+    provider: 'deepgram',
+    name: 'Deepgram',
+    placeholder: 'Select a Deepgram media model',
+  },
+]
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -68,8 +104,14 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     kimiConfig,
     minimaxConfig,
     minimaxCodingPlanConfig,
+    elevenlabsConfig,
+    deepgramConfig,
+    availableVertexModels,
+    availableMinimaxModels,
     availableZAIModels,
     availableKimiModels,
+    availableElevenLabsModels,
+    availableDeepgramModels,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
@@ -80,18 +122,63 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     setKimiConfig,
     setMinimaxConfig,
     setMinimaxCodingPlanConfig,
+    setElevenlabsConfig,
+    setDeepgramConfig,
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
     refreshAvailableLLMs,
     // Supported providers filter
     isProviderSupported,
+    providerCapabilities,
     llmConfigLocked,
     lockedProviders
   } = useLLMStore()
 
   const isProviderLocked = (provider: ProviderType) =>
     lockedProviders.includes('all') || lockedProviders.includes(provider)
+
+  const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
+    if (tab === 'audio-gemini') return 'vertex'
+    if (tab === 'audio-minimax') return 'minimax'
+    if (tab === 'library' || tab === 'claude-code' || tab === 'gemini-cli' || tab === 'codex-cli') return null
+    return tab
+  }
+
+  const hasCapability = useCallback((provider: ProviderType, capabilities: Set<string>) => {
+    const providerCaps = providerCapabilities[provider] || []
+    return providerCaps.some(capability => capabilities.has(capability))
+  }, [providerCapabilities])
+
+  const hasProviderCapabilityData = Object.keys(providerCapabilities).length > 0
+
+  const llmProviderTabs = useMemo(() => (
+    PROVIDER_ORDER.filter(provider => {
+      const supported = isProviderSupported(provider)
+      console.log('[LLMModal] provider', provider, 'supported:', supported)
+      if (!supported) return false
+      if (!hasProviderCapabilityData) return provider !== 'elevenlabs' && provider !== 'deepgram'
+      return hasCapability(provider, CHAT_CAPABILITIES)
+    })
+  ), [hasCapability, hasProviderCapabilityData, isProviderSupported])
+
+  const audioProviderItems = useMemo(() => {
+    if (!hasProviderCapabilityData) {
+      return FALLBACK_AUDIO_PROVIDER_ITEMS.filter(item => isProviderSupported(item.provider))
+    }
+    return PROVIDER_ORDER
+      .filter(provider => isProviderSupported(provider) && hasCapability(provider, AUDIO_CAPABILITIES))
+      .map(provider => ({
+        tab: provider === 'vertex' ? 'audio-gemini' as const : provider === 'minimax' ? 'audio-minimax' as const : provider,
+        provider: provider as APIKeyProviderType,
+        name: provider === 'vertex' ? 'Gemini' : getProviderDisplayInfo(provider).name,
+        placeholder: provider === 'vertex'
+          ? 'Select a Gemini audio model'
+          : provider === 'minimax'
+            ? 'Select a MiniMax audio model'
+            : `Select a ${getProviderDisplayInfo(provider).name} media model`,
+      }))
+  }, [hasCapability, hasProviderCapabilityData, isProviderSupported])
 
   // Get mode-specific configs
   const modeConfig = getConfigForMode(currentMode)
@@ -130,9 +217,11 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     'z-ai': { config: zaiConfig, setConfig: setZaiConfig },
     kimi: { config: kimiConfig, setConfig: setKimiConfig },
     minimax: { config: minimaxConfig, setConfig: setMinimaxConfig },
-    'minimax-coding-plan': { config: minimaxCodingPlanConfig, setConfig: setMinimaxCodingPlanConfig }
-  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, zaiConfig, kimiConfig, minimaxConfig, minimaxCodingPlanConfig,
-      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setZaiConfig, setKimiConfig, setMinimaxConfig, setMinimaxCodingPlanConfig])
+    'minimax-coding-plan': { config: minimaxCodingPlanConfig, setConfig: setMinimaxCodingPlanConfig },
+    elevenlabs: { config: elevenlabsConfig, setConfig: setElevenlabsConfig },
+    deepgram: { config: deepgramConfig, setConfig: setDeepgramConfig }
+  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, zaiConfig, kimiConfig, minimaxConfig, minimaxCodingPlanConfig, elevenlabsConfig, deepgramConfig,
+      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setZaiConfig, setKimiConfig, setMinimaxConfig, setMinimaxCodingPlanConfig, setElevenlabsConfig, setDeepgramConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -204,7 +293,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     'z-ai': 'idle',
     kimi: 'idle',
     minimax: 'idle',
-    'minimax-coding-plan': 'idle'
+    'minimax-coding-plan': 'idle',
+    elevenlabs: 'idle',
+    deepgram: 'idle'
   })
 
   const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
@@ -217,7 +308,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     'z-ai': null,
     kimi: null,
     minimax: null,
-    'minimax-coding-plan': null
+    'minimax-coding-plan': null,
+    elevenlabs: null,
+    deepgram: null
   })
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
@@ -230,7 +323,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
+  const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -454,13 +547,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   <Settings className="w-4 h-4" />
                 </button>
 
-                <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {PROVIDER_ORDER
-                  .filter(provider => {
-                    const supported = isProviderSupported(provider)
-                    console.log('[LLMModal] provider', provider, 'supported:', supported)
-                    return supported
-                  })
+                <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">LLM Providers</h3>
+                {llmProviderTabs
                   .map((provider) => (
                   (() => {
                     const providerInfo = getProviderDisplayInfo(provider)
@@ -483,6 +571,34 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     )
                   })()
                 ))}
+
+                {audioProviderItems.length > 0 && (
+                  <>
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Audio Providers</h3>
+                    {audioProviderItems.map((item) => (
+                      (() => {
+                        const providerInfo = getProviderDisplayInfo(item.provider)
+                        return (
+                    <button
+                      key={item.tab}
+                      onClick={() => setActiveTab(item.tab)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                        activeTab === item.tab ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                      }`}
+                    >
+                      <div className="flex-1">
+                        <div className="font-medium">{item.name}</div>
+                        <div className="text-xs opacity-75">
+                          {isProviderLocked(item.provider) ? 'Configured by admin' : providerInfo.authDescription}
+                        </div>
+                      </div>
+                      {isProviderLocked(item.provider) && <Lock className="w-4 h-4 opacity-60" />}
+                    </button>
+                        )
+                      })()
+                    ))}
+                  </>
+                )}
               </div>
             </div>
 
@@ -493,20 +609,24 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && activeTab !== 'codex-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
+              {(() => {
+                const lockedProvider = getProviderForTab(activeTab)
+                if (!lockedProvider || !(lockedProvider in providerConfigMap) || !isProviderLocked(lockedProvider)) return null
+                return (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
                   <p className="text-sm text-muted-foreground max-w-sm">
                     The API key for this provider is set server-side. Contact your administrator to change it.
                   </p>
-                  {providerConfigMap[activeTab]?.config.model_id && (
+                  {providerConfigMap[lockedProvider]?.config.model_id && (
                     <p className="text-sm text-muted-foreground mt-4">
-                      Current model: <span className="font-mono text-foreground">{providerConfigMap[activeTab].config.model_id}</span>
+                      Current model: <span className="font-mono text-foreground">{providerConfigMap[lockedProvider].config.model_id}</span>
                     </p>
                   )}
                 </div>
-              )}
+                )
+              })()}
 
               {/* Editable provider sections (only when not locked) */}
               {activeTab === 'openrouter' && !isProviderLocked('openrouter') && (
@@ -632,6 +752,97 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   apiKeyStatus={apiKeyStatus['minimax-coding-plan']}
                   apiKeyError={apiKeyErrors['minimax-coding-plan']}
                   metadata={metadata}
+                />
+              )}
+
+              {activeTab === 'audio-gemini' && !isProviderLocked('vertex') && (
+                <APIKeyProviderSection
+                  provider="vertex"
+                  providerLabel="Gemini Audio"
+                  modelPlaceholder="Select a Gemini audio model"
+                  publishErrorLabel="Gemini"
+                  config={{
+                    ...vertexConfig,
+                    model_id: vertexConfig.model_id || 'gemini-3.1-flash-tts-preview'
+                  }}
+                  models={Array.from(new Set([
+                    'gemini-3.1-flash-tts-preview',
+                    ...(metadata?.filter(m => m.provider === 'vertex').map(m => m.model_id) || []),
+                    ...availableVertexModels
+                  ]))}
+                  onUpdate={(config) => setVertexConfig(config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('vertex', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.vertex}
+                  apiKeyError={apiKeyErrors.vertex}
+                  metadata={metadata}
+                  allowPublish={false}
+                />
+              )}
+
+              {activeTab === 'audio-minimax' && !isProviderLocked('minimax') && (
+                <APIKeyProviderSection
+                  provider="minimax"
+                  providerLabel="MiniMax Audio"
+                  modelPlaceholder="Select a MiniMax audio model"
+                  publishErrorLabel="MiniMax"
+                  config={{
+                    ...minimaxConfig,
+                    model_id: minimaxConfig.model_id || 'speech-2.8-turbo'
+                  }}
+                  models={Array.from(new Set([
+                    'speech-2.8-turbo',
+                    'speech-2.8-hd',
+                    'music-2.6',
+                    'music-2.6-free',
+                    ...(metadata?.filter(m => m.provider === 'minimax').map(m => m.model_id) || []),
+                    ...availableMinimaxModels
+                  ]))}
+                  onUpdate={(config) => setMinimaxConfig(config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.minimax}
+                  apiKeyError={apiKeyErrors.minimax}
+                  metadata={metadata}
+                  allowPublish={false}
+                />
+              )}
+
+              {activeTab === 'elevenlabs' && !isProviderLocked('elevenlabs') && (
+                <APIKeyProviderSection
+                  provider="elevenlabs"
+                  providerLabel="ElevenLabs"
+                  modelPlaceholder="Select an ElevenLabs media model"
+                  publishErrorLabel="ElevenLabs"
+                  config={elevenlabsConfig}
+                  models={Array.from(new Set([
+                    ...(metadata?.filter(m => m.provider === 'elevenlabs').map(m => m.model_id) || []),
+                    ...availableElevenLabsModels
+                  ]))}
+                  onUpdate={(config) => handleProviderConfigUpdate('elevenlabs', config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('elevenlabs', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.elevenlabs}
+                  apiKeyError={apiKeyErrors.elevenlabs}
+                  metadata={metadata}
+                  allowPublish={false}
+                />
+              )}
+
+              {activeTab === 'deepgram' && !isProviderLocked('deepgram') && (
+                <APIKeyProviderSection
+                  provider="deepgram"
+                  providerLabel="Deepgram"
+                  modelPlaceholder="Select a Deepgram media model"
+                  publishErrorLabel="Deepgram"
+                  config={deepgramConfig}
+                  models={Array.from(new Set([
+                    ...(metadata?.filter(m => m.provider === 'deepgram').map(m => m.model_id) || []),
+                    ...availableDeepgramModels
+                  ]))}
+                  onUpdate={(config) => handleProviderConfigUpdate('deepgram', config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('deepgram', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.deepgram}
+                  apiKeyError={apiKeyErrors.deepgram}
+                  metadata={metadata}
+                  allowPublish={false}
                 />
               )}
 

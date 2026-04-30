@@ -98,7 +98,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		},
 		"share_browser": map[string]interface{}{
 			"type":        "boolean",
-			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
+			"description": "Whether the sub-agent shares the parent's browser session (Playwright/agent-browser) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 		"preferred_tier": map[string]interface{}{
 			"type":        "integer",
@@ -133,7 +133,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		},
 		"share_browser": map[string]interface{}{
 			"type":        "boolean",
-			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
+			"description": "Whether the sub-agent shares the parent's browser session (Playwright/agent-browser) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 	}
 	callGenericAgentProperties["preferred_tier"] = map[string]interface{}{

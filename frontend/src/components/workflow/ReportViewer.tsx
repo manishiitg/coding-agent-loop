@@ -2,7 +2,7 @@
 // JSON source, and renders widgets.
 // See docs/workflow/persistent_stores_design.md.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { TextWidget } from './reportWidgets/TextWidget'
 import { MarkdownWidget } from './reportWidgets/MarkdownWidget'
 import { StatWidget } from './reportWidgets/StatWidget'
@@ -24,8 +24,9 @@ import {
 } from './reportWidgets/shared'
 import { useCompactWidgetLayout, useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { parseTimestamp } from './reportWidgets/costSummaries'
-import { BarChart3, Laptop, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
+import { BarChart3, Download, Laptop, Loader2, RefreshCw, Smartphone, TabletSmartphone } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { useChatStore } from '../../stores/useChatStore'
 import {
   applyWidgetFilter,
   evaluateShowIf,
@@ -50,6 +51,116 @@ import type {
 
 export const REPORT_PREVIEW_PREFERENCE_KEY = 'workflow_report_preview_preference'
 export const REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT = 'workflow-report-preview-preference-changed'
+const REPORT_SVG_EXPORT_SCALE = 2
+const REPORT_PNG_EXPORT_SCALE = 2
+type ReportExportFormat = 'svg' | 'png'
+
+function utf8ToBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  const chunkSize = 8192
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.slice(index, index + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+function dataUrlPayload(dataUrl: string): string {
+  const commaIndex = dataUrl.indexOf(',')
+  return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl
+}
+
+function inlineComputedStyles(source: Element, target: Element): void {
+  if (target instanceof HTMLElement || target instanceof SVGElement) {
+    const computed = window.getComputedStyle(source)
+    for (const property of Array.from(computed)) {
+      target.style.setProperty(property, computed.getPropertyValue(property), computed.getPropertyPriority(property))
+    }
+  }
+
+  const sourceChildren = Array.from(source.children)
+  const targetChildren = Array.from(target.children)
+  sourceChildren.forEach((sourceChild, index) => {
+    const targetChild = targetChildren[index]
+    if (targetChild) inlineComputedStyles(sourceChild, targetChild)
+  })
+}
+
+function triggerSvgDownload(dataUrl: string, filename: string): void {
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
+async function saveReportImage(dataUrl: string, filename: string, format: ReportExportFormat): Promise<{ canceled?: boolean; filePath?: string } | null> {
+  const electronAPI = (window as unknown as {
+    electronAPI?: {
+      saveFlowImage?: (payload: { filename: string; dataUrl: string; format: ReportExportFormat }) => Promise<{ canceled?: boolean; filePath?: string }>
+    }
+  }).electronAPI
+
+  if (electronAPI?.saveFlowImage) {
+    return electronAPI.saveFlowImage({ filename, dataUrl: dataUrlPayload(dataUrl), format })
+  }
+
+  triggerSvgDownload(dataUrl, filename)
+  return null
+}
+
+function reportExportFilename(workspacePath: string, format: ReportExportFormat): string {
+  const workflowName = workspacePath.split('/').filter(Boolean).pop() || 'workflow'
+  const safeName = workflowName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `${safeName}-report-${timestamp}.${format}`
+}
+
+function renderReportElementToSvg(reportElement: HTMLElement): string {
+  const width = Math.max(1, Math.ceil(reportElement.scrollWidth || reportElement.getBoundingClientRect().width))
+  const height = Math.max(1, Math.ceil(reportElement.scrollHeight || reportElement.getBoundingClientRect().height))
+  const exportWidth = width * REPORT_SVG_EXPORT_SCALE
+  const exportHeight = height * REPORT_SVG_EXPORT_SCALE
+  const clone = reportElement.cloneNode(true) as HTMLElement
+  inlineComputedStyles(reportElement, clone)
+  clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+  clone.style.width = `${width}px`
+  clone.style.minHeight = `${height}px`
+  clone.style.margin = '0'
+
+  const html = new XMLSerializer().serializeToString(clone)
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%">${html}</foreignObject>`,
+    '</svg>',
+  ].join('')
+  return `data:image/svg+xml;base64,${utf8ToBase64(svg)}`
+}
+
+function svgDataUrlToPngDataUrl(svgDataUrl: string, scale = REPORT_PNG_EXPORT_SCALE): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      const sourceWidth = Math.max(1, image.naturalWidth || image.width)
+      const sourceHeight = Math.max(1, image.naturalHeight || image.height)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.ceil(sourceWidth * scale)
+      canvas.height = Math.ceil(sourceHeight * scale)
+      const context = canvas.getContext('2d')
+      if (!context) {
+        reject(new Error('Could not create PNG export canvas'))
+        return
+      }
+      context.scale(scale, scale)
+      context.drawImage(image, 0, 0, sourceWidth, sourceHeight)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    image.onerror = () => reject(new Error('Failed to render SVG export as PNG'))
+    image.src = svgDataUrl
+  })
+}
 
 // Convert "#rgb" / "#rrggbb" / "rgb(r,g,b)" / "hsl(h,s%,l%)" to a Tailwind-style
 // "H S% L%" triplet. Tailwind's CSS variables expect that triplet so they can
@@ -422,6 +533,8 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [hiddenWidgetKeys, setHiddenWidgetKeys] = useState<Set<string>>(() => new Set())
+  const [isExportingReport, setIsExportingReport] = useState(false)
+  const reportExportRef = useRef<HTMLDivElement>(null)
 
   const plan: ParsedReportPlan = useMemo(() => {
     if (!planSource) return { sections: [] }
@@ -681,6 +794,26 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
     setRefreshNonce(prev => prev + 1)
   }
 
+  const handleExportReport = async (format: ReportExportFormat) => {
+    const target = reportExportRef.current
+    if (!target) return
+    setIsExportingReport(true)
+    try {
+      const filename = reportExportFilename(workspacePath, format)
+      const svgDataUrl = renderReportElementToSvg(target)
+      const dataUrl = format === 'png' ? await svgDataUrlToPngDataUrl(svgDataUrl) : svgDataUrl
+      const result = await saveReportImage(dataUrl, filename, format)
+      if (result?.canceled) return
+      const location = result?.filePath ? ` to ${result.filePath}` : ''
+      useChatStore.getState().addToast(`Exported report as ${format.toUpperCase()}${location}`, 'success')
+    } catch (error) {
+      console.error('[ReportView] Failed to export report:', error)
+      useChatStore.getState().addToast(error instanceof Error ? error.message : 'Failed to export report', 'error')
+    } finally {
+      setIsExportingReport(false)
+    }
+  }
+
   const handleToggleWidgetHidden = (widgetKey: string) => {
     setHiddenWidgetKeys(prev => {
       const next = new Set(prev)
@@ -766,6 +899,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
   // group-hover so the expansion is predictable on touch devices and
   // tolerates Tailwind purge edge cases.
   const [previewControlsExpanded, setPreviewControlsExpanded] = useState(false)
+  const [exportControlsExpanded, setExportControlsExpanded] = useState(false)
 
   // Inline custom palette → CSS variables on the report root. Hex values get
   // converted to "H S% L%" triplets because Tailwind variables are HSL-shaped
@@ -793,7 +927,7 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2.5 py-3 [scrollbar-gutter:stable] sm:px-4 sm:py-4">
-        <div className={previewShellClassName}>
+        <div ref={reportExportRef} className={previewShellClassName}>
           <div className={`flex flex-col gap-3 ${previewContentClassName}`}>
             {loading && <ReportSkeleton />}
             {error && <div className="text-destructive">Failed to load report: {error}</div>}
@@ -840,6 +974,58 @@ export function ReportView({ workspacePath, onClose, mobilePreview = false }: Re
             )}
           </div>
         </div>
+      </div>
+
+      <div
+        className="absolute right-3 top-3 z-20 inline-flex items-center rounded-full border border-border/70 bg-background/95 p-0.5 shadow-lg backdrop-blur-sm focus-within:ring-1 focus-within:ring-ring sm:right-4 sm:top-4"
+        role="group"
+        aria-label="Export report"
+        onMouseEnter={() => setExportControlsExpanded(true)}
+        onMouseLeave={() => setExportControlsExpanded(false)}
+        onFocus={() => setExportControlsExpanded(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setExportControlsExpanded(false)
+          }
+        }}
+      >
+        <button
+          onClick={() => { void handleExportReport('svg') }}
+          disabled={isExportingReport}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          title="Export report as SVG"
+          aria-label="Export report as SVG"
+        >
+          {isExportingReport ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+        </button>
+        <button
+          onClick={() => { void handleExportReport('svg') }}
+          disabled={isExportingReport}
+          className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          style={{
+            width: exportControlsExpanded ? 30 : 0,
+            opacity: exportControlsExpanded ? 1 : 0,
+            pointerEvents: exportControlsExpanded ? 'auto' : 'none',
+          }}
+          title="Export report as SVG"
+          aria-label="Export report as SVG"
+        >
+          SVG
+        </button>
+        <button
+          onClick={() => { void handleExportReport('png') }}
+          disabled={isExportingReport}
+          className="inline-flex h-6 items-center justify-center overflow-hidden rounded-full px-0 text-[9px] font-semibold text-muted-foreground transition-[width,opacity,background-color,color] duration-150 ease-out hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+          style={{
+            width: exportControlsExpanded ? 34 : 0,
+            opacity: exportControlsExpanded ? 1 : 0,
+            pointerEvents: exportControlsExpanded ? 'auto' : 'none',
+          }}
+          title="Export report as PNG"
+          aria-label="Export report as PNG"
+        >
+          PNG
+        </button>
       </div>
 
       <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 sm:bottom-5 sm:right-5">

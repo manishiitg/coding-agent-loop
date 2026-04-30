@@ -1165,11 +1165,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const currentWorkspacePane = get().showWorkspacePane
         persistWorkflowUIStateForPreset(presetId ?? null, {
           showChatArea: show,
-          showWorkspacePane: show ? currentWorkspacePane : true,
+          showWorkspacePane: currentWorkspacePane,
         })
         set(state => ({
           showChatArea: show,
-          showWorkspacePane: !show && !state.showWorkspacePane ? true : state.showWorkspacePane,
+          showWorkspacePane: state.showWorkspacePane,
           chatAreaExpanded: show ? true : state.chatAreaExpanded
         }))
       },

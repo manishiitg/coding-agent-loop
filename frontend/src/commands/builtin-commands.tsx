@@ -147,8 +147,7 @@ export const builtinCommands: CommandDefinition[] = [
     source: 'builtin',
     execute: (ctx) => {
       const focus = ctx.beforeSlash.trim()
-      const runFolder = ctx.getWorkflowStore().selectedRunFolder
-      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-workflow", focus=${JSON.stringify(focus)}, iteration=${JSON.stringify(runFolder ? runFolder.split('/')[0] : '')}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
+      ctx.onSubmit(`Call get_workflow_command_guidance(kind="improve-workflow", focus=${JSON.stringify(focus)}) and follow the returned instructions verbatim. The tool returns the canonical guided-flow text for this command — do not paraphrase or skip its steps.`)
     }
   },
   {
@@ -279,7 +278,7 @@ Re-read the conversation and extract the concrete, repeatable steps the workflow
 - A detailed \`description\` of what the step does, in enough detail that a worker with no memory of this conversation could execute it
 - A \`success_criteria\` line describing how to tell the step succeeded
 - Optionally \`context_dependencies\` (file names produced by earlier steps) and \`context_output\` (file name this step produces)
-- Most steps should use \`"type": "regular"\`. Use \`"conditional"\` / \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching or human-in-the-loop.
+- Most steps should use \`"type": "regular"\`. Use \`"routing"\` / \`"human_input"\` / \`"todo_task"\` only when the conversation genuinely called for branching, human-in-the-loop, or sub-workflow orchestration.
 
 ## Step 4 — Call create_workflow
 Build the two JSON objects yourself in this turn and call the privileged tool:

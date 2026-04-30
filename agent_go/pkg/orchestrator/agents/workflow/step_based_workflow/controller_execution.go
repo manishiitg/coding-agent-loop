@@ -1616,7 +1616,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["PreviousIterationOutput"] = ""
 
 			// Signal whether this workflow has any browser MCP available (playwright /
-			// agent_browser / camoufox / CDP). Downstream prompt builders use this to gate
+			// agent_browser / Playwright / CDP). Downstream prompt builders use this to gate
 			// the browser-specific main.py authoring rules + DOM probe so non-browser workflows
 			// don't pay the prompt tax. Note: empty browserMode means "auto-detect", NOT "no
 			// browser" — HasBrowserCapability() checks registered servers+skills directly.

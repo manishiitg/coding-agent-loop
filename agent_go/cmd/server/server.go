@@ -13,7 +13,6 @@ import (
 	_ "net/http/pprof" // Register pprof handlers
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -340,7 +339,7 @@ type QueryRequest struct {
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"`
 	// Browser automation access configuration
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
-	// Explicit browser mode from frontend: none|headless|cdp|playwright|stealth
+	// Explicit browser mode from frontend: none|headless|cdp|playwright
 	BrowserMode string `json:"browser_mode,omitempty"`
 	// Google Workspace access configuration
 	EnableGWSAccess *bool `json:"enable_gws_access,omitempty"` // Enable/disable Google Workspace CLI access (nil = inherit default, true/false = explicit override)
@@ -410,7 +409,7 @@ func getCdpPort(req QueryRequest) int {
 func getBrowserMode(req QueryRequest) string {
 	mode := strings.ToLower(strings.TrimSpace(req.BrowserMode))
 	switch mode {
-	case "none", "headless", "cdp", "playwright", "stealth":
+	case "none", "headless", "cdp", "playwright":
 		return mode
 	}
 
@@ -420,11 +419,6 @@ func getBrowserMode(req QueryRequest) string {
 			return "cdp"
 		}
 		return "headless"
-	}
-	for _, s := range req.EnabledServers {
-		if s == "camofox" {
-			return "stealth"
-		}
 	}
 	for _, s := range req.EnabledServers {
 		if s == "playwright" {
@@ -448,8 +442,6 @@ func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig 
 		switch s {
 		case "playwright":
 			cfg.HasPlaywright = true
-		case "camofox":
-			cfg.HasCamofox = true
 		}
 	}
 	return cfg
@@ -818,7 +810,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
-	apiRouter.HandleFunc("/camofox-start", api.handleCamofoxStart).Methods("POST")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
@@ -929,8 +920,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	sessionToolsRouter.Use(executor.AuthMiddleware(api.apiToken))
 	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		r.Header.Set("X-Session-ID", vars["session_id"])
-		routeMCPRequest(w, r, vars["server"], vars["tool"])
+		sid := vars["session_id"]
+		r.Header.Set("X-Session-ID", sid)
+		// MCP-style URLs can be redirected to custom workspace tools. Those
+		// tools resolve folder guards from context, so mirror /tools/custom.
+		ctx := context.WithValue(r.Context(), common.ChatSessionIDKey, sid)
+		routeMCPRequest(w, r.WithContext(ctx), vars["server"], vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -1826,98 +1821,6 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleCamofoxStart checks if camofox-browser is running, starts it if not, and returns status.
-// Called by the frontend when the user selects Stealth Browser mode.
-func (api *StreamingAPI) handleCamofoxStart(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Parse request body for headed preference
-	var reqBody struct {
-		Headed *bool `json:"headed"`
-	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&reqBody)
-	}
-	headed := true // default to headed (visible browser)
-	if reqBody.Headed != nil {
-		headed = *reqBody.Headed
-	}
-
-	port := 9377
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-
-	// Check if already running
-	if api.camofoxHealthCheck(healthURL) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"connected": true,
-			"started":   false,
-			"message":   "camofox-browser already running",
-		})
-		return
-	}
-
-	// Not running — start it
-	headlessEnv := "CAMOFOX_HEADLESS=false"
-	if !headed {
-		headlessEnv = "CAMOFOX_HEADLESS=true"
-	}
-	log.Printf("[CAMOFOX] Starting camofox-browser on port %d (headed=%v)...", port, headed)
-	cmd := exec.Command("camofox-browser")
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("PORT=%d", port),
-		headlessEnv,
-	)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		log.Printf("[CAMOFOX] Failed to start camofox-browser: %v", err)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"connected": false,
-			"started":   false,
-			"error":     fmt.Sprintf("failed to start camofox-browser: %v", err),
-		})
-		return
-	}
-
-	// Detach — don't wait for the process
-	go func() {
-		_ = cmd.Wait()
-	}()
-
-	// Poll health endpoint for up to 20 seconds
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
-		if api.camofoxHealthCheck(healthURL) {
-			log.Printf("[CAMOFOX] camofox-browser is ready (pid %d)", cmd.Process.Pid)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"connected": true,
-				"started":   true,
-				"message":   "camofox-browser started successfully",
-			})
-			return
-		}
-	}
-
-	log.Printf("[CAMOFOX] camofox-browser did not become ready within 20s")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"connected": false,
-		"started":   true,
-		"error":     "camofox-browser started but did not become ready within 20 seconds",
-	})
-}
-
-// camofoxHealthCheck hits the camofox-browser /health endpoint
-func (api *StreamingAPI) camofoxHealthCheck(healthURL string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(healthURL)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == 200
-}
-
 // Query endpoint - handles POST requests to start agent streaming
 func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
@@ -1998,17 +1901,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
-	// Strip browser-specific MCP servers (playwright, camofox) when no browser is selected.
+	// Strip browser-specific MCP servers (playwright) when no browser is selected.
 	// These servers only work when a browser is active; including them otherwise causes errors.
 	if req.BrowserMode == "" || req.BrowserMode == "none" {
 		var filteredForBrowser []string
 		for _, s := range selectedServers {
-			if s != "playwright" && s != "camofox" {
+			if s != "playwright" {
 				filteredForBrowser = append(filteredForBrowser, s)
 			}
 		}
 		if len(filteredForBrowser) != len(selectedServers) {
-			log.Printf("[SERVERS] Stripped browser-specific servers (playwright/camofox) — no browser mode active (was %d, now %d)", len(selectedServers), len(filteredForBrowser))
+			log.Printf("[SERVERS] Stripped browser-specific servers (playwright) — no browser mode active (was %d, now %d)", len(selectedServers), len(filteredForBrowser))
 			selectedServers = filteredForBrowser
 		}
 	}
@@ -2326,24 +2229,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Resolve effective browser mode
 		workflowBrowserMode := req.BrowserMode
 		// Only register agent_browser for headless/CDP when no dedicated browser MCP server
-		// (Playwright/Camofox) is configured.
+		// (Playwright) is configured.
 		hasPlaywrightServer := false
-		hasCamofoxServer := false
 		for _, s := range selectedServers {
 			if s == "playwright" {
 				hasPlaywrightServer = true
 			}
-			if s == "camofox" {
-				hasCamofoxServer = true
-			}
 		}
-		if hasPlaywrightServer || hasCamofoxServer {
-			if hasPlaywrightServer {
-				workflowBrowserMode = "playwright"
-			} else {
-				workflowBrowserMode = "stealth"
-			}
-			log.Printf("[WORKFLOW] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", workflowBrowserMode)
+		if hasPlaywrightServer {
+			workflowBrowserMode = "playwright"
+			log.Printf("[WORKFLOW] Playwright server detected — skipping agent_browser registration, using mode=%s", workflowBrowserMode)
 		}
 		// Store resolved browser mode on session for context-aware shell blocking
 		if workflowBrowserMode != "" {
@@ -2384,12 +2279,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			var filteredServers []string
 			for _, s := range selectedServers {
-				if s != "playwright" && s != "camofox" {
+				if s != "playwright" {
 					filteredServers = append(filteredServers, s)
 				}
 			}
 			if len(filteredServers) != len(selectedServers) {
-				log.Printf("[WORKFLOW] Headless browser mode: stripped playwright/camofox MCP servers from server list (was %d, now %d)", len(selectedServers), len(filteredServers))
+				log.Printf("[WORKFLOW] Headless browser mode: stripped playwright MCP server from server list (was %d, now %d)", len(selectedServers), len(filteredServers))
 				selectedServers = filteredServers
 				if len(selectedServers) == 0 {
 					serverList = mcpclient.NoServers
@@ -3144,7 +3039,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Auto-enable code execution mode for claude-code provider.
 		// Claude Code accesses MCP tools via the HTTP bridge (mcpbridge stdio binary),
 		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "claude-code" || req.Provider == "kimi" {
+		if req.Provider == "claude-code" {
 			useCodeExecutionMode = true
 			log.Printf("[CLAUDE CODE FAMILY] Code execution mode enforced for MCP tool access via bridge")
 		}
@@ -3170,7 +3065,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		if !isWorkflowPhase {
-			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "kimi" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
+			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
@@ -3506,11 +3401,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
 			}
 
-			// Chat mode: LLM-visible workspace tools (advanced + image + video)
+			// Chat mode: LLM-visible workspace tools (advanced + image + video + audio + music)
 			// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient.
 			// These tools are restricted to the current workspace/chat folder guard.
 			workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
 			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
+			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceAudioTools()...)
+			workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceMusicTools()...)
 			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 			workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
 			virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
@@ -3518,6 +3415,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				UserID:          currentUserID,
 			}, workspaceExecutors, nil)
 			virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          currentUserID,
+			}, workspaceExecutors, nil)
+			virtualtools.MergeAudioToolExecutors(virtualtools.AudioGenExecutorConfig{
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          currentUserID,
+			}, workspaceExecutors, nil)
+			virtualtools.MergeMusicToolExecutors(virtualtools.AudioGenExecutorConfig{
 				WorkspaceAPIURL: getWorkspaceAPIURL(),
 				UserID:          currentUserID,
 			}, workspaceExecutors, nil)
@@ -4176,8 +4081,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			chatBrowserCfg := buildChatBrowserConfig(req)
 			if chatBrowserPrompt := browserinstructions.BuildBrowserInstructions(chatBrowserCfg); chatBrowserPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(chatBrowserPrompt)
-				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
-					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasCamofox, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
+				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, agent-browser=%v, cdp=%v)",
+					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
 			}
 			if req.EnableGWSAccess != nil && *req.EnableGWSAccess {
 				underlyingAgent.AppendSystemPrompt(getGWSQuickStartInstructions())
@@ -4226,7 +4131,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add CLI-specific tool mapping for providers that use the api-bridge.
 			// These providers can only call mcp__api-bridge__* tools directly;
 			// delegation/memory tools must be called via curl through execute_shell_command.
-			if req.Provider == "claude-code" || req.Provider == "kimi" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
+			if req.Provider == "claude-code" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
 			}
@@ -4239,16 +4144,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Browser instructions (upload + mode-specific) are already injected above via BuildBrowserInstructions.
 			hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
 			hasPlaywright := false
-			hasCamofox := false
 			for _, s := range req.EnabledServers {
 				if s == "playwright" {
 					hasPlaywright = true
 				}
-				if s == "camofox" {
-					hasCamofox = true
-				}
 			}
-			if hasBrowserAccess || hasPlaywright || hasCamofox {
+			if hasBrowserAccess || hasPlaywright {
 				// Register transformer on the agent (primary path for LLM-driven tool calls).
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
 				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
@@ -4362,7 +4263,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;
 				// all others default to tool search mode for the workshop agent.
 				// This mirrors the logic in interactive_workshop_manager.go:730-732.
-				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "kimi" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
+				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
 				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v", finalProvider, phaseIsCodeExec)
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
@@ -4575,22 +4476,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								phaseBrowserCfg.HasAgentBrowser = true
 							case "playwright":
 								phaseBrowserCfg.HasPlaywright = true
-							case "stealth":
-								phaseBrowserCfg.HasCamofox = true
 							}
-							// Also check selectedServers for playwright/camofox (may be set independently)
+							// Also check selectedServers for Playwright (may be set independently)
 							for _, s := range selectedServers {
 								switch s {
 								case "playwright":
 									phaseBrowserCfg.HasPlaywright = true
-								case "camofox":
-									phaseBrowserCfg.HasCamofox = true
 								}
 							}
 							if phaseBrowserPrompt := browserinstructions.BuildBrowserInstructions(phaseBrowserCfg); phaseBrowserPrompt != "" {
 								underlyingAgent.AppendSystemPrompt(phaseBrowserPrompt)
-								log.Printf("[WORKFLOW_PHASE] Appended browser instructions to %s (mode=%s, playwright=%v, camofox=%v, agent-browser=%v)",
-									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasCamofox, phaseBrowserCfg.HasAgentBrowser)
+								log.Printf("[WORKFLOW_PHASE] Appended browser instructions to %s (mode=%s, playwright=%v, agent-browser=%v)",
+									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasAgentBrowser)
 							}
 
 							// Register agent_browser tool on the chat agent for headless/CDP modes.
@@ -4860,41 +4757,45 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
-					// Reporting tools: JSON report-plan read/write tools plus validation and
-					// preview against real db/*.json / knowledgebase/*.json sources. The renderer
-					// silently drops bad widgets, so validation stays in the loop.
-					if err := todo_creation_human.RegisterReportPlanManagementTools(
-						underlyingAgent,
-						phaseWorkspacePath,
-						api.logger,
-						phaseReadFile,
-						phaseWriteFile,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan management tools in %s: %v", workflowPhaseID, err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered report plan management tools in %s", workflowPhaseID)
-					}
+					if phaseTemplateVars["WorkshopMode"] == "reporting" {
+						// Reporting tools: JSON report-plan read/write tools plus validation and
+						// preview against real db/*.json / knowledgebase/*.json sources. The renderer
+						// silently drops bad widgets, so validation stays in the loop.
+						if err := todo_creation_human.RegisterReportPlanManagementTools(
+							underlyingAgent,
+							phaseWorkspacePath,
+							api.logger,
+							phaseReadFile,
+							phaseWriteFile,
+						); err != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan management tools in %s: %v", workflowPhaseID, err)
+						} else {
+							log.Printf("[WORKFLOW_PHASE] Registered report plan management tools in %s", workflowPhaseID)
+						}
 
-					if err := todo_creation_human.RegisterReportPlanValidationTools(
-						underlyingAgent,
-						phaseWorkspacePath,
-						api.logger,
-						phaseReadFile,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan validation tool in %s: %v", workflowPhaseID, err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered report plan validation tool in %s", workflowPhaseID)
-					}
+						if err := todo_creation_human.RegisterReportPlanValidationTools(
+							underlyingAgent,
+							phaseWorkspacePath,
+							api.logger,
+							phaseReadFile,
+						); err != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report plan validation tool in %s: %v", workflowPhaseID, err)
+						} else {
+							log.Printf("[WORKFLOW_PHASE] Registered report plan validation tool in %s", workflowPhaseID)
+						}
 
-					if err := todo_creation_human.RegisterReportRenderPreviewTool(
-						underlyingAgent,
-						phaseWorkspacePath,
-						api.logger,
-						phaseReadFile,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report render preview tool in %s: %v", workflowPhaseID, err)
+						if err := todo_creation_human.RegisterReportRenderPreviewTool(
+							underlyingAgent,
+							phaseWorkspacePath,
+							api.logger,
+							phaseReadFile,
+						); err != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to register report render preview tool in %s: %v", workflowPhaseID, err)
+						} else {
+							log.Printf("[WORKFLOW_PHASE] Registered report render preview tool in %s", workflowPhaseID)
+						}
 					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered report render preview tool in %s", workflowPhaseID)
+						log.Printf("[WORKFLOW_PHASE] Skipped report plan tools in %s mode for %s", phaseTemplateVars["WorkshopMode"], workflowPhaseID)
 					}
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
@@ -5286,7 +5187,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// One file per session — overwrites on each follow-up with the full cumulative history.
 		// Resolve workspace-docs root so files are visible in the UI.
 		if isWorkflowPhase && workflowPhaseFolder != "" && len(persistedHistory) > 0 {
-			builderDir := filepath.Join(workflowPhaseFolder, "builder")
 			convData := map[string]interface{}{
 				"session_id":           sessionID,
 				"phase_id":             workflowPhaseID,
@@ -5294,7 +5194,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-				logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
+				logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
 				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
 					log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
 				} else {
@@ -6226,8 +6126,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		subBrowserCfg := buildChatBrowserConfig(parentReq)
 		if subBrowserPrompt := browserinstructions.BuildBrowserInstructions(subBrowserCfg); subBrowserPrompt != "" {
 			underlyingAgent.AppendSystemPrompt(subBrowserPrompt)
-			log.Printf("[BROWSER] Added browser instructions to sub-agent (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
-				subBrowserCfg.HasPlaywright, subBrowserCfg.HasCamofox, subBrowserCfg.HasAgentBrowser, subBrowserCfg.CdpPort > 0)
+			log.Printf("[BROWSER] Added browser instructions to sub-agent (playwright=%v, agent-browser=%v, cdp=%v)",
+				subBrowserCfg.HasPlaywright, subBrowserCfg.HasAgentBrowser, subBrowserCfg.CdpPort > 0)
 		}
 
 		// [GWS] Add GWS quick-start instructions to sub-agent (same as parent)
@@ -6239,16 +6139,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Register file path transformer for browser file uploads on sub-agent
 		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
 		hasPlaywright := false
-		hasCamofox := false
 		for _, s := range parentReq.EnabledServers {
 			if s == "playwright" {
 				hasPlaywright = true
 			}
-			if s == "camofox" {
-				hasCamofox = true
-			}
 		}
-		if hasBrowserAccess || hasPlaywright || hasCamofox {
+		if hasBrowserAccess || hasPlaywright {
 			wsAbsPath := fsutil.WorkspaceShellRoot()
 			underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 				paths, ok := args["paths"].([]interface{})
@@ -6279,15 +6175,25 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Register workspace tools for sub-agent
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image + video).
+		// Sub-agents get the normal LLM-visible workspace tool set (advanced + image + video + audio + music).
 		workspaceTools := append(virtualtools.CreateWorkspaceAdvancedTools(), virtualtools.CreateWorkspaceImageTools()...)
 		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceVideoTools()...)
+		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceAudioTools()...)
+		workspaceTools = append(workspaceTools, virtualtools.CreateWorkspaceMusicTools()...)
 		workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
 		virtualtools.MergeImageToolExecutors(virtualtools.ImageGenExecutorConfig{
 			WorkspaceAPIURL: getWorkspaceAPIURL(),
 			UserID:          subAgentUserID,
 		}, workspaceExecutors, nil)
 		virtualtools.MergeVideoToolExecutors(virtualtools.VideoGenExecutorConfig{
+			WorkspaceAPIURL: getWorkspaceAPIURL(),
+			UserID:          subAgentUserID,
+		}, workspaceExecutors, nil)
+		virtualtools.MergeAudioToolExecutors(virtualtools.AudioGenExecutorConfig{
+			WorkspaceAPIURL: getWorkspaceAPIURL(),
+			UserID:          subAgentUserID,
+		}, workspaceExecutors, nil)
+		virtualtools.MergeMusicToolExecutors(virtualtools.AudioGenExecutorConfig{
 			WorkspaceAPIURL: getWorkspaceAPIURL(),
 			UserID:          subAgentUserID,
 		}, workspaceExecutors, nil)
@@ -7468,16 +7374,29 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 		api.conversationMux.Unlock()
 		log.Printf("[BG AGENT] Synthetic turn completed for session %s, history: %d messages", sessionID, len(finalHistory))
 
-		// Persist conversation to builder/ folder on disk (same as handleQuery defer)
+		// Persist conversation to builder/conversation/YYYY-MM-DD/ on disk (same as handleQuery defer)
 		// Without this, auto-notification responses are only in memory and lost on restart.
 		api.sessionWorkspaceMu.RLock()
 		workflowPhaseFolder, hasFolderForSession := api.sessionWorkspaceFolders[sessionID]
 		api.sessionWorkspaceMu.RUnlock()
 		if hasFolderForSession && workflowPhaseFolder != "" && len(finalHistory) > 0 {
-			builderDir := filepath.Join(workflowPhaseFolder, "builder")
 			phaseID := ""
 			if hasReq {
-				phaseID = req.PhaseID
+				phaseID = strings.TrimSpace(req.PhaseID)
+			}
+			logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
+			if phaseID == "" {
+				if existingContent, exists, err := readFileFromWorkspace(context.Background(), logPath); err == nil && exists {
+					var existing struct {
+						PhaseID string `json:"phase_id"`
+					}
+					if json.Unmarshal([]byte(existingContent), &existing) == nil {
+						phaseID = strings.TrimSpace(existing.PhaseID)
+					}
+				}
+			}
+			if phaseID == "" {
+				phaseID = "workflow-builder"
 			}
 			convData := map[string]interface{}{
 				"session_id":           sessionID,
@@ -7486,7 +7405,6 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 				"updated_at":           time.Now().Format(time.RFC3339),
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-				logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
 				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
 					log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
 				} else {
@@ -7509,12 +7427,6 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 // This is passed to the planner sub-agent so it knows what tools/servers/skills are available
 func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContext {
 	hasBrowser := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
-	for _, s := range req.EnabledServers {
-		if s == "camofox" {
-			hasBrowser = true
-			break
-		}
-	}
 	caps := &virtualtools.CapabilitiesContext{
 		EnabledServers: req.EnabledServers,
 		SelectedTools:  req.SelectedTools,
@@ -8199,22 +8111,14 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			// Browser mode from manifest capabilities
 			effectiveBrowserMode := caps.BrowserMode
 			wsHasPlaywright := false
-			wsHasCamofox := false
 			for _, s := range cfg.SelectedServers {
 				if s == "playwright" {
 					wsHasPlaywright = true
 				}
-				if s == "camofox" {
-					wsHasCamofox = true
-				}
 			}
-			if wsHasPlaywright || wsHasCamofox {
-				if wsHasPlaywright {
-					effectiveBrowserMode = "playwright"
-				} else {
-					effectiveBrowserMode = "stealth"
-				}
-				log.Printf("[WORKSHOP] Playwright/Camofox server detected — using mode=%s", effectiveBrowserMode)
+			if wsHasPlaywright {
+				effectiveBrowserMode = "playwright"
+				log.Printf("[WORKSHOP] Playwright server detected — using mode=%s", effectiveBrowserMode)
 			}
 			if effectiveBrowserMode != "" {
 				common.SetSessionBrowserMode(sessionID, effectiveBrowserMode)
@@ -8240,7 +8144,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 
 				var filteredServers []string
 				for _, s := range cfg.SelectedServers {
-					if s != "playwright" && s != "camofox" {
+					if s != "playwright" {
 						filteredServers = append(filteredServers, s)
 					}
 				}

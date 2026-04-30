@@ -153,6 +153,19 @@ func registerEvaluationValidationTools(
 				if strings.TrimSpace(step.Description) == "" {
 					return "", fmt.Errorf("evaluation step %q is missing description", step.ID)
 				}
+				for gateIdx, gate := range step.AppliesToRoutes {
+					if strings.TrimSpace(gate.RoutingStepID) == "" {
+						return "", fmt.Errorf("evaluation step %q applies_to_routes[%d] is missing routing_step_id", step.ID, gateIdx)
+					}
+					if len(gate.RouteIDs) == 0 {
+						return "", fmt.Errorf("evaluation step %q applies_to_routes[%d] is missing route_ids", step.ID, gateIdx)
+					}
+					for routeIdx, routeID := range gate.RouteIDs {
+						if strings.TrimSpace(routeID) == "" {
+							return "", fmt.Errorf("evaluation step %q applies_to_routes[%d].route_ids[%d] is empty", step.ID, gateIdx, routeIdx)
+						}
+					}
+				}
 				if step.PreValidation != nil {
 					if err := validateRegexPatternsInSchema(step.PreValidation); err != nil {
 						return "", fmt.Errorf("evaluation step %q has invalid pre_validation regex: %w", step.ID, err)

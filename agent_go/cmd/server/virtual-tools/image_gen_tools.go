@@ -15,12 +15,13 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
-// imageGenModelCosts maps model IDs to cost-per-image in USD
+// imageGenModelCosts maps model IDs with known fixed per-image pricing to USD.
+// Token-priced providers such as Codex CLI are intentionally omitted so they do
+// not get reported as free when no fixed per-image price is available.
 var imageGenModelCosts = map[string]float64{
 	"gemini-3.1-flash-image-preview": 0.067,  // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
 	"gemini-3-pro-image-preview":     0.134,  // $0.134/1K-2K image · $0.24/4K image
 	"image-01":                       0.0035, // MiniMax Image-01
-	"codex-cli":                      0.0,    // Token-priced; per-image cost not exposed by Codex CLI
 }
 
 var imageProviderModels = map[string][]string{
@@ -130,7 +131,8 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 // imageGenResult is the JSON structure returned to the LLM
 type imageGenResult struct {
 	Model        string   `json:"model"`
-	CostPerImage float64  `json:"cost_per_image"`
+	CostPerImage *float64 `json:"cost_per_image,omitempty"`
+	CostNote     string   `json:"cost_note,omitempty"`
 	Prompt       string   `json:"prompt"`
 	SavedPaths   []string `json:"saved_paths,omitempty"`
 	Count        int      `json:"count"`
@@ -276,6 +278,16 @@ func imageModelsSummaryForProvider(provider string) string {
 		return supportedImageProviderSummary()
 	}
 	return fmt.Sprintf("Supported models for provider %q: %s", provider, strings.Join(models, ", "))
+}
+
+func imageGenerationCostMetadata(provider, modelID string) (*float64, string) {
+	if strings.EqualFold(strings.TrimSpace(provider), "codex-cli") {
+		return nil, "Token-priced via Codex CLI; fixed per-image cost is not available. This is not free."
+	}
+	if cost, ok := imageGenModelCosts[modelID]; ok {
+		return &cost, ""
+	}
+	return nil, "Fixed per-image cost is not configured for this model."
 }
 
 func wrapImageGenerationSelectionError(err error) error {
@@ -612,16 +624,21 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			savedPaths = append(savedPaths, savedPath)
 		}
 
-		costPerImage := imageGenModelCosts[modelID]
+		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
 		result := imageGenResult{
 			Model:        modelID,
 			CostPerImage: costPerImage,
+			CostNote:     costNote,
 			Prompt:       prompt,
 			SavedPaths:   savedPaths,
 			Count:        len(resp.Images),
 			Note:         "",
 		}
-		log.Printf("[IMAGE_GEN] Done: saved=%d costPerImage=$%.4f", len(savedPaths), costPerImage)
+		if costPerImage != nil {
+			log.Printf("[IMAGE_GEN] Done: saved=%d costPerImage=$%.4f", len(savedPaths), *costPerImage)
+		} else {
+			log.Printf("[IMAGE_GEN] Done: saved=%d costNote=%q", len(savedPaths), costNote)
+		}
 
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
@@ -897,16 +914,21 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			savedPaths = append(savedPaths, savedPath)
 		}
 
-		costPerImage := imageGenModelCosts[modelID]
+		costPerImage, costNote := imageGenerationCostMetadata(provider, modelID)
 		result := imageGenResult{
 			Model:        modelID,
 			CostPerImage: costPerImage,
+			CostNote:     costNote,
 			Prompt:       prompt,
 			SavedPaths:   savedPaths,
 			Count:        len(resp.Images),
 			Note:         "",
 		}
-		log.Printf("[IMAGE_EDIT] Done: saved=%d costPerImage=$%.4f", len(savedPaths), costPerImage)
+		if costPerImage != nil {
+			log.Printf("[IMAGE_EDIT] Done: saved=%d costPerImage=$%.4f", len(savedPaths), *costPerImage)
+		} else {
+			log.Printf("[IMAGE_EDIT] Done: saved=%d costNote=%q", len(savedPaths), costNote)
+		}
 		resultJSON, err := json.Marshal(result)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal result: %w", err)

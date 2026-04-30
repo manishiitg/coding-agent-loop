@@ -608,6 +608,14 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		v := value
 		keys.MiniMaxCodingPlan = &v
 	}
+	if value, ok := rawKeys["elevenlabs"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.ElevenLabs = &v
+	}
+	if value, ok := rawKeys["deepgram"].(string); ok && strings.TrimSpace(value) != "" {
+		v := value
+		keys.Deepgram = &v
+	}
 	if value, ok := rawKeys["bedrock"].(map[string]interface{}); ok {
 		if region, ok := value["region"].(string); ok && strings.TrimSpace(region) != "" {
 			keys.Bedrock = &llm.BedrockConfig{Region: region}

@@ -9,7 +9,8 @@ interface ImageGenToolCallEndDisplayProps {
 
 interface ImageGenResult {
   model: string
-  cost_per_image: number
+  cost_per_image?: number | null
+  cost_note?: string
   prompt: string
   saved_paths?: string[]
   count: number
@@ -39,6 +40,13 @@ async function downloadWorkspaceFile(url: string, filename: string) {
   }
 }
 
+function formatImageCost(data: ImageGenResult): string {
+  if (typeof data.cost_per_image === 'number') {
+    return `$${data.cost_per_image.toFixed(2)}/image`
+  }
+  return data.cost_note || 'Cost unavailable'
+}
+
 export const ImageGenToolCallEndDisplay: React.FC<ImageGenToolCallEndDisplayProps> = ({ event }) => {
   if (!event.result) return null
 
@@ -65,7 +73,7 @@ export const ImageGenToolCallEndDisplay: React.FC<ImageGenToolCallEndDisplayProp
       <div className="flex items-center gap-2 text-sm font-medium text-purple-700 dark:text-purple-300">
         <ImagePlus className="w-4 h-4 flex-shrink-0" />
         <span>
-          Generated {data.count} image{data.count !== 1 ? 's' : ''} · {data.model} · ${data.cost_per_image.toFixed(2)}/image
+          Generated {data.count} image{data.count !== 1 ? 's' : ''} · {data.model} · {formatImageCost(data)}
         </span>
       </div>
 

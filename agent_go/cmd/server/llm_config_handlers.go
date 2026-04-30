@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,8 @@ var supportedLLMProviders = []string{
 	"kimi",
 	"minimax",
 	"minimax-coding-plan",
+	"elevenlabs",
+	"deepgram",
 	"claude-code",
 	"gemini-cli",
 	"codex-cli",
@@ -139,6 +142,42 @@ func isAllowedDefaultLLM(provider, modelID string) bool {
 	return false
 }
 
+func buildProviderCapabilities(ctx context.Context) map[string][]string {
+	raw := buildLLMCapabilities(ctx, "all", false)
+	grouped := make(map[string]map[string]bool)
+
+	for capabilityName, value := range raw {
+		section, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		providers, ok := section["providers"].([]llmCapabilityProvider)
+		if !ok {
+			continue
+		}
+		for _, provider := range providers {
+			if strings.TrimSpace(provider.Provider) == "" {
+				continue
+			}
+			if grouped[provider.Provider] == nil {
+				grouped[provider.Provider] = make(map[string]bool)
+			}
+			grouped[provider.Provider][capabilityName] = true
+		}
+	}
+
+	result := make(map[string][]string, len(grouped))
+	for provider, capabilitySet := range grouped {
+		capabilities := make([]string, 0, len(capabilitySet))
+		for capabilityName := range capabilitySet {
+			capabilities = append(capabilities, capabilityName)
+		}
+		sort.Strings(capabilities)
+		result[provider] = capabilities
+	}
+	return result
+}
+
 // getPrimaryProviderAndModelFromDefaults extracts provider and model_id from llm.GetLLMDefaults().PrimaryConfig.
 func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 	defaults := llm.GetLLMDefaults()
@@ -205,6 +244,12 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	}
 	if s := os.Getenv("MINIMAX_CODING_PLAN_API_KEY"); s != "" {
 		keys.MiniMaxCodingPlan = &s
+	}
+	if s := os.Getenv("ELEVENLABS_API_KEY"); s != "" {
+		keys.ElevenLabs = &s
+	}
+	if s := os.Getenv("DEEPGRAM_API_KEY"); s != "" {
+		keys.Deepgram = &s
 	}
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
@@ -357,7 +402,10 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"kimi_config":                defaults.KimiConfig,
 		"minimax_config":             defaults.MinimaxConfig,
 		"minimax_coding_plan_config": defaults.MinimaxCodingPlanConfig,
+		"elevenlabs_config":          defaults.ElevenLabsConfig,
+		"deepgram_config":            defaults.DeepgramConfig,
 		"available_models":           defaults.AvailableModels,
+		"provider_capabilities":      buildProviderCapabilities(r.Context()),
 		"supported_providers":        getSupportedProviders(),
 		"locked_providers":           lockedProviders,
 	}
@@ -399,6 +447,10 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("minimax_config")
 			case "minimax-coding-plan":
 				stripSecrets("minimax_coding_plan_config")
+			case "elevenlabs":
+				stripSecrets("elevenlabs_config")
+			case "deepgram":
+				stripSecrets("deepgram_config")
 			}
 		}
 	}

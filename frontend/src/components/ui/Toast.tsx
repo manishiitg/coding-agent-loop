@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle, Info, XCircle } from 'lucide-react';
 
 type ToastType = 'success' | 'info' | 'error';
@@ -38,7 +39,7 @@ export const Toast: React.FC<ToastProps> = ({
   const { icon: Icon, bgColor } = TOAST_CONFIG[type];
 
   return (
-    <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right-full duration-300">
+    <div className="fixed top-4 right-4 z-[100000] animate-in slide-in-from-right-full duration-300">
       <div className={`${bgColor} text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 max-w-sm`}>
         <Icon className="w-4 h-4 flex-shrink-0" />
         <span className="text-sm font-medium">{message}</span>
@@ -53,7 +54,9 @@ interface ToastContainerProps {
 }
 
 export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemoveToast }) => {
-  return (
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <>
       {toasts.map((toast) => (
         <Toast
@@ -63,6 +66,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove
           onClose={() => onRemoveToast(toast.id)}
         />
       ))}
-    </>
+    </>,
+    document.body
   );
 };

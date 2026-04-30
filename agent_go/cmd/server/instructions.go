@@ -176,7 +176,8 @@ Edit ` + "`" + absConfig + `/delegation-tier-config.json` + "`" + ` to change wh
 
 ## Published LLMs & Provider Auth
 Published LLM metadata lives in ` + "`" + absConfig + `/published-llms.json` + "`" + `. Provider authentication lives separately in ` + "`" + absConfig + `/provider-api-keys.json` + "`" + `.
-- To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, and ` + "`generate_image`" + `, including auth/runtime availability.
+- To see which providers/models are supported and currently usable by mode, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, ` + "`read_video`" + `, ` + "`generate_image`" + `, ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `, including auth/runtime availability and static pricing metadata where available.
+- Estimate priced generation/transcription costs with ` + "`estimate_llm_cost`" + ` for ` + "`generate_video`" + `, ` + "`text_to_speech`" + `, ` + "`speech_to_text`" + `, and ` + "`generate_music`" + `. Treat results as estimates and verify provider pricing before high-volume runs.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses the same shared metadata catalog as the frontend model picker.
 - List published LLMs: ` + "`execute_shell_command(command: \"cat " + absConfig + "/published-llms.json\")`" + `
@@ -269,7 +270,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
 
 **Interactive builder / workshop:**
-- ` + "`builder/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches. Only the 3 most recent are kept.
+- ` + "`builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`" + ` — workshop (interactive builder) conversation histories. Used by workshop agents to avoid repeating failed approaches.
 - ` + "`builder/improve.md`" + ` — durable prose improvement log written by ` + "`/improve-*`" + ` commands. Read on every improvement turn; append-style narrative.
 - ` + "`builder/decisions.jsonl`" + ` — append-only **structured** audit log of every change to the workflow (sidecar to ` + "`improve.md`" + `, not a replacement). Each entry carries source (agent/user/system), trigger, applied_changes, target_metrics, optional linked_experiment_id. Generated automatically when ` + "`propose_experiment`" + ` / ` + "`propose_metric`" + ` apply changes; agents append directly via ` + "`diff_patch_workspace_file`" + ` for user-rule captures and ` + "`/improve-eval`" + ` rubric-change markers (the system prompt section on rule capture documents the line format).
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert. **Read this** before proposing plan edits to see what's already been tried this session and why; complements ` + "`builder/decisions.jsonl`" + ` (which is workflow-level, cross-session) with the per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
@@ -562,7 +563,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`selected_tools`" + ` — specific tool names to allow-list from those servers (optional)
 - ` + "`selected_skills`" + ` — skill folder names to auto-activate
 - ` + "`selected_secrets`" + ` — secret names the workflow needs
-- ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + ` | ` + "`playwright`" + ` | ` + "`stealth`" + `
+- ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + ` | ` + "`playwright`" + `
 - ` + "`use_code_execution_mode`" + ` — ` + "`true`" + ` if steps should run scripted Python; ` + "`false`" + ` for direct tool calls
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
 
@@ -1042,7 +1043,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to `+"`iteration-1/`"+`, `+"`iteration-2/`"+`, ... (keep 10). Per-run layout: `+"`runs/iteration-{N}/{group}/execution/step-{N}/code/main.py`"+` for working main.py copies.
 - Final reports: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — per-group final output reports
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
-- Builder sessions: `+"`%s/builder/session-{id}-conversation.json`"+` — workshop chat histories (kept 3)
+- Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories
 - Decisions log: `+"`%s/builder/decisions.jsonl`"+` — append-only structured audit log; sidecar to `+"`improve.md`"+`. Auto-improvement framework.
 - Metrics: `+"`%s/planning/metrics.json`"+` (optional) — quantified goal definitions; required for workflows with business-context accumulation. Tool-only writes (use propose_metric); shell writes blocked by FolderGuard.
 - Rules store: `+"`%s/knowledgebase/rules/rules.md`"+` and `+"`%s/knowledgebase/rules/examples/`"+` — Type 3 only. Accumulated user-supplied business rules; excluded from KB reorganize/consolidate passes. Audit trail folded into `+"`builder/decisions.jsonl`"+` (source=user + trigger=rule-captured).

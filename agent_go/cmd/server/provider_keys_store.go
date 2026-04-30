@@ -29,6 +29,8 @@ type StoredProviderKeys struct {
 	GeminiCLI         string               `json:"gemini_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
+	ElevenLabs        string               `json:"elevenlabs,omitempty"`
+	Deepgram          string               `json:"deepgram,omitempty"`
 	Bedrock           *StoredBedrockConfig `json:"bedrock,omitempty"`
 	Azure             *StoredAzureConfig   `json:"azure,omitempty"`
 }
@@ -125,6 +127,12 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.MiniMaxCodingPlan != "" {
 		m["minimax-coding-plan"] = keys.MiniMaxCodingPlan
 	}
+	if keys.ElevenLabs != "" {
+		m["elevenlabs"] = keys.ElevenLabs
+	}
+	if keys.Deepgram != "" {
+		m["deepgram"] = keys.Deepgram
+	}
 	if keys.Bedrock != nil {
 		m["bedrock"] = map[string]interface{}{"region": keys.Bedrock.Region}
 	}
@@ -179,6 +187,12 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.MiniMaxCodingPlan != "" {
 		result.MiniMaxCodingPlan = &keys.MiniMaxCodingPlan
 	}
+	if keys.ElevenLabs != "" {
+		result.ElevenLabs = &keys.ElevenLabs
+	}
+	if keys.Deepgram != "" {
+		result.Deepgram = &keys.Deepgram
+	}
 	if keys.Bedrock != nil {
 		result.Bedrock = &llm.BedrockConfig{Region: keys.Bedrock.Region}
 	}
@@ -215,6 +229,12 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	if result.MiniMax != nil {
 		loaded = append(loaded, "minimax")
+	}
+	if result.ElevenLabs != nil {
+		loaded = append(loaded, "elevenlabs")
+	}
+	if result.Deepgram != nil {
+		loaded = append(loaded, "deepgram")
 	}
 	if result.Bedrock != nil {
 		loaded = append(loaded, "bedrock")
@@ -263,6 +283,8 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		CodexCLI:          pick(envKeys.CodexCLI, wsKeys.CodexCLI),
 		MiniMax:           pick(envKeys.MiniMax, wsKeys.MiniMax),
 		MiniMaxCodingPlan: pick(envKeys.MiniMaxCodingPlan, wsKeys.MiniMaxCodingPlan),
+		ElevenLabs:        pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
+		Deepgram:          pick(envKeys.Deepgram, wsKeys.Deepgram),
 	}
 	// Bedrock / Azure: workspace wins if present, else env
 	if wsKeys.Bedrock != nil {
@@ -401,6 +423,8 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		GeminiCLI:         pick(existing.GeminiCLI, incoming.GeminiCLI),
 		MiniMax:           pick(existing.MiniMax, incoming.MiniMax),
 		MiniMaxCodingPlan: pick(existing.MiniMaxCodingPlan, incoming.MiniMaxCodingPlan),
+		ElevenLabs:        pick(existing.ElevenLabs, incoming.ElevenLabs),
+		Deepgram:          pick(existing.Deepgram, incoming.Deepgram),
 	}
 
 	// Bedrock / Azure: incoming wins if present, else keep existing

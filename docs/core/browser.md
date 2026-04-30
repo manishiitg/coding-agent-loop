@@ -1,6 +1,6 @@
 # Browser System
 
-Complete reference for browser automation in mcp-agent-builder-go — session limits, CDP local browser, stealth browser (Camoufox), Playwright artifacts, and known bugs.
+Complete reference for browser automation in mcp-agent-builder-go — session limits, CDP local browser, Playwright artifacts, and known bugs.
 
 ---
 
@@ -8,7 +8,6 @@ Complete reference for browser automation in mcp-agent-builder-go — session li
 
 - [Session Limit Manager](#session-limit-manager)
 - [CDP Local Browser Connection](#cdp-local-browser-connection)
-- [Camoufox Stealth Browser](#camoufox-stealth-browser)
 - [Playwright Artifacts and Output Location](#playwright-artifacts-and-output-location)
 - [Browser Session Identity Split Plan](#browser-session-identity-split-plan)
 - [Known Bugs](#known-bugs)
@@ -169,68 +168,6 @@ xattr -cr /path/to/Chrome-CDP.app
 
 ---
 
-## Camoufox Stealth Browser
-
-Anti-detect browser automation using [camofox-mcp](https://github.com/redf0x1/camofox-mcp) — an MCP server that bridges to a Camoufox-based browser (patched Firefox) designed to pass all major browser fingerprinting tests.
-
-### Architecture
-
-1. **Host Process**: `camofox-browser` runs as a persistent process on your host machine.
-2. **MCP Server**: The `camofox` MCP server connects via WebSocket (default port `9377`).
-3. **Agent Interaction**: Agent uses `camofox` tools (click, type, navigate, etc.) routed through the stealth browser.
-
-### Backend
-
-- **Endpoint**: `POST /api/camofox-start` with `{ "headed": boolean }`
-- **Handler**: `handleCamofoxStart` in `agent_go/cmd/server/server.go`
-  - Checks if a process is already listening on the Camoufox port
-  - Spawns `camofox-browser` if not
-  - Supports headless and headed modes
-
-### MCP Configuration
-
-Pre-configured in `agent_go/configs/mcp_servers_clean.json`:
-
-```json
-"camofox": {
-  "command": "camofox-mcp",
-  "args": [],
-  "env": {
-    "CAMOFOX_URL": "http://localhost:9377"
-  }
-}
-```
-
-### Frontend Integration
-
-- **Auto-Start**: When "Stealth Browser" is selected, frontend calls `agentApi.startCamofox(headed)`.
-- **Headed Toggle**: Real-time toggle for headed mode.
-- **Visual Feedback**: "Starting Camoufox..." status during initialization.
-
-### Prerequisites
-
-```bash
-npm install -g camofox-browser
-# First run downloads patched Firefox binary (~200MB) to ~/.camoufox
-```
-
-### Comparison with Playwright
-
-| Feature | Playwright MCP | Camoufox MCP |
-|---------|---------------|--------------|
-| **Engine** | Chromium (default) | Firefox (patched) |
-| **Stealth** | Basic (easily detected) | High (hardened for evasion) |
-| **Architecture** | Spawns per session | Shared host process |
-| **Performance** | Faster startup | Slightly slower (heavy hardening) |
-| **Tooling** | 15+ tools | 40+ specialized tools |
-
-### Troubleshooting
-
-- **"camofox-browser not found"**: Install via `npm install -g camofox-browser`. Must be in system PATH.
-- **Site still detects bot**: Enable `headed` mode (some sites check viewport consistency). Check if your IP is flagged. Use `camofox_wait` for human-like delays.
-
----
-
 ## Playwright Artifacts and Output Location
 
 ### The Problem
@@ -285,7 +222,7 @@ Even when controlling your local browser via CDP, `working_dir` injection is act
 A single MCP session ID currently does two jobs:
 
 1. **Tool session identity** — session-scoped `MCP_API_URL`, custom tool routing, code execution mode HTTP calls.
-2. **Browser session identity** — Playwright / `agent_browser` / Camoufox browser reuse, page state continuity, login persistence.
+2. **Browser session identity** — Playwright / `agent_browser` browser reuse, page state continuity, login persistence.
 
 This coupling breaks in the workflow builder.
 
@@ -321,7 +258,7 @@ For workflow builder: `browser::<workspace-hash>::<group-id>` (canonical `group_
 ### What Must Change
 
 1. **Session model**: Introduce `ToolSessionID` + `BrowserSessionID` (fallback to tool session if browser session empty).
-2. **Browser tools**: Playwright, `agent_browser`, Camoufox must resolve `browser_session_id` first, fall back to `tool_session_id`.
+2. **Browser tools**: Playwright and `agent_browser` must resolve `browser_session_id` first, fall back to `tool_session_id`.
 3. **Code execution env**: Add `MCP_BROWSER_SESSION_ID` or equivalent, keep `MCP_API_URL` on tool session.
 4. **Workshop controller state**: Track `map[groupID]browserSessionID` and optional `lastActiveGroupID`.
 5. **Cleanup lifecycle**: Closing a tool session must not auto-destroy a shared browser session.
@@ -343,7 +280,7 @@ For workflow builder: `browser::<workspace-hash>::<group-id>` (canonical `group_
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_exports.go` — workshop session setup
 - `agent_go/cmd/server/server.go` — workflow-phase chat agent creation, session-aware executors
 
-**mcpagent:** Browser session registry/reuse logic, Playwright session lookup, `agent_browser` execution path, Camoufox session lookup.
+**mcpagent:** Browser session registry/reuse logic, Playwright session lookup, `agent_browser` execution path.
 
 ### Risk
 

@@ -11,6 +11,9 @@ export const WORKSPACE_ADVANCED_TOOLS = [
   'generate_text_llm',
   'search_web_llm',
   'generate_video',
+  'text_to_speech',
+  'speech_to_text',
+  'generate_music',
   'diff_patch_workspace_file',
 ] as const;
 

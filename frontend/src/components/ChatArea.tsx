@@ -2189,16 +2189,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const storedRestoredConversationPath = shouldAttachRestoredConversation
       ? currentTab?.config?.restoredConversationPath?.trim()
       : ''
-    const restoredConversationPath = storedRestoredConversationPath &&
-      effectiveFileContext.some((file) => file.path === storedRestoredConversationPath)
-      ? storedRestoredConversationPath
-      : ''
+    const restoredConversationPath = storedRestoredConversationPath || ''
+    const restoredConversationSummary = currentTab?.config?.restoredConversationSummary?.trim()
     const restoredConversationContext = restoredConversationPath
-      ? `\n\nPrevious workflow-builder conversation file: ${restoredConversationPath}\nIf the user refers to earlier messages or asks what was discussed before, read this file first and use it as conversation context.`
+      ? `\n\nPrevious workflow-builder conversation: ${restoredConversationPath}\nUse this compact restored context only; do not read the full conversation file unless the user explicitly asks for older details.${restoredConversationSummary ? `\n\n${restoredConversationSummary}` : ''}`
       : ''
+    const fileContextForPrompt = restoredConversationPath
+      ? effectiveFileContext.filter((file) => file.path !== restoredConversationPath)
+      : effectiveFileContext
 
-    const queryBaseWithContext = effectiveFileContext.length > 0
-      ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
+    const queryBaseWithContext = fileContextForPrompt.length > 0
+      ? `${query.trim()}\n\n📁 Files in context: ${fileContextForPrompt.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
     const displayQueryWithContext = queryBaseWithContext
     const queryWithContext = `${displayQueryWithContext}${restoredConversationContext}`
@@ -2258,10 +2259,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // File context is one-shot: it belongs to the message being submitted, not
     // the whole conversation. The request payload below already captured it.
-    if (effectiveFileContext.length > 0) {
+    if (effectiveFileContext.length > 0 || restoredConversationPath) {
       chatStore.setTabConfig(currentTab.tabId, {
         fileContext: [],
         restoredConversationPath: undefined,
+        restoredConversationSummary: undefined,
       })
     }
 

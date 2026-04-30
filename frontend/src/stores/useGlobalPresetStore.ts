@@ -76,7 +76,7 @@ interface GlobalPresetState {
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => Promise<CustomPreset | null>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
 
   // Actions for preset application
@@ -144,7 +144,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded, browserMode) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, browserMode) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
 
         // Convert secret IDs to names for backend persistence (names are device-independent)

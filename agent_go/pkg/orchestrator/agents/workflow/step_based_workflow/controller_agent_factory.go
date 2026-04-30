@@ -233,15 +233,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		effectiveServers = hcpo.GetSelectedServers()
 	}
 
-	// Check for Playwright and Camofox MCP servers
+	// Check for Playwright MCP server
 	hasPlaywright := false
-	hasCamofox := false
 	for _, server := range effectiveServers {
 		if server == "playwright" {
 			hasPlaywright = true
-		}
-		if server == "camofox" {
-			hasCamofox = true
 		}
 	}
 
@@ -254,7 +250,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		}
 	}
 
-	if !hasPlaywright && !hasAgentBrowser && !hasCamofox {
+	if !hasPlaywright && !hasAgentBrowser {
 		return // No browser tool, nothing to configure
 	}
 
@@ -262,8 +258,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	browserToolType := "agent-browser"
 	if hasPlaywright {
 		browserToolType = "playwright"
-	} else if hasCamofox {
-		browserToolType = "camofox"
 	}
 
 	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
@@ -349,7 +343,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 //
 // Why this is needed:
 //   - Normal execution agents preload lazy-connect server configs (with runtime overrides)
-//     during agent startup, so the first Playwright/Camofox tool call uses the workflow's
+//     during agent startup, so the first Playwright tool call uses the workflow's
 //     run-specific browser settings.
 //   - Saved-script fast path skips execution-agent startup and goes straight to main.py.
 //   - Without this priming, the first browser call falls through to mcpcache and creates
@@ -381,7 +375,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) primeBrowserServerConfigsForSavedScri
 
 	var primed []string
 	for _, serverName := range config.ServerNames {
-		if serverName != "playwright" && serverName != "camofox" {
+		if serverName != "playwright" {
 			continue
 		}
 		serverConfig, err := mergedConfig.GetServer(serverName)
@@ -2164,7 +2158,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
-				// Close the MCP session (Playwright/Camofox connection)
+				// Close the MCP session (Playwright connection)
 				mcpagent.CloseSession(isolatedSessionID)
 				// Close agent-browser processes and remove from tracker
 				tracker := browser.GetSessionTracker()
@@ -2271,7 +2265,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
 			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
 			defer func() {
-				// Close the MCP session (Playwright/Camofox connection)
+				// Close the MCP session (Playwright connection)
 				mcpagent.CloseSession(isolatedSessionID)
 				// Close agent-browser processes and remove from tracker
 				tracker := browser.GetSessionTracker()

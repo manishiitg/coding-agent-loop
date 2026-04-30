@@ -23,4 +23,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setDockBadge: (text) => ipcRenderer.send('set-dock-badge', text),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   printToPDF: (filename) => ipcRenderer.invoke('print-to-pdf', filename),
+  saveFlowImage: (payload) => ipcRenderer.invoke('save-flow-image', payload),
+  captureFlowImage: (payload) => ipcRenderer.invoke('capture-flow-image', payload),
 });

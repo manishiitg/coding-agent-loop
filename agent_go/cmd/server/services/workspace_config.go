@@ -262,7 +262,6 @@ func LoadImageAnalysisConfig(ctx context.Context, workspaceURL string) (*ImageAn
 	return cfg, true, nil
 }
 
-
 func sanitizeImageGenerationModelConfig(cfg *ImageGenerationModelConfig) *ImageGenerationModelConfig {
 	if cfg == nil {
 		return nil
@@ -310,6 +309,8 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		CodexCLI          string `json:"codex_cli,omitempty"`
 		MiniMax           string `json:"minimax,omitempty"`
 		MiniMaxCodingPlan string `json:"minimax_coding_plan,omitempty"`
+		ElevenLabs        string `json:"elevenlabs,omitempty"`
+		Deepgram          string `json:"deepgram,omitempty"`
 		Bedrock           *struct {
 			Region string `json:"region"`
 		} `json:"bedrock,omitempty"`
@@ -354,6 +355,12 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 	}
 	if stored.MiniMaxCodingPlan != "" {
 		m["minimax-coding-plan"] = stored.MiniMaxCodingPlan
+	}
+	if stored.ElevenLabs != "" {
+		m["elevenlabs"] = stored.ElevenLabs
+	}
+	if stored.Deepgram != "" {
+		m["deepgram"] = stored.Deepgram
 	}
 	if stored.Bedrock != nil {
 		m["bedrock"] = map[string]interface{}{"region": stored.Bedrock.Region}

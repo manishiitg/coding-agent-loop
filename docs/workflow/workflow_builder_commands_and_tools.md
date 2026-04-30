@@ -70,6 +70,8 @@ These are exposed to the agent regardless of workshop mode. Every per-mode list 
 | LLM helpers | `generate_text_llm`, `search_web_llm` |
 | Image | `image_gen`, `image_edit` |
 | Video | `generate_video` |
+| Audio | `text_to_speech`, `speech_to_text` |
+| Music | `generate_music` |
 | Secrets | `list_secrets`, `set_user_secret`, `delete_user_secret` |
 | Human | `human_feedback` |
 | Browser | `agent_browser` |

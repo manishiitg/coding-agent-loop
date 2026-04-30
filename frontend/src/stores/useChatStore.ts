@@ -192,12 +192,11 @@ export interface ChatTabConfig {
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
-  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'  // Browser access mode (default: 'none')
+  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   enableGWSAccess?: boolean  // Enable/disable Google Workspace CLI access
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
-  camofoxHeaded?: boolean  // Camofox headed mode — visible browser window (default: true)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
   workflowContext: Array<{
     presetId: string
@@ -205,6 +204,7 @@ export interface ChatTabConfig {
     workspacePath: string
   }>  // Workflow presets selected via # in chat input
   restoredConversationPath?: string  // Durable conversation file for UI-restored tabs
+  restoredConversationSummary?: string  // Compact recent context from a restored workflow-builder conversation
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
@@ -1835,7 +1835,7 @@ export const useChatStore = create<ChatState>()(
           type SyncUpdate = {
             lastSelectedSkills?: string[]
             lastSelectedSubAgents?: string[]
-            lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+            lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
             lastEnableImageGeneration?: boolean
             lastGWSAccess?: boolean
           }

@@ -10,7 +10,7 @@ import { ModelOptionsConfig } from './llm/ModelOptionsConfig'
 
 type APIKeyProvider = Extract<
   LLMProvider,
-  'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan'
+  'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi' | 'minimax' | 'minimax-coding-plan' | 'elevenlabs' | 'deepgram'
 >
 
 interface APIKeyProviderSectionProps {
@@ -25,6 +25,7 @@ interface APIKeyProviderSectionProps {
   apiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   apiKeyError: string | null
   metadata?: ModelMetadata[]
+  allowPublish?: boolean
 }
 
 export function APIKeyProviderSection({
@@ -39,6 +40,7 @@ export function APIKeyProviderSection({
   apiKeyStatus,
   apiKeyError,
   metadata,
+  allowPublish = true,
 }: APIKeyProviderSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [isPublishing, setIsPublishing] = useState(false)
@@ -212,7 +214,7 @@ export function APIKeyProviderSection({
             </div>
           </div>
 
-          {!isLocked && (
+          {!isLocked && allowPublish && (
             <div className="border-t border-border pt-4">
               {isPublishing ? (
                 <div className="space-y-3">

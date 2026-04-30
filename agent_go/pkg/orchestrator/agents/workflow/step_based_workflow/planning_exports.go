@@ -1150,7 +1150,7 @@ func RegisterRunFullWorkflowTool(
 ) {
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background — you will be notified when complete. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background — you will be notified when complete. If the plan contains human_input steps, you MUST provide human_inputs with a response for each one — the tool will error if any are missing. For routing steps, you can also pass human_inputs with the user's choice to guide the routing decision. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1164,6 +1164,10 @@ func RegisterRunFullWorkflowTool(
 					"additionalProperties": map[string]interface{}{
 						"type": "string",
 					},
+				},
+				"disable_eval": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional. When true, skip the automatic evaluation pass after this workflow run completes. Defaults to false.",
 				},
 			},
 			"required": []string{"group_name"},
@@ -1186,6 +1190,7 @@ func RegisterRunFullWorkflowTool(
 				return "group_name is required. Read variables.json to see available groups.", nil
 			}
 			enabledGroupNames := []string{groupName}
+			disableEval, _ := args["disable_eval"].(bool)
 
 			// Parse human_inputs (optional map of step_id → response)
 			var humanInputs map[string]string
@@ -1323,6 +1328,9 @@ func RegisterRunFullWorkflowTool(
 					"workshop_mode":  "runner",
 					"execution_type": "full-workflow",
 				}
+				if disableEval {
+					execMeta["disable_eval"] = "true"
+				}
 				if iteration != "" {
 					execMeta["iteration"] = iteration
 				}
@@ -1340,6 +1348,7 @@ func RegisterRunFullWorkflowTool(
 							InputData: map[string]string{
 								"execution_strategy": strategy,
 								"execution_type":     "full-workflow",
+								"disable_eval":       fmt.Sprintf("%v", disableEval),
 							},
 						}
 						if execErr != nil {
@@ -1371,6 +1380,7 @@ func RegisterRunFullWorkflowTool(
 						InputData: map[string]string{
 							"execution_strategy": strategy,
 							"execution_type":     "full-workflow",
+							"disable_eval":       fmt.Sprintf("%v", disableEval),
 						},
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
@@ -1445,6 +1455,7 @@ func RegisterRunFullWorkflowTool(
 					ExecutionStrategy: strategy,
 					EnabledGroupNames: enabledGroupNames,
 					HumanInputs:       humanInputs,
+					DisableEval:       disableEval,
 				}
 				workflowController.SetExecutionOptions(execOpts)
 
@@ -1480,7 +1491,11 @@ func RegisterRunFullWorkflowTool(
 			if iteration != "" {
 				iterInfo = fmt.Sprintf("\nIteration: %s (reusing)", iteration)
 			}
-			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s\nAll steps will be executed end-to-end.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo), nil
+			evalInfo := "\nAuto-evaluation: enabled"
+			if disableEval {
+				evalInfo = "\nAuto-evaluation: disabled"
+			}
+			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s%s\nAll steps will be executed end-to-end.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo, evalInfo), nil
 		},
 		"workflow",
 	); err != nil {

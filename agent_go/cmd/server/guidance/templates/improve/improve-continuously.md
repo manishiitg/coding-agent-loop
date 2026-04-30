@@ -52,20 +52,21 @@ OPENING (every fire):
 EXPERIMENT MODE (when metrics.json is non-empty):
 1. **Check active experiments first.** If 3+ experiments are already active, do nothing this fire — log "deferring: too many active experiments" to improve.md and return. Opening experiment #4 while 1–3 are still measuring confounds attribution.
 2. If any active experiment is in 'awaiting-approval' or 'awaiting-conclusion-approval', do nothing this fire — those need human action, not new proposals. Log and return.
-3. **Discover** by reading run outputs first (latest iteration under runs/), eval reports, decisions.jsonl. Compare outputs to soul.md success criteria as a business analyst — what gap is most worth testing? Look for things the user is NOT asking about: tone uniformity that should segment, redundant work that should cache, weak validation that should tighten, content that misses the prospect's pain point. Read enough run output that patterns appear; do not skim.
+3. **Discover** by reading runs/iteration-0 outputs first, then iteration-0 eval reports and builder/decisions.jsonl. Compare outputs to soul.md success criteria as a business analyst — what gap is most worth testing? Look for things the user is NOT asking about: tone uniformity that should segment, redundant work that should cache, weak validation that should tighten, content that misses the prospect's pain point. Read enough run output that patterns appear; do not skim.
 4. **Pick exactly ONE candidate** — the highest-impact change defensible by specific run-output evidence. Multi-file bundles are fine if they share ONE underlying belief; if you need an "and" connecting distinct claims, those are separate experiments and you only open one.
 5. **Pick the target metric.** Prefer outcome metrics (linked_success_criteria non-empty) whose criterion is failing or drifting. Telemetry SLOs are last resort. State explicitly: "this experiment targets <metric_id> which operationalizes success criterion: <quoted criterion>."
 6. **Call propose_experiment.** Do NOT call harden_workflow or apply changes directly — the framework gates and reverts on a bad verdict.
 7. If no candidate is strong enough (no clear evidence-backed hypothesis), do nothing this fire. Log "no high-confidence hypothesis surfaced" to improve.md and return. A scheduled fire with no proposal is a valid outcome.
 
 DIRECT MODE (when metrics.json is empty):
-1. Apply the legacy autonomous improvement logic — review evidence, optimize_workflow, harden_workflow / replan_workflow_from_results as needed, improve evaluation_plan / report_plan when their coverage is weak.
+1. Apply the legacy autonomous improvement logic — review evidence, optimize_workflow, harden_workflow / replan_workflow_from_results as needed, and improve evaluation_plan when its coverage is weak.
 2. Be conservative and bounded — do not loop or run a fresh workflow pass unless verification is genuinely needed.
 
 ALWAYS:
 - improve the evaluation plan when objective/success-criteria coverage is weak or misleading (this is exempt from the experiment gate — eval definition isn't a workflow change)
+- do not edit reports/report_plan.json from this optimizer schedule. If report layout or widgets need changes, log that follow-up and tell the user to switch to Reporting mode.
 - update builder/improve.md with: timestamp, mode used, evidence reviewed, what was opened (experiment_id) or applied, what was deferred and why, remaining gaps, next hypotheses{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
-- when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the decisions.jsonl entry (DIRECT MODE).
+- when this scheduled fire applies a change that addresses a finding from builder/review.md or a queued proposal in builder/improve.md, follow the resolution-discipline rules in the system prompt: scan for matching `F-...` / `I-...` ids, append `**[RESOLVED YYYY-MM-DD — <how>]**` markers inline after the original entries, and include `linked_review_finding` / `linked_improve_entry` in the experiment payload (EXPERIMENT MODE) or the builder/decisions.jsonl entry (DIRECT MODE).
 
 PERSISTENT IMPROVEMENT LOG
 Create or update builder/improve.md now as the durable optimization log for future scheduled improvement runs.

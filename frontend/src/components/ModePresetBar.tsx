@@ -317,8 +317,7 @@ export const ModePresetBar: React.FC = () => {
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
-    camofoxHeaded?: boolean,
-    browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+    browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'
   ) => {
     try {
       const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
@@ -365,7 +364,6 @@ export const ModePresetBar: React.FC = () => {
         undefined, // enableContextEditing
         selectedSecrets,
         selectedGlobalSecretNames,
-        camofoxHeaded,
         browserMode
       )
 

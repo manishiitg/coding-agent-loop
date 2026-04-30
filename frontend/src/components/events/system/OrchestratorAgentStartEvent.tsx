@@ -5,6 +5,7 @@ import { useExpandable } from '../useExpandable';
 import { Plus, Minus } from 'lucide-react';
 import { useLLMStore } from '../../../stores'
 import { getModelDisplayName } from '../../../utils/llmDisplay'
+import { isEvaluationAgentEvent } from './eventDisplayUtils'
 
 function formatWorkshopIteration(iteration?: number, inputIteration?: string): string | null {
   if (inputIteration && inputIteration.trim() !== '') return inputIteration
@@ -51,6 +52,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const hasInputData = event.input_data && Object.keys(event.input_data).length > 0;
 
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
+  const isEvaluationAgent = isEvaluationAgentEvent(event)
   const isWorkshopStep = agentType?.startsWith('workshop-')
   const isBackgroundAgent = agentType === 'workshop-background-task'
   const isWorkshopStepExecution = agentType === 'workshop-step-execution'
@@ -64,6 +66,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     : ''
 
   const getLabel = () => {
+    if (isEvaluationAgent && agentType === 'evaluation_scoring') return 'Evaluation Scoring'
+    if (isEvaluationAgent && (agentType === 'todo_planner_execution' || agentType === 'generic_execution' || agentType === 'workshop-step-execution')) return 'Evaluation Step'
+    if (isEvaluationAgent) return 'Evaluation Agent'
     if (agentType === 'workshop-step-execution') return 'Step Execution'
     if (agentType === 'workshop-step-learning') return 'Learning Agent'
     if (agentType === 'workshop-step-debug') return 'Optimization Agent'
@@ -81,6 +86,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   }
 
   const getAgentIcon = () => {
+    if (isEvaluationAgent) return '🧪'
     if (agentType === 'workshop-step-execution') return '▶️'
     if (agentType === 'workshop-step-learning') return '📚'
     if (agentType === 'workshop-step-debug') return '🔧'
@@ -98,6 +104,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   }
 
   const getAgentColor = () => {
+    if (isEvaluationAgent) return 'blue'
     if (agentType === 'workshop-step-execution') return 'cyan'
     if (agentType === 'workshop-step-learning') return 'amber'
     if (agentType === 'workshop-step-debug') return 'orange'
@@ -205,6 +212,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     savedLLMs,
     availableLLMs,
   })
+  const modeLabel = isEvaluationAgent
+    ? (useLearnCodeMode ? 'Eval Learn Code' : modeFlags.use_code_execution_mode ? 'Eval Code Exec' : 'Eval')
+    : (useLearnCodeMode ? 'Learn Code' : modeFlags.use_code_execution_mode ? 'Code Exec' : null)
 
   return (
     <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200 ${isWorkshopStep ? 'border-l-4 ml-2' : ''}`}>
@@ -220,7 +230,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  {useLearnCodeMode ? ' | Learn Code' : modeFlags.use_code_execution_mode ? ' | Code Exec' : null}
+                  {modeLabel ? ` | ${modeLabel}` : null}
                   {workshopMeta
                     ? ` | ${workshopMeta}`
                     : ` | Model: ${modelDisplayName} | Servers: ${event.servers_count} | Max Turns: ${event.max_turns}`}

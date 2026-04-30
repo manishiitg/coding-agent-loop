@@ -66,7 +66,7 @@ type StepBasedWorkflowOrchestrator struct {
 	workflowID    string // For human feedback tracking
 	httpSessionID string // HTTP session ID for MCP cleanup scoping
 	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
-	browserMode   string // Browser mode: "playwright", "stealth", "cdp", "headless", "" (auto-detect)
+	browserMode   string // Browser mode: "playwright", "cdp", "headless", "" (auto-detect)
 
 	// Workshop MCP session cache: one reusable MCP session per group name within a
 	// workshop session. This preserves browser/login state when the user runs
@@ -522,7 +522,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetCdpPort() int {
 }
 
 // SetBrowserMode sets the browser mode for prompt instructions.
-// Valid values: "playwright", "stealth", "cdp", "headless", "" (auto-detect from servers/skills).
+// Valid values: "playwright", "cdp", "headless", "" (auto-detect from servers/skills).
 func (hcpo *StepBasedWorkflowOrchestrator) SetBrowserMode(mode string) {
 	hcpo.browserMode = mode
 }
@@ -533,13 +533,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetBrowserMode() string {
 }
 
 // HasBrowserCapability reports whether this workflow has any browser MCP available —
-// a registered browser server (playwright or camofox), the agent-browser skill, a
+// a registered browser server (playwright), the agent-browser skill, a
 // configured CDP port, or an explicit non-"none" browserMode. Use this (not
 // GetBrowserMode directly) when deciding whether to emit browser-specific prompt
 // content — an empty browserMode means "auto-detect", NOT "no browser".
 //
 // Real signals (see controller_agent_factory.go): browser MCP servers are
-// "playwright" and "camofox"; agent-browser ships as a skill registered via
+// "playwright"; agent-browser ships as a skill registered via
 // GetSelectedSkills; CDP attach is driven by CdpPort.
 func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 	if mode := hcpo.browserMode; mode != "" && mode != "none" {
@@ -549,7 +549,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) HasBrowserCapability() bool {
 		return true
 	}
 	for _, s := range hcpo.GetSelectedServers() {
-		if s == "playwright" || s == "camofox" {
+		if s == "playwright" {
 			return true
 		}
 	}

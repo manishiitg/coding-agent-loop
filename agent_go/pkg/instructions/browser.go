@@ -26,17 +26,16 @@ func cdpHost() string {
 // BrowserConfig holds the resolved browser state for prompt generation.
 type BrowserConfig struct {
 	HasPlaywright   bool
-	HasCamofox      bool
 	HasAgentBrowser bool
 	CdpPort         int    // >0 means CDP mode, 0 means headless (legacy, use Mode when set)
-	Mode            string // "cdp", "headless", "playwright", "stealth", "" (empty = fallback to CdpPort)
+	Mode            string // "cdp", "headless", "playwright", "" (empty = fallback to CdpPort)
 	IsIsolated      bool   // true when running in a share_browser=false sub-agent
 }
 
 // BuildBrowserInstructions returns the complete browser system prompt
 // (upload + mode-specific) for the given config, or "" if no browser tool is active.
 func BuildBrowserInstructions(cfg BrowserConfig) string {
-	if !cfg.HasPlaywright && !cfg.HasCamofox && !cfg.HasAgentBrowser {
+	if !cfg.HasPlaywright && !cfg.HasAgentBrowser {
 		return ""
 	}
 
@@ -45,12 +44,9 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags
 	isCdp := cfg.Mode == "cdp" || (cfg.Mode == "" && cfg.CdpPort > 0)
 	isPlaywright := cfg.Mode == "playwright" || (cfg.Mode == "" && cfg.HasPlaywright)
-	isStealth := cfg.Mode == "stealth" || (cfg.Mode == "" && cfg.HasCamofox)
 
 	if isPlaywright {
 		result += "\n" + GetPlaywrightModeInstructions()
-	} else if isStealth {
-		result += "\n" + GetCamofoxInstructions()
 	} else if isCdp {
 		result += "\n" + GetCdpBrowserInstructions()
 	} else {
@@ -250,69 +246,4 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
 For detailed usage, read: execute_shell_command(command="cat %s")`, agentBrowserSkillPath())
-}
-
-// GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.
-func GetCamofoxInstructions() string {
-	return `
-
-## Camofox Stealth Browser
-
-You have access to the Camofox stealth browser — an anti-detect Firefox fork that bypasses bot detection.
-Use the camofox MCP tools (snapshot, click, type_text, navigate, etc.) to interact with websites.
-Always prefer snapshot over screenshot — it returns an accessibility tree which is much more token-efficient.
-
-### Tab Management (IMPORTANT)
-
-**Before creating a new tab, always check for existing ones:**
-1. Call list_tabs() first — reuse an existing tab if one is already open rather than creating a new one.
-2. Only call create_tab() if no suitable tab exists.
-
-**Always clean up when done:**
-- Close individual tabs with close_tab(tabId="...") when you no longer need them.
-- At the very end of your task, call camofox_close_session() to close ALL remaining tabs and free resources.
-- Never leave tabs open after completing your work — each run should start fresh.
-
-### File Upload (Camofox)
-Camofox does not have a direct file upload tool. To upload a file to a website:
-1. Use snapshot(tabId) to find the file input element ref
-2. Use camofox_evaluate_js to set the file via JavaScript DataTransfer API or trigger the input programmatically
-Note: For headed mode, the user can also manually select a file when the file picker opens.
-
-### Session Persistence
-
-Camofox has built-in session/cookie persistence using named profiles:
-
-**Saving a session (after login):**
-1. save_profile(tabId="tab-id", profileId="my-site-login") — saves cookies to a named profile
-
-**Restoring a session (in a new tab/conversation):**
-1. create_tab(url="https://example.com") — create a new tab
-2. load_profile(tabId="tab-id", profileId="my-site-login") — restore saved cookies
-3. refresh(tabId="tab-id") — reload page with restored cookies
-
-**Managing profiles:**
-- list_profiles() — see all saved profiles
-- delete_profile(profileId="old-profile") — remove a profile
-
-**Importing cookies directly:**
-- import_cookies(tabId="tab-id", cookies="[{...}]", userId="user1") — import raw cookie JSON
-
-Always save a profile after successful login so the session can be reused later without re-authentication.
-
-### Downloads
-
-Camofox manages downloads internally (not saved to workspace filesystem):
-
-**Retrieving downloads:**
-1. list_downloads(tabId="tab-id") — see all downloaded files
-2. get_download(downloadId="id", includeContent=true) — get file content as base64
-
-**Batch downloading resources from a page:**
-- batch_download(tabId="tab-id", selector="table.files", types="documents") — extract and download all matching resources
-
-**To save a download to workspace:**
-1. Get the download content: get_download(downloadId="id", includeContent=true)
-2. Save to workspace using execute_shell_command with base64 decode
-`
 }

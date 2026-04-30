@@ -44,6 +44,21 @@ The core evaluation files are:
 
 Frontend eval mode loads these files directly. The eval plan is not embedded in the main workflow manifest structure.
 
+Eval steps can be scoped to the route or artifact they apply to:
+
+```json
+{
+  "id": "eval-bid-submission",
+  "title": "Evaluate Bid Submission",
+  "description": "Verify bid submission artifacts...",
+  "applies_to_routes": [
+    { "routing_step_id": "workflow-mode-router", "route_ids": ["route-bid"] }
+  ]
+}
+```
+
+When this field is present, the runtime checks the target run's `routing-evaluation.json` before launching the eval step. Non-applicable checks are skipped and recorded in the final report with `max_score: 0`, so a run is not penalized for route paths it did not take.
+
 Current frontend behavior is implemented in [useEvaluationPlanData.ts](/Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/hooks/useEvaluationPlanData.ts).
 
 ## Eval Mode In The UI

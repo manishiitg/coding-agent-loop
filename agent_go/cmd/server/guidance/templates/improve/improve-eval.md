@@ -44,7 +44,7 @@ Show ALL proposed changes as a diff (before/after snippets per eval step) before
 
 PASS 4 — RECORD THE CHANGE (every eval edit)
 After applying any change to evaluation/evaluation_plan.json:
-1. Append an entry to decisions.jsonl using diff_patch_workspace_file. Format (one JSON object per line):
+1. Append an entry to builder/decisions.jsonl using diff_patch_workspace_file. Format (one JSON object per line):
    {"id": "<short-id-or-uuid>", "ts": "<ISO-8601 UTC>", "source": "agent", "trigger": "improve-eval", "applied_changes": ["evaluation/evaluation_plan.json"], "rationale": "<one-line summary of what changed and why>", "target_metrics": [<list of metric ids whose source.id points to edited eval steps, if any>]}
 2. The decisions entry serves as a "rubric change" marker. Trajectory chart renderers should break the line at this timestamp because pre-change and post-change scores aren't comparable.
 
@@ -69,6 +69,6 @@ After each eval change is applied:
    ```
    Use `[PARTIALLY RESOLVED ...]` if only part of the finding was addressed; use `[INVALID YYYY-MM-DD — ...]` if the finding turned out to be wrong. Never delete or rewrite the original finding.
 
-2. **In the decisions.jsonl entry from Pass 4** (the rubric-change marker), include `linked_review_finding` populated with the array of matched `F-...` ids. This is what makes the audit trail searchable: every rubric change that closed a review item points back at it, and every resolved review item names the decision that closed it.
+2. **In the builder/decisions.jsonl entry from Pass 4** (the rubric-change marker), include `linked_review_finding` populated with the array of matched `F-...` ids. This is what makes the audit trail searchable: every rubric change that closed a review item points back at it, and every resolved review item names the decision that closed it.
 
 This applies to chat-intent eval fixes too. If the user asks "tighten that eval check on segment coverage" outside of any slash command and you apply the fix, you still scan review.md for matching findings, append the RESOLVED marker, and link the decision.

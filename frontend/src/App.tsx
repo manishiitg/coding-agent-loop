@@ -242,28 +242,73 @@ function App() {
 
       let totalEvents = 0
       let totalEventBytes = 0
-      const eventDetails: Array<{ session: string; tab: string; events: number; evtSizeKB: number; mode: string; preset: string; streaming: boolean; hasSSE: boolean }> = []
+      let largestEventBytes = 0
+      const eventDetails: Array<{ session: string; tabs: number; tabNames: string; events: number; evtSizeKB: number; avgEventKB: number; largestEventKB: number; largestEventType: string; mode: string; preset: string; streaming: boolean; hasSSE: boolean }> = []
+      const duplicateSessionDetails: Array<{ session: string; tabs: number; tabNames: string; events: number; evtSizeKB: number }> = []
+      const largestEvents: Array<{ session: string; type: string; sizeKB: number; id: string; tabNames: string }> = []
+      const tabsBySession = new Map<string, typeof tabs>()
       for (const tab of tabs) {
         if (tab.sessionId) {
-          const events = chatState.tabEvents[tab.sessionId] || []
-          const count = events.length
-          const sizeEstimate = JSON.stringify(events).length
-          totalEvents += count
-          totalEventBytes += sizeEstimate
-          if (count > 0) {
-            eventDetails.push({
-              session: tab.sessionId.slice(0, 8),
-              tab: tab.name.slice(0, 25),
-              events: count,
-              evtSizeKB: Math.round(sizeEstimate / 1024),
-              mode: tab.metadata?.mode || '?',
-              preset: (tab.metadata?.presetQueryId || '').slice(0, 8),
-              streaming: tab.isStreaming,
-              hasSSE: !!sseConns[tab.sessionId]
+          tabsBySession.set(tab.sessionId, [...(tabsBySession.get(tab.sessionId) || []), tab])
+        }
+      }
+      for (const [sid, sessionTabs] of tabsBySession.entries()) {
+        const events = chatState.tabEvents[sid] || []
+        const count = events.length
+        const sizeEstimate = JSON.stringify(events).length
+        const tabNames = sessionTabs.map(t => t.name.slice(0, 24)).join(', ')
+        totalEvents += count
+        totalEventBytes += sizeEstimate
+
+        let largestForSessionBytes = 0
+        let largestForSessionType = ''
+        for (const event of events) {
+          const eventBytes = JSON.stringify(event).length
+          if (eventBytes > largestForSessionBytes) {
+            largestForSessionBytes = eventBytes
+            largestForSessionType = event.type || '(unknown)'
+          }
+          if (eventBytes > largestEventBytes) largestEventBytes = eventBytes
+          if (eventBytes >= 50 * 1024) {
+            largestEvents.push({
+              session: sid.slice(0, 8),
+              type: event.type || '(unknown)',
+              sizeKB: Math.round(eventBytes / 1024),
+              id: (event.id || '').slice(0, 16),
+              tabNames,
             })
           }
         }
+
+        if (count > 0) {
+          const firstTab = sessionTabs[0]
+          eventDetails.push({
+            session: sid.slice(0, 8),
+            tabs: sessionTabs.length,
+            tabNames,
+            events: count,
+            evtSizeKB: Math.round(sizeEstimate / 1024),
+            avgEventKB: count > 0 ? Math.round(sizeEstimate / count / 1024) : 0,
+            largestEventKB: Math.round(largestForSessionBytes / 1024),
+            largestEventType: largestForSessionType,
+            mode: firstTab.metadata?.mode || '?',
+            preset: (firstTab.metadata?.presetQueryId || '').slice(0, 8),
+            streaming: sessionTabs.some(t => t.isStreaming),
+            hasSSE: !!sseConns[sid]
+          })
+        }
+
+        if (sessionTabs.length > 1) {
+          duplicateSessionDetails.push({
+            session: sid.slice(0, 8),
+            tabs: sessionTabs.length,
+            tabNames,
+            events: count,
+            evtSizeKB: Math.round(sizeEstimate / 1024),
+          })
+        }
       }
+      largestEvents.sort((a, b) => b.sizeKB - a.sizeKB)
 
       // Streaming text sizes
       const streamingTextSizes: Array<{ session: string; sizeKB: number; chars: number }> = []
@@ -397,11 +442,19 @@ function App() {
       }
 
       // Events
-      console.log(`\nEvents in memory: ${totalEvents} across ${eventDetails.length} sessions (~${Math.round(totalEventBytes / 1024)} KB)`)
+      console.log(`\nEvents in memory: ${totalEvents} across ${eventDetails.length} unique sessions (~${Math.round(totalEventBytes / 1024)} KB, largest event ${Math.round(largestEventBytes / 1024)} KB)`)
       if (eventDetails.length > 0) {
-        // Sort by event count descending to show biggest first
-        eventDetails.sort((a, b) => b.events - a.events)
+        // Sort by estimated memory descending to show biggest first
+        eventDetails.sort((a, b) => b.evtSizeKB - a.evtSizeKB)
         console.table(eventDetails)
+      }
+      if (duplicateSessionDetails.length > 0) {
+        console.log(`%c Duplicate tab references: ${duplicateSessionDetails.length} session(s) shown in multiple tabs`, 'color: orange; font-weight: bold')
+        console.table(duplicateSessionDetails)
+      }
+      if (largestEvents.length > 0) {
+        console.log(`%c Large retained events (>=50 KB): ${largestEvents.length} total, top 20 shown`, 'color: orange; font-weight: bold')
+        console.table(largestEvents.slice(0, 20))
       }
 
       // Orphan events

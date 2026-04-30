@@ -183,6 +183,16 @@
           "type": "string",
           "description": "If this decision opened or was caused by an experiment."
         },
+        "linked_review_finding": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "builder/review.md finding ids (F-YYYY-MM-DD-NNN) this decision resolves or partially resolves."
+        },
+        "linked_improve_entry": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "builder/improve.md proposal ids (I-YYYY-MM-DD-NNN) this decision resolves or implements."
+        },
         "regulation_ref": {
           "type": "string",
           "description": "For compliance workflows: reference to the regulation/clause this decision relates to."
@@ -581,6 +591,16 @@
           "type": "integer",
           "minimum": 1,
           "description": "Override default_measurement_runs from experiments/config.json."
+        },
+        "linked_review_finding": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional builder/review.md finding ids (F-YYYY-MM-DD-NNN) this experiment is intended to resolve."
+        },
+        "linked_improve_entry": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional builder/improve.md proposal ids (I-YYYY-MM-DD-NNN) this experiment is intended to resolve."
         }
       }
     },

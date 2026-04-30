@@ -11,12 +11,13 @@ import (
 // fully encode what passing/failing looks like (deterministic checks via
 // learn_code, or LLM judgment grounded in the description).
 type EvaluationStep struct {
-	ID              string            `json:"id"`
-	Title           string            `json:"title"`
-	Description     string            `json:"description"`
-	PreValidation   *ValidationSchema `json:"pre_validation,omitempty"`
-	AgentConfigs    *AgentConfigs     `json:"-"`                      // runtime config
-	ContextOutput   string            `json:"context_output,omitempty"` // Filename of output produced by the step
+	ID               string                         `json:"id"`
+	Title            string                         `json:"title"`
+	Description      string                         `json:"description"`
+	PreValidation    *ValidationSchema              `json:"pre_validation,omitempty"`
+	AgentConfigs     *AgentConfigs                  `json:"-"`                        // runtime config
+	ContextOutput    string                         `json:"context_output,omitempty"` // Filename of output produced by the step
+	AppliesToRoutes  []EvaluationRouteApplicability `json:"applies_to_routes,omitempty"`
 	// DBWrite grants this evaluation step write access to db/. Read is always allowed.
 	// Off by default: evaluation typically reads db/ to score against real state, and its
 	// own writes stay in the sandbox run folder. Set true only for workflows where the eval
@@ -25,16 +26,26 @@ type EvaluationStep struct {
 	DBWrite bool `json:"db_write,omitempty"`
 }
 
+// EvaluationRouteApplicability gates an evaluation step to one or more selected
+// routes from a routing step in the target workflow run. When set, the eval step
+// only runs if the target run's routing-evaluation.json selected one of RouteIDs.
+type EvaluationRouteApplicability struct {
+	RoutingStepID string   `json:"routing_step_id"`
+	RouteIDs      []string `json:"route_ids"`
+}
+
 // Implement PlanStepInterface for EvaluationStep
 
-func (e *EvaluationStep) GetID() string                           { return e.ID }
-func (e *EvaluationStep) GetTitle() string                        { return e.Title }
-func (e *EvaluationStep) GetDescription() string                  { return e.Description }
-func (e *EvaluationStep) GetSuccessCriteria() string              { return "" } // dropped — see struct doc
-func (e *EvaluationStep) GetContextDependencies() []string        { return nil }
-func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput { return FlexibleContextOutput(e.ContextOutput) }
-func (e *EvaluationStep) GetValidationSchema() *ValidationSchema   { return e.PreValidation }
-func (e *EvaluationStep) StepType() StepType                       { return StepTypeRegular }
+func (e *EvaluationStep) GetID() string                    { return e.ID }
+func (e *EvaluationStep) GetTitle() string                 { return e.Title }
+func (e *EvaluationStep) GetDescription() string           { return e.Description }
+func (e *EvaluationStep) GetSuccessCriteria() string       { return "" } // dropped — see struct doc
+func (e *EvaluationStep) GetContextDependencies() []string { return nil }
+func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput {
+	return FlexibleContextOutput(e.ContextOutput)
+}
+func (e *EvaluationStep) GetValidationSchema() *ValidationSchema { return e.PreValidation }
+func (e *EvaluationStep) StepType() StepType                     { return StepTypeRegular }
 
 func (e *EvaluationStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
@@ -66,7 +77,7 @@ func (e *EvaluationStep) MarshalJSON() ([]byte, error) {
 // with no special-case schema. To override scoring's code-exec mode, add an entry
 // like:
 //
-//   { "id": "__evaluation_scoring__", "agent_configs": { "use_code_execution_mode": false } }
+//	{ "id": "__evaluation_scoring__", "agent_configs": { "use_code_execution_mode": false } }
 //
 // to evaluation/step_config.json.
 const EvaluationScoringStepID = "__evaluation_scoring__"
@@ -133,6 +144,7 @@ type EvaluationStepScore struct {
 	MaxScore      int                `json:"max_score"`
 	Reasoning     string             `json:"reasoning"`
 	Evidence      string             `json:"evidence"`
+	Skipped       bool               `json:"skipped,omitempty"`
 	ContextOutput string             `json:"context_output,omitempty"`
 	OutputContent *StepOutputContent `json:"output_content,omitempty"`
 }

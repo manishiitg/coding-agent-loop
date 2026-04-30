@@ -74,6 +74,8 @@ export interface StoredProviderKeys {
   gemini_cli?: string
   minimax?: string
   minimax_coding_plan?: string
+  elevenlabs?: string
+  deepgram?: string
   bedrock?: { region: string }
   azure?: { endpoint: string; api_key: string; api_version?: string; region?: string }
 }

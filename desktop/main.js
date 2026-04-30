@@ -247,6 +247,49 @@ ipcMain.handle('print-to-pdf', async (event, suggestedFilename) => {
   return { canceled: false }
 })
 
+ipcMain.handle('save-flow-image', async (event, { filename, dataUrl, format }) => {
+  const extension = format === 'jpeg' ? 'jpg' : format === 'svg' ? 'svg' : 'png';
+  const safeFilename = (filename || `workflow-flow.${extension}`).replace(/[\\/]/g, '-');
+  const downloadsDir = app.getPath('downloads');
+  const parsed = path.parse(safeFilename);
+  let filePath = path.join(downloadsDir, safeFilename);
+  let suffix = 1;
+  while (fs.existsSync(filePath)) {
+    filePath = path.join(downloadsDir, `${parsed.name}-${suffix}${parsed.ext || `.${extension}`}`);
+    suffix += 1;
+  }
+
+  const rawData = String(dataUrl || '');
+  const commaIndex = rawData.indexOf(',');
+  const base64 = commaIndex >= 0 ? rawData.slice(commaIndex + 1) : rawData;
+  await fs.promises.writeFile(filePath, Buffer.from(base64, 'base64'));
+  return { canceled: false, filePath };
+});
+
+ipcMain.handle('capture-flow-image', async (event, { filename, format, rect }) => {
+  const extension = format === 'jpeg' ? 'jpg' : 'png';
+  const safeFilename = (filename || `workflow-flow.${extension}`).replace(/[\\/]/g, '-');
+  const downloadsDir = app.getPath('downloads');
+  const parsed = path.parse(safeFilename);
+  let filePath = path.join(downloadsDir, safeFilename);
+  let suffix = 1;
+  while (fs.existsSync(filePath)) {
+    filePath = path.join(downloadsDir, `${parsed.name}-${suffix}${parsed.ext || `.${extension}`}`);
+    suffix += 1;
+  }
+
+  const bounds = {
+    x: Math.max(0, Math.round(rect?.x || 0)),
+    y: Math.max(0, Math.round(rect?.y || 0)),
+    width: Math.max(1, Math.round(rect?.width || 1)),
+    height: Math.max(1, Math.round(rect?.height || 1)),
+  };
+  const image = await event.sender.capturePage(bounds);
+  const buffer = format === 'jpeg' ? image.toJPEG(95) : image.toPNG();
+  await fs.promises.writeFile(filePath, buffer);
+  return { canceled: false, filePath };
+});
+
 // IPC Handler for Dock Badge
 ipcMain.on('set-dock-badge', (event, text) => {
   if (process.platform === 'darwin') {

@@ -206,6 +206,8 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	workspaceImageCategory := virtualtools.GetWorkspaceImageToolCategory()
 	workspaceImageTools := virtualtools.CreateWorkspaceImageTools()
 	workspaceVideoTools := virtualtools.CreateWorkspaceVideoTools()
+	workspaceAudioTools := virtualtools.CreateWorkspaceAudioTools()
+	workspaceMusicTools := virtualtools.CreateWorkspaceMusicTools()
 
 	// Use session-aware executors when session info is provided
 	var workspaceAdvancedExecutors map[string]func(ctx context.Context, args map[string]any) (string, error)
@@ -218,6 +220,8 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 	allTools = append(allTools, workspaceAdvancedTools...)
 	allTools = append(allTools, workspaceImageTools...)
 	allTools = append(allTools, workspaceVideoTools...)
+	allTools = append(allTools, workspaceAudioTools...)
+	allTools = append(allTools, workspaceMusicTools...)
 	for name, executor := range workspaceAdvancedExecutors {
 		allExecutors[name] = executor
 	}
@@ -226,6 +230,14 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		UserID:          userID,
 	}, allExecutors, nil)
 	virtualtools.MergeVideoToolExecutorsUntyped(virtualtools.VideoGenExecutorConfig{
+		WorkspaceAPIURL: getWorkspaceAPIURL(),
+		UserID:          userID,
+	}, allExecutors, nil)
+	virtualtools.MergeAudioToolExecutorsUntyped(virtualtools.AudioGenExecutorConfig{
+		WorkspaceAPIURL: getWorkspaceAPIURL(),
+		UserID:          userID,
+	}, allExecutors, nil)
+	virtualtools.MergeMusicToolExecutorsUntyped(virtualtools.AudioGenExecutorConfig{
 		WorkspaceAPIURL: getWorkspaceAPIURL(),
 		UserID:          userID,
 	}, allExecutors, nil)
@@ -242,6 +254,16 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		}
 	}
 	for _, tool := range workspaceVideoTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
+		}
+	}
+	for _, tool := range workspaceAudioTools {
+		if tool.Function != nil {
+			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
+		}
+	}
+	for _, tool := range workspaceMusicTools {
 		if tool.Function != nil {
 			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
 		}

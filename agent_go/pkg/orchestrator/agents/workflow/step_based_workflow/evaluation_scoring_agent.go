@@ -78,10 +78,11 @@ func (a *WorkflowEvaluationScoringAgent) Execute(ctx context.Context, templateVa
 	// Ensure the AgentStarted event carries the right mode marker. base_orchestrator_agent.go
 	// reads templateVars["IsLearnCodeMode"] to set UseLearnCodeMode on the event, which is
 	// what makes the UI render "Learn Code" instead of "Code Exec".
+	if templateVars == nil {
+		templateVars = map[string]string{}
+	}
+	templateVars["IsEvaluationMode"] = "true"
 	if a.learnCodeMode {
-		if templateVars == nil {
-			templateVars = map[string]string{}
-		}
 		if _, set := templateVars["IsLearnCodeMode"]; !set {
 			templateVars["IsLearnCodeMode"] = "true"
 		}

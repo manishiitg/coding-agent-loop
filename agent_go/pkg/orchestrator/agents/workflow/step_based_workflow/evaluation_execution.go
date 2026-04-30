@@ -88,6 +88,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	hcpo.variableValues["TARGET_RUN_PATH"] = targetRunPath
 
 	// Convert evaluation steps to PlanStepInterface
+	evaluationPlan, skippedStepScores := hcpo.filterEvaluationPlanForTargetRun(ctx, evaluationPlan, targetRunFolder)
+	if len(skippedStepScores) > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipped %d non-applicable evaluation step(s) for target run %s", len(skippedStepScores), targetRunFolder))
+	}
 	breakdownSteps := evaluationPlan.ToPlanSteps()
 
 	// Set evaluation mode flag — controls step_config.json lookup (evaluation/step_config.json)
@@ -140,7 +144,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 
 	// Run scoring phase after all evaluation steps complete
 	hcpo.GetLogger().Info("📊 Starting evaluation scoring phase")
-	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder)
+	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder, internalEvalRunFolder, skippedStepScores)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Evaluation scoring failed: %v", err), nil)
 		return "", fmt.Errorf("evaluation scoring phase failed: %w", err)
@@ -154,7 +158,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 
 // runEvaluationScoringPhase collects all eval step outputs and runs a single scoring agent
 // that scores all steps at once with holistic analysis.
-func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string) (*EvaluationReport, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string, internalEvalRunFolder string, skippedStepScores []*EvaluationStepScore) (*EvaluationReport, error) {
 	evalExecutionPath := filepath.Join("evaluation", "runs", internalEvalRunFolder, "execution")
 	// The scoring agent will write its raw report to this folder via submit_report. We
 	// then re-marshal with totals/timestamps and publish to the target run folder too.
@@ -190,7 +194,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	scoringCtx = context.WithValue(scoringCtx, orchevents.ForceCorrelationIDKey, scoringSessionID)
 	scoringCtx = context.WithValue(scoringCtx, orchevents.IsSubAgentContextKey, true)
 
-	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder, evalReportFolder)
+	report, err := hcpo.scoreAllSteps(scoringCtx, evaluationPlan, stepInputs, targetRunFolder, evalReportFolder, skippedStepScores)
 	if err != nil {
 		return nil, fmt.Errorf("scoring agent failed: %w", err)
 	}
@@ -294,20 +298,108 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.C
 	return strings.Join(outputs, "\n\n"), nil
 }
 
-// scoreAllSteps runs a single scoring agent that scores all evaluation steps at once.
-func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string, evalReportFolder string) (*EvaluationReport, error) {
-	report, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs, evalReportFolder)
-	if err != nil {
-		return nil, err
+// filterEvaluationPlanForTargetRun removes eval steps that are explicitly scoped
+// to a route absent from the selected workflow run.
+func (hcpo *StepBasedWorkflowOrchestrator) filterEvaluationPlanForTargetRun(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string) (*EvaluationPlan, []*EvaluationStepScore) {
+	if evaluationPlan == nil || len(evaluationPlan.Steps) == 0 {
+		return evaluationPlan, nil
+	}
+
+	active := make([]*EvaluationStep, 0, len(evaluationPlan.Steps))
+	skipped := make([]*EvaluationStepScore, 0)
+	for _, step := range evaluationPlan.Steps {
+		if step == nil {
+			continue
+		}
+		if applies, reason := hcpo.evaluationStepAppliesToTargetRun(ctx, step, targetRunFolder); !applies {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping evaluation step %s: %s", step.ID, reason))
+			skipped = append(skipped, &EvaluationStepScore{
+				StepID:    step.ID,
+				Score:     0,
+				MaxScore:  0,
+				Reasoning: fmt.Sprintf("Skipped because this evaluation step is not applicable to target run %s. %s", targetRunFolder, reason),
+				Evidence:  "Route gating marked this eval step as not applicable.",
+				Skipped:   true,
+			})
+			continue
+		}
+		active = append(active, step)
+	}
+
+	return &EvaluationPlan{Steps: active}, skipped
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) evaluationStepAppliesToTargetRun(ctx context.Context, step *EvaluationStep, targetRunFolder string) (bool, string) {
+	for _, gate := range step.AppliesToRoutes {
+		if strings.TrimSpace(gate.RoutingStepID) == "" || len(gate.RouteIDs) == 0 {
+			continue
+		}
+		selectedRouteID, ok := hcpo.readSelectedRouteForTargetRun(ctx, targetRunFolder, gate.RoutingStepID)
+		if !ok {
+			// Missing route logs are not enough to skip safely; older runs may not have them.
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read routing selection for step %s in run %s; running eval step %s conservatively", gate.RoutingStepID, targetRunFolder, step.ID))
+			continue
+		}
+		if !stringInList(selectedRouteID, gate.RouteIDs) {
+			return false, fmt.Sprintf("routing step %q selected route %q, not one of %v", gate.RoutingStepID, selectedRouteID, gate.RouteIDs)
+		}
+	}
+
+	return true, ""
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) readSelectedRouteForTargetRun(ctx context.Context, targetRunFolder string, routingStepID string) (string, bool) {
+	path := filepath.Join("runs", targetRunFolder, "logs", routingStepID, "routing-evaluation.json")
+	content, err := hcpo.ReadWorkspaceFile(ctx, path)
+	if err != nil || strings.TrimSpace(content) == "" {
+		return "", false
+	}
+	var payload struct {
+		SelectedRouteID string `json:"selected_route_id"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse %s: %v", path, err))
+		return "", false
+	}
+	if payload.SelectedRouteID == "" {
+		return "", false
+	}
+	return payload.SelectedRouteID, true
+}
+
+func stringInList(value string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if strings.EqualFold(value, strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
+}
+
+// scoreAllSteps runs a single scoring agent that scores all applicable evaluation
+// steps at once. Non-applicable route checks are appended with max_score=0 so
+// they are visible in the report without penalizing the target run.
+func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string, evalReportFolder string, skippedStepScores []*EvaluationStepScore) (*EvaluationReport, error) {
+	var report *EvaluationReport
+	if len(stepInputs) == 0 {
+		report = &EvaluationReport{StepScores: []*EvaluationStepScore{}}
+	} else {
+		var err error
+		report, err = hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs, evalReportFolder)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	report.TargetRunFolder = targetRunFolder
 	report.GeneratedAt = time.Now().Format(time.RFC3339)
-	report.MaxPossibleScore = len(evaluationPlan.Steps) * 10
 
 	// Fill in any steps that the scoring agent missed
 	scoredStepIDs := make(map[string]bool)
 	for _, s := range report.StepScores {
+		if s == nil {
+			continue
+		}
 		scoredStepIDs[s.StepID] = true
 	}
 	for _, step := range evaluationPlan.Steps {
@@ -322,11 +414,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, ev
 			})
 		}
 	}
+	report.StepScores = append(report.StepScores, skippedStepScores...)
 
 	// Calculate totals
 	report.TotalScore = 0
+	report.MaxPossibleScore = 0
 	for _, s := range report.StepScores {
+		if s == nil {
+			continue
+		}
 		report.TotalScore += s.Score
+		report.MaxPossibleScore += s.MaxScore
 	}
 	if report.MaxPossibleScore > 0 {
 		report.ScorePercentage = float64(report.TotalScore) / float64(report.MaxPossibleScore) * 100

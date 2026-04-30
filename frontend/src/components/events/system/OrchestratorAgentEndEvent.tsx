@@ -2,6 +2,7 @@ import React from 'react';
 import type { OrchestratorAgentEndEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
 import { formatDuration } from '../../../utils/duration';
+import { isEvaluationAgentEvent } from './eventDisplayUtils';
 
 interface OrchestratorAgentEndEventDisplayProps {
   event: OrchestratorAgentEndEvent;
@@ -11,6 +12,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
   // Hide workshop wrapper end events — these are signal-only events for auto-notification,
   // the actual agent completion is already shown by the inner agent's end event
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
+  const isEvaluationAgent = isEvaluationAgentEvent(event)
   if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task') {
     return null
   }
@@ -22,6 +24,9 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getLabel = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isEvaluationAgent && t === 'evaluation_scoring') return 'Evaluation Scoring'
+    if (isEvaluationAgent && (t === 'todo_planner_execution' || t === 'generic_execution')) return 'Evaluation Step'
+    if (isEvaluationAgent) return 'Evaluation Agent'
     if (t === 'todo_planner_execution') return 'Sub-Agent'
     if (t === 'generic_execution') return 'Generic Agent'
     if (t === 'todo_task_orchestrator') return 'Todo Orchestrator'
@@ -36,6 +41,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getAgentIcon = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isEvaluationAgent) return '🧪'
     if (t === 'plan_breakdown') return '🔍'
     if (t === 'planning') return '📋'
     if (t === 'execution') return '⚡'
@@ -47,6 +53,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getAgentColor = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (isEvaluationAgent) return 'blue'
     if (t === 'plan_breakdown') return 'emerald'
     if (t === 'planning') return 'blue'
     if (t === 'execution') return 'purple'
@@ -238,4 +245,3 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
     </div>
   );
 };
-

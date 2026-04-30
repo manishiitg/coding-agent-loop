@@ -46,7 +46,7 @@ AgentForge is built for teams that want more than a chat box:
 
 - **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
 - **Google Workspace** for Gmail, Drive, Calendar, Docs, and Sheets
-- **Browser automation** through Vercel Agent-Browser, Camoufox, and local CDP bridging
+- **Browser automation** through Vercel Agent-Browser, Playwright, and local CDP bridging
 - **MCP servers**, local tools, workspace files, and custom connectors
 
 ## Why Teams Choose It

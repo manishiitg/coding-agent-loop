@@ -38,6 +38,15 @@ type LLMAgentWrapper struct {
 	history []llmtypes.MessageContent
 }
 
+func providerUsesNativeContextManagement(provider llm.Provider) bool {
+	switch strings.ToLower(strings.TrimSpace(string(provider))) {
+	case "claude-code", "gemini-cli", "codex-cli":
+		return true
+	default:
+		return false
+	}
+}
+
 // LLMAgentConfig holds configuration for the LLM agent wrapper
 type LLMAgentConfig struct {
 	Name               string
@@ -156,6 +165,16 @@ func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer obser
 // NewLLMAgentWrapperWithTrace creates a new LLM agent wrapper with hierarchical tracing support
 func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, mainTraceID observability.TraceID, logger loggerv2.Logger) (*LLMAgentWrapper, error) {
 	logger.Info(fmt.Sprintf("NewLLMAgentWrapper received config: %+v", config))
+	if providerUsesNativeContextManagement(config.Provider) {
+		if config.EnableContextSummarization {
+			logger.Info(fmt.Sprintf("📝 Context summarization disabled for %s - CLI provider manages context natively", config.Provider))
+			config.EnableContextSummarization = false
+		}
+		if config.EnableContextEditing {
+			logger.Info(fmt.Sprintf("✂️ Context editing disabled for %s - CLI provider manages context natively", config.Provider))
+			config.EnableContextEditing = false
+		}
+	}
 	logger.Info(fmt.Sprintf("Creating agent with config path: %s", config.ConfigPath))
 	if config.Name == "" {
 		config.Name = "mcp-agent"

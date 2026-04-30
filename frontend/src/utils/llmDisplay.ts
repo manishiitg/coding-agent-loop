@@ -16,6 +16,8 @@ export type ProviderType =
   | 'codex-cli'
   | 'minimax'
   | 'minimax-coding-plan'
+  | 'elevenlabs'
+  | 'deepgram'
 
 type ProviderDisplayInfo = {
   name: string
@@ -84,6 +86,16 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'API Key',
     colorClass: 'text-cyan-600 dark:text-cyan-400',
   },
+  elevenlabs: {
+    name: 'ElevenLabs',
+    authDescription: 'API Key',
+    colorClass: 'text-violet-600 dark:text-violet-400',
+  },
+  deepgram: {
+    name: 'Deepgram',
+    authDescription: 'API Key',
+    colorClass: 'text-emerald-600 dark:text-emerald-400',
+  },
   'minimax-coding-plan': {
     name: 'MiniMax Coding Plan',
     authDescription: 'Coding Plan Key (sk-cp-)',
@@ -101,6 +113,8 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'z-ai',
   'kimi',
   'minimax',
+  'elevenlabs',
+  'deepgram',
   'minimax-coding-plan',
   'claude-code',
   'gemini-cli',

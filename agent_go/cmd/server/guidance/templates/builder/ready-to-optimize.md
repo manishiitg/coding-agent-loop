@@ -7,7 +7,7 @@ Run an optimization-readiness checklist. Check each item and report PASS or FAIL
 5. **Variables configured?** — Read variables/variables.json, check at least one group exists with values. FAIL if empty.
 6. **At least one successful run?** — Check runs/ folder for any completed iteration. FAIL if no runs exist.
 7. **Validation schemas exist?** — Check that steps producing context_output have a validation_schema. WARN if missing.
-8. **Evaluation plan exists?** — Check evaluation/evaluation_plan.json exists and has at least one eval step. WARN if missing.
+8. **Evaluation handoff clear?** — Do not require evaluation/evaluation_plan.json in Builder. PASS if objective, success criteria, and run evidence are clear enough for Optimizer to create/validate eval coverage; WARN only if the missing foundation would block Optimizer from writing meaningful evals.
 9. **Step configs set?** — Check planning/step_config.json has entries for all steps with execution mode declared. WARN if missing.
 
 Summary:

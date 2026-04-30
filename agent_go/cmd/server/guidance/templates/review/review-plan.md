@@ -56,7 +56,7 @@ OUTPUT FORMAT
 For each step, produce a per-step report:
 
 ```
-### step-id: <name> (type: <regular|learn_code|todo_task|routing|conditional|human_input>)
+### step-id: <name> (type: <regular|todo_task|routing|human_input|orphan>)
 **Description summary:** <one-line>
 **Lens A — Description vs Skill:** <findings or "clean">
 **Lens B — Hardcoded:** <findings or "clean">

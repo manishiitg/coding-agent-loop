@@ -190,7 +190,7 @@ func BuildMainPyAuthoringRules() string {
 
 // BuildBrowserAuthoringRules returns the browser-automation-specific main.py rules.
 // Append to BuildMainPyAuthoringRules() ONLY when the step has a browser MCP available
-// (playwright, agent_browser, camoufox, etc.). Non-browser steps get no benefit from
+// (playwright, agent_browser, etc.). Non-browser steps get no benefit from
 // these ~60 lines and paying the token tax on every step prompt is wasteful.
 //
 // Callers: gate with templateVars["HasBrowserAccess"] == "true" or equivalent signal.
@@ -212,7 +212,6 @@ func BuildBrowserAuthoringRules() string {
 	sb.WriteString("- **Discovery when a11y snapshot is insufficient**: custom `<div>` buttons, dropdowns inside portals, autocomplete options, form inputs missing from the a11y tree. Run a READ-ONLY DOM probe that returns a JSON inventory of the page (role, id, aria-label, data-testid, visible text, stable `cssPath`). One probe tells you the site's hook strategy (e.g. \"38 aria-labels, 0 testids → use aria-label + role+name\"). Then act via Path A (snapshot + tool calls) or Path B (Playwright locator API via `browser_run_code`) — as long as the locator you persist is durable.\n")
 	sb.WriteString("- **Probe invocation depends on which browser tool is active** — pick the matching form:\n")
 	sb.WriteString("  - Playwright MCP: `call_mcp('playwright', 'browser_evaluate', {'function': '<JS below>'})`\n")
-	sb.WriteString("  - Camoufox MCP: same as Playwright — `browser_evaluate` tool with `function` param\n")
 	sb.WriteString("  - agent-browser CLI (shell): `agent-browser eval \"<JS below>\"` — returns JSON on stdout; pipe to a file if the payload is large\n")
 	sb.WriteString("  The JS body is identical across backends — only the invocation wrapper differs.\n")
 	sb.WriteString("- **Canonical DOM probe** — copy this verbatim. Do NOT reinvent it per step; one source of truth keeps results comparable across runs, and the auto-id filtering (radix/mat-mdc/React-useId/UUID) is already tuned:\n")
@@ -266,7 +265,7 @@ type browserCapabilityProvider interface {
 }
 
 // browserAuthoringRulesIfBrowserEnabled returns BuildBrowserAuthoringRules() when the
-// workflow has any browser MCP configured (playwright, camofox, workspace_browser/
+// workflow has any browser MCP configured (playwright, workspace_browser/
 // agent-browser skill, or CDP port), else "". Use at call sites that have access to
 // the orchestrator (e.g. workshop manager, planning exports).
 func browserAuthoringRulesIfBrowserEnabled(p browserCapabilityProvider) string {

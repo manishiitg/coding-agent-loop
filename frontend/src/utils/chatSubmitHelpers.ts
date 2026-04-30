@@ -127,14 +127,12 @@ export function buildQueryRequestPayload(params: {
   const legacyUseCdp = currentTab?.config?.useCdp === true
   const legacyEnableBrowser = currentTab?.config?.enableBrowserAccess === true
   const selectedServers = currentTab?.config?.selectedServers || []
-  let effectiveBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth' =
+  let effectiveBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' =
     rawBrowserMode
       ? rawBrowserMode
       : (legacyEnableBrowser
           ? (legacyUseCdp ? 'cdp' : 'headless')
-          : (selectedServers.includes('camofox')
-              ? 'stealth'
-              : (selectedServers.includes('playwright') ? 'playwright' : 'none')))
+          : (selectedServers.includes('playwright') ? 'playwright' : 'none'))
 
   // Guard against stale/migrated config where browserMode says headless
   // but useCdp is actually enabled in tab config.
@@ -144,7 +142,7 @@ export function buildQueryRequestPayload(params: {
 
   const isBrowserAccessMode = effectiveBrowserMode === 'headless' || effectiveBrowserMode === 'cdp'
   const payloadServers = isBrowserAccessMode
-    ? effectiveServers.filter(s => s !== 'playwright' && s !== 'camofox')
+    ? effectiveServers.filter(s => s !== 'playwright')
     : effectiveServers
 
   return {

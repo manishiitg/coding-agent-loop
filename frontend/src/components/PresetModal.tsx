@@ -24,7 +24,7 @@ import ModalPortal from './ui/ModalPortal';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -59,8 +59,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const enableContextSummarization = true;
   const [useKnowledgebase, setUseKnowledgebase] = useState(true);
-  const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'>('none');
-  const [camofoxHeaded, setCamofoxHeaded] = useState(true);
+  const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright'>('none');
   const enableBrowserAccess = browserMode === 'headless' || browserMode === 'cdp';
   const [useCdp, setUseCdp] = useState(false);
   const [cdpPort, setCdpPort] = useState(9222);
@@ -89,22 +88,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     return 'loading' as const
   }, [toolList])
 
-  // Camofox MCP availability: check if 'camofox' server exists in toolList
-  const camofoxServerStatus = useMemo(() => {
-    const entry = toolList.find(t => t.server === 'camofox')
-    if (!entry) return 'not_found' as const
-    if (entry.status === 'ok') return 'ok' as const
-    if (entry.status === 'error') return 'error' as const
-    return 'loading' as const
-  }, [toolList])
-
   // Browser mode setter that also syncs selectedServers
-  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
+  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright') => {
     setBrowserModeState(mode)
     setSelectedServers(prev => {
-      const cleaned = prev.filter(s => s !== 'playwright' && s !== 'camofox')
+      const cleaned = prev.filter(s => s !== 'playwright')
       if (mode === 'playwright') return [...cleaned, 'playwright']
-      if (mode === 'stealth') return [...cleaned, 'camofox']
       return cleaned
     })
     // Reset CDP when switching away
@@ -255,9 +244,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       } else {
         // Legacy fallback for presets saved before browserMode was added
         const presetServers = editingPreset.selectedServers || [];
-        if (presetServers.includes('camofox')) {
-          setBrowserModeState('stealth');
-        } else if (presetServers.includes('playwright')) {
+        if (presetServers.includes('playwright')) {
           setBrowserModeState('playwright');
         } else if (editingPreset.enableBrowserAccess) {
           setBrowserModeState('headless');
@@ -265,7 +252,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           setBrowserModeState('none');
         }
       }
-      setCamofoxHeaded(editingPreset.camofoxHeaded !== false); // Default true
       // Load agent-specific configs if available
       setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
@@ -296,7 +282,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLlmConfig(defaultLLM);
       setUseKnowledgebase(true); // Default true
       setBrowserModeState('none'); // Default no browser
-      setCamofoxHeaded(true); // Default headed
       // Initialize agent-specific configs to null (will use legacy default)
       setLearningLLM(null);
       setPhaseLLM(null);
@@ -406,12 +391,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         enableBrowserAccess, // Browser automation access
         selectedSecrets, // Secret IDs for injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
-        browserMode === 'stealth' ? camofoxHeaded : undefined, // Camofox headed mode
-        browserMode // Browser mode: none|headless|cdp|playwright|stealth
+        browserMode // Browser mode: none|headless|cdp|playwright
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -849,64 +833,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         </div>
                       </label>
 
-                      {/* Stealth (Camofox) */}
-                      <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                        camofoxServerStatus === 'not_found'
-                          ? 'border-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed'
-                          : browserMode === 'stealth'
-                            ? 'border-orange-500 dark:border-orange-500 bg-orange-50 dark:bg-orange-950/40 cursor-pointer'
-                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40 cursor-pointer'
-                      }`}>
-                        <input
-                          type="radio"
-                          name="presetBrowserMode"
-                          checked={browserMode === 'stealth'}
-                          onChange={() => setBrowserMode('stealth')}
-                          disabled={camofoxServerStatus === 'not_found'}
-                          className="mt-0.5 w-4 h-4 text-orange-500 accent-orange-500"
-                        />
-                        <div className="flex-1">
-                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Stealth Browser (Camofox)</div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                            Anti-detect Firefox for sites that block bots. Headed mode with session persistence.
-                          </div>
-                          {camofoxServerStatus === 'not_found' && (
-                            <div className="text-xs text-red-500 dark:text-red-400 mt-1.5 flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                              &quot;camofox&quot; server not found in MCP config &mdash; add it in MCP Settings
-                            </div>
-                          )}
-                          {camofoxServerStatus === 'error' && (
-                            <div className="text-xs text-amber-500 dark:text-amber-400 mt-1.5 flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                              Camofox MCP server has errors &mdash; check MCP Settings
-                            </div>
-                          )}
-                        </div>
-                      </label>
                     </div>
-
-                    {/* Camofox configuration sub-panel */}
-                    {browserMode === 'stealth' && (
-                      <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
-                        <label className="flex items-center gap-2.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={camofoxHeaded}
-                            onChange={(e) => setCamofoxHeaded(e.target.checked)}
-                            className="w-4 h-4 rounded accent-orange-500"
-                          />
-                          <div>
-                            <div className="text-sm text-gray-900 dark:text-gray-200">Show browser window</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-500">
-                              {camofoxHeaded
-                                ? 'Visible Firefox window \u2014 watch the agent navigate in real-time'
-                                : 'Headless mode \u2014 browser runs in background (faster, no window)'}
-                            </div>
-                          </div>
-                        </label>
-                      </div>
-                    )}
 
                     {/* CDP configuration sub-panel */}
                     {browserMode === 'cdp' && (

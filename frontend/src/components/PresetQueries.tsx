@@ -104,7 +104,7 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright') => {
     console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
       label,
       editingPreset: editingPreset?.id,
@@ -132,7 +132,6 @@ interface PresetQueriesProps {
         undefined, // enableContextEditing
         selectedSecrets,
         selectedGlobalSecretNames,
-        camofoxHeaded,
         browserMode
       );
 

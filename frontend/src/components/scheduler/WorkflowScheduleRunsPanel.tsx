@@ -37,6 +37,7 @@ interface JobPopupState {
   selectedRunFolder?: string
   sessionId?: string
   presetQueryId?: string
+  startedAt?: string
 }
 
 type RunCostData = {
@@ -952,6 +953,17 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const workspacePath = job.workspace_path || preset?.workspacePath || null
     if (!workspacePath) return
 
+    const resolveStartedAt = (folder?: string): string | undefined => {
+      const runs = jobRuns[job.id] ?? []
+      if (folder) {
+        const iterationKey = folder.includes('/') ? folder.split('/')[0] : folder
+        const match = runs.find(r => r.run_folder === folder || r.run_folder === iterationKey)
+        if (match?.started_at) return match.started_at
+      }
+      if (job.last_status === 'running' && runs[0]?.started_at) return runs[0].started_at
+      return job.last_run_at
+    }
+
     // Load run folders and filter to the specific iteration
     try {
       const resp = await agentApi.getRunFolders(workspacePath)
@@ -969,9 +981,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           selectedRunFolder = groupFolders[0]
         }
       }
-      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders, popup, selectedRunFolder })
+      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders, popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
     } catch {
-      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders: [], popup, selectedRunFolder })
+      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders: [], popup, selectedRunFolder, startedAt: resolveStartedAt(selectedRunFolder) })
     }
   }
 
@@ -1510,7 +1522,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                             ) : (
                               <Minus className="w-3 h-3" />
                             )}
-                            {job.last_status === 'running' ? 'Running...' : `Last: ${timeAgo(job.last_run_at)}`}
+                            {job.last_status === 'running'
+                              ? job.last_run_at
+                                ? `Running since ${formatLocalScheduleTime(job.last_run_at)} (${timeAgo(job.last_run_at)})`
+                                : 'Running...'
+                              : `Last: ${timeAgo(job.last_run_at)}`}
                           </span>
                           <span>
                             {job.env_filtered
@@ -1775,6 +1791,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                               popup: 'live',
                                               sessionId: currentSessionId,
                                               presetQueryId: job.preset_query_id,
+                                              startedAt: run.started_at,
                                             })}
                                             className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
                                           >
@@ -1897,6 +1914,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           workspacePath={popupState.workspacePath}
           runFolders={popupState.runFolders}
           selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
+          startedAt={popupState.startedAt}
         />
       )}
 
@@ -1908,6 +1926,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           workspacePath={popupState.workspacePath}
           runFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
           runFolders={popupState.runFolders}
+          startedAt={popupState.startedAt}
         />
       )}
 
@@ -1924,6 +1943,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             setPopupState(null)
             openScheduledRunInChat(sid, name, pid)
           }}
+          startedAt={popupState.startedAt}
         />
       )}
 
@@ -1935,6 +1955,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           workspacePath={popupState.workspacePath}
           selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
           runFolders={popupState.runFolders}
+          startedAt={popupState.startedAt}
         />
       )}
 

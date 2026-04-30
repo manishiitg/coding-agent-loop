@@ -67,6 +67,24 @@ export function formatDurationSeconds(durationNs: number): string {
  * @param durationNs - Duration in nanoseconds (from Go time.Duration)
  * @returns Compact duration string
  */
+export function formatStartedAt(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const clock = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+  const diffMs = Date.now() - d.getTime()
+  const mins = Math.floor(diffMs / 60000)
+  let rel: string
+  if (mins < 1) rel = 'just now'
+  else if (mins < 60) rel = `${mins}m ago`
+  else if (mins < 24 * 60) {
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
+    rel = m > 0 ? `${h}h ${m}m ago` : `${h}h ago`
+  } else rel = `${Math.floor(mins / (24 * 60))}d ago`
+  return `Started ${clock} (${rel})`
+}
+
 export function formatDurationCompact(durationNs: number): string {
   if (!durationNs || durationNs <= 0) {
     return '0ms'

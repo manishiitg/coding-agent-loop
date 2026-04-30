@@ -4,6 +4,7 @@ import { SSEConnection } from '../../services/sse'
 import { EventList } from '../events'
 import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { useChatStore } from '../../stores'
+import { formatStartedAt } from '../../utils/duration'
 import type { PollingEvent, SSEEventMessage } from '../../services/api-types'
 import { getTypedEventData } from '../../generated/event-types'
 import ModalPortal from '../ui/ModalPortal'
@@ -13,9 +14,10 @@ interface ScheduleLiveEventsPopupProps {
   jobName: string
   onClose: () => void
   onOpenInChat?: () => void
+  startedAt?: string | null
 }
 
-export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, onOpenInChat }: ScheduleLiveEventsPopupProps) {
+export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, onOpenInChat, startedAt }: ScheduleLiveEventsPopupProps) {
   const [allEvents, setAllEvents] = useState<PollingEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [sessionStatus, setSessionStatus] = useState<string>('')
@@ -86,6 +88,7 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose, o
                 Session: <span className="font-mono">{sessionId}</span>
                 {sessionStatus && <span className="ml-2 text-amber-500">({sessionStatus})</span>}
                 <span className="ml-2">{displayEvents.length} events ({allEvents.length} total)</span>
+                {startedAt && <span className="ml-2">{formatStartedAt(startedAt)}</span>}
               </p>
             </div>
           </div>

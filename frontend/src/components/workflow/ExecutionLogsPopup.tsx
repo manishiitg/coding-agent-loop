@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
+import { formatStartedAt } from '../../utils/duration'
 import { ConversationViewer } from './ConversationViewer'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import ModalPortal from '../ui/ModalPortal'
@@ -41,6 +42,7 @@ interface ExecutionLogsPopupProps {
   workspacePath: string | null
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
+  startedAt?: string | null
 }
 
 const ITERATION_ZERO_DEFAULT_FOLDER = 'iteration-0/default'
@@ -449,7 +451,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   onClose,
   workspacePath,
   runFolder: initialRunFolder,
-  runFolders
+  runFolders,
+  startedAt
 }) => {
   const runFolderOptions = useMemo(() => {
     const defaultRunFolder = getDefaultRunFolder(initialRunFolder, runFolders)
@@ -1862,6 +1865,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <Terminal className="w-5 h-5 text-primary" />
               Execution Logs
+              {startedAt && (
+                <span className="text-xs font-normal text-muted-foreground">{formatStartedAt(startedAt)}</span>
+              )}
             </h2>
             <div className="flex flex-wrap items-center gap-2 mt-1 sm:gap-4">
               {/* Run Folder Selector */}

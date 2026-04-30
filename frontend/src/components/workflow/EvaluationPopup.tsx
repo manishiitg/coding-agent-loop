@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { EvaluationReportsResponse } from '../../services/api-types'
+import { formatStartedAt } from '../../utils/duration'
 import ModalPortal from '../ui/ModalPortal'
 
 interface EvaluationPopupProps {
@@ -30,6 +31,7 @@ interface EvaluationPopupProps {
   selectedRunFolder: string | null // Currently selected run folder in the UI
   runFolders: string[]
   onRunEvaluation?: (runFolder: string) => Promise<void>
+  startedAt?: string | null
 }
 
 // Format percentage for display
@@ -65,6 +67,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   selectedRunFolder,
   runFolders,
   onRunEvaluation,
+  startedAt,
 }) => {
   const [activeTab, setActiveTab] = useState<'reports' | 'plan'>('reports')
   const [loading, setLoading] = useState(false)
@@ -217,6 +220,9 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
               <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-primary" />
                 Evaluation
+                {startedAt && (
+                  <span className="text-xs font-normal text-muted-foreground">{formatStartedAt(startedAt)}</span>
+                )}
               </h2>
               
               {/* Tab Buttons */}

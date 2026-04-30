@@ -16,6 +16,7 @@ import {
   Minus
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { formatStartedAt } from '../../utils/duration'
 import type {
   ModelTokenUsage,
   TokenUsageFile,
@@ -33,6 +34,7 @@ interface CostsPopupProps {
   workspacePath: string | null
   runFolders: string[] // Available run folders
   selectedRunFolder: string | null // Currently selected run folder
+  startedAt?: string | null
 }
 
 // Format cost in USD
@@ -343,7 +345,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   onClose,
   workspacePath,
   runFolders,
-  selectedRunFolder
+  selectedRunFolder,
+  startedAt
 }) => {
   const [loading, setLoading] = useState(false)
   const [runCosts, setRunCosts] = useState<RunCosts[]>([])
@@ -1123,6 +1126,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <DollarSign className="w-5 h-5 text-primary" />
               Cost Analysis
+              {startedAt && (
+                <span className="text-xs font-normal text-muted-foreground">{formatStartedAt(startedAt)}</span>
+              )}
             </h2>
             <div className="flex flex-wrap items-center gap-2 mt-1 sm:gap-4">
               {overallSummary && (

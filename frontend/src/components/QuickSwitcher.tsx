@@ -275,7 +275,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       : (query ? 'No matching chat tabs' : 'No chat tabs available')
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
+      className="absolute inset-0 z-50 flex items-start justify-center pt-[20vh]"
       onClick={onClose}
     >
       {/* Backdrop */}

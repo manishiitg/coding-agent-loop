@@ -1176,12 +1176,6 @@ function App() {
           onClose={() => {}} // Modal handles its own closing
         />
 
-        {/* Quick Switcher (Ctrl+K) - workflows in workflow mode, chats in chat/multi-agent */}
-        <QuickSwitcher
-          isOpen={showQuickSwitcher}
-          onClose={() => setShowQuickSwitcher(false)}
-        />
-
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
@@ -1193,6 +1187,12 @@ function App() {
 
           {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
+            {/* Quick Switcher (Ctrl+K) - constrained to the main content area */}
+            <QuickSwitcher
+              isOpen={showQuickSwitcher}
+              onClose={() => setShowQuickSwitcher(false)}
+            />
+
             {/* Global Mode & Preset Bar - only above middle content area, not sidebars */}
             <ModePresetBar />
             

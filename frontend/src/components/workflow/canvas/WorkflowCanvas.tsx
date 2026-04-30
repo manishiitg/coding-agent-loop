@@ -265,9 +265,13 @@ async function saveWorkflowImage(dataUrl: string, filename: string, format: Work
   }).electronAPI
 
   if (electronAPI?.saveFlowImage) {
+    const payload = dataUrlPayload(dataUrl)
+    if (format === 'png' && !payload.startsWith('iVBOR')) {
+      throw new Error('PNG export payload was invalid. Reload the Electron window and try again.')
+    }
     return electronAPI.saveFlowImage({
       filename,
-      dataUrl: dataUrlPayload(dataUrl),
+      dataUrl: payload,
       format,
     })
   }

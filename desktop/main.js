@@ -262,7 +262,14 @@ ipcMain.handle('save-flow-image', async (event, { filename, dataUrl, format }) =
   const rawData = String(dataUrl || '');
   const commaIndex = rawData.indexOf(',');
   const base64 = commaIndex >= 0 ? rawData.slice(commaIndex + 1) : rawData;
-  await fs.promises.writeFile(filePath, Buffer.from(base64, 'base64'));
+  const buffer = Buffer.from(base64, 'base64');
+  if (format === 'png' && !buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    throw new Error('PNG export payload was invalid.');
+  }
+  if (format === 'svg' && !buffer.toString('utf8', 0, 128).trimStart().startsWith('<svg')) {
+    throw new Error('SVG export payload was invalid.');
+  }
+  await fs.promises.writeFile(filePath, buffer);
   return { canceled: false, filePath };
 });
 

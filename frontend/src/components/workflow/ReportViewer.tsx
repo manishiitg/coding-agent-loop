@@ -104,7 +104,11 @@ async function saveReportImage(dataUrl: string, filename: string, format: Report
   }).electronAPI
 
   if (electronAPI?.saveFlowImage) {
-    return electronAPI.saveFlowImage({ filename, dataUrl: dataUrlPayload(dataUrl), format })
+    const payload = dataUrlPayload(dataUrl)
+    if (format === 'png' && !payload.startsWith('iVBOR')) {
+      throw new Error('PNG export payload was invalid. Reload the Electron window and try again.')
+    }
+    return electronAPI.saveFlowImage({ filename, dataUrl: payload, format })
   }
 
   triggerSvgDownload(dataUrl, filename)

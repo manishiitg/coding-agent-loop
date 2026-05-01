@@ -298,7 +298,7 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderAnthropic):
 		return keys.Anthropic != nil && strings.TrimSpace(*keys.Anthropic) != "", "ANTHROPIC_API_KEY or workspace provider auth"
 	case string(llm.ProviderClaudeCode):
-		return keys.Anthropic != nil && strings.TrimSpace(*keys.Anthropic) != "", "ANTHROPIC_API_KEY or workspace provider auth"
+		return true, "Claude Code CLI login"
 	case string(llm.ProviderZAI):
 		return keys.ZAI != nil && strings.TrimSpace(*keys.ZAI) != "", "Z_AI_API_KEY/ZAI_API_KEY or workspace provider auth"
 	case string(llm.ProviderKimi):
@@ -500,6 +500,7 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderZAI):               {"glm-4.6v", "glm-5v-turbo"},
 					string(llm.ProviderKimi):              {"kimi-k2.6"},
 					string(llm.ProviderCodexCLI):          {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
+					string(llm.ProviderClaudeCode):        {"claude-code"},
 				},
 				map[string]string{
 					string(llm.ProviderVertex):            "gemini-3-pro-preview",
@@ -507,10 +508,12 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderZAI):               "glm-4.6v",
 					string(llm.ProviderKimi):              "kimi-k2.6",
 					string(llm.ProviderCodexCLI):          "codex-cli",
+					string(llm.ProviderClaudeCode):        "claude-code",
 				},
 				map[string][]string{
 					string(llm.ProviderMiniMaxCodingPlan): {"Use minimax-coding-plan, not plain minimax, for image understanding."},
 					string(llm.ProviderCodexCLI):          {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
+					string(llm.ProviderClaudeCode):        {"Uses the local workspace image path through Claude Code CLI."},
 				},
 			),
 		}

@@ -1393,8 +1393,9 @@ func wrapReadImageWithLLM(
 			provider, modelID)
 
 		// Step 4: Make the LLM call with the image + query.
-		// Codex CLI does not consume ImageContent through the adapter today, but
-		// it can inspect local files when given the workspace path directly.
+		// CLI providers can inspect local files when given the workspace path
+		// directly. Codex CLI also does not consume ImageContent through the
+		// adapter today, so keep CLI image analysis path-based.
 		parts := []llmtypes.ContentPart{
 			llmtypes.TextContent{Text: imageData.Query},
 			llmtypes.ImageContent{
@@ -1403,10 +1404,10 @@ func wrapReadImageWithLLM(
 				Data:       imageData.Data,
 			},
 		}
-		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) {
+		if strings.EqualFold(provider, string(llm.ProviderCodexCLI)) || strings.EqualFold(provider, string(llm.ProviderClaudeCode)) {
 			absoluteImagePath := workspaceAbsolutePath(normalizeWorkspaceDocumentPath(imageData.Filepath))
 			if _, statErr := os.Stat(absoluteImagePath); statErr != nil {
-				return "", fmt.Errorf("codex-cli image analysis requires a readable local workspace file at %q: %w", absoluteImagePath, statErr)
+				return "", fmt.Errorf("%s image analysis requires a readable local workspace file at %q: %w", provider, absoluteImagePath, statErr)
 			}
 			parts = []llmtypes.ContentPart{
 				llmtypes.TextContent{Text: fmt.Sprintf("Inspect the local image file at this workspace path:\n%s\n\nQuestion: %s", absoluteImagePath, imageData.Query)},

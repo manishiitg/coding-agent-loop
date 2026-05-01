@@ -67,6 +67,19 @@ func TestNormalizeImageAnalysisProviderAndModelCodexDefault(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageAnalysisProviderAndModelClaudeCodeDefault(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("claude-code", "")
+	if err != nil {
+		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
+	}
+	if provider != "claude-code" {
+		t.Fatalf("provider = %q, want claude-code", provider)
+	}
+	if modelID != "claude-code" {
+		t.Fatalf("modelID = %q, want claude-code", modelID)
+	}
+}
+
 func TestNormalizeImageAnalysisProviderAndModelInfersCodexFromModel(t *testing.T) {
 	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "gpt-5.4-mini")
 	if err != nil {

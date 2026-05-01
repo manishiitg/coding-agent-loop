@@ -185,6 +185,8 @@ func defaultImageAnalysisModelForProvider(provider string) string {
 		return "kimi-k2.6"
 	case "codex-cli":
 		return "codex-cli"
+	case "claude-code":
+		return "claude-code"
 	default:
 		return "gemini-3-pro-preview"
 	}
@@ -256,7 +258,7 @@ func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, s
 	}
 
 	switch provider {
-	case "vertex", "minimax-coding-plan", "z-ai", "kimi", "codex-cli":
+	case "vertex", "minimax-coding-plan", "z-ai", "kimi", "codex-cli", "claude-code":
 		return provider, modelID, nil
 	default:
 		return "", "", fmt.Errorf("unsupported image analysis provider %q. %s", provider, supportedImageAnalysisProviderSummary())
@@ -278,7 +280,7 @@ func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 
 func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex-cli":
+	case "codex-cli", "claude-code":
 		return true
 	case "z-ai":
 		return apiKeys != nil && apiKeys.ZAI != nil && strings.TrimSpace(*apiKeys.ZAI) != ""
@@ -294,7 +296,7 @@ func supportedImageProviderSummary() string {
 }
 
 func supportedImageAnalysisProviderSummary() string {
-	return "Supported image analysis providers: vertex (Gemini vision models), minimax-coding-plan (claude-sonnet-4-5, claude-opus-4-6, claude-haiku-4-5-20251001), z-ai (glm-4.6v, glm-5v-turbo), kimi (kimi-k2.6), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark)"
+	return "Supported image analysis providers: vertex (Gemini vision models), minimax-coding-plan (claude-sonnet-4-5, claude-opus-4-6, claude-haiku-4-5-20251001), z-ai (glm-4.6v, glm-5v-turbo), kimi (kimi-k2.6), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), claude-code (claude-code)"
 }
 
 func imageModelsSummaryForProvider(provider string) string {
